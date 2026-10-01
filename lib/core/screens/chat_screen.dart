@@ -17234,6 +17234,46 @@ class _TimelineSystemEventRow extends StatelessWidget {
   }
 }
 
+/// Last laid-out size of a user bubble, read when its edit button is tapped.
+final class _BubbleSizeHolder {
+  Size? size;
+}
+
+class _BubbleSizeReporter extends SingleChildRenderObjectWidget {
+  const _BubbleSizeReporter({required this.holder, super.child});
+
+  final _BubbleSizeHolder holder;
+
+  @override
+  _RenderBubbleSizeReporter createRenderObject(BuildContext context) =>
+      _RenderBubbleSizeReporter(holder);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderBubbleSizeReporter renderObject,
+  ) {
+    renderObject.holder = holder;
+  }
+}
+
+class _RenderBubbleSizeReporter extends RenderProxyBox {
+  _RenderBubbleSizeReporter(this._holder);
+
+  _BubbleSizeHolder _holder;
+  set holder(_BubbleSizeHolder value) {
+    if (identical(value, _holder)) return;
+    _holder = value;
+    if (hasSize) value.size = size;
+  }
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    _holder.size = size;
+  }
+}
+
 class _UserMessage extends StatelessWidget {
   final String content;
   final bool verbose;
@@ -17332,7 +17372,11 @@ class _UserMessage extends StatelessWidget {
     final List<String> metaLines = _buildMetaLines(verbose, metadata);
     final timestamp = _formatMessageTimestamp(metadata);
     final parsed = _parseUserContent(content);
-    final bubbleMeasureKey = GlobalKey();
+    // No GlobalKey here: a fresh key on every build remounted the inline
+    // editor below it on each chat rebuild (streaming, presence, timers) and
+    // wiped what the user was typing. The bubble reports its laid-out size
+    // into a plain holder instead.
+    final bubbleSize = _BubbleSizeHolder();
 
     return ChatMessageSelectionArea(
       enabled: !editing,
@@ -17349,139 +17393,144 @@ class _UserMessage extends StatelessWidget {
           children: [
             KeyedSubtree(
               key: const ValueKey('user-message-bubble'),
-              child: Container(
-                key: bubbleMeasureKey,
-                // Mientras se edita la burbuja se ensancha al ancho máximo de
-                // una burbuja normal (alineada a la derecha) para que el texto
-                // tenga sitio, en vez de quedarse con el ancho del original.
-                width: editing ? double.infinity : null,
-                padding: EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: compact ? 8 : 11,
-                ),
-                // Burbuja estilo Claude: panel suave uniforme, redondeado, SIN
-                // borde. El mensaje del agente va en texto plano; el del usuario
-                // en esta burbuja sutil.
-                decoration: BoxDecoration(
-                  color: colors.surfaceVariant.withValues(alpha: 0.6),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: editing
-                    ? InlineMessageEditor(
-                        initialText: editingText ?? parsed.text.trim(),
-                        draftText: editingDraft,
-                        saving: editSaving,
-                        attachments: parsed.attachments.isEmpty
-                            ? null
-                            : _buildAttachmentCards(
-                                context,
-                                parsed.attachments,
-                              ),
-                        onCancel: onCancelEdit!,
-                        onSave: onSaveEdit!,
-                      )
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (metaLines.isNotEmpty)
-                            _MetaBlock(lines: metaLines, onDark: true),
-                          if (parsed.attachments.isNotEmpty)
-                            Padding(
-                              padding: EdgeInsets.only(
-                                bottom: parsed.text.isNotEmpty ? 8 : 0,
-                              ),
-                              child: _buildAttachmentCards(
-                                context,
-                                parsed.attachments,
-                              ),
-                            ),
-                          if (parsed.text.isNotEmpty)
-                            MarkdownBody(
-                              data: parsed.text,
-                              selectable: false,
-                              // Respeta los saltos de línea simples (CommonMark los
-                              // colapsaría en espacios → texto "todo junto").
-                              softLineBreak: true,
-                              onTapLink: (text, href, title) =>
-                                  openChatMarkdownLink(context, href),
-                              styleSheet: _userSheet(theme, colors),
-                            ),
-                          if (supplements.isNotEmpty) ...[
-                            const SizedBox(height: 11),
-                            Divider(
-                              height: 1,
-                              color: colors.divider.withValues(alpha: 0.45),
-                            ),
-                            const SizedBox(height: 9),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.add_comment_outlined,
-                                  size: 14,
-                                  color: colors.accent,
+              child: _BubbleSizeReporter(
+                holder: bubbleSize,
+                child: Container(
+                  // Mientras se edita la burbuja se ensancha al ancho máximo de
+                  // una burbuja normal (alineada a la derecha) para que el texto
+                  // tenga sitio, en vez de quedarse con el ancho del original.
+                  width: editing ? double.infinity : null,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: compact ? 8 : 11,
+                  ),
+                  // Burbuja estilo Claude: panel suave uniforme, redondeado, SIN
+                  // borde. El mensaje del agente va en texto plano; el del usuario
+                  // en esta burbuja sutil.
+                  decoration: BoxDecoration(
+                    color: colors.surfaceVariant.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: editing
+                      ? InlineMessageEditor(
+                          initialText: editingText ?? parsed.text.trim(),
+                          draftText: editingDraft,
+                          saving: editSaving,
+                          attachments: parsed.attachments.isEmpty
+                              ? null
+                              : _buildAttachmentCards(
+                                  context,
+                                  parsed.attachments,
                                 ),
-                                const SizedBox(width: 6),
-                                Flexible(
-                                  child: Text(
-                                    Strings.of(
-                                      context,
-                                    ).chaSteerSupplementsLabel,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                      color: colors.textSecondary,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 7),
-                            for (
-                              var index = 0;
-                              index < supplements.length;
-                              index++
-                            )
+                          onCancel: onCancelEdit!,
+                          onSave: onSaveEdit!,
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (metaLines.isNotEmpty)
+                              _MetaBlock(lines: metaLines, onDark: true),
+                            if (parsed.attachments.isNotEmpty)
                               Padding(
                                 padding: EdgeInsets.only(
-                                  bottom: index == supplements.length - 1
-                                      ? 0
-                                      : 7,
+                                  bottom: parsed.text.isNotEmpty ? 8 : 0,
                                 ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Container(
-                                      width: 2,
-                                      height: 18,
-                                      margin: const EdgeInsets.only(
-                                        top: 2,
-                                        right: 8,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: colors.accent.withValues(
-                                          alpha: 0.55,
-                                        ),
-                                        borderRadius: BorderRadius.circular(2),
-                                      ),
-                                    ),
-                                    Expanded(
-                                      child: Text(
-                                        supplements[index],
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          height: 1.35,
-                                          color: colors.textPrimary,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                                child: _buildAttachmentCards(
+                                  context,
+                                  parsed.attachments,
                                 ),
                               ),
+                            if (parsed.text.isNotEmpty)
+                              MarkdownBody(
+                                data: parsed.text,
+                                selectable: false,
+                                // Respeta los saltos de línea simples (CommonMark los
+                                // colapsaría en espacios → texto "todo junto").
+                                softLineBreak: true,
+                                onTapLink: (text, href, title) =>
+                                    openChatMarkdownLink(context, href),
+                                styleSheet: _userSheet(theme, colors),
+                              ),
+                            if (supplements.isNotEmpty) ...[
+                              const SizedBox(height: 11),
+                              Divider(
+                                height: 1,
+                                color: colors.divider.withValues(alpha: 0.45),
+                              ),
+                              const SizedBox(height: 9),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.add_comment_outlined,
+                                    size: 14,
+                                    color: colors.accent,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Flexible(
+                                    child: Text(
+                                      Strings.of(
+                                        context,
+                                      ).chaSteerSupplementsLabel,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: colors.textSecondary,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 7),
+                              for (
+                                var index = 0;
+                                index < supplements.length;
+                                index++
+                              )
+                                Padding(
+                                  padding: EdgeInsets.only(
+                                    bottom: index == supplements.length - 1
+                                        ? 0
+                                        : 7,
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        width: 2,
+                                        height: 18,
+                                        margin: const EdgeInsets.only(
+                                          top: 2,
+                                          right: 8,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: colors.accent.withValues(
+                                            alpha: 0.55,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            2,
+                                          ),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          supplements[index],
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            height: 1.35,
+                                            color: colors.textPrimary,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
                           ],
-                        ],
-                      ),
+                        ),
+                ),
               ),
             ),
             if (!editing)
@@ -17491,12 +17540,8 @@ class _UserMessage extends StatelessWidget {
                   if (onEdit != null)
                     IconButton(
                       onPressed: () {
-                        final box =
-                            bubbleMeasureKey.currentContext?.findRenderObject()
-                                as RenderBox?;
-                        if (box != null && box.hasSize) {
-                          onEdit!(box.size.width);
-                        }
+                        final size = bubbleSize.size;
+                        if (size != null) onEdit!(size.width);
                       },
                       tooltip: Strings.of(context).chaEditMessage,
                       padding: EdgeInsets.zero,

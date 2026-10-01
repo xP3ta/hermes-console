@@ -73,6 +73,9 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
     // again or cancel.
     if (oldWidget.saving && !widget.saving) _submitted = false;
     final draft = widget.draftText;
+    // A returned draft also means the save ended without closing the editor,
+    // even when the parent never painted a frame with `saving` on.
+    if (draft != oldWidget.draftText && !widget.saving) _submitted = false;
     if (draft != null && draft != oldWidget.draftText) {
       if (_controller.text != draft) {
         _controller.value = TextEditingValue(

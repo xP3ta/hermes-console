@@ -19633,6 +19633,45 @@ void main() {
     expect(find.byIcon(Icons.edit_outlined), findsNWidgets(2));
   });
 
+  testWidgets('el editor de burbuja conserva lo escrito aunque el chat se '
+      'redibuje', (tester) async {
+    await pumpChat(
+      tester,
+      desktopGateway: _UiRewindGateway(),
+      connection: _remoteConn('conn-inline-editor-rebuild'),
+      messages: const [
+        {'role': 'assistant', 'content': 'Respuesta uno'},
+        {'role': 'user', 'content': 'pregunta uno', '_desktopRowId': 11},
+      ],
+    );
+    await tester.tap(find.byIcon(Icons.edit_outlined));
+    await tester.pump();
+    final field = find.byKey(const ValueKey('inline-message-editor-field'));
+    await tester.enterText(field, 'pregunta uno corregida');
+    await tester.pump();
+    final before = tester.state(field);
+
+    // Cualquier evento del agente redibuja la pantalla del chat.
+    final screen = tester.state<State<StatefulWidget>>(
+      find.byType(ChatScreen),
+    );
+    for (var i = 0; i < 5; i++) {
+      // ignore: invalid_use_of_protected_member
+      screen.setState(() {});
+      await tester.pump();
+    }
+
+    expect(
+      tester.state(field),
+      same(before),
+      reason: 'el editor no se recrea en cada redibujado',
+    );
+    expect(
+      tester.widget<TextField>(field).controller!.text,
+      'pregunta uno corregida',
+    );
+  });
+
   testWidgets('auth Dashboard al resolver identidad muestra configuración', (
     tester,
   ) async {
