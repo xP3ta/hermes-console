@@ -7566,7 +7566,7 @@
   "tp1216PillCompacted": "Compacted",
   "tp1216PillNothingToCompact": "No changes",
   "tp1216SkillName": "skill {name}",
-  "tp1216ToolCount": "{name}, {count, plural, =1{once} other{{count} times}}",
+  "tp1216ToolCount": "{name}, {count, plural, =1{one time} other{{count} times}}",
   "tp1216MoreTools": "+{count} more",
 "lo1216QueueParkedFromPreviousSession": "Queue paused since the last session",
 "s1216StartupFailedTitle": "Hermes Console could not start",
