@@ -23012,7 +23012,9 @@ void main() {
       final scrollReads = <int>[];
       for (var frame = 0; frame < 6; frame++) {
         performance.reset();
-        gateway.emit('reasoning.delta', {'text': 'scroll $frame '});
+        for (var i = 0; i < 6; i++) {
+          gateway.emit('reasoning.delta', {'text': 'scroll $frame.$i '});
+        }
         await tester.drag(
           find.byType(ChatScrollInteractionGuard),
           const Offset(0, 300),
@@ -23021,17 +23023,20 @@ void main() {
         scrollReads.add(performance.publicTranscriptReads);
       }
 
-      expect(buildsPerFrame, everyElement(lessThanOrEqualTo(1)));
+      // Exactly one: coalescing may merge a burst, never delay it a frame.
+      expect(buildsPerFrame, everyElement(1));
       expect(
         readsPerFrame,
-        everyElement(lessThanOrEqualTo(12)),
-        reason: 'one frame must not re-project the transcript per row',
+        everyElement(lessThanOrEqualTo(3)),
+        reason:
+            'neither the rows of one frame nor each delta of a burst may '
+            're-project the whole transcript',
       );
-      expect(scrollReads, everyElement(lessThanOrEqualTo(24)));
+      expect(scrollReads, everyElement(lessThanOrEqualTo(8)));
       // Behaviour is unchanged: the reasoning text keeps flowing in.
       final reasoning = chat.messages.first['reasoning'] as String? ?? '';
       expect(reasoning, contains('step 9.5'));
-      expect(reasoning, contains('scroll 5'));
+      expect(reasoning, contains('scroll 5.5'));
       expect(tester.takeException(), isNull);
 
       gateway.emit('message.complete', {'text': 'Done.'});
@@ -23045,6 +23050,45 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.textContaining('Done.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a terminal event right after a reasoning burst paints on the next frame',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-reasoning-terminal-now'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'assistant', 'content': 'Respuesta anterior.'},
+          {'role': 'user', 'content': 'Pregunta anterior'},
+        ],
+      );
+      await chat.send(
+        fullText: 'piensa',
+        model: 'hermes-agent',
+        history: const [],
+      );
+      gateway.emit('message.start');
+      await tester.pump(const Duration(milliseconds: 450));
+      expect(find.byKey(const ValueKey('stop')), findsOneWidget);
+
+      // Coalesced progress must never hold back the terminal transition:
+      // the burst and the completion land in the same frame.
+      for (var i = 0; i < 5; i++) {
+        gateway.emit('reasoning.delta', {'text': 'paso $i '});
+      }
+      gateway.emit('message.complete', {'text': 'Respuesta final lista.'});
+      await tester.pump();
+      await tester.pump();
+
+      expect(chat.isStreaming, isFalse);
+      expect(find.textContaining('Respuesta final lista.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('stop')), findsNothing);
+      expect(chat.messages.first['reasoning'], contains('paso 4'));
+      expect(tester.takeException(), isNull);
     },
   );
 

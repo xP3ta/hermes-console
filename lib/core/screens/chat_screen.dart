@@ -5557,8 +5557,46 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
+  /// `toolProgress` arrives once per reasoning/thinking delta and per tool
+  /// progress tick: reasoning models stream hundreds per second. Each one used
+  /// to run the full handler (transcript projections, render invalidation and
+  /// a screen setState), so a burst cost several whole-transcript projections
+  /// per frame in a long chat. A burst is coalesced into one handler run per
+  /// frame. Any other event flushes the pending one first, so ordering is
+  /// kept and terminal/approval transitions still paint immediately; the
+  /// timer covers the case where no frame is produced (app in background).
+  bool _toolProgressPending = false;
+  Timer? _toolProgressFlushTimer;
+
   void _onChatEvent(ActiveChatEvent event) {
     if (_disposed || !mounted) return;
+    if (event == ActiveChatEvent.toolProgress) {
+      if (_toolProgressPending) return;
+      _toolProgressPending = true;
+      SchedulerBinding.instance.scheduleFrameCallback(
+        (_) => _flushPendingToolProgress(),
+      );
+      _toolProgressFlushTimer = Timer(
+        const Duration(milliseconds: 34),
+        _flushPendingToolProgress,
+      );
+      return;
+    }
+    _flushPendingToolProgress();
+    if (_disposed || !mounted) return;
+    _handleChatEvent(event);
+  }
+
+  void _flushPendingToolProgress() {
+    if (!_toolProgressPending) return;
+    _toolProgressPending = false;
+    _toolProgressFlushTimer?.cancel();
+    _toolProgressFlushTimer = null;
+    if (_disposed || !mounted) return;
+    _handleChatEvent(ActiveChatEvent.toolProgress);
+  }
+
+  void _handleChatEvent(ActiveChatEvent event) {
     if (_findOpen && event != ActiveChatEvent.token) _scheduleFindRefresh();
     // An externally observed successor can become live without a local
     // `started` event. Retire the old terminal host before publishing its
@@ -6311,6 +6349,9 @@ class _ChatScreenState extends State<ChatScreen>
     _persistLastRead();
     _chatSub?.cancel();
     _chatSub = null;
+    _toolProgressFlushTimer?.cancel();
+    _toolProgressFlushTimer = null;
+    _toolProgressPending = false;
     _attachmentDelivery?.removeAttachmentListener(_attachmentListener);
     _attachmentDelivery = null;
     // El modo voz YA NO se destruye al cerrar la pantalla: vive en el servicio
