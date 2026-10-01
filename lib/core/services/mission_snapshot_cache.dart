@@ -15,14 +15,14 @@ final class MissionSnapshotCache {
   final Map<String, MissionBackendSnapshot> _entries = {};
 
   /// Same saved connection pointed at a different server is a different key.
-  static String _key(SavedConnection connection) =>
+  static String keyOf(SavedConnection connection) =>
       '${connection.id}|${connection.baseUrl}';
 
   MissionBackendSnapshot? read(SavedConnection connection) =>
-      _entries[_key(connection)];
+      _entries[keyOf(connection)];
 
   void write(SavedConnection connection, MissionBackendSnapshot snapshot) {
-    final key = _key(connection);
+    final key = keyOf(connection);
     _entries.remove(key);
     _entries[key] = snapshot;
     while (_entries.length > capacity) {

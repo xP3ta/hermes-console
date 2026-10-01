@@ -38,6 +38,7 @@ import '../bots/state/bot_chat_target.dart';
 import '../services/shared_gateway_pool.dart';
 import '../services/mission_control_repository.dart';
 import '../services/mission_snapshot_cache.dart';
+import '../services/mission_snapshot_prewarm.dart';
 import '../services/mission_bot_chat_store.dart';
 import '../services/mission_organization_store.dart';
 import '../services/notifications/background_listener.dart';
@@ -215,6 +216,11 @@ class MissionControlScreen extends StatefulWidget {
   @visibleForTesting
   final MissionSnapshotCache? snapshotCache;
 
+  /// Background first read to reuse; defaults to the shared one for the real
+  /// repository (injected data sources opt in explicitly).
+  @visibleForTesting
+  final MissionSnapshotPrewarm? prewarm;
+
   /// Per-bot model catalog/reasoning (tests); defaults to the gateway.
   final BotModelGateway? botModelGateway;
   @visibleForTesting
@@ -238,6 +244,7 @@ class MissionControlScreen extends StatefulWidget {
     this.botModelGateway,
     this.modelOptionsLoader,
     this.snapshotCache,
+    this.prewarm,
     super.key,
   });
 
@@ -341,7 +348,22 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       // of showing Mission Control while the refresh is in flight.
       _scheduleInitialOpen(cached);
     }
-    unawaited(_load(refresh: cached != null));
+    unawaited(
+      MissionSnapshotPrewarm.markOpened(
+        widget.connManager.prefs,
+        widget.connection.id,
+      ),
+    );
+    final prewarm =
+        widget.prewarm ??
+        (widget.dataSource == null ? MissionSnapshotPrewarm.shared : null);
+    // A background read started from Home is still in flight: wait for it
+    // instead of asking the server twice. It is a fresh read, so no extra
+    // refresh follows.
+    final inFlight = prewarm?.claim(widget.connection);
+    unawaited(
+      _load(refresh: cached != null, reuse: cached == null ? inFlight : null),
+    );
   }
 
   @override
@@ -430,7 +452,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     });
   }
 
-  Future<void> _load({bool refresh = false}) async {
+  Future<void> _load({
+    bool refresh = false,
+    Future<MissionBackendSnapshot>? reuse,
+  }) async {
     final generation = ++_loadGeneration;
     if (mounted) {
       setState(() {
@@ -443,8 +468,15 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       });
     }
     try {
-      final incoming = await _dataSource.load();
+      final incoming = reuse == null
+          ? await _dataSource.load()
+          : await reuse.catchError((Object _) => _dataSource.load());
       if (!mounted || generation != _loadGeneration) return;
+      final source = _dataSource;
+      if (reuse != null && source is MissionControlRepository) {
+        // The prewarm read used its own repository: resume room logs here.
+        source.seedHostedLogs(incoming.hostedGroups);
+      }
       final snapshot = _retainLastGoodSources(incoming);
       setState(() {
         _snapshot = snapshot;
