@@ -7768,5 +7768,20 @@
   "lm1215FitUnknown": "Unknown fit",
   "lm1215LoadFailed": "Could not read the local models",
   "lm1215Retry": "Retry",
-  "lm1215Refresh": "Refresh"
+  "lm1215Refresh": "Refresh",
+  "rq1215ClarifyAsks": "{name} asks",
+  "rq1215ClarifyStep": "Question {index} of {total}",
+  "rq1215ClarifyHint": "Type your answer",
+  "rq1215ClarifySend": "Reply",
+  "rq1215AnswerFailed": "Couldn't send the answer. Try again.",
+  "rq1215RowWaitingAnswer": "Waiting for your answer",
+  "rq1215StatusNeedsAnswer": "Needs your answer",
+  "rq1215WaitingUnreachable": "{name} is waiting for an answer the room can't show",
+  "rq1215WaitingUnreachableHint": "Open it in its chat to reply.",
+  "rq1215OpenChat": "Open its chat",
+  "rq1215CancelWait": "Cancel wait",
+  "rq1215CancelWaitTitle": "Cancel {name}'s wait?",
+  "rq1215CancelWaitBody": "Only {name}'s turn in this room is interrupted. Its session stays open and the other bots keep working.",
+  "rq1215KeepWaiting": "Keep waiting",
+  "rq1215CancelWaitFailed": "Couldn't cancel the wait. Try again."
 }

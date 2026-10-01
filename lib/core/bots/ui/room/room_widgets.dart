@@ -1032,10 +1032,7 @@ class RoomRoundDetail extends StatelessWidget {
     RoomTurnState.working => s.roomRowWorking(
       roomElapsed(now.difference(row.since ?? now)),
     ),
-    RoomTurnState.needsYou =>
-      row.approval?.command != null
-          ? s.roomRowNeedsYou(row.approval!.command!)
-          : s.roomRowApproval,
+    RoomTurnState.needsYou => _needsYouDetail(s, row),
     RoomTurnState.queued => s.roomRowQueued,
     RoomTurnState.passed => s.roomRowPassed,
     RoomTurnState.replied => s.roomRowReplied,
@@ -1043,6 +1040,19 @@ class RoomRoundDetail extends StatelessWidget {
     RoomTurnState.stopped => s.roomRowStopped,
     RoomTurnState.noReply => s.roomRowNoReply,
   };
+
+  static String _needsYouDetail(Strings s, RoomRoundRow row) {
+    final prompt = row.prompt;
+    final approval = row.approval;
+    if (approval == null && prompt is! RoomMemberApproval) {
+      // A clarify question or an unreadable wait on a human.
+      return s.rq1215RowWaitingAnswer;
+    }
+    final command =
+        approval?.command ??
+        (prompt is RoomMemberApproval ? prompt.command : null);
+    return command != null ? s.roomRowNeedsYou(command) : s.roomRowApproval;
+  }
 
   Widget _row(BuildContext context, RoomRoundRow row) {
     final s = Strings.of(context);
@@ -1371,6 +1381,248 @@ class _ChoiceButton extends StatelessWidget {
         textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
       ),
       child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+    );
+  }
+}
+
+/// A member's open `clarify` question, answerable from the room with one of
+/// the offered choices or free text.
+class RoomMemberClarifyCard extends StatefulWidget {
+  final RoomMemberClarify prompt;
+  final HostedGroupMember? member;
+  final AgentProfile? profile;
+  final bool busy;
+
+  /// Null when this room cannot answer (read-only): the question still
+  /// shows, without live controls.
+  final void Function(String answer)? onAnswer;
+
+  const RoomMemberClarifyCard({
+    super.key,
+    required this.prompt,
+    required this.member,
+    required this.profile,
+    required this.busy,
+    required this.onAnswer,
+  });
+
+  @override
+  State<RoomMemberClarifyCard> createState() => _RoomMemberClarifyCardState();
+}
+
+class _RoomMemberClarifyCardState extends State<RoomMemberClarifyCard> {
+  final TextEditingController _text = TextEditingController();
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _send() {
+    final value = _text.text.trim();
+    if (value.isEmpty) return;
+    widget.onAnswer?.call(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final prompt = widget.prompt;
+    final name = roomSpeakerName(widget.member, null, widget.profile);
+    final id = 'room-member-clarify-${prompt.requestId}';
+    final enabled = !widget.busy && widget.onAnswer != null;
+    return Container(
+      key: ValueKey(id),
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: colors.surfaceVariant,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: colors.warning.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.help_outline_rounded, size: 16, color: colors.warning),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  s.rq1215ClarifyAsks(name),
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: roomMemberColor(
+                      widget.member?.handle ?? name,
+                      profile: widget.profile,
+                    ),
+                  ),
+                ),
+              ),
+              if (prompt.total > 1)
+                Text(
+                  s.rq1215ClarifyStep(prompt.index, prompt.total),
+                  style: TextStyle(fontSize: 11, color: colors.textSecondary),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            prompt.question,
+            style: TextStyle(fontSize: 14, color: colors.textPrimary),
+          ),
+          for (var i = 0; i < prompt.choices.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: _ChoiceButton(
+                key: ValueKey('$id-choice-$i'),
+                label: prompt.choices[i],
+                primary: i == 0,
+                destructive: false,
+                onPressed: enabled
+                    ? () => widget.onAnswer!(prompt.choices[i])
+                    : null,
+              ),
+            ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  key: ValueKey('$id-text'),
+                  controller: _text,
+                  enabled: enabled,
+                  minLines: 1,
+                  maxLines: 4,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => _send(),
+                  style: TextStyle(fontSize: 13.5, color: colors.textPrimary),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: s.rq1215ClarifyHint,
+                    filled: true,
+                    fillColor: colors.background,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              TextButton(
+                key: ValueKey('$id-send'),
+                onPressed: enabled ? _send : null,
+                style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
+                child: Text(s.rq1215ClarifySend),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Honest fallback when a member's session waits on a human but the room
+/// cannot show the request: open that bot's chat, or (confirmed) cancel the
+/// wait of that runtime only.
+class RoomMemberWaitingBanner extends StatelessWidget {
+  final HostedGroupMember member;
+  final AgentProfile? profile;
+  final bool busy;
+  final VoidCallback? onOpenChat;
+  final VoidCallback? onCancelWait;
+
+  const RoomMemberWaitingBanner({
+    super.key,
+    required this.member,
+    required this.profile,
+    required this.busy,
+    required this.onOpenChat,
+    required this.onCancelWait,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final id = 'room-member-waiting-${member.memberId}';
+    return Container(
+      key: ValueKey(id),
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 6),
+      decoration: BoxDecoration(
+        color: colors.warning.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: colors.warning.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.hourglass_top_rounded,
+                size: 18,
+                color: colors.warning,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      s.rq1215WaitingUnreachable(
+                        roomSpeakerName(member, null, profile),
+                      ),
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                    if (onOpenChat != null)
+                      Text(
+                        s.rq1215WaitingUnreachableHint,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 4,
+            children: [
+              if (onCancelWait != null)
+                TextButton(
+                  key: ValueKey('$id-cancel'),
+                  onPressed: busy ? null : onCancelWait,
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 40),
+                    foregroundColor: colors.error,
+                  ),
+                  child: Text(s.rq1215CancelWait),
+                ),
+              if (onOpenChat != null)
+                TextButton(
+                  key: ValueKey('$id-open'),
+                  onPressed: onOpenChat,
+                  style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
+                  child: Text(s.rq1215OpenChat),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

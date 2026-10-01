@@ -108,6 +108,22 @@ Future<void> pooledRoomApprove(
   }
 }
 
+/// One member-prompt RPC (`room_member_prompts.dart`) on the pooled Desktop
+/// socket for [connection].
+Future<Map<String, dynamic>> pooledRoomPromptRequest(
+  SavedConnection connection,
+  String method,
+  Map<String, dynamic> params, {
+  SharedGatewayPool? pool,
+}) async {
+  final lease = (pool ?? SharedGatewayPool.instance).acquire(connection);
+  try {
+    return await lease.client.roomPromptRequest(method, params);
+  } finally {
+    lease.release();
+  }
+}
+
 /// Room drafts in the encrypted `ChatDraftStore`, same key as before
 /// (`mob-room-<base64(authority, room)>`) so existing drafts survive.
 final class ChatDraftRoomStore implements RoomDraftStore {

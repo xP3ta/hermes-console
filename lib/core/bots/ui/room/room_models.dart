@@ -13,9 +13,11 @@ import '../../../models/hosted_groups.dart';
 import '../../../models/room_member_status.dart' show resolveRoomRecipients;
 import '../../../widgets/mission_profile_avatar.dart'
     show MissionProfileAvatarCache;
+import '../../data/room_member_prompts.dart';
 import '../../state/bot_presence.dart';
 import '../bot_identity.dart';
 
+export '../../data/room_member_prompts.dart';
 export '../bot_identity.dart' show botIdentityColor;
 
 // ─── Attachments (gap G1 interim) ───────────────────────────────────────────
@@ -495,6 +497,10 @@ final class RoomRoundRow {
   final String? taskId;
   final RoomApprovalAction? approval;
 
+  /// A human prompt open in the member's own session (clarify question,
+  /// approval the driver did not report, or an unreadable wait).
+  final RoomMemberPrompt? prompt;
+
   /// Retry is offered by the server for this task.
   final bool retryOffered;
   final String? reasonCode;
@@ -505,6 +511,7 @@ final class RoomRoundRow {
     this.since,
     this.taskId,
     this.approval,
+    this.prompt,
     this.retryOffered = false,
     this.reasonCode,
   });
@@ -554,6 +561,7 @@ RoomRoundModel? deriveRoomRound({
   required List<HostedGroupMember> members,
   RoomDriverStatus? driverStatus,
   DateTime? now,
+  List<RoomMemberPrompt> memberPrompts = const [],
 }) {
   HostedGroupEvent? discussion;
   for (final e in events.reversed) {
@@ -608,6 +616,13 @@ RoomRoundModel? deriveRoomRound({
     for (final a in driver?.approvals ?? const <RoomApprovalAction>[]) {
       if (a.memberId == member.memberId) approval = a;
     }
+    RoomMemberPrompt? prompt;
+    for (final p in memberPrompts) {
+      if (p.memberId == member.memberId) {
+        prompt = p;
+        break;
+      }
+    }
     final taskId = last?.activity.taskId;
     final retry = taskId != null && (driver?.offersRetry(taskId) ?? false);
     final since = last == null ? null : roomEventTime(last);
@@ -628,7 +643,8 @@ RoomRoundModel? deriveRoomRound({
     }
 
     RoomTurnState state;
-    if (approval != null) {
+    // A member blocked on a human is waiting for you, never "working".
+    if (approval != null || prompt != null) {
       state = RoomTurnState.needsYou;
     } else {
       switch (last?.kind) {
@@ -657,6 +673,7 @@ RoomRoundModel? deriveRoomRound({
         since: since,
         taskId: approval?.taskId ?? taskId,
         approval: approval,
+        prompt: prompt,
         retryOffered: retry,
         reasonCode: last?.activity.reasonCode,
       ),

@@ -20,6 +20,7 @@ import '../services/active_chat_service.dart';
 import '../services/chat_draft_store.dart';
 import '../services/connection_manager.dart';
 import '../bots/data/desktop_projection_rooms.dart';
+import '../bots/data/room_member_prompts.dart';
 import '../bots/state/attention.dart';
 import '../bots/ui/room/room_dictation.dart';
 import '../bots/ui/room/room_gateway.dart';
@@ -593,6 +594,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                 for (final profile in snapshot.profiles) profile.name: profile,
               },
               onOpenMember: _openRoomMember,
+              onOpenMemberSession: _openRoomMemberSession,
               canSend:
                   enabled &&
                   (capabilities?.supports(GroupMethod.send) ?? false),
@@ -1593,6 +1595,43 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     else if (_snapshot case final current?) {
       await _openInitialTarget(MissionControlOpenTarget.room(sessionId: '', roomId: selected), current);
     }
+  }
+
+  /// Opens a hosted room member's own room session (`Group: <room_id>`)
+  /// as a chat, where Console renders its pending question or approval.
+  Future<void> _openRoomMemberSession(
+    String profileName,
+    String storedSessionId,
+  ) async {
+    final snapshot = _snapshot;
+    final profile = snapshot?.profiles
+        .where((p) => p.name == profileName)
+        .firstOrNull;
+    final session = Session(
+      id: storedSessionId,
+      title: profileName,
+      profile: profileName,
+      isDefaultProfile: profile?.isDefault ?? false,
+      model: profile?.model ?? '',
+      source: 'bot_room',
+      messageCount: 1,
+      isActive: true,
+      preview: '',
+      startedAt: 0,
+    );
+    final observer = widget.botChatOpenObserver;
+    if (observer != null) {
+      observer(session);
+      return;
+    }
+    await openChatFromSection<void>(
+      context,
+      builder: (_) => ChatScreen(
+        connection: widget.connection,
+        session: session,
+        initialStoredSessionId: storedSessionId,
+      ),
+    );
   }
 
   void _openRoomMember(String profileName) {
@@ -3638,6 +3677,10 @@ class _HostedRoomWorkspace extends StatefulWidget {
 
   /// See `_RoomsTab.onOpenMember`.
   final ValueChanged<String> onOpenMember;
+
+  /// Opens a member's room session chat (profile, durable session id).
+  final Future<void> Function(String profile, String storedSessionId)?
+  onOpenMemberSession;
   final bool canSend;
   final bool canRename;
   final bool canStop;
@@ -3665,6 +3708,7 @@ class _HostedRoomWorkspace extends StatefulWidget {
     required this.avatarCache,
     required this.localProfiles,
     required this.onOpenMember,
+    this.onOpenMemberSession,
     required this.canSend,
     required this.canRename,
     required this.canStop,
@@ -3761,7 +3805,24 @@ class _HostedRoomWorkspaceState extends State<_HostedRoomWorkspace> {
         // `groups.retry` stays retired in Console until upstream binds it
         // to revision/log position (docs/hosted_identity_transition_matrix).
         canRetry: false,
+        canAnswerPrompts: writable && widget.canSend,
       ),
+      // Member questions/approvals the room projection does not carry, read
+      // from each member's own session on the pooled socket.
+      memberPrompts: connection == null
+          ? null
+          : GatewayRoomMemberPrompts(
+              (method, params) =>
+                  pooledRoomPromptRequest(connection, method, params),
+            ),
+      onOpenMemberChat: switch (widget.onOpenMemberSession) {
+        final open? => (member, stored) {
+          if (_profileFor(member) != null) {
+            unawaited(open(member.owner.profile, stored));
+          }
+        },
+        null => null,
+      },
       profileFor: _profileFor,
       avatarCache: widget.avatarCache,
       prefs: _prefs ?? MemoryRoomPrefs(),

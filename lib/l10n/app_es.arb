@@ -9372,5 +9372,58 @@
   "lm1215FitUnknown": "Ajuste desconocido",
   "lm1215LoadFailed": "No se pudieron leer los modelos locales",
   "lm1215Retry": "Reintentar",
-  "lm1215Refresh": "Actualizar"
+  "lm1215Refresh": "Actualizar",
+  "rq1215ClarifyAsks": "{name} te pregunta",
+  "@rq1215ClarifyAsks": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rq1215ClarifyStep": "Pregunta {index} de {total}",
+  "@rq1215ClarifyStep": {
+    "placeholders": {
+      "index": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "rq1215ClarifyHint": "Escribe tu respuesta",
+  "rq1215ClarifySend": "Responder",
+  "rq1215AnswerFailed": "No se pudo enviar la respuesta. Inténtalo de nuevo.",
+  "rq1215RowWaitingAnswer": "Esperando tu respuesta",
+  "rq1215StatusNeedsAnswer": "Necesita tu respuesta",
+  "rq1215WaitingUnreachable": "{name} está esperando una respuesta que la sala no puede mostrar",
+  "@rq1215WaitingUnreachable": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rq1215WaitingUnreachableHint": "Ábrela en su chat para contestar.",
+  "rq1215OpenChat": "Abrir su chat",
+  "rq1215CancelWait": "Cancelar espera",
+  "rq1215CancelWaitTitle": "¿Cancelar la espera de {name}?",
+  "@rq1215CancelWaitTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rq1215CancelWaitBody": "Solo se interrumpe el turno de {name} en esta sala. Su sesión no se cierra y el resto de bots sigue trabajando.",
+  "@rq1215CancelWaitBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rq1215KeepWaiting": "Seguir esperando",
+  "rq1215CancelWaitFailed": "No se pudo cancelar la espera. Inténtalo de nuevo."
 }

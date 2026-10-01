@@ -58,6 +58,15 @@ class RoomScreen extends StatefulWidget {
   final Widget? roomAvatar;
   final void Function(HostedGroupMember member)? onOpenMember;
 
+  /// Reads and answers prompts open in members' own sessions (clarify,
+  /// approvals the room driver does not report). Null: not available.
+  final RoomMemberPromptSource? memberPrompts;
+
+  /// Opens a member's room session as a chat ([storedSessionId] is its
+  /// durable id), where the full request UI is available.
+  final void Function(HostedGroupMember member, String storedSessionId)?
+  onOpenMemberChat;
+
   /// Poll timer seam for tests (defaults to [Timer.new]).
   final RoomPollTimerFactory? pollTimer;
   final DateTime Function()? clock;
@@ -79,6 +88,8 @@ class RoomScreen extends StatefulWidget {
     this.displayName,
     this.roomAvatar,
     this.onOpenMember,
+    this.memberPrompts,
+    this.onOpenMemberChat,
     this.pollTimer,
     this.clock,
   });
@@ -109,6 +120,15 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   bool _detailOpen = false;
   final List<AttachmentDraft> _attachments = [];
   final Set<String> _answering = {};
+
+  /// Prompts open in members' sessions (latest probe), and the ones being
+  /// answered. [_promptEpoch] discards a probe that started before an
+  /// answer landed, so an answered card never comes back from a stale read.
+  List<RoomMemberPrompt> _prompts = const [];
+  final Set<String> _promptBusy = {};
+  int _promptEpoch = 0;
+  bool _probing = false;
+  bool _probeAgain = false;
   final Set<String> _retrying = {};
   Animation<double>? _coverAnimation;
   bool _stopping = false;
@@ -156,6 +176,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     _composer.addListener(_onComposerChanged);
     unawaited(_loadLocal());
     unawaited(_restoreDraft());
+    unawaited(_probePrompts());
   }
 
   @override
@@ -273,6 +294,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       setState(() {});
     }
     if (added.isNotEmpty || reset) _retirePublishedOutbox();
+    unawaited(_probePrompts());
     if (result.room.disbanded && mounted) Navigator.of(context).maybePop();
     return (
       delta: RoomLogDelta(added: added, log: log, reset: reset),
@@ -471,6 +493,139 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         if (stillPending) _notice(s.roomActionFailed);
       }
     }
+  }
+
+  // ── Member prompts ───────────────────────────────────────────────────
+
+  /// Reads members' open prompts while the room works (a blocked member
+  /// keeps the driver working) or while a prompt is still shown. An idle
+  /// room sends nothing.
+  Future<void> _probePrompts() async {
+    final source = widget.memberPrompts;
+    if (source == null || !mounted) return;
+    if (!(_driver?.working ?? false) && _prompts.isEmpty) return;
+    if (_probing) {
+      _probeAgain = true;
+      return;
+    }
+    _probing = true;
+    try {
+      do {
+        _probeAgain = false;
+        final epoch = _promptEpoch;
+        List<RoomMemberPrompt> found;
+        try {
+          found = await source.probe(
+            _room,
+            skipApprovalIds: {
+              for (final a
+                  in _driver?.approvals ?? const <RoomApprovalAction>[])
+                a.requestId,
+            },
+          );
+        } catch (_) {
+          // Unknown is not "nobody waits": keep what is shown.
+          continue;
+        }
+        if (!mounted || epoch != _promptEpoch) continue;
+        _setPrompts(found);
+      } while (_probeAgain && mounted);
+    } finally {
+      _probing = false;
+    }
+  }
+
+  void _setPrompts(List<RoomMemberPrompt> next) {
+    final same =
+        next.length == _prompts.length &&
+        [
+          for (var i = 0; i < next.length; i++)
+            next[i].key == _prompts[i].key &&
+                next[i].runtimeSessionId == _prompts[i].runtimeSessionId,
+        ].every((v) => v);
+    if (same) return;
+    setState(() {
+      _prompts = List.unmodifiable(next);
+      _promptBusy.removeWhere((k) => !_prompts.any((p) => p.key == k));
+    });
+  }
+
+  /// One answer in flight per prompt; on success the card goes at once and
+  /// the room is read again.
+  Future<void> _answerPrompt(
+    RoomMemberPrompt prompt,
+    Future<void> Function(RoomMemberPromptSource source) send, {
+    required String failure,
+  }) async {
+    final source = widget.memberPrompts;
+    if (source == null ||
+        !widget.capabilities.canAnswerPrompts ||
+        _promptBusy.contains(prompt.key)) {
+      return;
+    }
+    setState(() => _promptBusy.add(prompt.key));
+    try {
+      await send(source);
+      if (!mounted) return;
+      _promptEpoch++;
+      setState(() {
+        _promptBusy.remove(prompt.key);
+        _prompts = List.unmodifiable(
+          _prompts.where((p) => p.key != prompt.key),
+        );
+      });
+      await refresh();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _promptBusy.remove(prompt.key));
+      _notice(failure);
+      unawaited(_probePrompts());
+    }
+  }
+
+  Future<void> _cancelWait(RoomMemberPrompt prompt) async {
+    final s = Strings.of(context);
+    final member = roomMemberById(prompt.memberId, _room.members);
+    final name = member == null
+        ? prompt.memberId
+        : roomSpeakerName(member, null, widget.profileFor(member));
+    final ok = await showHermesConfirmDialog(
+      context: context,
+      title: s.rq1215CancelWaitTitle(name),
+      message: s.rq1215CancelWaitBody(name),
+      confirmLabel: s.rq1215CancelWait,
+      cancelLabel: s.rq1215KeepWaiting,
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    await _answerPrompt(
+      prompt,
+      (source) => source.cancelWait(
+        prompt,
+        expectedTaskId: _openTaskOf(prompt.memberId),
+      ),
+      failure: s.rq1215CancelWaitFailed,
+    );
+  }
+
+  /// Task of the member's open room turn (`turn.started` without a
+  /// terminal event), so the interrupt is fenced to that exact turn.
+  String? _openTaskOf(String memberId) {
+    String? open;
+    for (final e in _events) {
+      if (e.activity.memberId != memberId) continue;
+      if (e.kind == 'turn.started') {
+        open = e.activity.taskId;
+      } else if (const {
+        'turn.settled',
+        'turn.failed',
+        'turn.cancelled',
+        'turn.deferred',
+      }.contains(e.kind)) {
+        open = null;
+      }
+    }
+    return open;
   }
 
   Future<void> _retry(String taskId) async {
@@ -931,6 +1086,11 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     if (driver != null && driver.approvals.isNotEmpty) {
       return s.roomStatusNeedsApproval;
     }
+    if (_prompts.isNotEmpty) {
+      return _prompts.any((p) => p is RoomMemberApproval)
+          ? s.roomStatusNeedsApproval
+          : s.rq1215StatusNeedsAnswer;
+    }
     if (driver != null &&
         (_visibleRetries.isNotEmpty ||
             (driver.blocked && driver.retries.isEmpty))) {
@@ -1233,10 +1393,80 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     );
   }
 
+  List<Widget> _promptCards() {
+    final s = Strings.of(context);
+    final canAnswer = widget.capabilities.canAnswerPrompts;
+    final cards = <Widget>[];
+    for (final prompt in _prompts) {
+      final member = roomMemberById(prompt.memberId, _room.members);
+      final profile = member == null ? null : widget.profileFor(member);
+      final busy = _promptBusy.contains(prompt.key);
+      switch (prompt) {
+        case RoomMemberClarify():
+          cards.add(
+            RoomMemberClarifyCard(
+              key: ValueKey('room-inline-${prompt.key}'),
+              prompt: prompt,
+              member: member,
+              profile: profile,
+              busy: busy,
+              onAnswer: canAnswer
+                  ? (answer) => unawaited(
+                      _answerPrompt(
+                        prompt,
+                        (source) => source.answerClarify(prompt, answer),
+                        failure: s.rq1215AnswerFailed,
+                      ),
+                    )
+                  : null,
+            ),
+          );
+        case RoomMemberApproval():
+          cards.add(
+            RoomApprovalCard(
+              key: ValueKey('room-inline-${prompt.key}'),
+              action: prompt.toDisplayAction(),
+              member: member,
+              profile: profile,
+              busy: busy,
+              onChoice: canAnswer
+                  ? (choice) => unawaited(
+                      _answerPrompt(
+                        prompt,
+                        (source) => source.answerApproval(prompt, choice),
+                        failure: s.rq1215AnswerFailed,
+                      ),
+                    )
+                  : null,
+            ),
+          );
+        case RoomMemberWaitingUnreachable():
+          if (member == null) continue;
+          final open = widget.onOpenMemberChat;
+          cards.add(
+            RoomMemberWaitingBanner(
+              key: ValueKey('room-inline-${prompt.key}'),
+              member: member,
+              profile: profile,
+              busy: busy,
+              onOpenChat: open == null
+                  ? null
+                  : () => open(member, prompt.storedSessionId),
+              onCancelWait: canAnswer
+                  ? () => unawaited(_cancelWait(prompt))
+                  : null,
+            ),
+          );
+      }
+    }
+    return cards;
+  }
+
   List<Widget> _inlineCards() {
     final driver = _driver;
-    if (driver == null) return const [];
+    if (driver == null) return _promptCards();
     return [
+      ..._promptCards(),
       for (final action in driver.approvals)
         RoomApprovalCard(
           key: ValueKey('room-inline-approval-${action.requestId}'),
@@ -1289,6 +1519,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
               state: RoomTurnState.noReply,
               since: r.since,
               taskId: r.taskId,
+              prompt: r.prompt,
               reasonCode: r.reasonCode,
             );
           }()
@@ -1300,6 +1531,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         round.active &&
         ((driver?.working ?? false) ||
             (driver?.approvals.isNotEmpty ?? false) ||
+            _prompts.isNotEmpty ||
             _visibleRetries.isNotEmpty ||
             rows.any(
               (r) =>
@@ -1449,6 +1681,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     _threadId == null,
     _retrying.join(','),
     _answering.join(','),
+    _prompts,
+    _promptBusy.join(','),
     _outboxVersion,
     locale,
     widget,
@@ -1483,6 +1717,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       _driver,
       _room,
       _dismissedTasks,
+      _prompts,
       // Without driver status an open turn expires with time.
       if (_driver == null) now.millisecondsSinceEpoch ~/ 10000,
     ];
@@ -1494,6 +1729,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         members: _room.members,
         driverStatus: _driver,
         now: now,
+        memberPrompts: _prompts,
       ),
     );
   }
