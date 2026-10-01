@@ -18547,6 +18547,22 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets(
+      'md1215: un borrador pinta el modelo elegido para el primer mensaje',
+      (tester) async {
+        await pumpChat(
+          tester,
+          initialPreferences: const {
+            'selected_model_conn-test_default_sess-test': 'gpt-6.1-sol',
+            'selected_provider_conn-test_default_sess-test': 'openai-codex',
+          },
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byKey(const ValueKey('GPT-6.1-sol')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 
   testWidgets('pj1215: a project chat creates its session in that folder', (

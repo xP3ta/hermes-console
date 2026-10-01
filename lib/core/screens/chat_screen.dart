@@ -3712,7 +3712,17 @@ class _ChatScreenState extends State<ChatScreen>
   /// Etiqueta corta del modelo activo para el AppBar (p.ej. "GPT-5.5"). Cae a un
   /// texto neutro mientras carga o si el Dashboard no está accesible.
   String get _activeModelLabel {
-    final model = _displayedSessionModel?.modelId ?? _activeModel?.model;
+    // md1215: a draft without a runtime sends `_selectedModel` with its first
+    // message; showing the server default instead read as "it did not change".
+    final staged =
+        _chatBound &&
+            !_chat.hasDesktopRuntime &&
+            _selectedModel.isNotEmpty &&
+            _selectedModel != 'hermes-agent'
+        ? _selectedModel
+        : null;
+    final model =
+        _displayedSessionModel?.modelId ?? staged ?? _activeModel?.model;
     if (model == null || model.isEmpty || model == 'hermes-agent') {
       return Strings.of(context).chaModelServer;
     }
