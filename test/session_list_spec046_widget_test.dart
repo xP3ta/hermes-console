@@ -1022,10 +1022,11 @@ void main() {
       await _pumpUntil(tester, find.text('Conversation 0'));
       rosterFails = true;
 
-      // Backoff never undercuts the 1 s base (jitter spreads above it).
+      // Backoff never undercuts the 1 s base (jitter spreads above it; the
+      // first attempt over [1 s, 1.5 s], so 0.75 → 1.375 s).
       events.addError(StateError('offline'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 999));
+      await tester.pump(const Duration(milliseconds: 1374));
       expect(reconnects, 0);
       await tester.pump(const Duration(milliseconds: 1));
       expect(reconnects, 1);
@@ -1047,7 +1048,7 @@ void main() {
       rosterFails = false;
       events.addError(StateError('lost after a stable interval'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 999));
+      await tester.pump(const Duration(milliseconds: 1374));
       expect(reconnects, 2);
       await tester.pump(const Duration(milliseconds: 1));
       expect(

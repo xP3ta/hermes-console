@@ -169,14 +169,17 @@ abstract final class TuiGatewayCloseCodes {
 /// Reconnect backoff shared by every Desktop gateway socket owner.
 ///
 /// Exponential (base 1 s, ×2) with jitter spread above the base so no attempt
-/// ever follows a failure sooner than [baseDelay]; the ceiling is 30 s in the
-/// foreground and 60 s while the app (or the background listener isolate) is
-/// in the background. [markHealthy] is for owners that observed
-/// [stableInterval] of continuous health, never for a single good read.
+/// ever follows a failure sooner than [baseDelay]; the ceiling is 15 s in the
+/// foreground (Desktop `apps/shared/src/reconnect-backoff.ts`) and 60 s while
+/// the app (or the background listener isolate) is in the background. The
+/// first attempt is jittered too (within half a base), so the sockets of several
+/// open chats that drop together do not all redial at the same instant.
+/// [markHealthy] is for owners that observed [stableInterval] of continuous
+/// health, never for a single good read.
 class GatewayReconnectBackoff {
   static const stableInterval = Duration(seconds: 30);
   static const baseDelay = Duration(seconds: 1);
-  static const foregroundCap = Duration(seconds: 30);
+  static const foregroundCap = Duration(seconds: 15);
   static const backgroundCap = Duration(seconds: 60);
 
   /// Test hook: scales every new backoff's base (real-socket suites that
@@ -200,7 +203,7 @@ class GatewayReconnectBackoff {
 
   Duration get _cap {
     final cap = backgroundCadence ? backgroundCap : foregroundCap;
-    // Keep the 1:30 base:cap ratio for scaled test bases.
+    // Keep the base:cap ratio for scaled test bases.
     return _base == baseDelay ? cap : _base * (cap.inSeconds);
   }
 
@@ -208,7 +211,12 @@ class GatewayReconnectBackoff {
     final exponent = _attempt.clamp(0, 7);
     _attempt += 1;
     final baseUs = _base.inMicroseconds;
-    final ceilingUs = min(baseUs * (1 << exponent), _cap.inMicroseconds);
+    // Attempt 0 spreads over [base, 1.5·base] instead of exactly base, which
+    // stays below attempt 1's [base, 2·base] for the same random sample.
+    final ceilingUs = min(
+      exponent == 0 ? baseUs * 3 ~/ 2 : baseUs * (1 << exponent),
+      _cap.inMicroseconds,
+    );
     final spread = ceilingUs - baseUs;
     final jitter = (_random().clamp(0.0, 1.0) * spread).floor();
     return Duration(microseconds: baseUs + jitter);
