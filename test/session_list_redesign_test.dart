@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/widgets/session_status_tone.dart';
@@ -1080,6 +1081,90 @@ void main() {
     },
   );
 
+  testWidgets(
+    'el anillo del punto en vivo repinta solo el punto, no la fila entera',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final prefs = await SharedPreferences.getInstance();
+      final manager = await ConnectionManager.create(prefs);
+      final aggregate = GlobalActivityAggregate.inMemory();
+      addTearDown(aggregate.dispose);
+      final dashboard = DashboardClient(
+        host: '127.0.0.1',
+        port: 9119,
+        manualToken: 'dashboard-token',
+        httpClientOverride: MockClient((request) async {
+          if (request.method == 'GET' && request.url.path == '/api/sessions') {
+            return _page([
+              _row('live-1', title: 'Migrar tests de pagos', lastActive: 2),
+            ]);
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      final gateway = _gateway();
+      final repository = SessionRepository(dashboard, gateway);
+      addTearDown(() {
+        repository.close();
+        dashboard.close();
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('es'),
+          theme: AppTheme.fromId('dark'),
+          localizationsDelegates: Strings.localizationsDelegates,
+          supportedLocales: Strings.supportedLocales,
+          home: SessionListScreen(
+            connection: _connection(),
+            connManager: manager,
+            clientOverride: gateway,
+            repositoryOverride: repository,
+            globalActivityOverride: aggregate,
+            activeSessionListLoader: () async => const DesktopActiveSessionList(
+              sessions: [
+                DesktopActiveSession(
+                  runtimeSessionId: 'runtime-live-1',
+                  storedSessionId: 'live-1',
+                  status: 'working',
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await _pumpUntil(
+        tester,
+        find.byKey(const ValueKey('session-running-live-1')),
+      );
+      await tester.pump(const Duration(seconds: 1));
+
+      // The 1.8 s ring ticks every frame while the row is live. Each tick
+      // must repaint the dot's own layer, never the title, preview or card.
+      final painted = <RenderObject>{};
+      debugOnProfilePaint = painted.add;
+      addTearDown(() => debugOnProfilePaint = null);
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      debugOnProfilePaint = null;
+      final paragraphs = painted.whereType<RenderParagraph>().length;
+      expect(
+        paragraphs,
+        0,
+        reason: 'the row text must not be repainted by the ring animation',
+      );
+      expect(painted, isNotEmpty, reason: 'the ring itself keeps animating');
+      // Leaving the screen (opaque route on top) stops the ticker.
+      Navigator.of(tester.element(find.byType(SessionListScreen)))
+          .push(MaterialPageRoute<void>(builder: (_) => const SizedBox()));
+      await tester.pumpAndSettle();
+    },
+  );
   testWidgets(
     'el punto en vivo no deja una animación colgada con movimiento reducido',
     (tester) async {

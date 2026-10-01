@@ -2375,36 +2375,40 @@ class _LiveDotState extends State<_LiveDot>
     );
     final ring = _ring;
     if (ring == null) return dot;
-    return SizedBox(
-      width: 8,
-      height: 8,
-      child: AnimatedBuilder(
-        animation: ring,
-        builder: (context, child) {
-          final t = Curves.easeOut.transform(ring.value);
-          return Stack(
-            clipBehavior: Clip.none,
-            alignment: Alignment.center,
-            children: [
-              Transform.scale(
-                scale: 1 + 1.6 * t,
-                child: Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: widget.color.withValues(alpha: 0.55 * (1 - t)),
-                      width: 1.5,
+    // The ring repaints every frame while the row is live: keep it on its own
+    // layer so each tick does not repaint the row's title, preview and card.
+    return RepaintBoundary(
+      child: SizedBox(
+        width: 8,
+        height: 8,
+        child: AnimatedBuilder(
+          animation: ring,
+          builder: (context, child) {
+            final t = Curves.easeOut.transform(ring.value);
+            return Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.center,
+              children: [
+                Transform.scale(
+                  scale: 1 + 1.6 * t,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: widget.color.withValues(alpha: 0.55 * (1 - t)),
+                        width: 1.5,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              ?child,
-            ],
-          );
-        },
-        child: dot,
+                ?child,
+              ],
+            );
+          },
+          child: dot,
+        ),
       ),
     );
   }
