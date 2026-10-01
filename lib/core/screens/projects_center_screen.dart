@@ -14,6 +14,7 @@ import '../utils/byte_bounded_lru_cache.dart';
 import '../utils/short_server_path.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_notice.dart';
+import '../widgets/hermes_premium_ui.dart' show showHermesFloatingSurface;
 import '../widgets/hermes_ui.dart';
 import '../widgets/projects/project_actions.dart';
 import 'chat_screen.dart';
@@ -304,10 +305,8 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
   }
 
   void _showExplainer() {
-    showModalBottomSheet<void>(
+    showHermesFloatingSurface<void>(
       context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
       builder: (sheetContext) => const _ProjectsExplainer(),
     );
   }
@@ -690,49 +689,47 @@ class _ProjectsExplainer extends StatelessWidget {
         ],
       ),
     );
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-        child: Column(
-          key: const ValueKey('pj1215-explainer'),
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              strings.pj1215ExplainTitle,
-              style: TextStyle(
-                color: colors.textPrimary,
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-              ),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+      child: Column(
+        key: const ValueKey('pj1215-explainer'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            strings.pj1215ExplainTitle,
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
             ),
-            const SizedBox(height: 14),
-            point(
-              Icons.folder_outlined,
-              strings.pj1215ExplainFolderTitle,
-              strings.pj1215ExplainFolderBody,
-            ),
-            point(
-              Icons.auto_awesome_outlined,
-              strings.pj1215ExplainAutoTitle,
-              strings.pj1215ExplainAutoBody,
-            ),
-            point(
-              Icons.call_split_rounded,
-              strings.pj1215ExplainWorktreeTitle,
-              strings.pj1215ExplainWorktreeBody,
-            ),
-            point(
-              Icons.add_comment_outlined,
-              strings.pj1215ExplainNewChatTitle,
-              strings.pj1215ExplainNewChatBody,
-            ),
-            point(
-              Icons.lock_outline_rounded,
-              strings.pj1215ExplainSafeTitle,
-              strings.pj1215ExplainSafeBody,
-            ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 14),
+          point(
+            Icons.folder_outlined,
+            strings.pj1215ExplainFolderTitle,
+            strings.pj1215ExplainFolderBody,
+          ),
+          point(
+            Icons.auto_awesome_outlined,
+            strings.pj1215ExplainAutoTitle,
+            strings.pj1215ExplainAutoBody,
+          ),
+          point(
+            Icons.call_split_rounded,
+            strings.pj1215ExplainWorktreeTitle,
+            strings.pj1215ExplainWorktreeBody,
+          ),
+          point(
+            Icons.add_comment_outlined,
+            strings.pj1215ExplainNewChatTitle,
+            strings.pj1215ExplainNewChatBody,
+          ),
+          point(
+            Icons.lock_outline_rounded,
+            strings.pj1215ExplainSafeTitle,
+            strings.pj1215ExplainSafeBody,
+          ),
+        ],
       ),
     );
   }

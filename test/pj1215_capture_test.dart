@@ -153,6 +153,38 @@ void main() {
       );
       await tester.pumpAndSettle();
       await _save(tester, 'worktree-$themeName');
+
+      await tester.tap(find.byKey(const ValueKey('pj1215-worktree-base')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('hermes-option-surface')), findsOne);
+      await _save(tester, 'worktree-base-$themeName');
+    });
+
+    testWidgets('$themeName: rename dialog', (tester) async {
+      final gateway = Pj1215FakeProjectsGateway.sample();
+      await _pump(tester, theme, _screen(gateway));
+      await tester.tap(
+        find.byKey(const ValueKey('pj1215-card-menu-p_console')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('pj1215-menu-rename')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('pj1215-rename-field')), findsOne);
+      await _save(tester, 'rename-$themeName');
+    });
+
+    testWidgets('$themeName: delete confirmation', (tester) async {
+      final gateway = Pj1215FakeProjectsGateway.sample();
+      await _pump(tester, theme, _screen(gateway));
+      await tester.tap(find.byKey(const ValueKey('pj1215-card-menu-p_notes')));
+      await tester.pumpAndSettle();
+      final delete = find.byKey(const ValueKey('pj1215-menu-delete'));
+      await tester.ensureVisible(delete);
+      await tester.pumpAndSettle();
+      await tester.tap(delete);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('pj1215-delete-confirm')), findsOne);
+      await _save(tester, 'delete-$themeName');
     });
 
     testWidgets('$themeName: open branch sheet', (tester) async {
