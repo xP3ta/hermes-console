@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../connection_manager.dart';
@@ -15,6 +16,39 @@ enum HermesServerDictationConfigurationResult {
   configured,
   unavailable,
   superseded,
+}
+
+/// Positive transcription-probe verdicts per Dashboard identity, so a
+/// dictation tap does not pay an extra round trip before the microphone
+/// opens. Only a confirmed endpoint is remembered, for [maxAge]; a negative or
+/// inconclusive answer is always probed again. Any change that withdraws the
+/// choice (engine or consent) drops the entry at the next tap.
+class HermesDictationProbeCache {
+  HermesDictationProbeCache._();
+
+  static const Duration maxAge = Duration(minutes: 10);
+  static final Map<String, DateTime> _confirmedAt = {};
+  static DateTime Function() _now = DateTime.now;
+
+  static bool isConfirmed(String identity) {
+    final at = _confirmedAt[identity];
+    if (at == null) return false;
+    if (_now().difference(at) < maxAge) return true;
+    _confirmedAt.remove(identity);
+    return false;
+  }
+
+  static void confirm(String identity) => _confirmedAt[identity] = _now();
+
+  static void forget(String identity) => _confirmedAt.remove(identity);
+
+  static void clear() => _confirmedAt.clear();
+
+  @visibleForTesting
+  static void resetForTesting({DateTime Function()? now}) {
+    _confirmedAt.clear();
+    _now = now ?? DateTime.now;
+  }
 }
 
 /// Vincula el Dictado del chat al STT oficial de la instancia Hermes activa.
@@ -42,6 +76,7 @@ configureHermesServerDictation({
   }
 
   if (voice.settings.sttEngine != SttEngineKind.hermesServer) {
+    HermesDictationProbeCache.clear();
     return unavailableOrSuperseded();
   }
   final createDashboard =
@@ -55,14 +90,19 @@ configureHermesServerDictation({
     );
     if (NativeVoiceConsentStore(preferences).read(identity) !=
         NativeVoiceConsent.accepted) {
+      HermesDictationProbeCache.forget(identity);
       return unavailableOrSuperseded();
     }
-    final available = await probeHermesTranscription(
-      statusOf: (endpoint) =>
-          dashboard.probeAudioEndpoint(endpoint, profile: profile),
-    );
-    if (!available) {
-      return unavailableOrSuperseded();
+    if (!HermesDictationProbeCache.isConfirmed(identity)) {
+      final available = await probeHermesTranscription(
+        statusOf: (endpoint) =>
+            dashboard.probeAudioEndpoint(endpoint, profile: profile),
+      );
+      if (!available) {
+        HermesDictationProbeCache.forget(identity);
+        return unavailableOrSuperseded();
+      }
+      HermesDictationProbeCache.confirm(identity);
     }
     // Motor y consentimiento pueden cambiar mientras responde el probe. No
     // transfieras el cliente con una elección ya retirada.
