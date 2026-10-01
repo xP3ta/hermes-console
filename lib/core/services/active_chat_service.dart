@@ -24,7 +24,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../widgets/chat_event_cards.dart';
-import '../models/activity_snapshot.dart' show activityToolDetail;
+import '../models/activity_snapshot.dart'
+    show
+        MemoryWrite,
+        MemoryWriteAction,
+        activityToolDetail,
+        isMemoryTool,
+        memoryWriteStepKey;
 import '../models/agent_task_list.dart';
 import '../models/attachment_draft.dart';
 import '../models/compaction_progress.dart' show parseCompactionChunks;
@@ -606,7 +612,29 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
       final call = <String, dynamic>{};
       if (id != null) call['id'] = id;
       if (raw['type'] == 'function') call['type'] = 'function';
-      if (name != null) call['function'] = {'name': name};
+      // mp1215: a `memory` call keeps only its screened write projection so
+      // the history can still say what was saved; other args never survive.
+      final memory = name == null
+          ? null
+          : MemoryWrite.fromArgs(
+              name,
+              function is Map ? function['arguments'] : null,
+            );
+      if (name != null) {
+        call['function'] = {
+          'name': name,
+          if (memory != null)
+            'arguments': jsonEncode({
+              'action': memory.action.name,
+              'target': memory.userTarget ? 'user' : 'memory',
+              if (memory.preview != null)
+                memory.action == MemoryWriteAction.remove
+                        ? 'old_text'
+                        : 'content':
+                    memory.preview,
+            }),
+        };
+      }
       calls.add(call);
     }
     if (calls.isNotEmpty) normalized['tool_calls'] = calls;
@@ -20531,6 +20559,18 @@ class ActiveChat {
     // host…): nunca el argumento crudo. `tool.start` trae `args`; `tool.complete`
     // trae además `duration_s`, con lo que el «Hecho» del panel mide de verdad.
     final detail = activityToolDetail(label, payload['args']);
+    // mp1215: a `memory` call carries its write; `tool.complete` settles it
+    // with the gateway's own result (landed only on `success: true`).
+    final callMemory =
+        MemoryWrite.fromStep(
+          activityIndex >= 0
+              ? activity[activityIndex][memoryWriteStepKey]
+              : null,
+        ) ??
+        MemoryWrite.fromArgs(label, payload['args']);
+    final memory = running || !isMemoryTool(label)
+        ? callMemory
+        : MemoryWrite.settle(callMemory, payload['result']);
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final durationS = payload['duration_s'];
     if (activityIndex >= 0) {
@@ -20547,6 +20587,7 @@ class ActiveChat {
         'status': status,
         if (detail != null && previous['detail'] == null) 'detail': detail,
         'completed_at': ?completedAt,
+        memoryWriteStepKey: ?memory?.toStep(),
       };
     } else {
       activity.add({
@@ -20555,6 +20596,7 @@ class ActiveChat {
         'status': status,
         if (id != null && id.isNotEmpty) 'id': id,
         'detail': ?detail,
+        memoryWriteStepKey: ?memory?.toStep(),
         // Un fin sin inicio visto solo se mide si el gateway trae la duración.
         'timestamp': !running && durationS is num && durationS.isFinite
             ? nowMs - (durationS * 1000).round()

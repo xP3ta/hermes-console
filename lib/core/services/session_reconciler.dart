@@ -1,6 +1,7 @@
 import 'dart:convert';
 
-import '../models/activity_snapshot.dart' show activityToolDetail;
+import '../models/activity_snapshot.dart'
+    show MemoryWrite, activityToolDetail, isMemoryTool, memoryWriteStepKey;
 import '../models/desktop_session_snapshot.dart';
 import '../models/transcript_privacy_state.dart';
 import '../utils/assistant_content.dart';
@@ -69,6 +70,11 @@ Map<String, dynamic>? normalizeAssistantActivityStep(Object? raw) {
   };
   final rawDetail = raw['detail'];
   final detail = rawDetail is String ? rawDetail.trim() : '';
+  // mp1215: a `memory` call keeps its structural write (action, target,
+  // landed and a screened preview); any other tool never carries one.
+  final memory = isMemoryTool(label)
+      ? MemoryWrite.fromStep(raw[memoryWriteStepKey])?.toStep()
+      : null;
   return Map<String, dynamic>.unmodifiable({
     'kind': kind,
     'label': label,
@@ -80,8 +86,25 @@ Map<String, dynamic>? normalizeAssistantActivityStep(Object? raw) {
         detail.length <= 96 &&
         !detail.contains(_unsafeDisplayTextPattern))
       'detail': detail,
+    memoryWriteStepKey: ?memory,
   });
 }
+
+/// mp1215: the minimal, content-free shape of a `memory` tool result —
+/// whether it landed, its target and whether it replaced/removed an entry.
+/// Durable tool rows carry only this, never the result text.
+Map<String, dynamic>? memoryResultEvidence(Object? result) {
+  final write = MemoryWrite.settle(null, result);
+  if (write == null) return null;
+  return Map<String, dynamic>.unmodifiable({
+    'success': write.landed,
+    'target': write.userTarget ? 'user' : 'memory',
+    if (write.action.name == 'replace') 'replaced_entry': true,
+    if (write.action.name == 'remove') 'removed_entry': true,
+  });
+}
+
+const memoryResultEvidenceKey = '_memory_result';
 
 List<Map<String, dynamic>> normalizeAssistantActivityTrace(Object? raw) {
   if (raw is! List) return const [];
@@ -179,6 +202,10 @@ List<Map<String, dynamic>> assistantActivityFromToolCalls(
         'id': ?entry.id,
         'timestamp': ?timestamp,
         'detail': ?activityToolDetail(entry.label, entry.arguments),
+        memoryWriteStepKey: ?MemoryWrite.fromArgs(
+          entry.label,
+          entry.arguments,
+        )?.toStep(),
       });
       if (step != null) steps.add(step);
     }
@@ -271,9 +298,31 @@ List<Map<String, dynamic>> coalesceAssistantTurnsNewestFirst(
         'id': ?entry.id,
         'timestamp': ?timestampOf(message),
         'detail': ?detail,
+        memoryWriteStepKey: ?MemoryWrite.fromArgs(
+          entry.label,
+          entry.arguments,
+        )?.toStep(),
       });
     }
     appendToolCallEvidence(raw);
+  }
+
+  // mp1215: settle a `memory` step with what its result says (content-free
+  // evidence on durable rows, or the raw result kept for media evidence).
+  Map<String, dynamic> settleMemory(
+    Map<String, dynamic> step,
+    Map<String, dynamic> message,
+  ) {
+    final label = step['label']?.toString() ?? '';
+    if (!isMemoryTool(label)) return step;
+    final evidence = message[memoryResultEvidenceKey] ?? message['content'];
+    final settled = MemoryWrite.settle(
+      MemoryWrite.fromStep(step[memoryWriteStepKey]),
+      evidence,
+    );
+    return settled == null
+        ? step
+        : {...step, memoryWriteStepKey: settled.toStep()};
   }
 
   void completeTool(Map<String, dynamic> message) {
@@ -293,12 +342,12 @@ List<Map<String, dynamic>> coalesceAssistantTurnsNewestFirst(
           continue;
         }
         matched = true;
-        activity[i] = {
+        activity[i] = settleMemory({
           ...step,
           'status': 'completed',
           if (endedAt != null && step['completed_at'] == null)
             'completed_at': endedAt,
-        };
+        }, message);
       }
       if (matched) return;
     }
@@ -320,13 +369,15 @@ List<Map<String, dynamic>> coalesceAssistantTurnsNewestFirst(
           label.contains(_unsafeDisplayTextPattern)) {
         return;
       }
-      activity.add({
-        'kind': 'tool',
-        'label': label,
-        'status': 'completed',
-        if (id != null && id.isNotEmpty && id.length <= 180) 'id': id,
-        'timestamp': ?timestampOf(message),
-      });
+      activity.add(
+        settleMemory({
+          'kind': 'tool',
+          'label': label,
+          'status': 'completed',
+          if (id != null && id.isNotEmpty && id.length <= 180) 'id': id,
+          'timestamp': ?timestampOf(message),
+        }, message),
+      );
       return;
     }
     activity[index] = {...activity[index], 'status': 'completed'};
@@ -1348,6 +1399,10 @@ class DesktopSessionReconciler {
             'tool_name': toolResultBlocks[index]['name'].toString(),
           if (toolResultBlocks[index]['tool_use_id'] != null)
             'tool_call_id': toolResultBlocks[index]['tool_use_id'].toString(),
+          if (isMemoryTool(toolResultBlocks[index]['name']?.toString() ?? ''))
+            memoryResultEvidenceKey: ?memoryResultEvidence(
+              desktopSessionDisplayText(toolResultBlocks[index]['content']),
+            ),
           '_desktopSnapshotKey':
               'message-$runtimeSessionId-$ordinal-toolresult-$index',
           '_desktopSnapshotKind': 'persisted',
@@ -1380,6 +1435,14 @@ class DesktopSessionReconciler {
       if (retainMediaEvidence && message.toolName != null)
         'tool_name': message.toolName,
       if (retainMediaEvidence && message.toolCallId != null)
+        'tool_call_id': message.toolCallId,
+      if (role == 'tool' && isMemoryTool(message.toolName ?? ''))
+        memoryResultEvidenceKey: ?memoryResultEvidence(content),
+      // Pairs the content-free memory evidence with its call (id only).
+      if (role == 'tool' &&
+          !retainMediaEvidence &&
+          isMemoryTool(message.toolName ?? '') &&
+          message.toolCallId != null)
         'tool_call_id': message.toolCallId,
       if (retainMediaEvidence && message.toolCalls != null)
         'tool_calls': message.toolCalls
