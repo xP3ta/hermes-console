@@ -25,6 +25,7 @@ import 'core/screens/session_list_screen.dart';
 import 'core/screens/runs_screen.dart';
 
 import 'core/screens/tasks_screen.dart';
+import 'core/screens/cron_screen.dart';
 import 'core/services/app_error_log.dart';
 import 'core/services/startup_destination.dart';
 import 'core/services/run_registry.dart';
@@ -1673,6 +1674,24 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     final ownedTarget = missionControlTargetForNotification(open);
     if (ownedTarget != null) {
       return _openMissionControlFromNotification(nav, connection, ownedTarget);
+    }
+
+    // A cron completion with no session yet carries only its job: open that
+    // job's detail. CronScreen falls back to its list if the job is gone.
+    final jobId = open.jobId?.trim();
+    if (open.sessionId.isEmpty && jobId != null && jobId.isNotEmpty) {
+      nav.push(
+        MaterialPageRoute(
+          builder: (_) => CronScreen(
+            connection: connection,
+            connManager: widget.connManager,
+            initialJobId: jobId,
+            profileOverride: open.profile?.trim(),
+          ),
+        ),
+      );
+      await WidgetsBinding.instance.endOfFrame;
+      return NavigationDeliveryOutcome.delivered;
     }
 
     // Sin runId: comportamiento anterior — abrir la sesión de chat.

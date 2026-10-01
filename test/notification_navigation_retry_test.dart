@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
+import 'package:hermes_android/core/screens/cron_screen.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
@@ -357,4 +358,29 @@ void main() {
       expect(harness.notifications.hasPendingOpenForTesting, isFalse);
     },
   );
+
+  testWidgets('lo1216 a cron notification with only a job opens that job', (
+    tester,
+  ) async {
+    final harness = await _pumpHarness(tester);
+    addTearDown(harness.activeChats.dispose);
+
+    final outcome = harness.state.debugOpenNotification(
+      const NotificationOpen(
+        connId: 'notification-race-connection',
+        profile: 'ops',
+        jobId: 'nightly-report',
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(await outcome, NavigationDeliveryOutcome.delivered);
+
+    final cron = tester.widget<CronScreen>(find.byType(CronScreen));
+    expect(cron.initialJobId, 'nightly-report');
+    expect(cron.profileOverride, 'ops');
+    expect(cron.connection.id, 'notification-race-connection');
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
 }
