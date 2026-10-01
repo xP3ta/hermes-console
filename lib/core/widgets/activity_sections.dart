@@ -454,7 +454,8 @@ class ActivityStepRow extends StatelessWidget {
       label: [name, ?step.detail, status, if (!running) ?timeText].join(', '),
       excludeSemantics: true,
       child: Padding(
-        padding: EdgeInsets.symmetric(vertical: dense ? 2.5 : 4),
+        // tp1216: dense rows (history detail) sit tighter.
+        padding: EdgeInsets.symmetric(vertical: dense ? 1.5 : 4),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,

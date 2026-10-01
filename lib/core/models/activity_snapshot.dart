@@ -15,6 +15,11 @@ bool isInternalActivityLabel(String label) {
       normalized == 'tool_search';
 }
 
+/// tp1216: the tool Hermes uses to load a skill's instructions (or one of
+/// its resources). Its `name` argument identifies the skill.
+bool isSkillLoadTool(String label) =>
+    label.trim().toLowerCase() == 'skill_view';
+
 enum ActivityStepKind { reasoning, tool, skill }
 
 enum ActivityStepStatus { running, done, failed }
@@ -136,6 +141,22 @@ String? activityToolDetail(String tool, Object? args) {
     if (value is! String) return null;
     final trimmed = value.trim();
     return trimmed.isEmpty ? null : trimmed;
+  }
+
+  // tp1216: a skill load names its skill (`skill_view {name, file_path?}`),
+  // as Hermes Desktop titles it («github-pr-workflow → api.md»). Skill
+  // names are catalogue identifiers, still capped and secret-screened.
+  if (isSkillLoadTool(tool)) {
+    final name = text('name');
+    if (name != null && !_secretLike.hasMatch(name)) {
+      final file = text('file_path');
+      final fileName = file == null ? '' : _basename(file);
+      return _cap(
+        fileName.isEmpty || _secretLike.hasMatch(fileName)
+            ? name
+            : '$name → $fileName',
+      );
+    }
   }
 
   for (final key in const ['command', 'cmd', 'script']) {

@@ -44,12 +44,47 @@ class ChatEventInfo {
   /// Texto a renderizar cuando [kind] == text (markdown normal).
   final String text;
 
+  /// tp1216: herramientas que nombra el propio mensaje (las
+  /// `tool_calls[].function.name` de una llamada, o el `tool_name` de un
+  /// resultado), con la skill que carga una `skill_view` si su argumento
+  /// `name` viene. Vacío cuando el servidor no las nombra.
+  final List<({String label, bool skill, String? detail})> tools;
+
   const ChatEventInfo._({
     required this.kind,
     required this.text,
     this.status,
     this.approvalPending = false,
+    this.tools = const [],
   });
+
+  static List<({String label, bool skill, String? detail})> _callTools(
+    List calls,
+  ) {
+    final tools = <({String label, bool skill, String? detail})>[];
+    for (final call in calls.take(64)) {
+      if (call is! Map) continue;
+      final function = call['function'];
+      final name = (function is Map ? function['name'] : call['name'])
+          ?.toString()
+          .trim();
+      if (name == null || name.isEmpty || name.length > 120) continue;
+      Object? args = function is Map ? function['arguments'] : null;
+      if (args is String && isSkillLoadTool(name)) {
+        try {
+          args = jsonDecode(args);
+        } catch (_) {
+          args = null;
+        }
+      }
+      tools.add((
+        label: name,
+        skill: false,
+        detail: isSkillLoadTool(name) ? activityToolDetail(name, args) : null,
+      ));
+    }
+    return List.unmodifiable(tools);
+  }
 
   static const _internalKeys = {
     'command',
@@ -106,10 +141,11 @@ class ChatEventInfo {
     if (toolCalls is List &&
         toolCalls.isNotEmpty &&
         textContent.trim().isEmpty) {
-      return const ChatEventInfo._(
+      return ChatEventInfo._(
         kind: ChatEventKind.toolEvent,
         text: '',
         status: 'llamada',
+        tools: _callTools(toolCalls),
       );
     }
 
@@ -127,10 +163,15 @@ class ChatEventInfo {
           approvalPending: true,
         );
       }
-      return const ChatEventInfo._(
+      final resultName = (msg['tool_name'] ?? msg['name'])?.toString().trim();
+      return ChatEventInfo._(
         kind: ChatEventKind.toolEvent,
         text: '',
         status: 'completado',
+        tools:
+            resultName == null || resultName.isEmpty || resultName.length > 120
+            ? const []
+            : [(label: resultName, skill: false, detail: null)],
       );
     }
 
@@ -515,19 +556,26 @@ class _ToolActivityGroupState extends State<ToolActivityGroup> {
               ? (anyOk ? colors.warning : colors.error)
               : colors.textSecondary);
 
-    // Resumen de herramientas usadas (nombres únicos, máx 3) para el subtítulo.
-    final names = <String>[];
-    for (final e in events) {
-      final d = e.description;
-      if (d != null && d.isNotEmpty && !names.contains(d)) names.add(d);
-    }
-    final namesLabel = names.take(3).join(', ') + (names.length > 3 ? '…' : '');
+    // tp1216: resumen por herramienta/skill con sus recuentos. Cuentan las
+    // llamadas; los resultados solo si ninguna llamada nombra herramientas
+    // (así una llamada y su resultado no suman dos).
+    final calls = [
+      for (final e in events)
+        if (e.status == 'llamada') ...e.tools,
+    ];
+    final source = calls.isNotEmpty
+        ? calls
+        : [for (final e in events) ...e.tools];
+    final tools = summarizeToolRun(
+      source.map(
+        (t) =>
+            (label: t.label, skill: t.skill, detail: t.detail, running: false),
+      ),
+    );
 
-    // Subtítulo colapsado: nombres de herramientas o "actividad" al expandir.
+    // Subtítulo colapsado: el resumen, o "actividad" sin nombres/al expandir.
     final s = Strings.of(context);
-    final headLabel = _expanded
-        ? s.cevActivity
-        : (namesLabel.isNotEmpty ? namesLabel : s.cevActivity);
+    final headLabel = s.cevActivity;
 
     return Padding(
       padding: const EdgeInsets.only(left: 12, right: 40, top: 2, bottom: 2),
@@ -547,15 +595,17 @@ class _ToolActivityGroupState extends State<ToolActivityGroup> {
                   Icon(Icons.bolt_rounded, size: 14, color: accent),
                   const SizedBox(width: 7),
                   Flexible(
-                    child: Text(
-                      headLabel,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colors.textDisabled,
-                      ),
-                    ),
+                    child: tools.isNotEmpty && !_expanded
+                        ? ToolRunSummaryLine(items: tools, fontSize: 11)
+                        : Text(
+                            headLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: colors.textDisabled,
+                            ),
+                          ),
                   ),
                   const SizedBox(width: 8),
                   Text(
@@ -643,15 +693,16 @@ class _ToolStepState extends State<_ToolStep> {
       label = s.cevStatusDone;
     }
 
+    final named = info.tools.map((t) => t.label).toSet();
     final name = (info.description != null && info.description!.isNotEmpty)
         ? info.description!
-        : s.cevToolFallback;
+        : (named.isNotEmpty ? named.join(', ') : s.cevToolFallback);
     final hasDetail =
         (info.command != null && info.command!.isNotEmpty) ||
         (info.output != null && info.output!.isNotEmpty);
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: 3),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -1368,6 +1419,167 @@ class _ApprovalButton extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// tp1216 · Resumen de una tanda de herramientas en UNA línea
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Una entrada del resumen: una herramienta (`terminal ×3`) o una skill
+/// (`✦ github-pr-workflow`), en el orden en que apareció por primera vez.
+final class ToolRunSummaryItem {
+  const ToolRunSummaryItem({
+    required this.label,
+    required this.count,
+    required this.skill,
+    required this.running,
+  });
+
+  final String label;
+  final int count;
+
+  /// Es una skill: o el gateway marcó el paso como `skill`, o es una carga
+  /// `skill_view` cuyo argumento `name` la identifica.
+  final bool skill;
+
+  /// Alguna de sus llamadas sigue en curso.
+  final bool running;
+}
+
+/// Agrega los pasos de una tanda por herramienta/skill. Solo usa lo que el
+/// servidor dio (nombre del paso, su tipo y el detalle seguro ya proyectado);
+/// una `skill_view` sin nombre conocido cuenta como herramienta normal.
+/// Las skills van primero: son lo más informativo de la tanda.
+List<ToolRunSummaryItem> summarizeToolRun(
+  Iterable<({String label, bool skill, String? detail, bool running})> steps,
+) {
+  final order = <String>[];
+  final counts = <String, int>{};
+  final running = <String>{};
+  final skills = <String>{};
+  for (final step in steps) {
+    final label = step.label.trim();
+    if (label.isEmpty || isInternalActivityLabel(label)) continue;
+    String name = label;
+    var skill = step.skill;
+    if (!skill && isSkillLoadTool(label)) {
+      final detail = step.detail?.trim();
+      if (detail != null && detail.isNotEmpty) {
+        name = detail.split(' → ').first.trim();
+        skill = name.isNotEmpty;
+        if (!skill) name = label;
+      }
+    }
+    final key = '${skill ? 's' : 't'}:$name';
+    if (!counts.containsKey(key)) order.add(key);
+    counts[key] = (counts[key] ?? 0) + 1;
+    if (skill) skills.add(key);
+    if (step.running) running.add(key);
+  }
+  final items = [
+    for (final key in order)
+      ToolRunSummaryItem(
+        label: key.substring(2),
+        count: counts[key]!,
+        skill: skills.contains(key),
+        running: running.contains(key),
+      ),
+  ];
+  return [
+    ...items.where((item) => item.skill),
+    ...items.where((item) => !item.skill),
+  ];
+}
+
+/// Texto accesible del resumen: «skill github-pr-workflow, terminal ×3…».
+String toolRunSummarySemantics(Strings s, List<ToolRunSummaryItem> items) =>
+    items
+        .map((item) {
+          final name = item.skill ? s.tp1216SkillName(item.label) : item.label;
+          return item.count > 1 ? s.tp1216ToolCount(name, item.count) : name;
+        })
+        .join(', ');
+
+/// La línea compacta del resumen: `✦ github-pr-workflow · terminal ×3 ·
+/// read_file ×2`. La herramienta en curso va resaltada. Si no cabe, se corta
+/// con elipsis; más de [maxItems] entradas se resumen en «+N».
+class ToolRunSummaryLine extends StatelessWidget {
+  const ToolRunSummaryLine({
+    required this.items,
+    this.maxItems = 4,
+    this.fontSize = 11.5,
+    super.key,
+  });
+
+  final List<ToolRunSummaryItem> items;
+  final int maxItems;
+  final double fontSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    final shown = items.take(maxItems).toList(growable: false);
+    final hidden = items.length - shown.length;
+    final muted = TextStyle(color: colors.textSecondary);
+    final spans = <InlineSpan>[];
+    for (var i = 0; i < shown.length; i++) {
+      final item = shown[i];
+      if (i > 0) spans.add(TextSpan(text: ' · ', style: muted));
+      if (item.skill) {
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 3),
+              child: Icon(
+                Icons.auto_awesome_rounded,
+                key: const ValueKey('tool-run-skill-icon'),
+                size: fontSize,
+                color: colors.accentText,
+              ),
+            ),
+          ),
+        );
+      }
+      spans.add(
+        TextSpan(
+          text: item.label,
+          style: TextStyle(
+            color: item.running
+                ? colors.textPrimary
+                : (item.skill ? colors.accentText : colors.textSecondary),
+            fontWeight: item.running || item.skill
+                ? FontWeight.w600
+                : FontWeight.w500,
+          ),
+        ),
+      );
+      if (item.count > 1) {
+        spans.add(
+          TextSpan(
+            text: ' ×${item.count}',
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        );
+      }
+    }
+    if (hidden > 0) {
+      spans.add(TextSpan(text: ' · ', style: muted));
+      spans.add(TextSpan(text: s.tp1216MoreTools(hidden), style: muted));
+    }
+    return Text.rich(
+      TextSpan(children: spans),
+      key: const ValueKey('tool-run-summary'),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      semanticsLabel: toolRunSummarySemantics(s, items),
+      style: TextStyle(fontSize: fontSize, height: 1.3),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ThinkingTraceCard — UNA tarjeta por respuesta/run con el progreso agregado
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1700,6 +1912,29 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
       )
       .toList(growable: false);
 
+  /// tp1216: herramientas y skills de la tanda, agregadas para la línea
+  /// plegada («✦ github-pr-workflow · terminal ×3 · read_file ×2»).
+  ///
+  /// Only settled steps (done/failed) count: a call still without a result
+  /// may belong to a turn another surface is running, and passive
+  /// observation must not reconstruct its tools.
+  List<ToolRunSummaryItem> get _toolSummary => summarizeToolRun(
+    _visibleEvents
+        .where(
+          (event) =>
+              event.kind != ChatTraceEventKind.reasoning &&
+              (event.isDone || event.isFailed),
+        )
+        .map(
+          (event) => (
+            label: event.label,
+            skill: event.kind == ChatTraceEventKind.skill,
+            detail: event.detail,
+            running: false,
+          ),
+        ),
+  );
+
   String get _summary {
     final s = Strings.of(context);
     if (widget.active) {
@@ -1939,8 +2174,29 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     if (headerBuilder != null) {
       final s = Strings.of(context);
       final muted = TextStyle(fontSize: 11.5, color: colors.textSecondary);
+      final tools = _toolSummary;
+      // tp1216: qué herramientas y skills usó la tanda, en UNA línea a todo
+      // el ancho bajo la cabecera (en la cabecera no caben junto a las
+      // acciones). Plegada solo: desplegada, la lista ya lo dice todo.
+      Widget toolsRow({VoidCallback? onTap}) => Padding(
+        padding: const EdgeInsets.only(left: 50),
+        child: Semantics(
+          button: onTap != null,
+          onTap: onTap,
+          child: InkWell(
+            key: const ValueKey('thinking-trace-tools'),
+            borderRadius: BorderRadius.circular(6),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 1),
+              child: ToolRunSummaryLine(items: tools, maxItems: 5),
+            ),
+          ),
+        ),
+      );
       if (widget.active) {
-        // El estado vivo lo cuenta la pastilla de actividad; aquí, una palabra.
+        // El estado vivo lo cuenta la pastilla de actividad (con la
+        // herramienta en curso); aquí, una palabra y lo ya hecho en la tanda.
         return headerBuilder(
           context,
           Padding(
@@ -1953,13 +2209,17 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
               style: muted,
             ),
           ),
-          const SizedBox.shrink(),
+          // Settled steps only; the running one is named by the activity pill.
+          tools.isEmpty ? const SizedBox.shrink() : toolsRow(),
         );
       }
       final summary = Semantics(
         button: hasEvents,
         expanded: hasEvents ? _expanded : null,
-        label: _summary,
+        label: tools.isEmpty
+            ? _summary
+            : '${_cleanTraceStatus(_summary)}. '
+                  '${toolRunSummarySemantics(s, tools)}',
         excludeSemantics: true,
         child: InkWell(
           key: const ValueKey('thinking-trace-summary'),
@@ -2005,16 +2265,33 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
       final body = hasEvents && _expanded
           ? _buildTraceDetails(colors, tasks, muted: true)
           : const SizedBox.shrink();
+      final animatedBody = reduceMotion
+          ? body
+          : AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              alignment: Alignment.topCenter,
+              child: body,
+            );
       return headerBuilder(
         context,
         summary,
-        reduceMotion
-            ? body
-            : AnimatedSize(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOut,
-                alignment: Alignment.topCenter,
-                child: body,
+        tools.isEmpty || _expanded
+            ? animatedBody
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  toolsRow(
+                    onTap: hasEvents
+                        ? () {
+                            HapticFeedback.selectionClick();
+                            setState(() => _userExpanded = true);
+                          }
+                        : null,
+                  ),
+                  animatedBody,
+                ],
               ),
       );
     }
