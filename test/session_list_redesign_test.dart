@@ -385,6 +385,50 @@ void main() {
   });
 
   testWidgets(
+    'rebuilds without a list change reuse the filtered view, and pin/unpin '
+    'still regroup it',
+    (tester) async {
+      tester.view.physicalSize = const Size(1170, 2532);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final today = nowSeconds();
+      await pump(tester, [
+        _row('hoy-1', title: 'Firma del keystore en CI', lastActive: today),
+        _row('pin-1', title: 'Migrar tests de pagos', lastActive: today - 600),
+      ]);
+      await _pumpUntil(tester, find.text('Migrar tests de pagos'));
+      await tester.pumpAndSettle();
+      final strings = Strings.of(
+        tester.element(find.byType(SessionListScreen)),
+      );
+
+      final passes = SessionListScreen.debugFilterPasses;
+      for (var i = 0; i < 3; i++) {
+        tester.element(find.byType(SessionListScreen)).markNeedsBuild();
+        await tester.pump();
+      }
+      expect(SessionListScreen.debugFilterPasses, passes);
+
+      await tester.drag(
+        find.text('Migrar tests de pagos'),
+        const Offset(400, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(strings.sesPinned.toUpperCase()), findsOneWidget);
+      expect(SessionListScreen.debugFilterPasses, greaterThan(passes));
+
+      await tester.drag(
+        find.text('Migrar tests de pagos'),
+        const Offset(400, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(strings.sesPinned.toUpperCase()), findsNothing);
+    },
+  );
+
+  testWidgets(
     'el borrador se hila en la vista previa en vez de una píldora de color',
     (tester) async {
       tester.view.physicalSize = const Size(1170, 2532);

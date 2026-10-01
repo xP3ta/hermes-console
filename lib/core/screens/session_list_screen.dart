@@ -129,6 +129,10 @@ List<Session> changedDurableSessions(
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SessionListScreen extends StatefulWidget {
+  /// How many times the filtered/sorted session view was recomputed.
+  @visibleForTesting
+  static int debugFilterPasses = 0;
+
   final SavedConnection connection;
   final ConnectionManager connManager;
   final ApiClient? clientOverride;
@@ -199,6 +203,12 @@ class _SessionListScreenState extends State<SessionListScreen>
   final ScrollController _libraryScrollController = ScrollController();
 
   final Map<String, bool> _pendingArchiveByLogicalId = {};
+
+  /// Bumped by in-place mutations of [_sessions], [_searchResults] or
+  /// [_pendingArchiveByLogicalId]; reassignments are caught by identity.
+  int _listRevision = 0;
+  Object? _filteredKey;
+  List<Session> _filteredCache = const [];
   SessionCategory _activeCategory = SessionCategory.chats;
   bool _showArchived = false;
 
@@ -1158,6 +1168,7 @@ class _SessionListScreenState extends State<SessionListScreen>
 
     setState(() {
       _pendingArchiveByLogicalId[session.logicalId] = archived;
+      _listRevision++;
     });
     try {
       await repository.setArchived(
@@ -1173,6 +1184,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       setState(() {
         _replaceSessionArchived(session, archived);
         _pendingArchiveByLogicalId.remove(session.logicalId);
+        _listRevision++;
       });
       _showArchiveResult(archived, localOnly: false);
     } on DashboardHttpException catch (error) {
@@ -1182,6 +1194,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         if (!mounted) return;
         setState(() {
           _pendingArchiveByLogicalId.remove(session.logicalId);
+          _listRevision++;
         });
         _showArchiveResult(archived, localOnly: true);
         return;
@@ -1198,6 +1211,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     if (!mounted) return;
     setState(() {
       _pendingArchiveByLogicalId.remove(session.logicalId);
+      _listRevision++;
     });
     await _fetchSessions();
     if (!mounted) return;
@@ -1396,7 +1410,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     setState(() {
       bool retained(Session row) =>
           !aliases.contains(row.id) && !aliases.contains(row.logicalId);
-      _sessions.removeWhere((row) => !retained(row));
+      _sessions = _sessions.where(retained).toList();
       _searchResults = _searchResults?.where(retained).toList();
       _searching = false;
     });
@@ -1627,7 +1641,44 @@ class _SessionListScreenState extends State<SessionListScreen>
 
   // ── Filtering ────────────────────────────────────────────────────────────
 
+  /// [_computeFilteredSessions] memoized on every input it reads: list
+  /// identities and in-place revision, local archive state (pin/archive/
+  /// hidden/titles), query, category, archived toggle and locale.
   List<Session> get _filteredSessions {
+    final key = (
+      _sessions,
+      _searchResults,
+      _listRevision,
+      _archive,
+      _archive?.revision,
+      _searchQuery,
+      _activeCategory,
+      _showArchived,
+      Localizations.localeOf(context),
+    );
+    final previous = _filteredKey;
+    if (previous is _FilterKey && _sameFilterKey(previous, key)) {
+      return _filteredCache;
+    }
+    _filteredKey = key;
+    return _filteredCache = List<Session>.unmodifiable(
+      _computeFilteredSessions(),
+    );
+  }
+
+  static bool _sameFilterKey(_FilterKey a, _FilterKey b) =>
+      identical(a.$1, b.$1) &&
+      identical(a.$2, b.$2) &&
+      a.$3 == b.$3 &&
+      identical(a.$4, b.$4) &&
+      a.$5 == b.$5 &&
+      a.$6 == b.$6 &&
+      a.$7 == b.$7 &&
+      a.$8 == b.$8 &&
+      a.$9 == b.$9;
+
+  List<Session> _computeFilteredSessions() {
+    SessionListScreen.debugFilterPasses++;
     final query = _searchQuery.trim().toLowerCase();
     final source = query.isNotEmpty && _repository != null
         ? (_searchResults ?? const <Session>[])
@@ -2903,3 +2954,15 @@ String _globalActivityLabel(Strings strings, GlobalActivity activity) {
 
 /// Tiempo relativo localizado para los tiles ("2h ago", "ahora", "14/6").
 String _relativeTime(double ts, Strings s) => formatSessionRelativeTime(ts, s);
+
+typedef _FilterKey = (
+  List<Session>,
+  List<Session>?,
+  int,
+  SessionArchive?,
+  int?,
+  String,
+  SessionCategory,
+  bool,
+  Locale,
+);
