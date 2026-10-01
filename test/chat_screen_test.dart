@@ -22284,6 +22284,115 @@ void main() {
     },
   );
 
+  testWidgets(
+    'a child started after the parent turn ended shows on the next frame',
+    (tester) async {
+      // Async delegation: delegate_task returns "dispatched" and the parent
+      // turn may end before the child relays subagent.start. The card must
+      // come from that event, not from the next subagent.list backstop.
+      final gateway = _StableRefreshGateway(
+        subagents: const [
+          DesktopSubagentSnapshot(
+            subagentId: 'queued-child',
+            status: 'queued',
+            goal: 'PUBLIC_QUEUED_GOAL',
+          ),
+        ],
+      );
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('post-terminal-child-start'),
+        desktopGateway: gateway,
+        registerActiveChatsTearDown: false,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      final app = tester.state<HermesAppState>(find.byType(HermesApp));
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_PARENT_REQUEST',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('subagent.spawn_requested', const {
+        'subagent_id': 'queued-child',
+        'goal': 'PUBLIC_QUEUED_GOAL',
+        'status': 'queued',
+      });
+      gateway.emit('message.complete', const {'text': 'PUBLIC_DISPATCHED'});
+      for (var f = 0; f < 60 && chat.isStreaming; f++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      await tester.pump(const Duration(seconds: 2));
+      expect(chat.isStreaming, isFalse);
+      expect(chat.subagentActivities.map((row) => row.subagentId), [
+        'queued-child',
+      ]);
+      gateway.subagents = const [
+        DesktopSubagentSnapshot(
+          subagentId: 'queued-child',
+          status: 'running',
+          goal: 'PUBLIC_QUEUED_GOAL',
+        ),
+        DesktopSubagentSnapshot(
+          subagentId: 'late-child',
+          status: 'running',
+          goal: 'PUBLIC_LATE_GOAL',
+        ),
+      ];
+      final listsBefore = gateway.listCalls;
+
+      gateway.emit('subagent.start', const {
+        'subagent_id': 'queued-child',
+        'goal': 'PUBLIC_QUEUED_GOAL',
+        'status': 'running',
+      });
+      gateway.emit('subagent.start', const {
+        'subagent_id': 'late-child',
+        'goal': 'PUBLIC_LATE_GOAL',
+        'status': 'running',
+      });
+      await tester.pump(const Duration(milliseconds: 16));
+
+      final rows = {
+        for (final row in _subagentPillRows(tester)) row.subagentId: row,
+      };
+      expect(rows.keys, unorderedEquals(['queued-child', 'late-child']));
+      expect(rows['queued-child']!.phase, SubagentActivityPhase.running);
+      expect(rows['late-child']!.phase, SubagentActivityPhase.running);
+      expect(rows['late-child']!.goalPreview, 'PUBLIC_LATE_GOAL');
+      expect(gateway.listCalls, listsBefore, reason: 'no list round-trip');
+      expect(_subagentPillLabel(tester), '2 subagentes trabajando');
+      expect(chat.isStreaming, isFalse);
+
+      // A stale replay of a finished child stays finished.
+      gateway.emit('subagent.complete', const {
+        'subagent_id': 'late-child',
+        'status': 'completed',
+      });
+      await tester.pump(const Duration(milliseconds: 16));
+      gateway.emit('subagent.start', const {
+        'subagent_id': 'late-child',
+        'status': 'running',
+      });
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(
+        _subagentPillRows(
+          tester,
+        ).singleWhere((row) => row.subagentId == 'late-child').isTerminal,
+        isTrue,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      app.activeChats.dispose();
+    },
+  );
+
   // La pastilla cachea a propósito las últimas filas conocidas para poder
   // abrirla y ver qué pasó cuando el trabajo ya terminó (ver
   // `_displaySubagentActivities`). Lo que no puede hacer es seguir

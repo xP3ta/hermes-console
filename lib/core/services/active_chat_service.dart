@@ -19233,10 +19233,22 @@ class ActiveChat {
             'subagent.progress',
           }.contains(event.type) &&
           _matchesLiveSubagent(payload);
+      // Async delegation dispatches children and may end the parent turn
+      // before they relay their start: the event names its own child, so it
+      // opens the card now instead of waiting for the next subagent.list.
+      // Replays of retired children stay absorbed by their tombstones.
+      final isLateChildStart =
+          _runTerminal &&
+          const {
+            'subagent.spawn_requested',
+            'subagent.start',
+          }.contains(event.type) &&
+          (payload['subagent_id']?.toString().trim() ?? '').isNotEmpty;
       if (_usingDesktopGateway &&
           (!_runTerminal ||
               isLateAuthoritativeCompletion ||
-              isLiveBackgroundUpdate)) {
+              isLiveBackgroundUpdate ||
+              isLateChildStart)) {
         _signalAdaptiveRefresh(
           subagents: _subagentEventNeedsRosterRepair(event.type, payload),
         );
