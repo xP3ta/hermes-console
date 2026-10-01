@@ -511,8 +511,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Projects'), findsOneWidget);
-    expect(find.text('Workspaces'), findsOneWidget);
+    // The empty state replaces the section header and explains what to do.
+    expect(find.textContaining('server folder they work in'), findsOneWidget);
     expect(find.textContaining('working directory (cwd)'), findsWidgets);
     expect(find.text('No projects yet'), findsOneWidget);
+    expect(find.text('What is this?'), findsWidgets);
   });
 }
