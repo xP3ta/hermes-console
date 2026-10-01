@@ -18337,6 +18337,13 @@ void main() {
       expect(find.byKey(const ValueKey('chat-model-dialog')), findsOneWidget);
     }
 
+    Future<void> closeModelSheet(WidgetTester tester) async {
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 240));
+      expect(find.byKey(const ValueKey('chat-model-dialog')), findsNothing);
+    }
+
     testWidgets(
       'md1215: el modelo elegido se pinta al instante, pendiente, y nunca el anterior',
       (tester) async {
@@ -18445,6 +18452,41 @@ void main() {
         expect(
           find.textContaining('se aplica en el siguiente mensaje'),
           findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'md1215: reabrir el selector reutiliza el catálogo y un cambio lo invalida',
+      (tester) async {
+        final (_, gateway) = await pumpModelChat(tester, 'conn-md1215-cache');
+        gateway.emit('session.info', const {
+          'info': {'model': 'old-model', 'provider': 'provider-a'},
+        });
+        await tester.pump();
+
+        await openModelSheet(tester);
+        await closeModelSheet(tester);
+        await openModelSheet(tester);
+        expect(
+          gateway.modelOptionsCalls,
+          1,
+          reason: 'el catálogo de la conexión se cachea entre aperturas',
+        );
+
+        await tester.tap(find.text('new-model').first);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        HermesNotice.of(
+          tester.element(find.byType(ChatScreen)),
+        ).clearSnackBars();
+        await tester.pump();
+        await openModelSheet(tester);
+        expect(
+          gateway.modelOptionsCalls,
+          2,
+          reason: 'un cambio aplicado invalida el catálogo cacheado',
         );
         expect(tester.takeException(), isNull);
       },

@@ -73,6 +73,7 @@ import 'recovery_proof.dart';
 import 'notifications/background_listener.dart';
 import 'notifications/notification_service.dart';
 import 'run_registry.dart';
+import 'model_catalog_cache.dart';
 import 'session_config_reducer.dart';
 import 'session_deletion.dart';
 import 'session_reconciler.dart';
@@ -4262,6 +4263,9 @@ class ActiveChat {
       _desktopRecoveryDelayForAttempt(attempt);
 
   final SavedConnection connection;
+
+  /// Shared per-connection `model.options` cache (md1215).
+  final ModelCatalogCache _modelCatalogCache;
   final String sessionId;
   final String logicalSessionId;
   late SessionIdentity _coreReadIdentity;
@@ -7869,6 +7873,7 @@ class ActiveChat {
     String? sessionProfile,
     String? initialStoredSessionId,
     StoredSessionMessageLoader? storedMessageLoader,
+    ModelCatalogCache? modelCatalogCache,
     LocalConversationLifecycle? localConversationLifecycle,
     bool attachDesktopRuntimeOnLoad = false,
     @visibleForTesting bool allowUnownedDesktopSnapshotForTesting = false,
@@ -7945,6 +7950,7 @@ class ActiveChat {
            turnIdempotencyCapability ??
            (() => ConnectionManager.isTurnIdempotencySupported(connection.id)),
        _storedMessageLoader = storedMessageLoader,
+       _modelCatalogCache = modelCatalogCache ?? ModelCatalogCache(),
        _transcriptDashboard = transcriptDashboard,
        _ownsTranscriptDashboard = transcriptDashboard == null,
        _localConversationLifecycle = localConversationLifecycle,
@@ -14653,8 +14659,20 @@ class ActiveChat {
       return null;
     }
     final catalogGateway = gateway as HermesDesktopModelCatalogGateway;
+    final profile = sessionProfile;
+    if (refresh) {
+      _modelCatalogCache.invalidate(connection.id, profile);
+    } else if (_modelCatalogCache.read(connection.id, profile)
+        case final cached?) {
+      return cached;
+    }
     try {
-      return await catalogGateway.modelOptions(runtimeId, refresh: refresh);
+      final catalog = await catalogGateway.modelOptions(
+        runtimeId,
+        refresh: refresh,
+      );
+      _modelCatalogCache.write(connection.id, profile, catalog);
+      return catalog;
     } on TuiGatewayRpcError catch (error) {
       if (error.code == 4007 || error.code == -32601) return null;
       rethrow;
@@ -15766,6 +15784,11 @@ class ActiveChat {
           result: result,
         ),
       );
+      // The catalog marks the current model; a new pick makes it stale.
+      if (requested.key == DesktopSessionConfigKey.model &&
+          !result.confirmRequired) {
+        _modelCatalogCache.invalidate(connection.id, sessionProfile);
+      }
     } catch (error) {
       if (_disposed || _sessionConfigScope != scope) {
         return _capturedSessionConfigChange(scope, requested.key, requestEpoch);
@@ -26613,6 +26636,10 @@ class _HomeWidgetChatMetadata {
 
 /// Registro de chats con streaming activo. Singleton vivo en HermesAppState.
 class ActiveChatService {
+  /// md1215: one `model.options` cache for every chat of the app, so
+  /// reopening the picker (or another chat on the same connection) does not
+  /// re-read the whole catalog.
+  final ModelCatalogCache modelCatalogCache = ModelCatalogCache();
   ActiveChatService({
     this.notifications,
     this.policy,
@@ -27488,6 +27515,7 @@ class ActiveChatService {
       desktopGateway: desktopGateway,
       compressionRestoreStore: _compressionRestoreStore,
       storedMessageLoader: storedMessageLoader,
+      modelCatalogCache: modelCatalogCache,
       attachDesktopRuntimeOnLoad:
           attachDesktopRuntimeOnLoad ?? _attachDesktopRuntimeOnLoadByDefault,
       allowUnownedDesktopSnapshotForTesting:
