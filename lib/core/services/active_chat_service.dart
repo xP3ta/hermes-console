@@ -4617,15 +4617,31 @@ class ActiveChat {
   static final Set<String> _dismissedStaleTurns = <String>{};
   String? _staleOfferTurnKey;
 
+  /// Most recent dismissals kept; older turns are long finished in practice.
+  @visibleForTesting
+  static const int dismissedStaleTurnLimit = 256;
+
   /// El usuario cierra el aviso sin detener nada: el trabajo sigue.
   void dismissStaleResumedSessionStopOffer() {
     final key = _staleOfferTurnKey;
-    if (key != null) _dismissedStaleTurns.add(key);
+    if (key != null) {
+      // Re-insert so the set keeps insertion order as recency, then drop the
+      // oldest dismissals beyond the limit.
+      _dismissedStaleTurns
+        ..remove(key)
+        ..add(key);
+      while (_dismissedStaleTurns.length > dismissedStaleTurnLimit) {
+        _dismissedStaleTurns.remove(_dismissedStaleTurns.first);
+      }
+    }
     clearStaleResumedSessionStopOffer();
   }
 
   @visibleForTesting
   static void debugResetDismissedStaleTurns() => _dismissedStaleTurns.clear();
+
+  @visibleForTesting
+  static int get debugDismissedStaleTurnCount => _dismissedStaleTurns.length;
 
   bool _clearFailedStopConfirmation() {
     if (_stopConfirmationState != StopConfirmationState.failed) return false;
