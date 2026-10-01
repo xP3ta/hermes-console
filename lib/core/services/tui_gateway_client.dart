@@ -1341,6 +1341,7 @@ class TuiGatewayClient
         HermesDesktopProcessStopGateway,
         HermesDesktopControlGateway,
         HermesDesktopSessionControlGateway,
+        HermesProjectManagementGateway,
         HermesExtensionManagementGateway,
         HermesMcpProvisioningGateway,
         HermesWebhookManagementGateway,
@@ -4760,10 +4761,21 @@ class TuiGatewayClient
             !requestedTitle.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)
         ? requestedTitle
         : null;
+    final workspace = config.workspace?.trim() ?? '';
+    final safeWorkspace =
+        workspace.isNotEmpty &&
+            workspace.length <= 4096 &&
+            !workspace.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)
+        ? workspace
+        : null;
     final result = await _requestExclusiveSessionMutation('session.create', {
       'source': 'desktop',
       if (profile.trim().isNotEmpty) 'profile': profile.trim(),
       'title': ?safeTitle,
+      if (safeWorkspace != null) ...{
+        'cwd': safeWorkspace,
+        'cwd_explicit': true,
+      },
       if (config.hidden) 'hidden': true,
       if (selection != null) ...{
         'model': selection.modelId,
@@ -5884,6 +5896,219 @@ class TuiGatewayClient
     if (result['cwd'] is! String) {
       _invalidControlResponse(DesktopGatewayCapability.projectsCenter);
     }
+  }
+
+  // ── Project management (same RPCs / REST routes as Hermes Desktop) ──────
+
+  @override
+  bool get projectWritesAllowed => !_connection.readOnly;
+
+  /// Project ids are `p_<hex>` for saved projects; a path never reaches the
+  /// write RPCs (auto projects are adopted through `projects.create`).
+  String _savedProjectId(String id) {
+    final value = _validatedControlValue(id, maxLength: 128);
+    if (!RegExp(r'^p_[A-Za-z0-9_-]+$').hasMatch(value)) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    return value;
+  }
+
+  static final RegExp _projectColorPattern = RegExp(
+    r'^(#[0-9A-Fa-f]{3,8}|hsl\(\d{1,3} \d{1,3}% \d{1,3}%\))$',
+  );
+  static final RegExp _projectIconPattern = RegExp(r'^[a-z][a-z0-9-]{0,40}$');
+
+  String _projectAppearanceValue(String value, RegExp pattern) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '';
+    if (!pattern.hasMatch(trimmed)) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    return trimmed;
+  }
+
+  String _projectName(String name) =>
+      _validatedControlValue(name, maxLength: 120);
+
+  @override
+  Future<void> updateProject(
+    String id, {
+    String? name,
+    String? color,
+    String? icon,
+  }) async {
+    _requireWritableControlConnection();
+    final result = await _controlRequest('projects.update', {
+      'id': _savedProjectId(id),
+      if (name != null) 'name': _projectName(name),
+      if (color != null)
+        'color': _projectAppearanceValue(color, _projectColorPattern),
+      if (icon != null)
+        'icon': _projectAppearanceValue(icon, _projectIconPattern),
+    }, capability: DesktopGatewayCapability.projectManagement);
+    if (result['project'] is! Map) {
+      _invalidControlResponse(DesktopGatewayCapability.projectManagement);
+    }
+  }
+
+  @override
+  Future<void> createProject({
+    required String name,
+    required String primaryPath,
+    String? color,
+    String? icon,
+  }) async {
+    _requireWritableControlConnection();
+    final path = _validatedControlValue(primaryPath, maxLength: 4096);
+    final safeColor = color == null
+        ? ''
+        : _projectAppearanceValue(color, _projectColorPattern);
+    final safeIcon = icon == null
+        ? ''
+        : _projectAppearanceValue(icon, _projectIconPattern);
+    final result = await _controlRequest('projects.create', {
+      'name': _projectName(name),
+      'folders': [path],
+      'primary_path': path,
+      if (safeColor.isNotEmpty) 'color': safeColor,
+      if (safeIcon.isNotEmpty) 'icon': safeIcon,
+      'use': false,
+    }, capability: DesktopGatewayCapability.projectManagement);
+    if (result['project'] is! Map) {
+      _invalidControlResponse(DesktopGatewayCapability.projectManagement);
+    }
+  }
+
+  @override
+  Future<void> deleteProject(String id) async {
+    _requireWritableControlConnection();
+    final result = await _controlRequest('projects.delete', {
+      'id': _savedProjectId(id),
+    }, capability: DesktopGatewayCapability.projectManagement);
+    if (result['projects'] is! List) {
+      _invalidControlResponse(DesktopGatewayCapability.projectManagement);
+    }
+  }
+
+  @override
+  Future<void> setActiveProject(String id) async {
+    _requireWritableControlConnection();
+    await _controlRequest('projects.set_active', {
+      'id': _savedProjectId(id),
+    }, capability: DesktopGatewayCapability.projectManagement);
+  }
+
+  Future<T> _projectGitRequest<T>(Future<T> Function() request) async {
+    if (!_capabilityCache.canAttempt(
+      DesktopGatewayCapability.projectWorktrees,
+    )) {
+      throw const DesktopControlFailure(
+        DesktopControlFailureKind.unsupported,
+        code: 404,
+      );
+    }
+    try {
+      final value = await _dashboardExtensionRequest(request);
+      _capabilityCache.mark(
+        DesktopGatewayCapability.projectWorktrees,
+        DesktopGatewayCapabilityState.supported,
+      );
+      return value;
+    } on DesktopControlFailure catch (failure) {
+      if (failure.kind == DesktopControlFailureKind.unsupported) {
+        _capabilityCache.mark(
+          DesktopGatewayCapability.projectWorktrees,
+          DesktopGatewayCapabilityState.unsupported,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  String _gitQuery(String route, String repoPath) {
+    final path = _validatedControlValue(repoPath, maxLength: 4096);
+    return 'git/$route?path=${Uri.encodeQueryComponent(path)}';
+  }
+
+  @override
+  Future<List<ProjectGitBaseBranch>> listBaseBranches(String repoPath) {
+    final endpoint = _gitQuery('base-branches', repoPath);
+    return _projectGitRequest(() async {
+      final result = await _dashboard.apiGet(endpoint);
+      return _extensionRows(result['branches'])
+          .map(ProjectGitBaseBranch.tryParse)
+          .whereType<ProjectGitBaseBranch>()
+          .toList(growable: false);
+    });
+  }
+
+  @override
+  Future<List<ProjectGitBranch>> listBranches(String repoPath) {
+    final endpoint = _gitQuery('branches', repoPath);
+    return _projectGitRequest(() async {
+      final result = await _dashboard.apiGet(endpoint);
+      return _extensionRows(result['branches'])
+          .map(ProjectGitBranch.tryParse)
+          .whereType<ProjectGitBranch>()
+          .toList(growable: false);
+    });
+  }
+
+  @override
+  Future<ProjectWorktreeResult> addWorktree(
+    String repoPath, {
+    String? branch,
+    String? base,
+    String? existingBranch,
+  }) {
+    _requireWritableControlConnection();
+    final path = _validatedControlValue(repoPath, maxLength: 4096);
+    String? ref(String? value) {
+      final trimmed = value?.trim() ?? '';
+      if (trimmed.isEmpty) return null;
+      return _validatedControlValue(trimmed, maxLength: 255);
+    }
+
+    final newBranch = ref(branch);
+    final body = <String, dynamic>{
+      'path': path,
+      if (newBranch != null) ...{'name': newBranch, 'branch': newBranch},
+      'base': ?ref(base),
+      'existingBranch': ?ref(existingBranch),
+    };
+    if (newBranch == null && body['existingBranch'] == null) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    return _projectGitRequest(() async {
+      final result = await _dashboard.apiPost(
+        'git/worktree/add',
+        body: body,
+        timeout: const Duration(minutes: 2),
+      );
+      final created = result['path'];
+      if (created is! String || created.trim().isEmpty) {
+        throw const DesktopControlFailure(
+          DesktopControlFailureKind.invalidResponse,
+        );
+      }
+      final createdBranch = result['branch'];
+      return ProjectWorktreeResult(
+        path: created.trim(),
+        branch: createdBranch is String ? createdBranch : (newBranch ?? ''),
+      );
+    });
+  }
+
+  @override
+  Future<void> switchBranch(String repoPath, String branch) {
+    _requireWritableControlConnection();
+    final body = {
+      'path': _validatedControlValue(repoPath, maxLength: 4096),
+      'branch': _validatedControlValue(branch, maxLength: 255),
+    };
+    return _projectGitRequest(() async {
+      await _dashboard.apiPost('git/branch/switch', body: body);
+    });
   }
 
   static const Set<String> _validSessionControlActions = {

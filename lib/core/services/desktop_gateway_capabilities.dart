@@ -8,6 +8,8 @@ enum DesktopGatewayCapability {
   extensionsCenter,
   agentCenter,
   projectsCenter,
+  projectManagement,
+  projectWorktrees,
   profileAssets,
   profilePets,
   sessionControl,

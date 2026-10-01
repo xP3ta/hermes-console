@@ -83,6 +83,11 @@ final class DesktopSessionCreateConfig {
   final bool createIfMissing;
   final bool allowTransportFallback;
 
+  /// Server-side working directory for a new chat started from a project or
+  /// worktree. Sent as `cwd` + `cwd_explicit: true` on `session.create`, the
+  /// same pair Hermes Desktop sends for a workspace-anchored new session.
+  final String? workspace;
+
   const DesktopSessionCreateConfig({
     this.model,
     this.reasoningEffort,
@@ -91,6 +96,7 @@ final class DesktopSessionCreateConfig {
     this.hidden = false,
     this.createIfMissing = true,
     this.allowTransportFallback = true,
+    this.workspace,
   });
 
   bool get isEmpty =>
@@ -100,7 +106,8 @@ final class DesktopSessionCreateConfig {
       title == null &&
       !hidden &&
       createIfMissing &&
-      allowTransportFallback;
+      allowTransportFallback &&
+      workspace == null;
 
   @override
   bool operator ==(Object other) =>
@@ -112,7 +119,8 @@ final class DesktopSessionCreateConfig {
           title == other.title &&
           hidden == other.hidden &&
           createIfMissing == other.createIfMissing &&
-          allowTransportFallback == other.allowTransportFallback;
+          allowTransportFallback == other.allowTransportFallback &&
+          workspace == other.workspace;
 
   @override
   int get hashCode => Object.hash(
@@ -123,6 +131,7 @@ final class DesktopSessionCreateConfig {
     hidden,
     createIfMissing,
     allowTransportFallback,
+    workspace,
   );
 }
 

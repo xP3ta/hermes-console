@@ -87,6 +87,59 @@ abstract class HermesDesktopControlGateway {
   Future<void> sendGoalAction(String runtimeSessionId, String action);
 }
 
+/// Project writes and git worktree helpers, exactly as Hermes Desktop issues
+/// them: `projects.update` / `projects.create` / `projects.delete` /
+/// `projects.set_active` over JSON-RPC and the Dashboard `/api/git/*` mirror
+/// Desktop uses on a remote gateway. Kept separate from
+/// [HermesDesktopControlGateway] so legacy fakes and servers keep compiling;
+/// a screen treats a gateway without it as read-only.
+abstract class HermesProjectManagementGateway {
+  /// True when this connection may write (not a read-only instance).
+  bool get projectWritesAllowed;
+
+  /// `projects.update {id, name?, color?, icon?}`. An empty string clears
+  /// color/icon on the server, like Desktop's "No color".
+  Future<void> updateProject(
+    String id, {
+    String? name,
+    String? color,
+    String? icon,
+  });
+
+  /// `projects.create`, used (like Desktop) to adopt an auto-discovered repo
+  /// the first time its appearance changes.
+  Future<void> createProject({
+    required String name,
+    required String primaryPath,
+    String? color,
+    String? icon,
+  });
+
+  /// `projects.delete {id}` — drops the saved project only; files, repos and
+  /// worktrees stay on disk.
+  Future<void> deleteProject(String id);
+
+  /// `projects.set_active {id}`.
+  Future<void> setActiveProject(String id);
+
+  /// `GET /api/git/base-branches?path=` (new-worktree base picker).
+  Future<List<ProjectGitBaseBranch>> listBaseBranches(String repoPath);
+
+  /// `GET /api/git/branches?path=` ("convert an existing branch").
+  Future<List<ProjectGitBranch>> listBranches(String repoPath);
+
+  /// `POST /api/git/worktree/add {path, name?, branch?, base?, existingBranch?}`.
+  Future<ProjectWorktreeResult> addWorktree(
+    String repoPath, {
+    String? branch,
+    String? base,
+    String? existingBranch,
+  });
+
+  /// `POST /api/git/branch/switch {path, branch}`.
+  Future<void> switchBranch(String repoPath, String branch);
+}
+
 abstract class HermesDesktopSessionControlGateway {
   Future<SessionControlSnapshot> readSessionControl(String runtimeSessionId);
 
