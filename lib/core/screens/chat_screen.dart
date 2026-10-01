@@ -130,6 +130,7 @@ import '../theme/app_theme.dart';
 import '../../l10n/app_localizations.dart';
 import '../utils/api_error.dart';
 import '../utils/session_title.dart';
+import '../utils/short_server_path.dart';
 import '../utils/voice_error.dart';
 import '../utils/chat_error.dart';
 import '../utils/byte_bounded_lru_cache.dart';
@@ -1211,6 +1212,11 @@ class ChatScreen extends StatefulWidget {
   final bool requestComposerFocus;
   final String? initialStoredSessionId;
 
+  /// Carpeta del servidor donde debe arrancar un chat NUEVO abierto desde un
+  /// proyecto o worktree. Viaja en `session.create` como `cwd` +
+  /// `cwd_explicit`, igual que Desktop; null para un chat sin carpeta.
+  final String? newChatWorkspace;
+
   /// Caché de identidad que Mission Control ya mantiene para Bot Chat.
   final MissionProfileAvatarCache? missionAvatarCache;
 
@@ -1247,6 +1253,7 @@ class ChatScreen extends StatefulWidget {
     this.initialVoiceMode = false,
     this.requestComposerFocus = false,
     this.initialStoredSessionId,
+    this.newChatWorkspace,
     this.missionAvatarCache,
     this.missionBotProfile,
     this.performanceProbe,
@@ -3609,12 +3616,21 @@ class _ChatScreenState extends State<ChatScreen>
       // Bot surfaces own a durable canonical pin. Their -32601 compatibility
       // fallback is handled by the pin hook itself; falling back to REST here
       // would submit without the verified pin after an RMW failure.
+      // A REST fallback cannot carry the workspace; failing is more honest
+      // than silently starting the project chat in another folder.
       allowTransportFallback:
           widget.connection.kind == InstanceKind.localhost &&
           widget.connection.onDeviceLoopback &&
           !resumesStoredBotChat &&
-          !createsBotChat,
+          !createsBotChat &&
+          _newChatWorkspace == null,
+      workspace: _newChatWorkspace,
     );
+  }
+
+  String? get _newChatWorkspace {
+    final workspace = widget.newChatWorkspace?.trim() ?? '';
+    return workspace.isEmpty ? null : workspace;
   }
 
   // ── Configuración efectiva de esta sesión ─────────────────────────────────
@@ -14418,6 +14434,7 @@ class _ChatScreenState extends State<ChatScreen>
         child: _EmptyChatState(
           model: _activeModelLabel,
           agentName: _assistantName,
+          workspace: _newChatWorkspace,
         ),
       );
     }
@@ -15975,8 +15992,13 @@ class _SlashPalette extends StatelessWidget {
 class _EmptyChatState extends StatelessWidget {
   final String model;
   final String agentName;
+  final String? workspace;
 
-  const _EmptyChatState({required this.model, this.agentName = 'hermes'});
+  const _EmptyChatState({
+    required this.model,
+    this.agentName = 'hermes',
+    this.workspace,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -16058,6 +16080,37 @@ class _EmptyChatState extends StatelessWidget {
                   ),
                 ],
               ),
+              if (workspace case final folder?) ...[
+                const SizedBox(height: 14),
+                ConstrainedBox(
+                  key: const ValueKey('pj1215-chat-workspace'),
+                  constraints: const BoxConstraints(maxWidth: 300),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.folder_outlined,
+                        size: 14,
+                        color: colors.textSecondary,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          Strings.of(
+                            context,
+                          ).pj1215ChatWorkspace(shortServerPath(folder)),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         ),

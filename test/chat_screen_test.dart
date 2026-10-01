@@ -2434,6 +2434,7 @@ void main() {
     int Function()? wallClockMs,
     Future<void> Function(String path, File destination)?
     userServerMediaFetcher,
+    String? newChatWorkspace,
   }) async {
     // Forzar locale español para que las cadenas i18n de ChatScreen coincidan
     // con las expectativas del test (el test fue escrito en español).
@@ -2582,6 +2583,7 @@ void main() {
           missionAvatarCache: missionAvatarCache,
           draftStoreOverride: draftStore,
           userServerMediaFetcher: userServerMediaFetcher,
+          newChatWorkspace: newChatWorkspace,
         ),
       ),
     );
@@ -18284,6 +18286,39 @@ void main() {
       expect(chat.canReleaseToDesktop, isTrue);
     },
   );
+
+  testWidgets('pj1215: a project chat creates its session in that folder', (
+    tester,
+  ) async {
+    final gateway = _UiRewindGateway()
+      ..resumeExistingError = const TuiGatewayRpcError(
+        'session.resume',
+        'not found',
+        code: 4007,
+      );
+    await pumpChat(
+      tester,
+      desktopGateway: gateway,
+      connection: _remoteConn('conn-pj1215'),
+      session: _session().copyWith(id: 'mob-pj1215', title: 'Nuevo chat'),
+      messages: const [],
+      newChatWorkspace: '/home/demo/code/hermes-console',
+    );
+    expect(find.byKey(const ValueKey('pj1215-chat-workspace')), findsOneWidget);
+    expect(find.text('Trabajará en ~/code/hermes-console'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'revisa el login');
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      gateway.createConfigs.single.workspace,
+      '/home/demo/code/hermes-console',
+    );
+    expect(gateway.createConfigs.single.allowTransportFallback, isFalse);
+    expect(gateway.submissions, ['revisa el login']);
+    gateway.emit('message.complete', const {'text': 'hecho'});
+    await tester.pump(const Duration(milliseconds: 400));
+  });
 
   testWidgets('dos conexiones homónimas no comparten preferencia legacy', (
     tester,
