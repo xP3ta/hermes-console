@@ -9284,5 +9284,6 @@
         "type": "String"
       }
     }
-  }
+  },
+  "lm1215DefaultForNewChats": "Predeterminado para chats nuevos"
 }
