@@ -181,4 +181,72 @@ void main() {
       expect(_composerFocused(tester), isTrue);
     });
   });
+
+  group('reply in thread', () {
+    testWidgets('the inline reply icon sets the thread without the keyboard', (
+      tester,
+    ) async {
+      await _pump(tester, _longRoom(EventSeq()));
+      expect(_composerFocused(tester), isFalse);
+      await tester.tap(find.byKey(const ValueKey('room-reply-user-29')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('room-thread-banner')), findsOneWidget);
+      expect(_composerFocused(tester), isFalse);
+      expect(tester.testTextInput.isVisible, isFalse);
+
+      // The user opens the keyboard by tapping the composer.
+      await tester.tap(_field);
+      await tester.pump();
+      expect(_composerFocused(tester), isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+      expect(find.byKey(const ValueKey('room-thread-banner')), findsOneWidget);
+    });
+
+    testWidgets(
+      'a tap that stops a fling over a reply icon replies to nothing',
+      (tester) async {
+        await _pump(tester, _longRoom(EventSeq()));
+        await tester.fling(_transcript, const Offset(0, 600), 2500);
+        await tester.pump(const Duration(milliseconds: 60));
+        expect(_transcriptMoving(tester), isTrue, reason: 'fling in flight');
+        final icons = find.byWidgetPredicate(
+          (w) =>
+              w.key is ValueKey<String> &&
+              (w.key! as ValueKey<String>).value.startsWith('room-reply-'),
+        );
+        expect(icons, findsWidgets);
+        await tester.tapAt(tester.getCenter(icons.first));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('room-thread-banner')), findsNothing);
+        expect(_composerFocused(tester), isFalse);
+        expect(tester.testTextInput.isVisible, isFalse);
+      },
+    );
+
+    testWidgets('control: Reply from the thread page focuses the composer', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      await _pump(tester, [
+        seq.user('status?', id: 'root'),
+        seq.member('m-builder', 'builder', 'one', 'root'),
+        seq.user('and now?', id: 'follow-up'),
+        seq.member('m-builder', 'builder', 'two', 'follow-up'),
+      ]);
+      final summary = find.byWidgetPredicate(
+        (w) =>
+            w.key is ValueKey<String> &&
+            (w.key! as ValueKey<String>).value.startsWith(
+              'room-thread-summary-',
+            ),
+      );
+      await tester.tap(summary.first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('room-thread-reply')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('room-thread-banner')), findsOneWidget);
+      expect(_composerFocused(tester), isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+    });
+  });
 }

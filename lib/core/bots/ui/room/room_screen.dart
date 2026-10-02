@@ -1174,11 +1174,15 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     };
   }
 
-  void _setThread(String? threadId) {
+  /// Targets [threadId] with the next send. Only an explicit reply action
+  /// ([focus]) opens the keyboard; the small reply icon beside every message
+  /// sits where a scroll is stopped, so it only shows the thread banner and
+  /// the user taps the composer to type.
+  void _setThread(String? threadId, {bool focus = false}) {
     setState(() => _threadId = threadId);
     _draftDirty = true;
     _flushDraft();
-    if (threadId != null) _focus.requestFocus();
+    if (threadId != null && focus) _focus.requestFocus();
   }
 
   void _insertMention(String handle) {
@@ -1250,7 +1254,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         onMention: _openMention,
         onReply: () {
           Navigator.of(context).pop();
-          _setThread(threadId);
+          _setThread(threadId, focus: true);
         },
       ),
     ),
