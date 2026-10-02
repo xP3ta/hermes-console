@@ -848,14 +848,17 @@ final class DesktopSubagentInterruptResult {
 }
 
 final class DesktopSubagentSnapshot {
-  static const _liveStatuses = <String>{
-    'requested',
-    'queued',
-    'running',
-    'active',
-    'thinking',
-    'tool',
-    'using_tool',
+  /// `SubagentStatus` values the contract marks terminal. `subagent.list`
+  /// reads only the live registry, so these are defensive: a finished row
+  /// must not resurrect a card.
+  static const _terminalStatuses = <String>{
+    'completed',
+    'complete',
+    'failed',
+    'error',
+    'timeout',
+    'interrupted',
+    'cancelled',
   };
 
   final String subagentId;
@@ -891,10 +894,15 @@ final class DesktopSubagentSnapshot {
       if (entry.key is String) json[entry.key as String] = entry.value;
     }
     final subagentId = _subagentOpaqueId(json['subagent_id']);
+    if (subagentId == null) return null;
+    // `status` is `SubagentStatus | null`. A live record without one, or with
+    // a status newer than this build, is still a running child.
     final statusValue = json['status'];
-    if (subagentId == null || statusValue is! String) return null;
-    final status = statusValue.trim().toLowerCase();
-    if (!_liveStatuses.contains(status)) return null;
+    final reported = statusValue is String
+        ? statusValue.trim().toLowerCase()
+        : '';
+    if (_terminalStatuses.contains(reported)) return null;
+    final status = reported.isEmpty ? 'running' : reported;
     final toolCount = json['tool_count'];
     final acceptingSteer = json['accepting_steer'];
     final startedAt = _subagentTimestamp(json['started_at']);
@@ -929,8 +937,9 @@ final class DesktopSubagentTailResult {
   });
 
   factory DesktopSubagentTailResult.fromJson(Map<String, dynamic> json) {
-    final available = json['available'];
-    final serverTruncated = json['truncated'];
+    // SubagentTailResult defaults: available=false, text="", truncated=false.
+    final available = json['available'] ?? false;
+    final serverTruncated = json['truncated'] ?? false;
     if (available is! bool || serverTruncated is! bool) {
       throw const FormatException('invalid subagent tail result');
     }
@@ -941,7 +950,7 @@ final class DesktopSubagentTailResult {
         truncated: false,
       );
     }
-    final rawContent = json['text'] ?? json['content'];
+    final rawContent = json['text'] ?? json['content'] ?? '';
     if (rawContent is! String) {
       throw const FormatException('invalid subagent tail content');
     }
