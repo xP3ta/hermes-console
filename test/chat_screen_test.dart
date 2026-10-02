@@ -30541,6 +30541,44 @@ void main() {
     chat.dispose();
   });
 
+  testWidgets('xr1215 the exhausted head reads in English under en_US', (
+    tester,
+  ) async {
+    final gateway = _SubmissionGateway();
+    final chat = await pumpChat(
+      tester,
+      chatState: ChatPipelineState.streaming,
+      desktopGateway: gateway,
+    );
+    tester.platformDispatcher.localesTestValue = [const Locale('en', 'US')];
+    chat.enqueue('first');
+    final id = chat.queuedEntries.single.id;
+    chat.markQueuedRetryExhaustedForTesting(id);
+    chat.state = ChatPipelineState.completed;
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
+    await tester.pump();
+
+    final retry = find.byKey(ValueKey('chat-queue-retry-exhausted-$id'));
+    expect(retry, findsOneWidget);
+    expect(
+      find.descendant(of: retry, matching: find.text("Couldn't send — Retry")),
+      findsOneWidget,
+    );
+    expect(find.text('No se pudo enviar — Reintentar'), findsNothing);
+
+    await tester.tap(retry);
+    await tester.pump();
+    await tester.pump();
+    expect(gateway.submissions, ['first']);
+    expect(chat.queuedEntries, isEmpty);
+    expect(find.text("Couldn't send — Retry"), findsNothing);
+    await tester.pump(const Duration(seconds: 8));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    chat.dispose();
+  });
+
   testWidgets('con un turno en marcha la cabecera conserva su nota', (
     tester,
   ) async {
