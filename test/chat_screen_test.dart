@@ -5486,7 +5486,9 @@ void main() {
       }
       await tester.pump();
 
-      expect(gateway.historyCalls, 1);
+      // co1215: the usable REST tail paints the reopen; the full native
+      // lineage is not read.
+      expect(gateway.historyCalls, 0);
       expect(restCalls, 1);
       expect(chat.hasEarlierMessages, isFalse);
       expect(find.text('Pregunta corta reabierta'), findsOneWidget);

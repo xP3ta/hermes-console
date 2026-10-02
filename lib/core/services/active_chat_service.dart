@@ -9668,16 +9668,14 @@ class ActiveChat {
             Future<SessionMessagesPage>? restTail;
             if (gateway is HermesDesktopSessionHistoryGateway &&
                 _storedMessageLoader == null) {
-              // The canonical REST tail does not depend on the runtime that
-              // resume resolves. When the announced size fits in one page the
-              // native reply will need it anyway, so put it on the wire now
-              // instead of after connect + resume + session.history.
-              final announced = expectedMessageCount;
-              if (announced != null &&
-                  announced > 0 &&
-                  announced <= prefetchContext.requestedLimit &&
-                  prefetchContext.requestedOffset == 0 &&
-                  !(_transcriptIsComplete && _messages.isNotEmpty) &&
+              // co1215: as in Hermes Desktop, the canonical latest-page REST
+              // tail is the display authority on open. It does not depend on
+              // the runtime that resume resolves, so it goes on the wire at
+              // t0 for every size and paints without waiting for connect +
+              // resume. `session.history` returns the whole lineage (1000
+              // rows ≈ 1.4 MB for a long chat), so it is only read when this
+              // page cannot be used (REST unreachable, unparsable, empty).
+              if (prefetchContext.requestedOffset == 0 &&
                   loadStillAuthorized()) {
                 final flight = _getStoredMessagesRestPage(
                   prefetchContext.requestedStoredSessionId,
@@ -9689,6 +9687,21 @@ class ActiveChat {
                 // Consumed below; an unused failure must not surface.
                 flight.ignore();
                 restTail = flight;
+                final canonical = await _captureAsync<SessionMessagesPage>(
+                  () => flight,
+                );
+                if (!loadStillAuthorized()) {
+                  throw StateError('Viewer ownership revoked');
+                }
+                if (canonical.value case final page?
+                    when _openingRestTailIsDisplayAuthority(page)) {
+                  // Reuses the flight; only adds the exact-page end proof.
+                  return _fetchStoredMessagesPage(
+                    prefetchContext,
+                    allowNativeHistory: false,
+                    prefetchedRestTail: flight,
+                  );
+                }
               }
               final resumed = await resumeFuture;
               if (!loadStillAuthorized()) {
@@ -10213,6 +10226,12 @@ class ActiveChat {
         durableHistoryIsEmpty: prefetchedNewestFirst?.isEmpty == true,
         durableHistoryLoaded: prefetchError == null,
       );
+      if (prefetchedTranscriptAccepted) {
+        // co1215: the REST tail painted this open and carries no
+        // display_metadata; editorial rows get it once, by exact identity,
+        // from the durable history (no-op when none is missing).
+        unawaited(_hydrateEditorialDisplayMetadataFromDurableHistory());
+      }
 
       final snapshot = resumedSnapshot;
       if (snapshot != null) {
@@ -10515,9 +10534,19 @@ class ActiveChat {
           context.consumer != _SessionMessagesPageConsumer.loadEarlier,
     );
     final expectedCount = context.hardExpectedMessageCount;
+    // co1215: the opening REST tail now paints on its own, so an exactly
+    // full canonical page gets the same one-row end proof as native history.
+    final fullCanonicalTail =
+        page is! _NativeSessionHistoryPage &&
+        page.hasEarlier == null &&
+        page.hasPagination &&
+        page.offset == 0 &&
+        page.limit == context.requestedLimit &&
+        page.returned == context.requestedLimit &&
+        context.consumer == _SessionMessagesPageConsumer.lifecyclePrefetch;
     final needsExactBoundaryProbe =
-        page is _NativeSessionHistoryPage &&
-        page.hasEarlier == true &&
+        (page is _NativeSessionHistoryPage && page.hasEarlier == true ||
+            fullCanonicalTail) &&
         context.requestedOffset == 0 &&
         expectedCount != null &&
         expectedCount == page.rawMessageCount &&
@@ -10542,9 +10571,22 @@ class ActiveChat {
             (lookahead.resolvedTipId == null ||
                 page.resolvedTipId == null ||
                 lookahead.resolvedTipId == page.resolvedTipId);
-        return lookaheadProvesEnd
+        if (!lookaheadProvesEnd) return page;
+        return page is _NativeSessionHistoryPage
             ? _NativeSessionHistoryPage(page, hasEarlier: false)
-            : page;
+            : SessionMessagesPage(
+                messages: page.messages,
+                pagination: <String, Object?>{
+                  'limit': page.limit,
+                  'offset': page.offset,
+                  'returned': page.returned,
+                },
+                rawMessageCount: page.rawMessageCount,
+                messagesFullyParsed: page.messagesFullyParsed,
+                resolvedTipId: page.resolvedTipId,
+                coverage: page.coverage,
+                hasEarlier: false,
+              );
       } on TimeoutException {
         if (attempt == 1) rethrow;
       } on SocketException {
@@ -10562,6 +10604,16 @@ class ActiveChat {
     }
     throw StateError('Stored message lookahead retry exhausted');
   }
+
+  /// co1215: whether the opening REST tail can paint on its own, without the
+  /// full native lineage. Same evidence the native branch requires before it
+  /// trusts the canonical page; an empty page never vetoes native history.
+  static bool _openingRestTailIsDisplayAuthority(SessionMessagesPage page) =>
+      page.messagesFullyParsed &&
+      page.paginationFullyParsed &&
+      page.messages.isNotEmpty &&
+      (!page.paginationProvided ||
+          _transcriptRowsHaveUnambiguousIdentityEvidence(page.messages));
 
   Future<SessionMessagesPage> _requestStoredMessagesPage({
     required String storedSessionId,
