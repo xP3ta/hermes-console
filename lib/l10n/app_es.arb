@@ -9546,5 +9546,7 @@
   "pw1215WriteFailed": "No se ha podido completar la acción.",
   "pw1215Gone": "Ya no existe en el servidor.",
   "pw1215FilesWritableNote": "Los cambios se guardan directamente en el servidor de Hermes.",
-  "pw1215FilesReadOnlyConnection": "Conexión de solo lectura: puedes ver los archivos, pero no cambiarlos."
+  "pw1215FilesReadOnlyConnection": "Conexión de solo lectura: puedes ver los archivos, pero no cambiarlos.",
+  "cr1215AwaitingUnseenInput": "Hermes espera tu respuesta a una pregunta que no se ha mostrado.",
+  "cr1215ShowQuestion": "Mostrar pregunta"
 }

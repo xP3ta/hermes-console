@@ -1175,6 +1175,48 @@ class _InteractiveUiGateway extends _UiRewindGateway
       throw StateError('unexpected terminal response');
 }
 
+/// Resume reports Hermes `waiting` on the user but the request frame never
+/// reached this socket; only `session.events.since` lists it.
+class _UnseenClarifyUiGateway extends _InteractiveUiGateway
+    implements HermesDesktopOpenRequestsGateway {
+  int openRequestReads = 0;
+
+  @override
+  Future<DesktopSessionSnapshot> resumeExisting(
+    String storedSessionId, {
+    String profile = '',
+    bool omitMessages = false,
+    bool deferHistory = false,
+  }) async {
+    resumeExistingCalls += 1;
+    return DesktopSessionSnapshot(
+      runtimeSessionId: 'runtime-ui-test',
+      storedSessionId: storedSessionId,
+      created: false,
+      running: true,
+      status: 'waiting',
+    );
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> openServerRequests(
+    String runtimeSessionId,
+  ) async {
+    openRequestReads += 1;
+    return const [
+      {
+        'id': 'srq-unseen-ui01',
+        'method': 'clarify',
+        'params': {
+          'session_id': 'runtime-ui-test',
+          'question': '¿Publicamos ya?',
+          'choices': ['Sí', 'No'],
+        },
+      },
+    ];
+  }
+}
+
 class _NoLiveMutationGateway extends _UiRewindGateway
     implements HermesDesktopRedirectGateway {
   final List<String> redirects = [];
@@ -15626,6 +15668,49 @@ void main() {
     expect(find.byKey(const ValueKey('send')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'Hermes esperando sin tarjeta muestra el aviso y Mostrar pregunta la trae',
+    (tester) async {
+      final gateway = _UnseenClarifyUiGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-clarify-unseen'),
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(chat.awaitsUnseenInput, isTrue);
+      final notice = find.byKey(const ValueKey('chat-awaiting-unseen-input'));
+      expect(notice, findsOneWidget);
+      expect(
+        find.descendant(
+          of: notice,
+          matching: find.text(
+            'Hermes espera tu respuesta a una pregunta que no se ha mostrado.',
+          ),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('chat-awaiting-unseen-input-show')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(gateway.openRequestReads, 1);
+      expect(
+        find.byKey(
+          const ValueKey('interactive-runtime-ui-test-srq-unseen-ui01'),
+        ),
+        findsOneWidget,
+      );
+      expect(notice, findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'clarify con IME reserva composer y deja confirmar una sola respuesta',

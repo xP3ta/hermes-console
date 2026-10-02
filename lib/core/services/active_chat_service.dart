@@ -4899,6 +4899,7 @@ class ActiveChat {
     } else if (!running) {
       _desktopLiveStatus = null;
     }
+    _noteServerAwaitsInput(running && normalized?.toLowerCase() == 'waiting');
     if (!running) {
       _offerStaleResumedSessionStop = false;
     } else if (coldOpen) {
@@ -5457,12 +5458,20 @@ class ActiveChat {
         return;
       }
       await applyAuthoritativeActiveSessionList(active);
-      // Con un turno propio vivo el roster solo aporta autoridad terminal: la
-      // máquina de presentación pasiva describe la actividad de otra superficie.
-      if (isStreaming) return;
       final rows = active.sessions.where(
         (candidate) => candidate.storedSessionId == storedId,
       );
+      if (_desktopRuntimeSessionId == null && !active.hasMalformedRows) {
+        // A chat with no runtime attached never receives the request frame;
+        // the roster's `waiting` is its only hint that Hermes is blocked on
+        // this user.
+        _noteServerAwaitsInput(
+          rows.any((row) => row.status?.trim().toLowerCase() == 'waiting'),
+        );
+      }
+      // Con un turno propio vivo el roster solo aporta autoridad terminal: la
+      // máquina de presentación pasiva describe la actividad de otra superficie.
+      if (isStreaming) return;
       // `active_list` puede contener varias generaciones del mismo durable ID.
       // Solo una lista vacía o filas explícitamente `idle` prueban reposo; un
       // estado nuevo/ausente se conserva como activo para no drenar a ciegas.
@@ -5714,6 +5723,24 @@ class ActiveChat {
       pendingApproval != null ||
       pendingInteractivePrompt != null ||
       _desktopContinuationRequired;
+
+  /// Hermes reported this session as `waiting` (an open clarify/approval/
+  /// sudo/secret request) while no card is on screen. Happens when the
+  /// request frame went to a socket that was dying or not attached; the
+  /// chat must say so instead of looking busy forever.
+  bool _serverAwaitsInput = false;
+
+  bool get awaitsUnseenInput =>
+      _serverAwaitsInput &&
+      !_disposed &&
+      !needsInput &&
+      ((isStreaming && !_runTerminal) || _desktopRuntimeSessionId == null);
+
+  void _noteServerAwaitsInput(bool value) {
+    if (_serverAwaitsInput == value) return;
+    _serverAwaitsInput = value;
+    _emit(ActiveChatEvent.sessionInfo);
+  }
 
   @visibleForTesting
   bool get activityWatchdogArmed => _activityWatchdogTimer != null;
@@ -8806,6 +8833,9 @@ class ActiveChat {
       _retiringDesktopRuntimeSessionId = retiredRuntimeId;
       _desktopRuntimeSessionId = null;
       _expireInteractivePromptsForRuntime(retiredRuntimeId);
+      if (reason != _RuntimeRetirement.transportLoss) {
+        _serverAwaitsInput = false;
+      }
     }
     final scope = _sessionConfigScope;
     if (scope != null) {
@@ -19664,6 +19694,12 @@ class ActiveChat {
         event.type != 'gateway.pong') {
       _observeRuntimeActivity();
     }
+    if (_serverAwaitsInput &&
+        event.type != 'gateway.ping' &&
+        event.type != 'gateway.pong' &&
+        event.type != 'session.info') {
+      _noteServerAwaitsInput(false);
+    }
     if (event.type == 'session.control.update') {
       _signalAdaptiveRefresh();
       _applySessionControlUpdate(payload['control']);
@@ -20437,6 +20473,81 @@ class ActiveChat {
   void _restorePendingClarify(DesktopSessionSnapshot snapshot) {
     _reconcilePendingClarifySnapshot(snapshot, unlockResponding: false);
     _restoreOpenServerRequests(snapshot);
+  }
+
+  Future<void>? _openRequestRehydration;
+
+  /// «Mostrar pregunta»: asks Hermes again for the requests still open on
+  /// this session (`session.events.since` → `open_requests`) and renders
+  /// them. Without an attached runtime it first rejoins it; the resume
+  /// snapshot carries the same list.
+  Future<void> rehydrateOpenRequests() {
+    final inFlight = _openRequestRehydration;
+    if (inFlight != null) return inFlight;
+    late final Future<void> run;
+    run = _rehydrateOpenRequests().whenComplete(() {
+      if (identical(_openRequestRehydration, run)) {
+        _openRequestRehydration = null;
+      }
+    });
+    _openRequestRehydration = run;
+    return run;
+  }
+
+  Future<void> _rehydrateOpenRequests() async {
+    if (_disposed) return;
+    final gateway = _desktopGateway;
+    if (gateway == null) return;
+    var runtimeId = _desktopRuntimeSessionId;
+    if (runtimeId == null) {
+      if (_viewerTurnConvergenceIsCurrent) {
+        _scheduleAutomaticDesktopReattach(gateway);
+        final reattach = _desktopAutomaticReattach;
+        if (reattach != null) await reattach;
+      } else {
+        await ensureDesktopRuntime();
+      }
+      if (_disposed || needsInput) return;
+      runtimeId = _desktopRuntimeSessionId;
+      if (runtimeId == null) return;
+    }
+    if (gateway is! HermesDesktopOpenRequestsGateway) return;
+    final bindEpoch = _desktopBindEpoch;
+    final List<Map<String, dynamic>> open;
+    try {
+      open = await (gateway as HermesDesktopOpenRequestsGateway)
+          .openServerRequests(runtimeId);
+    } on Object {
+      return;
+    }
+    if (_disposed ||
+        bindEpoch != _desktopBindEpoch ||
+        runtimeId != _desktopRuntimeSessionId) {
+      return;
+    }
+    for (final entry in open) {
+      if (entry['method'] == 'approval') {
+        final params = entry['params'];
+        if (params is Map) {
+          final payload = <String, dynamic>{
+            for (final item in params.entries)
+              if (item.key is String && item.key != 'session_id')
+                item.key as String: item.value,
+          };
+          payload.putIfAbsent('request_id', () => entry['id']);
+          _handleApprovalRequest(Map<String, dynamic>.unmodifiable(payload));
+        }
+        continue;
+      }
+      final event = TuiGatewayClient.openServerRequestEvent(entry);
+      if (event == null ||
+          event.sessionId != runtimeId ||
+          !_isInteractivePromptEvent(event.type)) {
+        continue;
+      }
+      _handleInteractivePromptEvent(event.type, runtimeId, event.payload);
+    }
+    if (open.isEmpty) _noteServerAwaitsInput(false);
   }
 
   bool _snapshotAwaitsUserInput(DesktopSessionSnapshot snapshot) {

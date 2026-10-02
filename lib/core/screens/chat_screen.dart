@@ -1321,6 +1321,7 @@ class _ChatScreenState extends State<ChatScreen>
   int? _desktopRuntimePresentationFingerprint;
   Object? _lastSessionConfigPresentation;
   (bool, int, int, int, int)? _activityPresentationFingerprint;
+  bool _lastAwaitsUnseenInput = false;
   bool _lastDesktopCompacting = false;
   PendingSessionConfigChange? _pendingModelConfirmation;
   NavigatorState? _modelConfirmationNavigator;
@@ -5903,6 +5904,7 @@ class _ChatScreenState extends State<ChatScreen>
         passiveAggregate.completed,
         _chat.safeActiveSubagentCount,
       );
+      final awaitsUnseenInput = _chat.awaitsUnseenInput;
       if (contextCompacting) {
         _sessionContextAwaitingPostCompactionMetrics = true;
       }
@@ -5917,7 +5919,9 @@ class _ChatScreenState extends State<ChatScreen>
           _lastDesktopCompacting == compacting &&
           _lastDesktopCompressionPresentation == compressionPresentation &&
           _activityPresentationFingerprint == activityPresentation &&
-          _lastSessionConfigPresentation == configPresentation;
+          _lastSessionConfigPresentation == configPresentation &&
+          _lastAwaitsUnseenInput == awaitsUnseenInput;
+      _lastAwaitsUnseenInput = awaitsUnseenInput;
       _lastSessionConfigPresentation = configPresentation;
       _lastDesktopCompressionPresentation = compressionPresentation;
       _activityPresentationFingerprint = activityPresentation;
@@ -11454,6 +11458,13 @@ class _ChatScreenState extends State<ChatScreen>
                                   recoveredLabel: str.chaConnectionRecovered,
                                 ),
                           ),
+                          if (_chat.awaitsUnseenInput)
+                            _AwaitingUnseenInputNotice(
+                              message: str.cr1215AwaitingUnseenInput,
+                              actionLabel: str.cr1215ShowQuestion,
+                              onShow: () =>
+                                  unawaited(_chat.rehydrateOpenRequests()),
+                            ),
                           if (_chat.localTranscriptTruncationNoticeVisible)
                             _LocalTranscriptTruncationNotice(
                               message: str.chaLocalTranscriptTruncated,
@@ -15042,7 +15053,9 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   bool get _turnWaitsForUser =>
-      _chat.pendingApproval != null || _chat.pendingInteractivePrompt != null;
+      _chat.pendingApproval != null ||
+      _chat.pendingInteractivePrompt != null ||
+      _chat.awaitsUnseenInput;
 
   HermesSparkMood _liveCompanionMood() {
     if (_transportVisibility.visible && !_chat.dashboardAuthRequired) {
@@ -15748,6 +15761,46 @@ class _DesktopAuthRequiredBanner extends StatelessWidget {
         trailing: _ChatNoticeDismissButton(
           key: const ValueKey('chat-dashboard-auth-dismiss'),
           onPressed: onDismiss,
+        ),
+      ),
+    );
+  }
+}
+
+/// Hermes reports the turn as waiting on the user but no question card is
+/// on screen (the request frame died with a socket). Honest copy instead of
+/// a busy spinner, plus an action that asks the server for the open request.
+class _AwaitingUnseenInputNotice extends StatelessWidget {
+  const _AwaitingUnseenInputNotice({
+    required this.message,
+    required this.actionLabel,
+    required this.onShow,
+  });
+
+  final String message;
+  final String actionLabel;
+  final VoidCallback onShow;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Semantics(
+      key: const ValueKey('chat-awaiting-unseen-input'),
+      container: true,
+      liveRegion: true,
+      label: message,
+      child: _ChatNoticeSurface(
+        icon: Icons.help_outline_rounded,
+        iconColor: colors.warning,
+        message: message,
+        trailing: TextButton(
+          key: const ValueKey('chat-awaiting-unseen-input-show'),
+          onPressed: onShow,
+          style: TextButton.styleFrom(
+            minimumSize: const Size(48, 48),
+            foregroundColor: colors.accentText,
+          ),
+          child: Text(actionLabel),
         ),
       ),
     );

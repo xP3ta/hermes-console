@@ -316,6 +316,15 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
   }
 }
 
+/// Reads the server→client requests still open on a live runtime without
+/// replaying its events (`session.events.since` past the newest sequence, as
+/// Desktop's room prompts do). Separate so legacy fakes stay valid.
+abstract class HermesDesktopOpenRequestsGateway {
+  Future<List<Map<String, dynamic>>> openServerRequests(
+    String runtimeSessionId,
+  );
+}
+
 /// Interfaz pequeña para poder probar [ActiveChat] sin abrir sockets reales.
 abstract class HermesDesktopGateway {
   Stream<TuiGatewayEvent> get events;
@@ -1313,6 +1322,7 @@ final class _SessionRosterSocketLease {
 class TuiGatewayClient
     implements
         HermesDesktopGateway,
+        HermesDesktopOpenRequestsGateway,
         HermesDesktopCompressionStatusGateway,
         BotMentionRosterGateway,
         BotRoomLinkGateway,
@@ -6786,6 +6796,30 @@ class TuiGatewayClient
       );
     }
   }
+
+  @override
+  Future<List<Map<String, dynamic>>> openServerRequests(
+    String runtimeSessionId,
+  ) async {
+    const method = 'session.events.since';
+    final runtime = _validatedRuntimeId(method, runtimeSessionId);
+    await _connectForRequest(method);
+    // `last_seen` above any sequence: no event is replayed, only the open
+    // requests, which the response handler also registers on this socket so
+    // the answer goes back as a response frame.
+    final result = await _requestConnected(method, <String, dynamic>{
+      'session_id': runtime,
+      'last_seen': _openRequestsProbeLastSeen,
+    }, timeout: const Duration(seconds: 10));
+    final open = result['open_requests'];
+    if (open is! List) return const [];
+    return [
+      for (final entry in open)
+        if (entry is Map<String, dynamic>) entry,
+    ];
+  }
+
+  static const int _openRequestsProbeLastSeen = 9007199254740991;
 
   @override
   Future<Map<String, dynamic>> compressionEventReplay(String runtimeSessionId) {

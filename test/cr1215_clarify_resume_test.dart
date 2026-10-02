@@ -411,6 +411,58 @@ void main() {
     expect(gateway.rpcCalls('clarify.respond'), isEmpty);
   });
 
+  test('waiting with no visible card says so, and Show question asks the '
+      'server for the open request', () async {
+    // The resume races the request: status already says waiting but the
+    // snapshot was cut before the request registered.
+    gateway.resumeResult = (_) => {
+      'session_id': 'runtime-1',
+      'stored_session_id': 'stored-1',
+      'running': true,
+      'status': 'waiting',
+    };
+    gateway.eventsSinceResult = (frame) => {
+      'events': <Object>[],
+      'latest_seq': 0,
+      'truncated': false,
+      'count': 0,
+      'open_requests': [_openClarify('srq-unseen000001')],
+    };
+    final client = _clientFor(gateway);
+    final chat = _chatFor(gateway, client, attach: true);
+    await chat.loadMessages();
+    await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+    expect(chat.pendingInteractivePrompt, isNull);
+    expect(chat.awaitsUnseenInput, isTrue);
+
+    await chat.rehydrateOpenRequests();
+    expect(chat.pendingInteractivePrompt!.key.requestId, 'srq-unseen000001');
+    expect(chat.awaitsUnseenInput, isFalse);
+    final probe = gateway.rpcCalls('session.events.since').last;
+    expect(probe['params']['session_id'], 'runtime-1');
+    expect(probe['params']['last_seen'], greaterThan(1 << 40));
+
+    await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'no');
+    final answer = await gateway
+        .nextFrame((frame) => frame['id'] == 'srq-unseen000001')
+        .timeout(const Duration(seconds: 2));
+    expect(answer['result'], {'answer': 'no'});
+  });
+
+  test('a working turn never shows the waiting notice', () async {
+    gateway.resumeResult = (_) => {
+      'session_id': 'runtime-1',
+      'stored_session_id': 'stored-1',
+      'running': true,
+      'status': 'working',
+    };
+    final client = _clientFor(gateway);
+    final chat = _chatFor(gateway, client, attach: true);
+    await chat.loadMessages();
+    await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+    expect(chat.awaitsUnseenInput, isFalse);
+  });
+
   test('connectivity flips every 200 ms with clarify traffic raise no '
       'uncaught error and the question survives', () async {
     gateway.resumeResult = (_) => {
