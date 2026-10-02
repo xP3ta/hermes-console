@@ -28527,7 +28527,9 @@ class ActiveChatService {
     @visibleForTesting
     HermesDesktopGateway Function(SavedConnection connection)?
     desktopGatewayFactory,
+    Listenable? connectionCredentialsRevision,
   }) : _prefs = prefs,
+       _connectionCredentialsRevision = connectionCredentialsRevision,
        _desktopGatewayFactory = desktopGatewayFactory,
        _homeWidgetNowMs =
            homeWidgetNowMs ?? (() => DateTime.now().millisecondsSinceEpoch),
@@ -28551,7 +28553,14 @@ class ActiveChatService {
     _restoreObservedFirstTokenLatencies();
     unawaited(_drainPendingCancelledTurnCleanup());
     this.globalActivity.addListener(_onGlobalActivityChanged);
+    _connectionCredentialsRevision?.addListener(closeWarmGateways);
   }
+
+  /// co1215: bumps on every material connection change, including Dashboard
+  /// secret rotation, which lives in Keystore and never reaches the parked
+  /// client's fingerprint. A parked socket authenticated with the old
+  /// credentials is closed instead of being handed to a reopened chat.
+  final Listenable? _connectionCredentialsRevision;
 
   /// re1215: this chat saw its own turn end on its own socket, which the
   /// roster aggregate never hears. Without this the list and Inicio kept
@@ -28657,6 +28666,8 @@ class ActiveChatService {
     c.baseUrl,
     c.effectiveDashboardUrl,
     c.gatewayAuthMode.storageKey,
+    // The client authenticates its ws ticket through the Dashboard.
+    c.dashboardAuthMode.storageKey,
     sha256.convert(utf8.encode(c.apiKey)).toString(),
     c.readOnly,
   ]);
@@ -30356,6 +30367,7 @@ class ActiveChatService {
       chat.dispose();
     }
     _chats.clear();
+    _connectionCredentialsRevision?.removeListener(closeWarmGateways);
     closeWarmGateways();
     _reopenTranscriptCache.clear();
     _reopenTranscriptCacheBytes = 0;

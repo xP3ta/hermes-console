@@ -298,6 +298,7 @@ Future<Widget> bootstrapHermesApp() async {
     prefs: prefs,
     cancelledTurnStore: tombstonesReady ? cancelledTurnStore : null,
     compressionRestoreStore: compressionRestoreStore,
+    connectionCredentialsRevision: connManager.connectionsRevision,
   );
   await activeChats.globalActivity.initialize();
   return HermesApp(

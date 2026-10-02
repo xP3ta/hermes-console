@@ -2,6 +2,7 @@ import 'dart:async';
 
 // ignore: depend_on_referenced_packages
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -68,7 +69,10 @@ class _CountingGateway implements HermesDesktopGateway {
   }
 }
 
-SavedConnection _connection(String id) => SavedConnection(
+SavedConnection _connection(
+  String id, {
+  AuthMode dashboardAuthMode = AuthMode.cookieSession,
+}) => SavedConnection(
   id: id,
   label: id,
   host: 'example.invalid',
@@ -76,6 +80,7 @@ SavedConnection _connection(String id) => SavedConnection(
   apiKey: 'test-key',
   useHttps: true,
   kind: InstanceKind.vps,
+  dashboardAuthMode: dashboardAuthMode,
 );
 
 ApiClient _api() => ApiClient(
@@ -90,8 +95,11 @@ void main() {
   late List<_CountingGateway> created;
   late ActiveChatService service;
 
+  late ValueNotifier<int> credentials;
+
   ActiveChatService newService() => ActiveChatService(
     attachDesktopRuntimeOnLoad: false,
+    connectionCredentialsRevision: credentials,
     compressionRestoreStore: testCompressionRestoreStore(),
     desktopGatewayFactory: (_) {
       final gateway = _CountingGateway(created.length);
@@ -101,6 +109,7 @@ void main() {
   );
 
   setUp(() {
+    credentials = ValueNotifier<int>(0);
     created = [];
     service = newService();
   });
@@ -224,6 +233,55 @@ void main() {
       attach('other', 'chat-a');
       expect(created, hasLength(3));
       expect(service.warmGatewayCountForTesting, 1);
+    });
+  });
+
+  test(
+    'a parked client is not reused after the Dashboard auth mode changed',
+    () {
+      fakeAsync((async) {
+        openConnected('conn', 'chat-a');
+        async.flushMicrotasks();
+        service.release('conn', 'chat-a');
+        async.flushMicrotasks();
+        expect(service.warmGatewayCountForTesting, 1);
+
+        final reopened = service.attach(
+          connection: _connection(
+            'conn',
+            dashboardAuthMode: AuthMode.sessionToken,
+          ),
+          sessionId: 'chat-a',
+          sessionTitle: 'Warm',
+          api: _api(),
+          storedMessageLoader: (_, _) async => const [],
+          disableForegroundKeepAlive: true,
+        );
+        async.flushMicrotasks();
+        expect(created, hasLength(2), reason: 'a new client for the new auth');
+        expect(created.first.closeCalls, 1);
+        expect(reopened.hasDesktopTransport, isTrue);
+      });
+    },
+  );
+
+  test('a credential revision closes parked clients before any reopen', () {
+    fakeAsync((async) {
+      openConnected('conn', 'chat-a');
+      async.flushMicrotasks();
+      service.release('conn', 'chat-a');
+      async.flushMicrotasks();
+      expect(service.warmGatewayCountForTesting, 1);
+
+      // Dashboard secrets rotate in Keystore: the SavedConnection, and so
+      // the fingerprint, is unchanged.
+      credentials.value += 1;
+      async.flushMicrotasks();
+      expect(created.single.closeCalls, 1);
+      expect(service.warmGatewayCountForTesting, 0);
+
+      attach('conn', 'chat-a');
+      expect(created, hasLength(2), reason: 'the old socket is not reused');
     });
   });
 
