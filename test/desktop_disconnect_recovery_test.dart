@@ -4676,6 +4676,93 @@ void main() {
     });
   }
 
+  // rl1215: during the network switch Hermes finished the phone's turn and
+  // then ran a runtime-event turn (a background process completed). The
+  // durable tail after the phone's prompt now holds an editorial
+  // `process_complete` user row. Terminal authority rejected that tail
+  // (`invalidRole`), so every idle snapshot ended in durable_pending and the
+  // chat re-read /messages forever while showing "connection lost".
+  for (final editorialKind in const [
+    'process_complete',
+    'async_delegation_complete',
+  ]) {
+    test('rl1215 idle recovery adopts a transcript that ends in a '
+        '$editorialKind turn', () async {
+      const storedId = 'session-rl1215-runtime-event';
+      const prompt = 'genera las poses que faltan';
+      const firstAnswer = 'respuesta del turno del teléfono';
+      const eventAnswer = 'respuesta al proceso terminado';
+      final gateway = _NonIdempotentLifecycleGateway(storedId);
+      var loaderCalls = 0;
+      var serverFinished = false;
+      final chat = _recoverableChat(
+        'rl1215-runtime-event-$editorialKind',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 1),
+        ],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async {
+          loaderCalls++;
+          return [
+            const {'id': 101, 'role': 'user', 'content': prompt},
+            if (serverFinished) ...[
+              const {'id': 102, 'role': 'assistant', 'content': firstAnswer},
+              {
+                'id': 103,
+                'role': 'user',
+                'display_kind': editorialKind,
+                'content': '[IMPORTANT: background work finished]',
+              },
+              const {'id': 104, 'role': 'assistant', 'content': eventAnswer},
+            ],
+          ];
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: prompt,
+        model: 'hermes-agent',
+        history: const [],
+      );
+      serverFinished = true;
+      gateway.recoverySnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-rl1215-event-idle',
+        storedSessionId: storedId,
+        created: false,
+        messagesProvided: false,
+        running: false,
+        status: 'idle',
+      );
+      gateway.failWith(const SocketException('Connection attempt cancelled'));
+
+      await _waitUntil(
+        () =>
+            (chat.state == ChatPipelineState.completed &&
+                chat.transportStatus.isConnected) ||
+            loaderCalls > 25,
+      );
+      expect(
+        loaderCalls,
+        lessThanOrEqualTo(3),
+        reason: 'an idle server must converge without polling /messages',
+      );
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.isStreaming, isFalse);
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+      for (final text in const [prompt, firstAnswer, eventAnswer]) {
+        expect(
+          chat.messages.where((message) => message['content'] == text),
+          hasLength(1),
+          reason: text,
+        );
+      }
+      expect(gateway.submitCalls, 1);
+    });
+  }
+
   test(
     'V5 client-owned turn keeps submitted-turn recovery after stream loss',
     () async {

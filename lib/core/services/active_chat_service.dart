@@ -18906,7 +18906,10 @@ class ActiveChat {
         final resultKind = _desktopSnapshotRecoveryResultKind(snapshot);
         debugPrint('[active-chat] snapshot recovery result kind=$resultKind');
         if (!snapshot.running && snapshot.inflight == null) {
-          if (await _tryAdoptDurableTranscriptForRecoveringTurn(turnEpoch)) {
+          if (await _tryAdoptDurableTranscriptForRecoveringTurn(
+            turnEpoch,
+            serverIdle: true,
+          )) {
             debugPrint(
               '[active-chat] snapshot recovery converged kind=durable_transcript',
             );
@@ -19378,8 +19381,9 @@ class ActiveChat {
 
   // A disconnected turn needs complete durable evidence before it can settle.
   Future<bool> _tryAdoptDurableTranscriptForRecoveringTurn(
-    int turnEpoch,
-  ) async {
+    int turnEpoch, {
+    bool serverIdle = false,
+  }) async {
     if (!_canRecoverTurn(turnEpoch)) return false;
     final loadEpoch = _messageLoadEpoch;
     final storedId = serverSessionId;
@@ -19399,12 +19403,26 @@ class ActiveChat {
         return false;
       }
       if (!_restTranscriptCoversAnnouncedCount(transcript)) return false;
-      final authority = _terminalAuthority(transcript, expectedUsers);
+      var authorityView = transcript;
+      var authority = _terminalAuthority(transcript, expectedUsers);
+      if (serverIdle &&
+          authority.reason == TerminalAuthorityReason.invalidRole) {
+        // rl1215: while the phone was away Hermes finished this turn and
+        // then ran a runtime-event turn (a background process or delegation
+        // completed). Its editorial user row follows our prompt, which the
+        // terminal reducer reads as a foreign role. The server is idle, so
+        // judge the tail without those rows and adopt the whole transcript.
+        final view = _withoutRuntimeEventPromptsAfterLatestUser(transcript);
+        if (view != null) {
+          authorityView = view;
+          authority = _terminalAuthority(view, expectedUsers);
+        }
+      }
       if (authority.reason != TerminalAuthorityReason.finalAssistant) {
         return false;
       }
       if (!_terminalTranscriptCanReplaceVisibleProjection(
-        transcript,
+        authorityView,
         expectedUsers,
       )) {
         return false;
@@ -19412,6 +19430,8 @@ class ActiveChat {
       await _completeRun(
         finalOutput: authority.assistantText,
         authoritativeTranscript: transcript,
+        authoritativeTranscriptAuthorityView:
+            identical(authorityView, transcript) ? null : authorityView,
       );
       return state == ChatPipelineState.completed;
     } catch (_) {
@@ -19434,6 +19454,35 @@ class ActiveChat {
         : math.max(hydration, hard);
     if (announced == null || announced <= 0) return true;
     return transcript.length >= announced;
+  }
+
+  /// rl1215: the chronological transcript without the editorial user rows of
+  /// runtime-event turns (`process_complete`, `async_delegation_complete`)
+  /// that Hermes ran after the latest real user prompt. Null when there is no
+  /// such row or the tail holds any other user row, so callers keep the
+  /// strict verdict.
+  List<Map<String, dynamic>>? _withoutRuntimeEventPromptsAfterLatestUser(
+    List<Map<String, dynamic>> chronological,
+  ) {
+    var latestUser = -1;
+    for (var index = 0; index < chronological.length; index++) {
+      if (isRealUserTurn(chronological[index])) latestUser = index;
+    }
+    if (latestUser < 0) return null;
+    final view = chronological.sublist(0, latestUser + 1);
+    var removed = false;
+    for (final message in chronological.skip(latestUser + 1)) {
+      if (message['role'] == 'user') {
+        final kind = effectiveUserDisplayKind(message);
+        if (kind != 'process_complete' && kind != 'async_delegation_complete') {
+          return null;
+        }
+        removed = true;
+        continue;
+      }
+      view.add(message);
+    }
+    return removed ? view : null;
   }
 
   Future<void> _recoverRestTurnFromTranscript(
@@ -24598,6 +24647,7 @@ class ActiveChat {
     List<Map<String, dynamic>> transcript, {
     required int completingEpoch,
     required int messageLoadEpoch,
+    List<Map<String, dynamic>>? authorityView,
   }) {
     if (!_isCurrentEpoch(completingEpoch) ||
         messageLoadEpoch != _messageLoadEpoch ||
@@ -24606,7 +24656,7 @@ class ActiveChat {
     }
     final expectedUsers = _messages.where(isRealUserTurn).length;
     if (!_terminalTranscriptCanReplaceVisibleProjection(
-          transcript,
+          authorityView ?? transcript,
           expectedUsers,
         ) &&
         !_completedProcessTurnCoversLiveAssistant(transcript)) {
@@ -24756,6 +24806,7 @@ class ActiveChat {
     String? finalReasoning,
     bool finalOutputNarratable = true,
     List<Map<String, dynamic>>? authoritativeTranscript,
+    List<Map<String, dynamic>>? authoritativeTranscriptAuthorityView,
   }) async {
     final invocationEpoch = _turnEpoch;
     final invocationBindEpoch = _desktopBindEpoch;
@@ -24806,6 +24857,7 @@ class ActiveChat {
             authoritativeTranscript,
             completingEpoch: invocationEpoch,
             messageLoadEpoch: authorityMessageLoadEpoch,
+            authorityView: authoritativeTranscriptAuthorityView,
           );
       if (!invocationStillCurrent() ||
           authorityMessageLoadEpoch != _messageLoadEpoch ||
@@ -28672,7 +28724,8 @@ class ActiveChatService {
     @visibleForTesting Future<bool> Function()? turnIdempotencyCapability,
     @visibleForTesting bool disableForegroundKeepAlive = false,
     @visibleForTesting
-    int transcriptPageSizeForTesting = ActiveChat.authoritativeTranscriptPageSize,
+    int transcriptPageSizeForTesting =
+        ActiveChat.authoritativeTranscriptPageSize,
     @visibleForTesting int Function()? wallClockMsForTesting,
   }) {
     final owner = Session.profileOwner(
