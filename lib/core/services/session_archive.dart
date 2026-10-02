@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -21,7 +22,14 @@ import '../utils/session_title.dart';
 ///
 /// All mutations are persisted immediately (synchronous write via the
 /// SharedPreferences instance obtained at construction time).
-class SessionArchive {
+///
+/// There is ONE store per preferences instance and connection: every screen
+/// (Home, Conversations, session detail, chat auto-title, drawer) receives the
+/// same object from [load] and listens to it. A private copy per screen used
+/// to flush its stale sets over another screen's write (an archive made in
+/// Conversations undone by a later hide in Home) and left the other screens
+/// showing the old title until their next network refresh.
+class SessionArchive extends ChangeNotifier {
   static const _prefix = 'archived_sessions_';
   static const _pinnedPrefix = 'pinned_sessions_';
   static const _hiddenPrefix = 'hidden_sessions_';
@@ -46,13 +54,29 @@ class SessionArchive {
 
   SessionArchive._(this._prefs, this._connectionId);
 
-  /// Load the archive for [connectionId] from [prefs].
+  static final Expando<Map<String, SessionArchive>> _stores = Expando(
+    'SessionArchive stores',
+  );
+
+  /// The shared archive for [connectionId] in [prefs].
+  ///
+  /// Every caller receives the same instance. It re-reads the preferences on
+  /// each call, so a removal made outside the store (connection cleanup) is
+  /// adopted; in-memory state is always written to the preferences cache
+  /// before any await, so this re-read can never lose a pending change.
   static Future<SessionArchive> load(
     SharedPreferences prefs,
     String connectionId,
   ) async {
+    final stores = _stores[prefs] ??= <String, SessionArchive>{};
+    final existing = stores[connectionId];
+    if (existing != null) {
+      existing._resync();
+      return existing;
+    }
     final archive = SessionArchive._(prefs, connectionId);
-    await archive._load();
+    archive._read();
+    stores[connectionId] = archive;
     return archive;
   }
 
@@ -61,11 +85,27 @@ class SessionArchive {
   String get _hiddenKey => '$_hiddenPrefix$_connectionId';
   String get _titleKey => '$_titlePrefix$_connectionId';
 
-  Future<void> _load() async {
+  void _read() {
     _archived = (_prefs.getStringList(_key) ?? []).toSet();
     _pinned = (_prefs.getStringList(_pinnedKey) ?? []).toSet();
     _hidden = (_prefs.getStringList(_hiddenKey) ?? []).toSet();
     _titles = _decodeTitles(_prefs.getStringList(_titleKey) ?? const []);
+  }
+
+  void _resync() {
+    final archived = _archived;
+    final pinned = _pinned;
+    final hidden = _hidden;
+    final titles = _titles;
+    _read();
+    if (setEquals(archived, _archived) &&
+        setEquals(pinned, _pinned) &&
+        setEquals(hidden, _hidden) &&
+        mapEquals(titles, _titles)) {
+      return;
+    }
+    _revision++;
+    notifyListeners();
   }
 
   // Helpers canónicos: viven en el modelo Session (single source of truth).
@@ -263,21 +303,31 @@ class SessionArchive {
     return true;
   }
 
-  Future<void> _flush() async {
+  /// Writes every set into the preferences cache before the first await and
+  /// notifies readers synchronously, so all screens observe one coherent cut.
+  Future<void> _flush() {
     _revision++;
-    await _prefs.setStringList(_key, _archived.toList());
-    await _prefs.setStringList(_pinnedKey, _pinned.toList());
-    await _prefs.setStringList(_hiddenKey, _hidden.toList());
-    await _flushTitles();
+    final writes = Future.wait<bool>([
+      _prefs.setStringList(_key, _archived.toList()),
+      _prefs.setStringList(_pinnedKey, _pinned.toList()),
+      _prefs.setStringList(_hiddenKey, _hidden.toList()),
+      _writeTitles(),
+    ]);
+    notifyListeners();
+    return writes;
   }
 
-  Future<void> _flushTitles() async {
+  Future<void> _flushTitles() {
     _revision++;
-    await _prefs.setStringList(
-      _titleKey,
-      _titles.entries.map((e) => '${e.key}\t${e.value}').toList(),
-    );
+    final write = _writeTitles();
+    notifyListeners();
+    return write;
   }
+
+  Future<bool> _writeTitles() => _prefs.setStringList(
+    _titleKey,
+    _titles.entries.map((e) => '${e.key}\t${e.value}').toList(),
+  );
 
   static Map<String, String> _decodeTitles(List<String> rows) {
     final titles = <String, String>{};

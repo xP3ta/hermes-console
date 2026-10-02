@@ -17,6 +17,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/dock_preferences_store.dart';
+import 'package:hermes_android/core/services/session_archive.dart';
 import 'package:hermes_android/core/services/session_repository.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -354,6 +355,36 @@ void main() {
     expect(find.text('2'), findsOneWidget);
     expect(find.text('1'), findsOneWidget);
   });
+
+  testWidgets(
+    'a rename or archive made on another screen repaints the list at once',
+    (tester) async {
+      tester.view.physicalSize = const Size(1170, 2532);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final today = nowSeconds();
+      final manager = await pump(tester, [
+        _row('keep-1', title: 'Firma del keystore en CI', lastActive: today),
+        _row('arch-1', title: 'Notas de la release', lastActive: today - 60),
+      ]);
+      await _pumpUntil(tester, find.text('Notas de la release'));
+      await tester.pumpAndSettle();
+
+      // Home / chat auto-title write through the same per-connection store.
+      final other = await SessionArchive.load(manager.prefs, _connectionId);
+      await other.setTitle('keep-1', 'Renombrada en Inicio');
+      await tester.pump();
+      expect(find.text('Renombrada en Inicio'), findsOneWidget);
+      expect(find.text('Firma del keystore en CI'), findsNothing);
+
+      await other.archive('arch-1');
+      await tester.pump();
+      expect(find.text('Notas de la release'), findsNothing);
+      expect(find.text('Renombrada en Inicio'), findsOneWidget);
+    },
+  );
 
   testWidgets('las fijadas van en su propia sección, antes que los días', (
     tester,

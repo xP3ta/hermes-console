@@ -202,6 +202,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     _liveStatusGate.removeListener(_onActivityChanged);
     _liveStatusGate.dispose();
     _listenedGlobalActivity?.removeListener(_onActivityChanged);
+    _archive?.removeListener(_onActivityChanged);
     _localStartPoll?.cancel();
     super.dispose();
   }
@@ -1135,7 +1136,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         // pestaña "Chats" de Conversaciones (la que abre "Ver todas" por
         // defecto) — el "aparece en Inicio y luego no está" reportado en
         // dispositivo real. Mismo criterio que `SessionCategory.chats`.
-        .where((s) => _isHomeRecentCandidate(s, archive))
+        // Local archive/hidden state is applied when painting, from the
+        // shared store, so a change made on another screen shows here at once.
+        .where(_isHomeRecentKind)
         .toList();
     final recentLimit = _homeRecentLimit();
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
@@ -1155,7 +1158,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _healthOk = ok;
       if (!ok) _dashboardAuth = DashboardAuthCheck.unknown;
       _checking = false;
-      _archive = archive;
+      _listenArchive(archive);
       if (!listReadUnavailable) _recentSessions = recentSessions;
     });
     if (ok) _scheduleMissionPrewarm(conn);
@@ -1188,17 +1191,41 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     unawaited(
       _hydrateTurnPreviews(
         conn,
-        recentSessions.take(recentLimit).toList(growable: false),
+        recentSessions
+            .where((s) => _isHomeRecentCandidate(s, archive))
+            .take(recentLimit)
+            .toList(growable: false),
       ),
     );
   }
 
   bool _isHomeRecentCandidate(Session s, SessionArchive archive) =>
-      !s.isJob &&
+      _isHomeRecentKind(s) &&
       !archive.isSessionHidden(s) &&
       !archive.isSessionArchived(s) &&
-      !archive.isHidden(s.id) &&
-      SessionCategory.chats.includesSource(s.source);
+      !archive.isHidden(s.id);
+
+  static bool _isHomeRecentKind(Session s) =>
+      !s.isJob && SessionCategory.chats.includesSource(s.source);
+
+  /// Recents as painted: the retained page filtered by the shared local
+  /// archive store (archive, hidden).
+  List<Session> get _visibleRecentSessions {
+    final archive = _archive;
+    if (archive == null) return _recentSessions;
+    return _recentSessions
+        .where((s) => _isHomeRecentCandidate(s, archive))
+        .toList(growable: false);
+  }
+
+  /// Follows the connection's shared [SessionArchive]: a rename, archive or
+  /// hide made on any screen repaints the recents without a network read.
+  void _listenArchive(SessionArchive archive) {
+    if (identical(_archive, archive)) return;
+    _archive?.removeListener(_onActivityChanged);
+    _archive = archive;
+    archive.addListener(_onActivityChanged);
+  }
 
   int _homeRecentLimit() {
     final media = MediaQuery.of(context);
@@ -1282,7 +1309,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final activeChats = _activeChats;
     HomeRecentDateGroup? previousGroup;
-    final visible = _recentSessions.take(limit).toList(growable: false);
+    final visible = _visibleRecentSessions.take(limit).toList(growable: false);
 
     for (var index = 0; index < visible.length; index++) {
       final session = visible[index];
@@ -2052,7 +2079,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                           dockBottomClearance,
                         ),
                         children: [
-                          if (_recentSessions.isNotEmpty) ...[
+                          if (_visibleRecentSessions.isNotEmpty) ...[
                             Padding(
                               padding: const EdgeInsets.only(
                                 left: 4,
