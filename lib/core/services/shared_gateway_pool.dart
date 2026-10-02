@@ -104,8 +104,14 @@ class SharedGatewayPool {
   }
 
   /// Sondea cada socket vivo del pool (cambio de red). Un socket medio
-  /// abierto cae por la ruta normal y su dueño aplica el backoff.
+  /// abierto cae por la ruta normal y su dueño aplica el backoff. Los ya
+  /// caídos olvidan el backoff de la red anterior (rl1215).
   Future<void> probeAll() async {
+    for (final entry in _entries.values) {
+      if (!entry.client.isClosed) {
+        entry.client.resetReconnectBackoffForNetworkChange();
+      }
+    }
     await Future.wait([
       for (final entry in _entries.values.toList())
         if (!entry.client.isClosed)

@@ -1741,6 +1741,9 @@ void _expectNoViewerAttachmentMutations(
   expect(api.stopCalls, 0);
 }
 
+// Mirrors `chatConnectionActiveGrace` (connection row, active turn).
+const chatConnectionActiveGraceForTest = Duration(seconds: 3);
+
 void main() {
   // Real-socket reconnect scenarios: keep the owner's backoff shape but on a
   // millisecond scale so waits stay within the suite's 2 s polls.
@@ -4849,6 +4852,68 @@ void main() {
       expect(chat.transportStatus.state, ChatTransportState.connected);
     });
   }
+
+  // rl1215: a Wi-Fi/cellular switch drops the socket with "Connection
+  // attempt cancelled" while the turn keeps running on the server. The first
+  // recovery attempt on the new path must re-adopt the live turn, so the
+  // transport is back before the 3 s grace of the connection row elapses and
+  // the transcript is not re-read on every attempt.
+  test('rl1215 network switch mid-turn re-adopts the running turn in one '
+      'attempt', () async {
+    const storedId = 'session-rl1215-switch';
+    const prompt = 'sigue trabajando mientras cambio de red';
+    final gateway = _NonIdempotentLifecycleGateway(storedId);
+    var loaderCalls = 0;
+    final chat = _recoverableChat(
+      'rl1215-switch',
+      gateway,
+      desktopRecoveryRandom: () => 1.0,
+      storedMessageLoader: (_, _) async {
+        loaderCalls++;
+        return const [];
+      },
+    );
+    addTearDown(chat.dispose);
+
+    await chat.send(fullText: prompt, model: 'hermes-agent', history: const []);
+    gateway.recoverySnapshot = DesktopSessionSnapshot(
+      runtimeSessionId: 'runtime-rl1215-new-path',
+      storedSessionId: storedId,
+      created: false,
+      inflight: DesktopInflightTurn(
+        user: prompt,
+        assistant: 'parcial en la red nueva',
+        streaming: true,
+      ),
+      running: true,
+      status: 'running',
+    );
+    final connectsBefore = gateway.connectCalls;
+    final readsBefore = loaderCalls;
+    final lostAt = DateTime.now();
+    gateway.failWith(const SocketException('Connection attempt cancelled'));
+
+    await _waitUntil(
+      () => chat.desktopRuntimeSessionId == 'runtime-rl1215-new-path',
+    );
+    expect(
+      DateTime.now().difference(lostAt),
+      lessThan(chatConnectionActiveGraceForTest),
+      reason: 'the loss never outlives the connection row grace',
+    );
+    expect(chat.state, ChatPipelineState.streaming);
+    expect(chat.transportStatus.state, ChatTransportState.connected);
+    expect(gateway.connectCalls - connectsBefore, 1);
+    expect(gateway.rosterResumeCalls, 1);
+    expect(loaderCalls - readsBefore, lessThanOrEqualTo(1));
+    expect(
+      chat.messages.where(
+        (message) => message['role'] == 'user' && message['content'] == prompt,
+      ),
+      hasLength(1),
+    );
+    expect(gateway.submitCalls, 1);
+  });
 
   // rl1215: once the socket is back and the server answered, recovery is
   // only re-reading the transcript. The chat must not keep saying

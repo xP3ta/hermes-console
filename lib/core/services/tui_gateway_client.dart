@@ -1550,6 +1550,17 @@ class TuiGatewayClient
   /// True while the owner is waiting out a reconnect backoff.
   bool get isBackingOff => reconnectBackoffRemaining > Duration.zero;
 
+  /// The platform reported a new default network (rl1215). The backoff ladder
+  /// measured the old path (a Wi-Fi/cellular switch kills every socket and
+  /// can push it to its ceiling); keeping it would make lazy RPCs fail fast
+  /// and the next dial wait up to 15 s on a network that already works.
+  /// It never closes or redials a socket; a half-open one is the probe's job.
+  void resetReconnectBackoffForNetworkChange() {
+    if (_closed) return;
+    _reconnectBackoff.markHealthy();
+    _backoffUntil = null;
+  }
+
   /// Explicit connect, used by owners that run their own reattach schedule
   /// (ActiveChat recovery, the Home/Library event subscriptions). Lazy RPC
   /// dials go through [_connectForRequest], which honours the backoff.

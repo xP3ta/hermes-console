@@ -25348,6 +25348,16 @@ class ActiveChat {
     _desktopRecoveryWake.complete();
   }
 
+  /// rl1215: a new default network voids the gateway's backoff ladder, so
+  /// the recovery loop (which never undercuts it) redials at once.
+  void _forgetReconnectBackoffAfterNetworkChange() {
+    if (_disposed) return;
+    final gateway = _desktopGateway;
+    if (gateway is TuiGatewayClient) {
+      gateway.resetReconnectBackoffForNetworkChange();
+    }
+  }
+
   /// Acortar el backoff no basta con un socket medio abierto en la red
   /// antigua: se comprueba ya y, si no responde, corre la ruta de error.
   /// Solo para señales de red/plataforma (cambio de red, vuelta a primer
@@ -29006,6 +29016,7 @@ class ActiveChatService {
   /// y acorta el backoff de cada chat.
   void requestImmediateTransportRecovery() {
     for (final chat in _chats.values) {
+      chat._forgetReconnectBackoffAfterNetworkChange();
       chat.probeTransportNow();
       chat.requestImmediateTransportRecovery();
     }
