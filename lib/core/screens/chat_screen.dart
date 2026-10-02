@@ -1771,8 +1771,12 @@ class _ChatScreenState extends State<ChatScreen>
     }
     final messages = _messages;
     if (messages.isEmpty || !_chat.messagesLoaded) return;
-    _newSinceResolved = true;
     final found = chatUnreadSinceStoredMarker(messages, markerKey);
+    if (found == null && _newSinceMarkerMayBeOlder()) {
+      unawaited(_pageBackForNewSinceMarker());
+      return;
+    }
+    _newSinceResolved = true;
     final firstUnread = found?.oldestNew;
     if (found == null || firstUnread == null) return;
     _newSinceFirstUnread = firstUnread;
@@ -1783,6 +1787,38 @@ class _ChatScreenState extends State<ChatScreen>
       unawaited(_landOnNewSinceYouLeft(firstUnread, newestRead, unread));
     });
     setState(() {});
+  }
+
+  /// The opening page holds only the newest rows (Desktop parity), so the
+  /// stored marker can sit in an older page. Look for it as deep as the
+  /// former 500-row opening page read, never further: a marker that is
+  /// gone (rewound, compacted away) must not walk the whole history.
+  static const int _newSinceLookbackRows = 500;
+  bool _newSincePagingBack = false;
+
+  bool _newSinceMarkerMayBeOlder() =>
+      _chat.hasEarlierMessages &&
+      !_chat.earlierMessagesLoadFailed &&
+      _chat.messages.length < _newSinceLookbackRows;
+
+  /// Loads older pages through the same contiguous backfill as scrolling to
+  /// the top (rows are only ever prepended in order), then resolves again.
+  Future<void> _pageBackForNewSinceMarker() async {
+    if (_newSincePagingBack) return;
+    _newSincePagingBack = true;
+    try {
+      final before = _chat.messages.length;
+      await _chat.loadEarlierMessages(continuePastInvisible: true);
+      if (_disposed || !mounted) return;
+      if (_chat.messages.length == before) {
+        // No progress: stop looking instead of retrying in a loop.
+        _newSinceResolved = true;
+        return;
+      }
+    } finally {
+      _newSincePagingBack = false;
+    }
+    _resolveNewSinceYouLeft();
   }
 
   Future<void> _landOnNewSinceYouLeft(
