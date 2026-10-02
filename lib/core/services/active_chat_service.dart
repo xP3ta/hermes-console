@@ -4262,6 +4262,10 @@ class ActiveChat {
   static const Duration _voiceBargeHandoffRetention = Duration(seconds: 30);
   static const Duration _desktopRecoveryDelayCap = Duration(seconds: 15);
   static const Duration _desktopRecoveryFallbackDelay = Duration(seconds: 1);
+
+  /// Idle snapshots, each followed by a full transcript read, before a
+  /// recovering turn settles as unconfirmed (rl1215).
+  static const int _desktopIdleRecoveryProofAttempts = 3;
   static const Duration _compressionRestoreRpcBudget = Duration(seconds: 10);
 
   static List<Duration> _normalizeDesktopRecoveryBackoff(
@@ -18830,6 +18834,7 @@ class ActiveChat {
     final epochInvalidated = _turnEpochInvalidated.future;
     var attempt = 0;
     var transcriptAttempted = false;
+    var idleWithoutProof = 0;
     Object lastError = originalError;
     debugPrint('[active-chat] snapshot recovery start');
     while (_canRecoverTurn(turnEpoch)) {
@@ -18921,6 +18926,21 @@ class ActiveChat {
             debugPrint(
               '[active-chat] snapshot recovery result kind=durable_pending',
             );
+            // rl1215: an idle server is authoritative. Once it has said so
+            // and the transcript still does not prove this turn's final
+            // answer after a few re-reads, more reads cannot change that:
+            // settle the turn as "not confirmed" (prompt kept once, retry
+            // offered) instead of polling /messages forever while the chat
+            // says the connection is lost.
+            idleWithoutProof += 1;
+            if (idleWithoutProof >= _desktopIdleRecoveryProofAttempts) {
+              debugPrint(
+                '[active-chat] snapshot recovery gave up '
+                'kind=idle_unproven attempts=$attempt',
+              );
+              _degradeLegacyTurnRecovery(turnEpoch, originalError);
+              return;
+            }
             continue;
           }
         }

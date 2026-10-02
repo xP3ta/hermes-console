@@ -4763,6 +4763,93 @@ void main() {
     });
   }
 
+  // rl1215 (Pixel 02/10, 94 attempts, 265 GET /messages in 15 min): an idle
+  // server whose transcript never proves this turn's final answer kept the
+  // chat in "connection lost" + "working" and re-read the whole transcript
+  // every few seconds until the app was killed. An idle server is
+  // authoritative: after a bounded number of re-reads the turn must settle
+  // with its prompt kept once and a retry affordance, polling must stop and
+  // the transport must read as connected.
+  for (final promptStored in const [true, false]) {
+    test('rl1215 idle server without a provable final stops polling '
+        '(prompt stored: $promptStored)', () async {
+      const storedId = 'session-rl1215-idle-unprovable';
+      const prompt = 'mensaje enviado justo al cambiar de red';
+      final gateway = _NonIdempotentLifecycleGateway(storedId);
+      var loaderCalls = 0;
+      var sent = false;
+      final chat = _recoverableChat(
+        'rl1215-idle-unprovable-$promptStored',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 1),
+        ],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async {
+          loaderCalls++;
+          return [
+            const {'id': 201, 'role': 'user', 'content': 'turno anterior'},
+            const {'id': 202, 'role': 'assistant', 'content': 'hecho'},
+            if (promptStored && sent)
+              const {'id': 203, 'role': 'user', 'content': prompt},
+          ];
+        },
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      await chat.send(
+        fullText: prompt,
+        model: 'hermes-agent',
+        history: const [],
+      );
+      gateway.recoverySnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-rl1215-unprovable-idle',
+        storedSessionId: storedId,
+        created: false,
+        messagesProvided: false,
+        running: false,
+        status: 'idle',
+      );
+      sent = true;
+      final readsBeforeLoss = loaderCalls;
+      gateway.failWith(const SocketException('Connection attempt cancelled'));
+
+      await _waitUntil(
+        () =>
+            (!chat.isStreaming &&
+                chat.state != ChatPipelineState.connecting &&
+                chat.transportStatus.isConnected) ||
+            loaderCalls - readsBeforeLoss > 40,
+      );
+      final readsAtSettle = loaderCalls - readsBeforeLoss;
+      expect(
+        readsAtSettle,
+        lessThanOrEqualTo(4),
+        reason: 'an idle server bounds the transcript re-reads',
+      );
+      expect(chat.isStreaming, isFalse);
+      expect(chat.sending, isFalse);
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+      expect(chat.awaitingDurableTurnRecovery, isTrue);
+      expect(
+        chat.messages.where(
+          (message) =>
+              message['role'] == 'user' && message['content'] == prompt,
+        ),
+        hasLength(1),
+        reason: 'the prompt stays exactly once, never lost or duplicated',
+      );
+      expect(gateway.submitCalls, 1);
+
+      // Polling stopped for good.
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(loaderCalls - readsBeforeLoss, readsAtSettle);
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+    });
+  }
+
   test(
     'V5 client-owned turn keeps submitted-turn recovery after stream loss',
     () async {
