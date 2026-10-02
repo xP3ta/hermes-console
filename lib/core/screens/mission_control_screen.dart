@@ -268,6 +268,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Object? _loadFailure;
   bool _loading = true;
   bool _refreshing = false;
+
+  /// The running refresh is a quiet revalidation (see [_load]).
+  bool _quietRefresh = false;
   ActiveChatService? _activeChats;
   final Map<ActiveChat, StreamSubscription<ActiveChatEvent>>
   _liveSubscriptions = {};
@@ -363,8 +366,14 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     // instead of asking the server twice. It is a fresh read, so no extra
     // refresh follows.
     final inFlight = prewarm?.claim(widget.connection);
+    // A warm open revalidates quietly, like Desktop: the snapshot is the
+    // first frame and no header spinner announces the background read.
     unawaited(
-      _load(refresh: cached != null, reuse: cached == null ? inFlight : null),
+      _load(
+        refresh: cached != null,
+        quiet: cached != null,
+        reuse: cached == null ? inFlight : null,
+      ),
     );
   }
 
@@ -664,11 +673,15 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     }
   }
 
+  /// [quiet] keeps the header spinner off for a background revalidation of
+  /// what is already on screen; [_refreshing] still blocks overlapping reads.
   Future<void> _load({
     bool refresh = false,
+    bool quiet = false,
     Future<MissionBackendSnapshot>? reuse,
   }) async {
     final generation = ++_loadGeneration;
+    _quietRefresh = quiet && refresh && _snapshot != null;
     if (mounted) {
       setState(() {
         if (refresh && _snapshot != null) {
@@ -2667,7 +2680,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       shape: const CircleBorder(),
     );
     return [
-      if (_refreshing)
+      if (_refreshing && !_quietRefresh)
         const Padding(
           padding: EdgeInsets.all(14),
           child: SizedBox.square(
