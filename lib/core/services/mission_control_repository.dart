@@ -438,12 +438,55 @@ abstract interface class MissionHostedGroupsReadDataSource {
   });
 }
 
+/// Profiles and sessions read on their own, for a roster-only refresh.
+final class MissionRosterRead {
+  final List<AgentProfile> profiles;
+  final List<Session> sessions;
+  final MissionCapabilityState profilesCapability;
+  final MissionCapabilityState sessionsCapability;
+  final Object? profilesError;
+  final Object? sessionsError;
+
+  const MissionRosterRead({
+    required this.profiles,
+    required this.sessions,
+    required this.profilesCapability,
+    required this.sessionsCapability,
+    this.profilesError,
+    this.sessionsError,
+  });
+}
+
+/// Optional partial refresh driven by the Gateway's change events.
+///
+/// While [liveChangesHealthy] holds, Mission Control can skip its periodic
+/// full reload: `sessions.changed` refreshes only the roster
+/// ([loadRoster]) and rooms are re-read only when `groups.list` shows they
+/// moved or their last driver evidence was active ([refreshHostedGroups]).
+abstract interface class MissionLiveRefreshDataSource {
+  /// Global Gateway events (`sessions.changed`…); errors when the socket
+  /// drops. Null when this source has no live channel.
+  Stream<TuiGatewayEvent>? watchLiveChanges();
+
+  /// The socket is up and the backend announced `change_events`.
+  bool get liveChangesHealthy;
+
+  Future<MissionRosterRead> loadRoster();
+
+  /// [previous] with only the rooms that changed (or were active) re-read.
+  /// Throws when the capability generation moved: the caller must reload.
+  Future<HostedGroupsSnapshot> refreshHostedGroups(
+    HostedGroupsSnapshot previous,
+  );
+}
+
 final class MissionControlRepository
     implements
         MissionControlDataSource,
         MissionProfileAvatarDataSource,
         MissionHostedGroupsDataSource,
-        MissionHostedGroupsReadDataSource {
+        MissionHostedGroupsReadDataSource,
+        MissionLiveRefreshDataSource {
   final MissionProfilesLoader profilesLoader;
   final MissionSessionsLoader sessionsLoader;
   final MissionBoardLoader boardLoader;
@@ -451,6 +494,11 @@ final class MissionControlRepository
   final MissionProfileAvatarLoader? profileAvatarLoader;
   final MissionHostedGroupsGateway? hostedGroupsGateway;
   final void Function()? onClose;
+
+  /// Global Gateway events and their health (see
+  /// [MissionLiveRefreshDataSource]); both null without a live channel.
+  final Stream<TuiGatewayEvent> Function()? liveChanges;
+  final bool Function()? liveChangesAvailable;
   bool _closed = false;
   final Map<String, RoomLogCursor> _logCursors = {};
   final Map<String, HostedGroupLogPage> _logSeeds = {};
@@ -468,6 +516,8 @@ final class MissionControlRepository
     this.profileAvatarLoader,
     this.hostedGroupsGateway,
     this.onClose,
+    this.liveChanges,
+    this.liveChangesAvailable,
   });
 
   factory MissionControlRepository.forConnection(SavedConnection connection) {
@@ -503,6 +553,9 @@ final class MissionControlRepository
       kanbanEventsLoader: (since) => kanban.events(since: since),
       profileAvatarLoader: desktop.profileAvatar,
       hostedGroupsGateway: _TuiMissionHostedGroupsGateway(desktop),
+      liveChanges: () => desktop.events,
+      liveChangesAvailable: () =>
+          desktop.isConnected && desktop.changeEventsAvailable,
       onClose: () {
         lease.release();
         kanban.close();
@@ -559,6 +612,131 @@ final class MissionControlRepository
           : _capability(groupsResult),
       failures: failures,
       loadedAt: DateTime.now(),
+    );
+  }
+
+  @override
+  Stream<TuiGatewayEvent>? watchLiveChanges() {
+    if (_closed) throw StateError('MissionControlRepository is closed');
+    return liveChanges?.call();
+  }
+
+  @override
+  bool get liveChangesHealthy =>
+      !_closed &&
+      liveChanges != null &&
+      (liveChangesAvailable?.call() ?? false);
+
+  @override
+  Future<MissionRosterRead> loadRoster() async {
+    if (_closed) throw StateError('MissionControlRepository is closed');
+    final results = await Future.wait<Object>([
+      _capture(profilesLoader),
+      _capture(sessionsLoader),
+    ]);
+    final profiles = results[0] as _MissionLoadResult<List<AgentProfile>>;
+    final sessions = results[1] as _MissionLoadResult<List<Session>>;
+    return MissionRosterRead(
+      profiles: profiles.value ?? const [],
+      sessions: sessions.value ?? const [],
+      profilesCapability: _capability(profiles),
+      sessionsCapability: _capability(sessions),
+      profilesError: profiles.error,
+      sessionsError: sessions.error,
+    );
+  }
+
+  /// A room needs `groups.state` unless the list row proves it unchanged
+  /// and its last driver evidence was quiet: an active room is always
+  /// re-read so a finished turn never keeps showing as working.
+  static bool _roomMoved(
+    HostedGroupRoom listed,
+    HostedGroupRoom? previous,
+    RoomDriverStatus? driver,
+  ) =>
+      previous == null ||
+      !listed.latestSeqKnown ||
+      !previous.latestSeqKnown ||
+      listed.latestSeq != previous.latestSeq ||
+      listed.revision != previous.revision ||
+      listed.authorityGatewayId != previous.authorityGatewayId ||
+      listed.authorityEpoch != previous.authorityEpoch ||
+      driver == null ||
+      driver.running ||
+      driver.working ||
+      driver.blocked ||
+      driver.needsUser;
+
+  @override
+  Future<HostedGroupsSnapshot> refreshHostedGroups(
+    HostedGroupsSnapshot previous,
+  ) async {
+    if (_closed) throw StateError('MissionControlRepository is closed');
+    final gateway = hostedGroupsGateway;
+    final known = previous.capabilities;
+    if (gateway == null || known == null) {
+      throw StateError('hosted groups were not loaded');
+    }
+    final capabilities = await gateway.capabilities();
+    if (capabilities.generation != known.generation ||
+        !capabilities.hasSharedRoomSurface ||
+        previous.rooms.length != previous.logs.length) {
+      throw StateError('hosted groups capability changed');
+    }
+    final listed = await gateway.list(generation: capabilities.generation);
+    final previousIndex = {
+      for (var i = 0; i < previous.rooms.length; i++)
+        previous.rooms[i].roomId: i,
+    };
+    final stale = <String>[
+      for (final room in listed)
+        if (_roomMoved(room, switch (previousIndex[room.roomId]) {
+          final i? => previous.rooms[i],
+          null => null,
+        }, previous.driverStatuses[room.roomId]))
+          room.roomId,
+    ];
+    final listedIds = {for (final room in listed) room.roomId};
+    _logCursors.removeWhere((roomId, _) => !listedIds.contains(roomId));
+    final reads = await _readRooms(
+      gateway,
+      stale,
+      generation: capabilities.generation,
+      skipLogAtTip: true,
+    );
+    final readById = {
+      for (var i = 0; i < stale.length; i++) stale[i]: reads[i],
+    };
+    final states = <HostedGroupRoom>[];
+    final logs = <HostedGroupLogPage>[];
+    final driverStatuses = <String, RoomDriverStatus>{};
+    for (final listedRoom in listed) {
+      final read = readById[listedRoom.roomId];
+      if (read == null) {
+        final i = previousIndex[listedRoom.roomId]!;
+        states.add(previous.rooms[i]);
+        logs.add(previous.logs[i]);
+        if (previous.driverStatuses[listedRoom.roomId] case final status?) {
+          driverStatuses[listedRoom.roomId] = status;
+        }
+        continue;
+      }
+      final state = read.room;
+      if (state.roomId != listedRoom.roomId ||
+          state.revision < listedRoom.revision) {
+        throw const FormatException('incoherent hosted room state');
+      }
+      states.add(state);
+      logs.add(read.log);
+      if (read.driverStatus case final status?) {
+        driverStatuses[state.roomId] = status;
+      }
+    }
+    return HostedGroupsSnapshot(
+      capabilities: capabilities,
+      rooms: List.unmodifiable(states),
+      logs: List.unmodifiable(logs),
+      driverStatuses: Map.unmodifiable(driverStatuses),
     );
   }
 
@@ -619,6 +797,7 @@ final class MissionControlRepository
     MissionHostedGroupsGateway gateway,
     List<String> roomIds, {
     required int generation,
+    bool skipLogAtTip = false,
   }) async {
     final results = List<_RoomRead?>.filled(roomIds.length, null);
     var next = 0;
@@ -629,6 +808,7 @@ final class MissionControlRepository
           gateway,
           roomIds[index],
           generation: generation,
+          skipLogAtTip: skipLogAtTip,
         );
       }
     }

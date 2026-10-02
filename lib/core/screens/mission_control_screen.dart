@@ -333,6 +333,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _organizations = _organizationStore.load(widget.connection.id);
     WidgetsBinding.instance.addObserver(this);
     _scheduleRosterRefresh();
+    _watchLiveChanges();
     _snapshotCache =
         widget.snapshotCache ??
         (widget.dataSource == null ? MissionSnapshotCache.shared : null);
@@ -388,6 +389,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _disposed = true;
     _live.remove(this);
     _rosterTimer?.cancel();
+    _eventRefreshTimer?.cancel();
+    unawaited(_liveChangeSubscription?.cancel());
+    _liveChangeSubscription = null;
     _rosterSearchOpen.dispose();
     _statusRevision.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -440,17 +444,224 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   final _rosterSearchOpen = ValueNotifier<bool>(false);
 
   /// Roster refresh while visible (spec 070 plan: roster every 30 s).
+  ///
+  /// Without healthy live change events every tick is a full reload, as
+  /// before. With them (see [MissionLiveRefreshDataSource]) a tick only
+  /// refreshes the roster and the rooms that moved while something is shown
+  /// as active, and a full reload runs every [liveBackstopInterval].
   static const rosterRefreshInterval = Duration(seconds: 30);
+
+  /// Full reload backstop while change events are healthy.
+  static const liveBackstopInterval = Duration(seconds: 120);
+
+  /// Minimum gap between event-driven partial refreshes: `sessions.changed`
+  /// fires every 2 s during a turn, and a refresh per event would cost more
+  /// than the old 30 s reload. The first event after a quiet gap refreshes
+  /// at once; later ones coalesce into one trailing refresh.
+  static const liveEventRefreshGap = Duration(seconds: 30);
   Timer? _rosterTimer;
+
+  StreamSubscription<TuiGatewayEvent>? _liveChangeSubscription;
+
+  /// The live channel delivered no error since the last full reload. A
+  /// dropped socket loses events, so the screen polls until a full reload
+  /// (which reconnects) proves the stream again.
+  bool _liveChangesOk = false;
+  bool _partialInFlight = false;
+
+  /// A change event arrived while the screen was covered, paused or within
+  /// [liveEventRefreshGap] of the last partial refresh.
+  bool _liveChangeDirty = false;
+
+  /// The last applied snapshot showed activity ([_showsActivity]).
+  bool _activityPainted = false;
+
+  /// Roster ticks since the last full reload (the backstop counts these).
+  int _ticksSinceFullLoad = 0;
+
+  /// Running for [liveEventRefreshGap] after each partial refresh.
+  Timer? _eventRefreshTimer;
+
+  MissionLiveRefreshDataSource? get _liveSource {
+    final source = _dataSource;
+    return source is MissionLiveRefreshDataSource
+        ? source as MissionLiveRefreshDataSource
+        : null;
+  }
+
+  /// Kanban has its own stream; while it is reconnecting the board (and a
+  /// "running" task) is only refreshed by the full reload.
+  bool get _liveChangesHealthy =>
+      _liveChangesOk &&
+      _liveChangeSubscription != null &&
+      !(_kanbanReconnectTimer?.isActive ?? false) &&
+      (_liveSource?.liveChangesHealthy ?? false);
+
+  bool get _refreshAllowed =>
+      !_disposed &&
+      mounted &&
+      !_lifecyclePaused &&
+      ModalRoute.of(context)?.isCurrent != false;
 
   void _scheduleRosterRefresh() {
     _rosterTimer?.cancel();
     _rosterTimer = Timer.periodic(rosterRefreshInterval, (_) {
-      if (_disposed || !mounted || _lifecyclePaused) return;
-      if (ModalRoute.of(context)?.isCurrent == false) return;
-      if (_loading || _refreshing) return;
-      unawaited(_load(refresh: true));
+      if (!_refreshAllowed) return;
+      if (_loading || _refreshing || _partialInFlight) return;
+      if (!_liveChangesHealthy) {
+        unawaited(_load(refresh: true));
+        return;
+      }
+      _ticksSinceFullLoad++;
+      if (_ticksSinceFullLoad * rosterRefreshInterval.inSeconds >=
+          liveBackstopInterval.inSeconds) {
+        unawaited(_load(refresh: true));
+        return;
+      }
+      // Also once more after activity was last painted: a worker that
+      // just went stale must repaint as idle, never stay "working".
+      if (_liveChangeDirty || _activityPainted || _showsActivity()) {
+        unawaited(_refreshPartial());
+      }
     });
+  }
+
+  void _watchLiveChanges() {
+    final source = _liveSource;
+    if (source == null) return;
+    final Stream<TuiGatewayEvent>? events;
+    try {
+      events = source.watchLiveChanges();
+    } catch (_) {
+      return;
+    }
+    if (events == null) return;
+    _liveChangeSubscription = events.listen(
+      _onLiveChange,
+      onError: (Object _) {
+        _liveChangesOk = false;
+        _eventRefreshTimer?.cancel();
+        _eventRefreshTimer = null;
+      },
+    );
+  }
+
+  void _onLiveChange(TuiGatewayEvent event) {
+    if (event.type != 'sessions.changed') return;
+    if (!_liveChangesOk) {
+      // First event after a dropped socket: the stream is back but events
+      // were lost meanwhile, so reload everything now. Without
+      // `change_events` the 30 s tick stays in charge (no reload storm).
+      if (_refreshAllowed &&
+          !_loading &&
+          !_refreshing &&
+          (_liveSource?.liveChangesHealthy ?? false)) {
+        unawaited(_load(refresh: true));
+      }
+      return;
+    }
+    if (!_refreshAllowed ||
+        _eventRefreshTimer != null ||
+        _partialInFlight ||
+        _loading ||
+        _refreshing) {
+      // Read once the gap closes (or by the next tick / resume).
+      _liveChangeDirty = true;
+      return;
+    }
+    unawaited(_refreshPartial());
+  }
+
+  void _armEventRefreshGap() {
+    _eventRefreshTimer?.cancel();
+    _eventRefreshTimer = Timer(liveEventRefreshGap, () {
+      _eventRefreshTimer = null;
+      if (_refreshAllowed && _liveChangeDirty && _liveChangesHealthy) {
+        unawaited(_refreshPartial());
+      }
+    });
+  }
+
+  /// Anything on screen that a later server read could turn idle: such a
+  /// state must keep refreshing so it never stays stale.
+  bool _showsActivity() {
+    final snapshot = _snapshot;
+    if (snapshot == null) return false;
+    for (final status in snapshot.hostedGroups.driverStatuses.values) {
+      if (status.running || status.working || status.blocked) return true;
+      if (status.needsUser) return true;
+    }
+    final now = DateTime.now();
+    for (final profile in snapshot.profiles) {
+      if (BotPresence.workerIsFresh(profile.workerSession, now)) return true;
+    }
+    return false;
+  }
+
+  /// Roster (`profiles.list` + sessions) and only the rooms that moved,
+  /// merged into the shown snapshot. Kanban keeps its own event stream.
+  Future<void> _refreshPartial() async {
+    final source = _liveSource;
+    final previous = _snapshot;
+    if (source == null || previous == null || _partialInFlight) return;
+    if (_loading || _refreshing) return;
+    _partialInFlight = true;
+    _liveChangeDirty = false;
+    _armEventRefreshGap();
+    final generation = ++_loadGeneration;
+    final refreshRooms =
+        previous.hostedGroupsCapability == MissionCapabilityState.available &&
+        previous.hostedGroups.capabilities != null;
+    try {
+      final roomsFuture = refreshRooms
+          ? source.refreshHostedGroups(previous.hostedGroups)
+          : Future.value(previous.hostedGroups);
+      // Settle both before awaiting either, so a failed room read never
+      // surfaces as an unhandled error while the roster is pending.
+      final roomsResult = roomsFuture.then<Object>(
+        (value) => value,
+        onError: (Object error) => _PartialRoomsFailure(error),
+      );
+      final roster = await source.loadRoster();
+      final rooms = await roomsResult;
+      if (!mounted || generation != _loadGeneration) return;
+      if (rooms is _PartialRoomsFailure) {
+        // Capability generation, authority or coherence moved: only a full
+        // reload may decide what the rooms show now.
+        _partialInFlight = false;
+        unawaited(_load(refresh: true));
+        return;
+      }
+      final failures = {...previous.failures}
+        ..remove('profiles')
+        ..remove('sessions');
+      if (roster.profilesError case final error?) failures['profiles'] = error;
+      if (roster.sessionsError case final error?) failures['sessions'] = error;
+      final snapshot = _retainLastGoodSources(
+        MissionBackendSnapshot(
+          profiles: roster.profiles,
+          sessions: roster.sessions,
+          board: previous.board,
+          profilesCapability: roster.profilesCapability,
+          sessionsCapability: roster.sessionsCapability,
+          kanbanCapability: previous.kanbanCapability,
+          hostedGroups: rooms as HostedGroupsSnapshot,
+          hostedGroupsCapability: previous.hostedGroupsCapability,
+          failures: failures,
+          loadedAt: DateTime.now(),
+        ),
+      );
+      setState(() => _snapshot = snapshot);
+      _activityPainted = _showsActivity();
+      _snapshotCache?.write(widget.connection, snapshot);
+      _statusRevision.value++;
+      _syncLiveSubscriptions();
+    } catch (_) {
+      // A failed partial read keeps what is shown; the next tick (or the
+      // backstop) retries with a full reload if the stream is unhealthy.
+    } finally {
+      _partialInFlight = false;
+    }
   }
 
   Future<void> _load({
@@ -484,6 +695,14 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         _loading = false;
         _refreshing = false;
       });
+      _ticksSinceFullLoad = 0;
+      _liveChangeDirty = false;
+      _activityPainted = _showsActivity();
+      // A reload over a healthy live socket makes the event stream whole
+      // again; over a dropped one the screen keeps polling.
+      _liveChangesOk =
+          _liveChangeSubscription != null &&
+          (_liveSource?.liveChangesHealthy ?? false);
       _snapshotCache?.write(widget.connection, snapshot);
       _statusRevision.value++;
       _kanbanEventCursor = incoming.board?.latestEventId ?? _kanbanEventCursor;
@@ -4175,4 +4394,10 @@ Future<T> _kickRoomWatchAfter<T>(Future<T> send) async {
   final result = await send;
   unawaited(BackgroundListener.kickRoomWatch());
   return result;
+}
+
+/// A partial room refresh that must fall back to a full reload.
+final class _PartialRoomsFailure {
+  final Object error;
+  const _PartialRoomsFailure(this.error);
 }
