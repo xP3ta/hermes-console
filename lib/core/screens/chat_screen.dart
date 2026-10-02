@@ -4649,6 +4649,8 @@ class _ChatScreenState extends State<ChatScreen>
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
       _chatSub = _chat.changes.listen(_onChatEvent);
       _chat.transportStatusListenable.addListener(_syncTransportVisibility);
+      _lastObservesRemoteTurnAfterReconnect =
+          _chat.observesRemoteTurnAfterReconnect;
       _syncTransportVisibility();
       _transportVisibility.addListener(_onTransportVisibilityChanged);
       _seenDurableSessionsChangeRevision = _chat.durableSessionsChangeRevision;
@@ -5802,7 +5804,17 @@ class _ChatScreenState extends State<ChatScreen>
       authRequired: _chat.dashboardAuthRequired,
       appForeground: _appInForeground,
     );
+    // cq1215: the pill headline of a post-cut viewer follows the transport
+    // (connecting vs. watching a running turn). A reconnect inside the grace
+    // window changes no visibility edge, so repaint on this edge too.
+    final observing = _chat.observesRemoteTurnAfterReconnect;
+    if (observing != _lastObservesRemoteTurnAfterReconnect) {
+      _lastObservesRemoteTurnAfterReconnect = observing;
+      if (mounted) setState(() {});
+    }
   }
+
+  bool _lastObservesRemoteTurnAfterReconnect = false;
 
   void _onTransportVisibilityChanged() {
     if (_disposed || !mounted) return;
@@ -10685,6 +10697,11 @@ class _ChatScreenState extends State<ChatScreen>
     // as a pill out of sync with its own panel; between steps the agent is
     // thinking, as the list and Home say.
     final activityHeadline = switch (_pipelineState) {
+      // cq1215: a post-cut viewer stays `connecting` for the rest of the
+      // turn; with the socket back it is watching a running turn.
+      ChatPipelineState.connecting
+          when _chat.observesRemoteTurnAfterReconnect =>
+        s.ss1215StatusWorking,
       ChatPipelineState.connecting => s.chaPipelineConnecting,
       ChatPipelineState.streaming => s.chaPipelineStreaming,
       _ => s.chaPipelineThinking,
@@ -15122,6 +15139,9 @@ class _ChatScreenState extends State<ChatScreen>
     }
     if (_turnWaitsForUser) return HermesSparkMood.waiting;
     return switch (_pipelineState) {
+      ChatPipelineState.connecting
+          when _chat.observesRemoteTurnAfterReconnect =>
+        HermesSparkMood.thinking,
       ChatPipelineState.connecting => HermesSparkMood.connecting,
       ChatPipelineState.waiting => HermesSparkMood.waiting,
       _ => HermesSparkMood.thinking,

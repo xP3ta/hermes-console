@@ -921,6 +921,35 @@ class _DroppedTransportGateway extends _UiRewindGateway
   void commitRecoveryRuntime(String runtimeSessionId) {}
 }
 
+/// cq1215: a turn already running on the server when the chat opens (another
+/// surface or an app restart), so after a socket loss the chat is a viewer.
+class _RunningViewerDropGateway extends _DroppedTransportGateway {
+  DesktopSessionSnapshot _running(String storedSessionId) =>
+      DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-ui-test',
+        storedSessionId: storedSessionId,
+        created: false,
+        running: true,
+        status: 'working',
+      );
+
+  @override
+  Future<DesktopSessionSnapshot> resumeExisting(
+    String storedSessionId, {
+    String profile = '',
+    bool omitMessages = false,
+    bool deferHistory = false,
+  }) async {
+    resumeExistingCalls += 1;
+    return _running(storedSessionId);
+  }
+
+  void reconnect(String storedSessionId) {
+    connected = true;
+    recoveryGate.complete(_running(storedSessionId));
+  }
+}
+
 class _SequencedSuccessorGateway extends _UiRewindGateway {
   final Object producer = Object();
   int sequence = 0;
@@ -3341,6 +3370,65 @@ void main() {
         reason: 'an outage longer than the grace is still shown',
       );
       expect(mood(), HermesSparkMood.offline);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      chat.dispose();
+      await tester.pump(const Duration(seconds: 20));
+    },
+  );
+
+  testWidgets(
+    'a viewer back on a live socket shows the running turn, not Conectando',
+    (tester) async {
+      final gateway = _RunningViewerDropGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-viewer-reconnected'),
+        desktopGateway: gateway,
+        initialStoredSessionId: 'sess-viewer-reconnected',
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(chat.isStreaming, isTrue);
+
+      String? headline() => tester
+          .widget<ActivityPillHost>(
+            find.descendant(
+              of: find.byKey(const ValueKey('chat-activity-pill')),
+              matching: find.byType(ActivityPillHost),
+            ),
+          )
+          .snapshot
+          .headline;
+
+      // The turn keeps running on the server for the whole test.
+      gateway.activeSessionList = DesktopActiveSessionList(
+        sessions: [
+          DesktopActiveSession(
+            runtimeSessionId: 'runtime-ui-test',
+            storedSessionId: chat.serverSessionId,
+            status: 'working',
+          ),
+        ],
+      );
+      gateway.drop();
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(chat.state, ChatPipelineState.connecting);
+      expect(chat.transportStatus.isConnected, isFalse);
+      expect(headline(), 'Conectando…');
+
+      gateway.reconnect(chat.serverSessionId);
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      await tester.pump(const Duration(seconds: 3));
+      // The viewer stays unbound until the turn ends, but it is connected.
+      expect(chat.state, ChatPipelineState.connecting);
+      expect(chat.transportStatus.isConnected, isTrue);
+      expect(chat.observesRemoteTurnAfterReconnect, isTrue);
+      expect(headline(), 'Trabajando…');
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       chat.dispose();

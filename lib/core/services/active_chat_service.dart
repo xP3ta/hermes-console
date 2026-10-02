@@ -5140,6 +5140,16 @@ class ActiveChat {
       !_runTerminal &&
       !_clientSubmittedCurrentTurn;
 
+  /// A viewer that lost its socket mid-turn stays `connecting` (unbound)
+  /// until the roster proves the turn ended, which can take the whole turn.
+  /// Once the transport is back that state is not a connection attempt: the
+  /// turn is running on the server and surfaces must say so, not
+  /// «Conectando…».
+  bool get observesRemoteTurnAfterReconnect =>
+      state == ChatPipelineState.connecting &&
+      _viewerTurnConvergenceIsCurrent &&
+      _transportStatus.isConnected;
+
   PassiveActivityAggregate get passiveActivityAggregate {
     if (_passiveDurableToolActivity.isEmpty) {
       return PassiveActivityAggregate.empty;

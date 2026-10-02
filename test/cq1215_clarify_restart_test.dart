@@ -291,4 +291,34 @@ void main() {
     expect(chat.pendingInteractivePrompt?.key.requestId, 'srq-restart00003');
     expect(chat.openRequestRecoveryFailed, isFalse);
   });
+
+  test('a viewer that reattaches to a working turn after a socket drop '
+      'is observing a running turn, not connecting', () async {
+    gateway.resumeResult = (_) => {
+      'session_id': 'live-s',
+      'stored_session_id': 'stored-1',
+      'running': true,
+      'status': 'working',
+    };
+    final client = _clientFor(gateway);
+    final chat = _coldChat(gateway, client);
+    await chat.loadMessages();
+    await _waitUntil(() => chat.desktopRuntimeSessionId == 'live-s');
+    expect(chat.isStreaming, isTrue);
+    expect(chat.observesRemoteTurnAfterReconnect, isFalse);
+
+    final resumesBefore = gateway.rpcCalls('session.resume').length;
+    await gateway.sockets.single.close(1001);
+    // While the socket is down the chat really is reconnecting.
+    await _waitUntil(() => !chat.transportStatus.isConnected);
+    expect(chat.observesRemoteTurnAfterReconnect, isFalse);
+    await _waitUntil(
+      () => gateway.rpcCalls('session.resume').length > resumesBefore,
+      timeout: const Duration(seconds: 20),
+    );
+    await _waitUntil(() => chat.transportStatus.isConnected);
+    // Still unbound (the turn has not ended), but the transport is back.
+    expect(chat.state, ChatPipelineState.connecting);
+    expect(chat.observesRemoteTurnAfterReconnect, isTrue);
+  });
 }
