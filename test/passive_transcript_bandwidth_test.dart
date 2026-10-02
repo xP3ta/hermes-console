@@ -61,6 +61,9 @@ final class _TranscriptServer {
   /// When true, full pages (not the one-row probe) come back with every row
   /// malformed, like a proxy truncating or rewriting a large body.
   bool corruptFullPages = false;
+
+  /// When true, every `/messages` request fails like a transient 503.
+  bool failMessages = false;
   final List<Map<String, Object?>> _rows = [];
   final requests = <Uri>[];
   var bytes = 0;
@@ -116,6 +119,9 @@ final class _TranscriptServer {
     final path = request.url.path;
     if (path != '/api/sessions/$_storedId/messages') {
       return http.Response('{"error":"not found"}', 404);
+    }
+    if (failMessages) {
+      return http.Response('{"error":"unavailable"}', 503);
     }
     final query = request.url.queryParameters;
     if (!honoursLimit) {
@@ -927,4 +933,111 @@ void main() {
       await _dispose(tester, fixture);
     },
   );
+
+  for (final failure in ['rest-fails', 'leaves-before-read']) {
+    testWidgets('re1215: an unseen store change survives a re-entry that did not '
+        'reconcile it ($failure)', (tester) async {
+      final server = _TranscriptServer();
+      final fixture = await _mount(tester, server, attachRuntime: true);
+      await _idle(tester, const Duration(seconds: 40));
+      final navigator = Navigator.of(tester.element(find.byType(ChatScreen)));
+      Future<void> enter() async {
+        navigator.push(
+          PageRouteBuilder<void>(
+            transitionDuration: Duration.zero,
+            reverseTransitionDuration: Duration.zero,
+            pageBuilder: (_, _, _) => ChatScreen(
+              connection: _connection,
+              session: _session,
+              initialStoredSessionId: _storedId,
+            ),
+          ),
+        );
+        await tester.pump();
+      }
+
+      Future<void> leave() async {
+        navigator.pop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byType(ChatScreen), findsNothing);
+      }
+
+      // A turn the user walks away from keeps the chat alive in the service.
+      final chat = fixture.chat;
+      expect(
+        await chat.send(
+          fullText: 'Vale hazlo',
+          model: 'hermes-agent',
+          history: chat.buildHistory(),
+        ),
+        isTrue,
+      );
+      await tester.pump();
+      await leave();
+      await _idle(tester, const Duration(seconds: 5));
+      server.append('user', content: 'Vale hazlo');
+      server.append('assistant', content: 'Respuesta final');
+      fixture.gateway.emit(
+        'message.complete',
+        payload: const {'text': 'Respuesta final'},
+      );
+      await _idle(tester, const Duration(seconds: 3));
+      // Away: Desktop goes on and Hermes broadcasts the store change.
+      server.append('user', content: 'Sigue desde Desktop');
+      server.append('assistant', content: 'Nueva respuesta en Desktop');
+      fixture.gateway.emit('sessions.changed');
+      await _idle(tester, const Duration(seconds: 6));
+      expect(identical(fixture0(fixture.activeChats), chat), isTrue);
+
+      // First re-entry does not reconcile: REST fails, or the user leaves
+      // again before the slow read can land.
+      if (failure == 'rest-fails') {
+        server.failMessages = true;
+      } else {
+        server.latency = const Duration(seconds: 3);
+      }
+      await enter();
+      await tester.pump(const Duration(milliseconds: 500));
+      await leave();
+      await _idle(tester, const Duration(seconds: 4));
+      // ignore: avoid_print
+      print(
+        '[re1215] after early leave: alive=${identical(fixture0(fixture.activeChats), chat)}',
+      );
+      server
+        ..failMessages = false
+        ..latency = Duration.zero;
+      if (identical(fixture0(fixture.activeChats), chat)) {
+        expect(
+          chat.messages.map((m) => m['content']),
+          isNot(contains('Nueva respuesta en Desktop')),
+        );
+      }
+
+      // Second re-entry: the pending change is read at once, well before
+      // any 30 s backstop or 5 s retry could pick it up.
+      final readsBefore = server.messageReads;
+      await enter();
+      await _idle(tester, const Duration(seconds: 2));
+      final contents = fixture0(
+        fixture.activeChats,
+      )!.messages.map((m) => m['content']).toList();
+      // ignore: avoid_print
+      print(
+        '[re1215] unseen change after $failure: '
+        'reads=${server.messageReads - readsBefore} '
+        'top=${contents.take(2).map((c) => '$c'.split(' ').take(2).join(' ')).toList()}',
+      );
+      expect(server.messageReads - readsBefore, greaterThan(0));
+      expect(contents.first, 'Nueva respuesta en Desktop');
+      expect(contents[1], 'Sigue desde Desktop');
+      expect(contents.where((c) => c == 'Sigue desde Desktop'), hasLength(1));
+      final ids = fixture0(
+        fixture.activeChats,
+      )!.messages.map((m) => m['id']).toList();
+      expect(ids.toSet(), hasLength(ids.length));
+      await _dispose(tester, fixture);
+    });
+  }
 }

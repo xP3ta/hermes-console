@@ -4728,11 +4728,12 @@ class _ChatScreenState extends State<ChatScreen>
       _syncTransportVisibility();
       _transportVisibility.addListener(_onTransportVisibilityChanged);
       _seenDurableSessionsChangeRevision = _chat.durableSessionsChangeRevision;
+      // The viewed mark only advances after a successful passive read (see
+      // _refreshPassiveTranscript): a screen that leaves before its read
+      // lands, or whose read fails, leaves the change unseen for the next.
       final unseenDurableStoreChange =
           _chat.durableSessionsChangeRevision !=
           _chat.viewedDurableSessionsChangeRevision;
-      _chat.viewedDurableSessionsChangeRevision =
-          _seenDurableSessionsChangeRevision;
       _syncStopConfirmationVisibility();
       // Al entrar sobre un turno que ya venía corriendo (volver a la pantalla,
       // resume en frío) no llega ningún evento nuevo hasta el siguiente frame
@@ -5288,6 +5289,9 @@ class _ChatScreenState extends State<ChatScreen>
     // without this bypass such a reply would sit unread until an unrelated
     // event happened to trigger a passive read.
     final durableChangeConfirmed = _durableTranscriptReadPending;
+    // Store changes up to this revision were broadcast before this read
+    // started, so a read that succeeds has reconciled them.
+    final durableRevisionAtStart = _chat.durableSessionsChangeRevision;
     final ownedLiveTurn = _chat.remoteSurfaceOwnsLiveTurn;
     await _chat.refreshPassiveRemoteActivity();
     if (!_canProbePassiveRemoteActivity) return true;
@@ -5316,6 +5320,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (!_canProbePassiveRemoteActivity) return true;
     if (probe != null && probe.unchanged && !_chat.isStreaming) {
       _durableTranscriptReadPending = false;
+      _markDurableRevisionViewed(durableRevisionAtStart);
       return true;
     }
     final fetched = await _fetchMessages(passiveOnly: true);
@@ -5324,8 +5329,22 @@ class _ChatScreenState extends State<ChatScreen>
     // failure (disconnect/network blip) must keep bypassing the runtime-
     // ownership gate on the reader's own retry, or the signal would be lost
     // the moment the first attempt fails.
-    if (fetched) _durableTranscriptReadPending = false;
+    if (fetched) {
+      _durableTranscriptReadPending = false;
+      _markDurableRevisionViewed(durableRevisionAtStart);
+    }
     return fetched;
+  }
+
+  /// re1215: record on the chat, which outlives this screen, that the
+  /// durable store has been reconciled up to [revision]. Only a successful
+  /// read calls this, so a change a screen never read stays pending for the
+  /// next screen that binds the chat.
+  void _markDurableRevisionViewed(int revision) {
+    if (_disposed || !_chatBound) return;
+    if (revision > _chat.viewedDurableSessionsChangeRevision) {
+      _chat.viewedDurableSessionsChangeRevision = revision;
+    }
   }
 
   void _invalidatePassiveMessageRefresh() {
@@ -5961,7 +5980,6 @@ class _ChatScreenState extends State<ChatScreen>
         durableSessionsChangeRevision != _seenDurableSessionsChangeRevision;
     if (sessionsChangedTick) {
       _seenDurableSessionsChangeRevision = durableSessionsChangeRevision;
-      _chat.viewedDurableSessionsChangeRevision = durableSessionsChangeRevision;
       _durableTranscriptReadPending = true;
     }
     // re1215: the `sessionInfo` that only carries a `sessions.changed` tick
