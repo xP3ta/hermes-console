@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+// Transitive via flutter_test; not added to pubspec to keep the lockfile.
+// ignore: depend_on_referenced_packages
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -4776,75 +4779,135 @@ void main() {
     'async_delegation_complete',
   ]) {
     test('rl1215 a running server never lets an editorial tail settle the '
-        'turn ($editorialKind)', () async {
-      const storedId = 'session-rl1215-running';
-      const prompt = 'genera las poses que faltan';
-      const partialAnswer = 'respuesta parcial antes del evento';
-      final gateway = _NonIdempotentLifecycleGateway(storedId);
-      var loaderCalls = 0;
-      var tailVisible = false;
-      final chat = _recoverableChat(
-        'rl1215-running-$editorialKind',
-        gateway,
-        desktopRecoveryBackoff: const [
-          Duration.zero,
-          Duration(milliseconds: 1),
-        ],
-        desktopRecoveryRandom: () => 1.0,
-        storedMessageLoader: (_, _) async {
-          loaderCalls++;
-          return [
-            const {'id': 201, 'role': 'user', 'content': prompt},
-            if (tailVisible) ...[
-              const {'id': 202, 'role': 'assistant', 'content': partialAnswer},
-              {
-                'id': 203,
-                'role': 'user',
-                'display_kind': editorialKind,
-                'content': '[IMPORTANT: background work finished]',
-              },
-              const {
-                'id': 204,
-                'role': 'assistant',
-                'content': 'respuesta al evento',
-              },
-            ],
-          ];
-        },
-      );
-      addTearDown(chat.dispose);
+        'turn ($editorialKind)', () {
+      fakeAsync((async) {
+        const storedId = 'session-rl1215-running';
+        const prompt = 'genera las poses que faltan';
+        const partialAnswer = 'respuesta parcial antes del evento';
+        final gateway = _NonIdempotentLifecycleGateway(storedId);
+        var loaderCalls = 0;
+        var tailVisible = false;
+        final chat = _recoverableChat(
+          'rl1215-running-$editorialKind',
+          gateway,
+          desktopRecoveryBackoff: const [
+            Duration.zero,
+            Duration(milliseconds: 1),
+          ],
+          desktopRecoveryRandom: () => 1.0,
+          storedMessageLoader: (_, _) async {
+            loaderCalls++;
+            return [
+              const {'id': 201, 'role': 'user', 'content': prompt},
+              if (tailVisible) ...[
+                const {
+                  'id': 202,
+                  'role': 'assistant',
+                  'content': partialAnswer,
+                },
+                {
+                  'id': 203,
+                  'role': 'user',
+                  'display_kind': editorialKind,
+                  'content': '[IMPORTANT: background work finished]',
+                },
+                const {
+                  'id': 204,
+                  'role': 'assistant',
+                  'content': 'respuesta al evento',
+                },
+              ],
+            ];
+          },
+        );
 
-      await chat.send(
-        fullText: prompt,
-        model: 'hermes-agent',
-        history: const [],
-      );
-      tailVisible = true;
-      gateway.recoverySnapshot = const DesktopSessionSnapshot(
-        runtimeSessionId: 'runtime-rl1215-running',
-        storedSessionId: storedId,
-        created: false,
-        messagesProvided: false,
-        running: true,
-        status: 'running',
-      );
-      gateway.failWith(const SocketException('Connection attempt cancelled'));
+        // Every change is checked against the server state of that moment,
+        // so a wrong adoption is caught whenever it lands, however late.
+        var serverRunning = true;
+        final completedWhileRunning = <int>[];
+        var completedAfterIdleSnapshot = false;
+        var resumesAtIdle = -1;
+        final sub = chat.changes.listen((_) {
+          if (chat.state != ChatPipelineState.completed) return;
+          if (serverRunning) completedWhileRunning.add(loaderCalls);
+          if (!serverRunning && gateway.resumeExistingCalls > resumesAtIdle) {
+            completedAfterIdleSnapshot = true;
+          }
+        });
 
-      await _waitUntil(() => loaderCalls >= 1);
-      await Future<void>.delayed(const Duration(milliseconds: 60));
+        void settle(bool Function() done, String what) {
+          for (var step = 0; step < 2000 && !done(); step++) {
+            async.elapse(const Duration(milliseconds: 10));
+          }
+          expect(done(), isTrue, reason: what);
+        }
 
-      expect(loaderCalls, greaterThanOrEqualTo(1));
-      expect(
-        chat.state,
-        isNot(ChatPipelineState.completed),
-        reason: 'an editorial tail must not settle a turn the server runs',
-      );
-      expect(
-        chat.messages.where((m) => m['content'] == partialAnswer),
-        isEmpty,
-        reason: 'the durable tail must not be adopted as authoritative',
-      );
-      expect(gateway.submitCalls, 1);
+        chat.send(fullText: prompt, model: 'hermes-agent', history: const []);
+        async.flushMicrotasks();
+        tailVisible = true;
+        gateway.recoverySnapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-rl1215-running',
+          storedSessionId: storedId,
+          created: false,
+          messagesProvided: false,
+          running: true,
+          status: 'running',
+        );
+
+        // Three losses while the server keeps running: each runs the
+        // pre-snapshot adoption attempt and reads a fresh running snapshot.
+        for (var cycle = 1; cycle <= 3; cycle++) {
+          final readsBefore = loaderCalls;
+          final resumesBefore = gateway.resumeExistingCalls;
+          gateway.failWith(
+            const SocketException('Connection attempt cancelled'),
+          );
+          settle(
+            () =>
+                loaderCalls > readsBefore &&
+                gateway.resumeExistingCalls > resumesBefore &&
+                chat.transportStatus.isConnected,
+            'cycle $cycle recovered on a running snapshot',
+          );
+        }
+        // The server keeps running for a long while; nothing may settle it.
+        async.elapse(const Duration(minutes: 10));
+        expect(completedWhileRunning, isEmpty);
+        expect(chat.state, isNot(ChatPipelineState.completed));
+        expect(
+          chat.messages.where((m) => m['content'] == partialAnswer),
+          isEmpty,
+          reason: 'the durable tail must not be adopted while running',
+        );
+
+        // Only an explicit idle snapshot may settle the turn.
+        serverRunning = false;
+        resumesAtIdle = gateway.resumeExistingCalls;
+        gateway.recoverySnapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-rl1215-idle',
+          storedSessionId: storedId,
+          created: false,
+          messagesProvided: false,
+          running: false,
+          status: 'idle',
+        );
+        gateway.failWith(const SocketException('Connection attempt cancelled'));
+        settle(
+          () => chat.state == ChatPipelineState.completed,
+          'the idle snapshot settles the turn',
+        );
+        expect(completedWhileRunning, isEmpty);
+        expect(completedAfterIdleSnapshot, isTrue);
+        expect(
+          chat.messages.where((m) => m['content'] == partialAnswer),
+          hasLength(1),
+        );
+        expect(gateway.submitCalls, 1);
+
+        sub.cancel();
+        chat.dispose();
+        async.flushTimers();
+      });
     });
   }
 
