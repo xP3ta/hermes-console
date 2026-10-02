@@ -5425,7 +5425,7 @@ class _ChatScreenState extends State<ChatScreen>
       turnActive: turnActive,
       tasksActive: turnActive || _chat.remoteSurfaceOwnsLiveTurn,
       turnStartedAt: turnActive
-          ? (_turnActivityStartedAt ?? _chat.desktopTurnStartedAt)
+          ? (_chat.turnClockOrigin ?? _turnActivityStartedAt)
           : null,
       headline: turnActive ? _traceHeadline() : null,
       waitingForUser: turnActive && (_turnWaitsForUser || _chat.needsInput),
@@ -5456,6 +5456,9 @@ class _ChatScreenState extends State<ChatScreen>
     return ActivitySnapshot(
       turnActive: true,
       tasksActive: true,
+      // ps1215: the remembered turn start keeps the timer counting from the
+      // real start on reopen instead of showing no timer (or 0:00).
+      turnStartedAt: _chat.provisionalTurnStartedAt,
       headline: switch (status.phase) {
         SessionLivePhase.responding => s.chaPipelineStreaming,
         SessionLivePhase.thinking => s.chaPipelineThinking,
@@ -5685,7 +5688,7 @@ class _ChatScreenState extends State<ChatScreen>
   bool get _turnActivityPillRevealed {
     final startedAt = _turnActivityStartedAt;
     if (!_turnLive || startedAt == null) return false;
-    return DateTime.now().difference(startedAt) >= const Duration(seconds: 2);
+    return _chat.wallNow().difference(startedAt) >= const Duration(seconds: 2);
   }
 
   void _syncTurnActivityClock() {
@@ -5693,12 +5696,12 @@ class _ChatScreenState extends State<ChatScreen>
       // Un solo origen por turno: los tics posteriores no deben reiniciarlo o
       // el contador volvería a cero en cada herramienta.
       //
-      // Deliberadamente local y no `desktopTurnStartedAt`: ese campo pertenece
-      // al turno del runtime remoto y sobrevive a la reconciliación, así que
-      // usarlo podía pintar un contador ya en marcha (o directamente de otro
-      // turno). Tras un resume en frío esto se queda corto, lo que subestima la
-      // espera — nunca la exagera, que es el único error que alarmaría.
-      _turnActivityStartedAt ??= DateTime.now();
+      // ps1215: el origen vive en el ActiveChat, que sobrevive a salir del
+      // chat; esta pantalla solo lo lee. Antes era un campo de la pantalla y
+      // volver a entrar en un turno en marcha reiniciaba el contador a 0:00.
+      // El chat usa el inicio real del turno del gateway cuando lo conoce
+      // (snapshot de resume, `message.start`); al terminar el turno lo borra.
+      _turnActivityStartedAt = _chat.anchorTurnClock();
       return;
     }
     _turnActivityStartedAt = null;
@@ -11666,6 +11669,9 @@ class _ChatScreenState extends State<ChatScreen>
                                               snapshot:
                                                   _buildActivitySnapshot(),
                                               actions: _buildActivityActions(),
+                                              // ps1215: the same clock the
+                                              // chat measures the turn with.
+                                              clock: _chat.wallNow,
                                               suspended: _slashPaletteVisible,
                                             ),
                                             KeyedSubtree(

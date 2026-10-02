@@ -5057,6 +5057,36 @@ class ActiveChat {
 
   /// Inicio del turno visible (equivalente a turnStartedAt en Desktop).
   DateTime? get desktopTurnStartedAt => _desktopTurnStartedAt;
+
+  /// ps1215: origin of the live turn's elapsed clock. It lives here, not in
+  /// the screen, so leaving and reopening a running chat keeps counting from
+  /// the turn start instead of from the reopen.
+  DateTime? _turnClockOrigin;
+
+  /// The wall clock this chat measures turns with (injectable in tests).
+  DateTime wallNow() => DateTime.fromMillisecondsSinceEpoch(_wallClockMs());
+
+  /// Start of the live turn for the pill timer, or null when no turn runs:
+  /// the earlier of the origin this chat fixed and the gateway's turn start.
+  /// A local send clears the gateway start and `message.start` sets it after
+  /// the local origin, so a finished turn's start never leaks into a new one.
+  DateTime? get turnClockOrigin {
+    if (!isStreaming) return null;
+    final local = _turnClockOrigin;
+    final server = _desktopTurnStartedAt;
+    if (server == null) return local;
+    if (local == null || server.isBefore(local)) return server;
+    return local;
+  }
+
+  /// Fixes the origin of a turn that is already running (opening the chat
+  /// mid-turn, a resume): the gateway's start when known, otherwise now.
+  DateTime? anchorTurnClock() {
+    if (!isStreaming) return null;
+    return _turnClockOrigin =
+        turnClockOrigin ?? _provisionalTurnStartedAt ?? wallNow();
+  }
+
   bool get hasDesktopTransport => _desktopGateway != null;
   bool get hasDesktopRuntime => _desktopRuntimeSessionId != null;
   bool get resumeReconciliationInFlight =>
@@ -6414,11 +6444,24 @@ class ActiveChat {
 
   /// Seeds [liveStatus] with a provisional value (from the roster and the
   /// last visit) until the gateway answers. Ignored once real state exists.
-  void seedProvisionalLiveStatus(SessionLiveStatus status) {
+  void seedProvisionalLiveStatus(
+    SessionLiveStatus status, {
+    DateTime? turnStartedAt,
+  }) {
     if (_disposed || _provisionalLiveSettled || isStreaming) return;
     if (!status.isLive) return;
     _provisionalLiveStatus = status.asProvisional();
+    _provisionalTurnStartedAt = status.turnLive ? turnStartedAt : null;
   }
+
+  /// ps1215: start of the turn the remembered visit saw running. Shown by
+  /// the provisional pill and used as the clock origin when the gateway
+  /// does not report its own turn start.
+  DateTime? _provisionalTurnStartedAt;
+
+  /// The remembered turn start, while the provisional status stands.
+  DateTime? get provisionalTurnStartedAt =>
+      provisionalLiveStatus == null ? null : _provisionalTurnStartedAt;
 
   /// Retires the provisional status for good: the gateway answered (a
   /// snapshot, a live event) or the load ended without one. Notifies when a
@@ -8821,6 +8864,18 @@ class ActiveChat {
         e == ActiveChatEvent.error ||
         e == ActiveChatEvent.cancelled) {
       _lastTerminalAt = DateTime.now().toUtc();
+    }
+    // ps1215: a new turn restarts the clock; a finished one drops it.
+    if (e == ActiveChatEvent.started ||
+        e == ActiveChatEvent.done ||
+        e == ActiveChatEvent.error ||
+        e == ActiveChatEvent.cancelled) {
+      _provisionalTurnStartedAt = null;
+    }
+    if (!isStreaming) {
+      _turnClockOrigin = null;
+    } else if (e == ActiveChatEvent.started) {
+      _turnClockOrigin = wallNow();
     }
     switch (e) {
       case ActiveChatEvent.started:
@@ -20083,7 +20138,7 @@ class ActiveChat {
     switch (event.type) {
       case 'message.start':
         _clearDesktopCompactingIndicator();
-        _desktopTurnStartedAt = DateTime.now();
+        _desktopTurnStartedAt = wallNow();
         state = ChatPipelineState.waiting;
         _emit(ActiveChatEvent.waiting);
       case 'reasoning.delta':
@@ -20473,7 +20528,7 @@ class ActiveChat {
     var turnTimingChanged = false;
     if (parsed.running == true && isStreaming) {
       if (_desktopTurnStartedAt == null) {
-        _desktopTurnStartedAt = DateTime.now();
+        _desktopTurnStartedAt = wallNow();
         turnTimingChanged = true;
       }
     }
@@ -27718,7 +27773,12 @@ class ActiveChatService {
   /// answers. Bounded; never persisted.
   final LinkedHashMap<
     String,
-    ({SessionLiveStatus status, AgentTaskList? tasks, DateTime at})
+    ({
+      SessionLiveStatus status,
+      AgentTaskList? tasks,
+      DateTime at,
+      DateTime? turnStartedAt,
+    })
   >
   _rememberedLiveStatus = LinkedHashMap();
   static const int _rememberedLiveStatusLimit = 16;
@@ -28772,7 +28832,12 @@ class ActiveChatService {
       profile: owner,
       sessionIds: initialTombstoneSessionIds,
     );
-    if (provisional != null) chat.seedProvisionalLiveStatus(provisional);
+    if (provisional != null) {
+      chat.seedProvisionalLiveStatus(
+        provisional.status,
+        turnStartedAt: provisional.turnStartedAt,
+      );
+    }
     _chats[key] = chat;
     _publishLiveStatus(key, chat);
     final seed =
@@ -29177,6 +29242,7 @@ class ActiveChatService {
       status: status,
       tasks: tasks.hasOpen ? tasks : null,
       at: DateTime.now(),
+      turnStartedAt: status.turnLive ? chat.turnClockOrigin : null,
     );
     while (_rememberedLiveStatus.length > _rememberedLiveStatusLimit) {
       _rememberedLiveStatus.remove(_rememberedLiveStatus.keys.first);
@@ -29189,7 +29255,8 @@ class ActiveChatService {
   /// A remembered status alone counts only while it is recent; the roster
   /// alone never names tools or tasks. The resume snapshot replaces all of
   /// it (see [ActiveChat.settleProvisionalLiveStatus]).
-  SessionLiveStatus? _provisionalLiveStatusFor(
+  ({SessionLiveStatus status, DateTime? turnStartedAt})?
+  _provisionalLiveStatusFor(
     String key, {
     required String connectionId,
     required String profile,
@@ -29208,21 +29275,30 @@ class ActiveChatService {
     }
     final remote = sessionLiveStatusFromGlobal(roster);
     if (!remote.isLive) {
-      return fresh && remembered.status.turnLive ? remembered.status : null;
+      return fresh && remembered.status.turnLive
+          ? (status: remembered.status, turnStartedAt: remembered.turnStartedAt)
+          : null;
     }
-    if (!fresh || !remote.turnLive) return remote;
+    if (!fresh || !remote.turnLive) {
+      return (status: remote, turnStartedAt: null);
+    }
     final local = remembered.status;
     // The roster is newer: it decides the phase; the remembered visit only
     // fills in what the roster cannot say (the tool, the open tasks).
     final keepTool =
         remote.phase == SessionLivePhase.working &&
         local.phase == SessionLivePhase.runningTool;
-    return SessionLiveStatus(
-      phase: keepTool ? SessionLivePhase.runningTool : remote.phase,
-      toolLabel: keepTool ? local.toolLabel : null,
-      toolDetail: keepTool ? local.toolDetail : null,
-      tasks: local.tasks ?? remembered.tasks,
-      stale: remote.stale,
+    return (
+      status: SessionLiveStatus(
+        phase: keepTool ? SessionLivePhase.runningTool : remote.phase,
+        toolLabel: keepTool ? local.toolLabel : null,
+        toolDetail: keepTool ? local.toolDetail : null,
+        tasks: local.tasks ?? remembered.tasks,
+        stale: remote.stale,
+      ),
+      // The roster still proves a live turn and the visit saw one: its
+      // start is the best known origin until the snapshot reports its own.
+      turnStartedAt: local.turnLive ? remembered.turnStartedAt : null,
     );
   }
 
