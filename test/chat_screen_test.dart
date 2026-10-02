@@ -28971,6 +28971,106 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  group('qp1215 queued turn after the chat screen is reopened', () {
+    Future<(ActiveChat, _NoLiveMutationGateway)> queueDuringCompaction(
+      WidgetTester tester,
+      String connectionId,
+      String text,
+    ) async {
+      final gateway = _NoLiveMutationGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn(connectionId),
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+      expect(
+        await chat.send(
+          fullText: 'turno largo',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      await tester.pump();
+      gateway.emit('status.update', const {'kind': 'compacting'});
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), text);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(chat.queuedMessages, [text]);
+      HermesNotice.of(
+        tester.element(find.byType(ChatScreen)),
+      ).removeCurrentSnackBar();
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump(const Duration(milliseconds: 400));
+      // Leave and open the same conversation again.
+      final shown = tester.widget<ChatScreen>(find.byType(ChatScreen));
+      Navigator.of(tester.element(find.byType(ChatScreen))).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) => ChatScreen(
+            connection: shown.connection,
+            session: shown.session,
+            initialStoredSessionId: 'sess-test',
+          ),
+        ),
+      );
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
+      await tester.pump();
+      return (chat, gateway);
+    }
+
+    int userRows(ActiveChat chat, String text) => chat.messages
+        .where((row) => row['role'] == 'user' && row['content'] == text)
+        .length;
+
+    int errorRows(ActiveChat chat) =>
+        chat.messages.where((row) => row['role'] == 'assistant_error').length;
+
+    testWidgets('Send next during compaction sends it once with one bubble', (
+      tester,
+    ) async {
+      final (chat, gateway) = await queueDuringCompaction(
+        tester,
+        'conn-qp1215-force',
+        'forzado',
+      );
+      final id = chat.queuedEntries.single.id;
+      await tester.tap(find.byKey(ValueKey('chat-queue-send-now-$id')));
+      for (var frame = 0; frame < 40; frame++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      gateway.emit('status.update', const {'kind': 'status', 'text': 'ready'});
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      expect(gateway.interruptCalls, 1);
+      expect(gateway.submissions, ['turno largo', 'forzado']);
+      expect(userRows(chat, 'forzado'), 1);
+      expect(errorRows(chat), 0);
+      expect(
+        find.text('No se pudo conservar el turno antes de enviarlo.'),
+        findsNothing,
+      );
+      expect(chat.queuedEntries, isEmpty);
+
+      gateway.emit('message.complete', {'text': 'hecho'});
+      await tester.pump(const Duration(seconds: 3));
+      expect(gateway.submissions, ['turno largo', 'forzado']);
+      expect(userRows(chat, 'forzado'), 1);
+      await tester.pump(const Duration(seconds: 10));
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   testWidgets('panel de cola expone acciones nativas por identidad', (
     tester,
   ) async {

@@ -2687,7 +2687,7 @@ class ActiveTurnDelivery {
     };
   }
 
-  final TurnOutboxPersistence _store;
+  TurnOutboxPersistence _store;
   final int Function() _nowMs;
   final Set<ValueChanged<List<AttachmentDraft>>> _attachmentListeners = {};
   PreparedTurn _current;
@@ -2698,6 +2698,19 @@ class ActiveTurnDelivery {
   Future<void> _mutationTail = Future<void>.value();
 
   PreparedTurn get current => _current;
+  TurnOutboxPersistence get store => _store;
+
+  /// Hands the durable record to the chat screen that owns the chat now.
+  ///
+  /// A queued or running turn outlives the screen that created it, while the
+  /// encrypted outbox only accepts writes from the live screen of the
+  /// conversation. Writes already in flight keep their own store; later ones
+  /// use [store].
+  void rebindStore(TurnOutboxPersistence store) {
+    if (_discarded) return;
+    _store = store;
+  }
+
   bool get transportStarted => _transportStarted;
   bool get acknowledged => _acknowledged;
   bool get discarded => _discarded;
@@ -7434,6 +7447,54 @@ class ActiveChat {
 
   void releaseTurnDelivery(ActiveTurnDelivery delivery) {
     if (identical(_activeTurnDelivery, delivery)) _activeTurnDelivery = null;
+  }
+
+  /// A queued head waits because no chat screen could store it yet.
+  bool _queueHeldForLocalWriter = false;
+
+  /// A chat screen now owns this chat. Queued and running turns keep their
+  /// durable record under the screen that created them; once that screen is
+  /// gone the encrypted outbox refuses its writes, so they move to this one.
+  void _adoptLocalConversationLifecycle(LocalConversationLifecycle? lifecycle) {
+    _localConversationLifecycle = lifecycle;
+    if (lifecycle == null || _disposed) return;
+    final active = _activeTurnDelivery;
+    if (active != null) _queuedDeliveryWritable(active);
+    for (final item in _preparedTurnQueue) {
+      _queuedDeliveryWritable(item.delivery);
+    }
+    if (!_queueHeldForLocalWriter) return;
+    _queueHeldForLocalWriter = false;
+    if (!_queueDrainSuspended && !isStreaming) Timer.run(_drainQueue);
+  }
+
+  /// Whether [delivery] can store its state now, after handing it to the
+  /// screen that owns the chat when the one that created it is gone.
+  bool _queuedDeliveryWritable(ActiveTurnDelivery delivery) {
+    final store = delivery.store;
+    if (store is! TurnOutboxStore) return true;
+    final turn = delivery.current;
+    bool writableBy(LocalConversationLifecycle? lifecycle) {
+      if (lifecycle == null) return false;
+      try {
+        LocalConversationCleanupFence.ensureWriteAllowed(
+          connectionId: turn.connectionId,
+          profile: turn.profile,
+          sessionId: turn.sessionId,
+          lifecycle: lifecycle,
+        );
+        return true;
+      } on LocalConversationWriteRejected {
+        return false;
+      }
+    }
+
+    final own = store.lifecycle;
+    if (own == null || writableBy(own)) return true;
+    final live = _localConversationLifecycle;
+    if (identical(live, own) || !writableBy(live)) return false;
+    delivery.rebindStore(store.withLifecycle(live));
+    return true;
   }
 
   /// Fallback compatible con cualquier instancia. Hermes Desktop también
@@ -22824,6 +22885,13 @@ class ActiveChat {
         unawaited(_settleDeliveredQueuedTurns());
         return;
       }
+      if (!_queuedDeliveryWritable(next.delivery)) {
+        // No chat screen can store it before sending: it would fail without
+        // reaching the gateway. It keeps its place until a screen owns the
+        // chat again.
+        _queueHeldForLocalWriter = true;
+        return;
+      }
       _preparedTurnDrainInFlight = true;
       try {
         final accepted = await send(
@@ -27984,7 +28052,7 @@ class ActiveChatService {
         authoritative: authoritativeStoredSessionBinding,
       )) {
         existing._markAttached();
-        existing._localConversationLifecycle = localConversationLifecycle;
+        existing._adoptLocalConversationLifecycle(localConversationLifecycle);
         existing.sessionTitle = sessionTitle;
         existing._bindSessionProfile(owner);
         existing.bindNotificationTarget(
