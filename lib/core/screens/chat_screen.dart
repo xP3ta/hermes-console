@@ -7169,9 +7169,16 @@ class _ChatScreenState extends State<ChatScreen>
   ChatRenderProjection get _currentRenderProjection {
     final messages = _messages;
     final cached = _renderProjection;
-    if (cached != null && cached.canReuseFor(messages)) return cached;
+    final streamingHead = _chat.isStreaming;
+    if (cached != null &&
+        cached.canReuseFor(messages, streamingHead: streamingHead)) {
+      return cached;
+    }
     widget.performanceProbe?.renderProjectionBuilds++;
-    return _renderProjection = ChatRenderProjection.build(messages);
+    return _renderProjection = ChatRenderProjection.build(
+      messages,
+      streamingHead: streamingHead,
+    );
   }
 
   List<_ChatListEntry> get _currentListEntries {
@@ -7254,7 +7261,10 @@ class _ChatScreenState extends State<ChatScreen>
     if (message['role'] != 'assistant' || message['_pipeline'] == true) {
       return null;
     }
-    final content = (message['content'] as String?) ?? '';
+    final content = _joinResponseGroupText(
+      _responseGroupTextPrefix(_olderResponseGroupRows(message)),
+      (message['content'] as String?) ?? '',
+    );
     if (content.length <= _assistantChunkMaxChars ||
         _jobChipLabel(content, Strings.of(context)) != null ||
         _messageKeepsLiveHost(message) ||
@@ -8623,122 +8633,74 @@ class _ChatScreenState extends State<ChatScreen>
     return true;
   }
 
-  /// ¿Es una fila del asistente cuyo único contenido es traza (razonamiento /
-  /// herramientas), sin texto visible, medios ni desenlace parado/cancelado?
-  bool _isTraceOnlyAssistantRow(Map<String, dynamic> row) {
-    if (row['role'] != 'assistant' ||
-        (row['display_kind']?.toString().trim().isNotEmpty ?? false) ||
-        row['_pipeline'] == true ||
-        row['_cancelled'] == true ||
-        row['_stopped'] == true ||
-        ((row['content'] as String?) ?? '').trim().isNotEmpty ||
-        _structuredGeneratedImages(row).isNotEmpty ||
-        _structuredGeneratedVideos(row).isNotEmpty) {
-      return false;
-    }
-    return normalizeAssistantActivityTrace(
-          row[assistantActivityTraceKey],
-        ).isNotEmpty ||
-        (row['reasoning'] is String &&
-            (row['reasoning'] as String).trim().isNotEmpty);
+  /// Filas más antiguas (más antigua primero) que comparten burbuja con
+  /// [msg] en el mismo turno, o vacío si [msg] no ancla un grupo de respuesta.
+  List<Map<String, dynamic>> _olderResponseGroupRows(
+    Map<String, dynamic> msg, {
+    bool liveHead = false,
+  }) {
+    final projection = _currentRenderProjection;
+    // A live frame may still carry the map of a previous flush; while the turn
+    // streams it always stands for the head row.
+    final index = projection.messageIndexOf(msg) ?? (liveHead ? 0 : null);
+    if (index == null) return const [];
+    final members = projection.responseGroupMembers(index);
+    if (members == null) return const [];
+    final messages = _messages;
+    return [for (var i = members.length - 1; i > 0; i--) messages[members[i]]];
   }
 
-  /// ¿Es una respuesta con texto visible, terminada y sin parar/cancelar?
-  bool _isMergeTargetAnswer(Map<String, dynamic> row) =>
-      row['role'] == 'assistant' &&
-      !(row['display_kind']?.toString().trim().isNotEmpty ?? false) &&
-      row['_pipeline'] != true &&
-      row['_cancelled'] != true &&
-      row['_stopped'] != true &&
-      ((row['content'] as String?) ?? '').trim().isNotEmpty;
-
-  /// Fusión de filas solo-traza con la respuesta que las sigue en el MISMO turno
-  /// (adyacentes, sin mensaje de usuario entre ellas):
-  ///  * en la fila solo-traza, `hidden` (no se pinta);
-  ///  * en la respuesta, `merged` con los pasos de todas (más antiguos primero).
-  /// El turno en vivo no se fusiona, ni se cruza un mensaje de usuario ni un
-  /// desenlace parado/cancelado.
-  ({bool hidden, Map<String, dynamic>? merged})? _traceMergeFor(
-    Map<String, dynamic> msg,
-  ) {
-    final projection = _currentRenderProjection;
-    final index = projection.messageIndexOf(msg);
-    if (index == null) return null;
-    if (_isTraceOnlyAssistantRow(msg)) {
-      final newerIndex = index - 1;
-      if (newerIndex < 0) return null;
-      final newer = _messages[newerIndex];
-      // Una fila solo-traza seguida de otra solo-traza se funde con la cadena
-      // completa: la oculta es cada una salvo que la cadena acabe en respuesta.
-      var probe = newerIndex;
-      var row = newer;
-      while (_isTraceOnlyAssistantRow(row) && probe > 0) {
-        probe -= 1;
-        row = _messages[probe];
-      }
-      final liveHead = _chat.isStreaming && probe == 0;
-      if (!liveHead && _isMergeTargetAnswer(row)) {
-        return (hidden: true, merged: null);
-      }
-      return null;
-    }
-    if (!_isMergeTargetAnswer(msg)) return null;
-    final older = <Map<String, dynamic>>[];
-    var probe = index + 1;
-    while (probe < _messages.length &&
-        _isTraceOnlyAssistantRow(_messages[probe])) {
-      older.add(_messages[probe]);
-      probe += 1;
-    }
-    if (older.isEmpty) return null;
+  /// Metadatos de la burbuja única de un turno (Desktop `ResponseMessages`):
+  /// traza, texto y medios de todas las filas del grupo, más antiguas primero.
+  /// [head] sustituye a la fila más nueva (p. ej. el frame vivo recortado).
+  Map<String, dynamic> _responseGroupMetadata(
+    Map<String, dynamic> msg, {
+    Map<String, dynamic>? head,
+  }) {
+    final older = _olderResponseGroupRows(msg, liveHead: head != null);
+    if (older.isEmpty) return head ?? msg;
+    final newest = head ?? msg;
     // La copia fusionada se reutiliza mientras las filas de origen no cambien:
     // su identidad alimenta la selección de texto y no debe variar por frame.
-    final cached = _traceMergeCache[msg];
+    final cached = _responseGroupCache[msg];
     if (cached != null &&
+        identical(cached.head, newest) &&
         cached.sources.length == older.length &&
-        [
-          for (var i = 0; i < older.length; i++)
-            identical(cached.sources[i], older[i]),
-        ].every((same) => same)) {
-      return (hidden: false, merged: cached.merged);
+        Iterable<int>.generate(
+          older.length,
+        ).every((i) => identical(cached.sources[i], older[i]))) {
+      return cached.merged;
     }
-    // `older` va del más nuevo al más antiguo: se invierte para el orden real.
-    final chain = [...older.reversed, msg];
-    final steps = <Map<String, dynamic>>[
-      for (final row in chain)
-        ...normalizeAssistantActivityTrace(row[assistantActivityTraceKey]),
-    ];
-    final reasoning = [
-      for (final row in chain)
-        if (row['reasoning'] is String &&
-            (row['reasoning'] as String).trim().isNotEmpty)
-          (row['reasoning'] as String).trim(),
-    ].join('\n\n');
-    var seconds = 0.0;
-    var hasSeconds = false;
-    for (final row in chain) {
-      final value = row['_activity_duration_seconds'];
-      if (value is num && value.isFinite && value > 0) {
-        seconds += value;
-        hasSeconds = true;
-      }
-    }
-    final merged = <String, dynamic>{
-      ...msg,
-      if (steps.isNotEmpty) assistantActivityTraceKey: steps,
-      if (reasoning.isNotEmpty) 'reasoning': reasoning,
-      if (hasSeconds) '_activity_duration_seconds': seconds,
-    };
-    if (_traceMergeCache.length > 64) _traceMergeCache.clear();
-    _traceMergeCache[msg] = (sources: older, merged: merged);
-    return (hidden: false, merged: merged);
+    final merged = mergeAssistantResponseGroup([...older, newest]);
+    if (_responseGroupCache.length > 64) _responseGroupCache.clear();
+    _responseGroupCache[msg] = (sources: older, head: newest, merged: merged);
+    return merged;
   }
 
   final Map<
     Map<String, dynamic>,
-    ({List<Map<String, dynamic>> sources, Map<String, dynamic> merged})
+    ({
+      List<Map<String, dynamic>> sources,
+      Map<String, dynamic> head,
+      Map<String, dynamic> merged,
+    })
   >
-  _traceMergeCache = Map.identity();
+  _responseGroupCache = Map.identity();
+
+  /// Texto visible de las filas anteriores del grupo, en orden.
+  static String _responseGroupTextPrefix(List<Map<String, dynamic>> older) => [
+    for (final row in older)
+      if (row['content'] is String &&
+          (row['content'] as String).trim().isNotEmpty)
+        row['content'] as String,
+  ].join('\n\n');
+
+  static String _joinResponseGroupText(String prefix, String content) =>
+      prefix.isEmpty
+      ? content
+      : content.trim().isEmpty
+      ? prefix
+      : '$prefix\n\n$content';
 
   bool _isLatestAssistant(Map<String, dynamic> target) {
     final indexes = _currentRenderProjection.assistantMessageIndexesNewestFirst;
@@ -15111,7 +15073,14 @@ class _ChatScreenState extends State<ChatScreen>
               // se percibe como un pequeño tirón si el usuario empieza a leer o
               // arrastrar. La guarda sobrevive al terminal para que cancelación,
               // error o una reconciliación tardía tampoco animen de nuevo la fila.
-              final key = _entranceKey(unit);
+              // A response group grows at its newest row; its oldest row is
+              // the stable identity, so a joining row never replays the
+              // entrance nor remounts the bubble.
+              final groupStart =
+                  plan is ChatMessageUnitPlan && sourceMessages.length > 1
+                  ? sourceMessages.last
+                  : null;
+              final key = _entranceKey(groupStart ?? unit);
               final belongsToSurfaceTurn =
                   _surfaceTurnSerial == _assistantEntranceSerial &&
                   (_chat.isStreaming || _surfaceTurnTerminal);
@@ -15141,16 +15110,18 @@ class _ChatScreenState extends State<ChatScreen>
               if (!keepsLiveHost && !isLiveHead) {
                 result = RepaintBoundary(child: result);
               }
-              final durableEntryIds = sourceMessages
-                  .map((message) {
-                    final messageId = canonicalTranscriptMessageId(message);
-                    if (messageId != null) return 'message:$messageId';
-                    final rowId = canonicalTranscriptRowId(message);
-                    return rowId == null ? null : 'row:$rowId';
-                  })
-                  .whereType<String>()
-                  .toList(growable: false);
-              if (durableEntryIds.length == sourceMessages.length) {
+              final durableEntryIds =
+                  (groupStart == null ? sourceMessages : [groupStart])
+                      .map((message) {
+                        final messageId = canonicalTranscriptMessageId(message);
+                        if (messageId != null) return 'message:$messageId';
+                        final rowId = canonicalTranscriptRowId(message);
+                        return rowId == null ? null : 'row:$rowId';
+                      })
+                      .whereType<String>()
+                      .toList(growable: false);
+              if (durableEntryIds.length ==
+                  (groupStart == null ? sourceMessages.length : 1)) {
                 // This must remain the outermost list child. Sliver reconciliation
                 // can then retain the complete bubble subtree even when refresh
                 // replaces its source Map or runtime presentation wrappers change.
@@ -15273,7 +15244,10 @@ class _ChatScreenState extends State<ChatScreen>
     ChatRenderUnitPlan plan,
   ) {
     final indexes = switch (plan) {
-      ChatMessageUnitPlan(:final messageIndex) => [messageIndex],
+      // Every row of a response group keeps its own anchor, find highlight
+      // and unread marker, newest first.
+      ChatMessageUnitPlan(:final memberIndexesNewestFirst) =>
+        memberIndexesNewestFirst,
       ChatUserTurnUnitPlan(
         :final primaryMessageIndex,
         :final supplementMessageIndexes,
@@ -15407,13 +15381,16 @@ class _ChatScreenState extends State<ChatScreen>
     final msg = unit as Map<String, dynamic>;
     final role = (msg['role'] as String?) ?? 'assistant';
     var content = (msg['content'] as String?) ?? '';
-    final sourceContent = content;
-    // Un turno que primero piensa/llama herramientas y luego responde llega en
-    // varias filas del servidor: la fila solo-traza se funde en el desplegable
-    // de la respuesta que la sigue (una cabecera, un «Completado ⌄»).
-    final traceMerge = role == 'assistant' ? _traceMergeFor(msg) : null;
-    if (traceMerge?.hidden ?? false) return const SizedBox.shrink();
-    final metadataMsg = traceMerge?.merged ?? msg;
+    // Un turno del agente llega en varias filas (herramientas, razonamiento,
+    // texto intermedio y final). Como Desktop, todas comparten UNA burbuja:
+    // una cabecera, un «Pensó ⌄» con todas las herramientas y el texto al
+    // final. [msg] es la fila más nueva y conserva acciones e identidad.
+    final groupRows = role == 'assistant'
+        ? _olderResponseGroupRows(msg)
+        : const <Map<String, dynamic>>[];
+    final metadataMsg = groupRows.isEmpty ? msg : _responseGroupMetadata(msg);
+    final groupPrefix = _responseGroupTextPrefix(groupRows);
+    final sourceContent = _joinResponseGroupText(groupPrefix, content);
 
     final historicalSubagents = historicalSubagentCompletionOf(msg);
     if (historicalSubagents != null) {
@@ -15481,10 +15458,10 @@ class _ChatScreenState extends State<ChatScreen>
     final isPipeline = msg['_pipeline'] == true;
     final hasUnifiedActivity =
         normalizeAssistantActivityTrace(
-          msg[assistantActivityTraceKey],
+          metadataMsg[assistantActivityTraceKey],
         ).isNotEmpty ||
-        (msg['reasoning'] is String &&
-            (msg['reasoning'] as String).trim().isNotEmpty);
+        (metadataMsg['reasoning'] is String &&
+            (metadataMsg['reasoning'] as String).trim().isNotEmpty);
     final isCancelled = msg['_cancelled'] == true;
     // El mensaje en curso es el más nuevo (índice 0) mientras hay streaming.
     // Solo en él aplicamos el normalizador visual de Markdown incompleto.
@@ -15513,6 +15490,7 @@ class _ChatScreenState extends State<ChatScreen>
         _revealedChars < content.length) {
       content = content.substring(0, _revealedChars);
     }
+    content = _joinResponseGroupText(groupPrefix, content);
 
     // Placeholder del turno activo: la ThinkingTraceCard en vivo agrega el
     // progreso del turno en curso (los eventos reales se agruparán al
@@ -15599,15 +15577,15 @@ class _ChatScreenState extends State<ChatScreen>
         msg['_stopped'] != true &&
         displayContent.trim().isEmpty &&
         operationalProjection.technicalDetails.isEmpty &&
-        _structuredGeneratedImages(msg).isEmpty &&
-        _structuredGeneratedVideos(msg).isEmpty &&
-        !_assistantActivityEvents(context, msg, '').any(
+        _structuredGeneratedImages(metadataMsg).isEmpty &&
+        _structuredGeneratedVideos(metadataMsg).isEmpty &&
+        !_assistantActivityEvents(context, metadataMsg, '').any(
           (event) =>
               event.kind == ChatTraceEventKind.reasoning ||
               !isInternalActivityLabel(event.label),
         ) &&
-        !(msg['reasoning'] is String &&
-            (msg['reasoning'] as String).trim().isNotEmpty)) {
+        !(metadataMsg['reasoning'] is String &&
+            (metadataMsg['reasoning'] as String).trim().isNotEmpty)) {
       return const SizedBox.shrink();
     }
     if (role == 'assistant' && isCancelled && content.isNotEmpty) {
@@ -15705,13 +15683,29 @@ class _ChatScreenState extends State<ChatScreen>
     _LiveAssistantFrame frame, {
     required bool compact,
   }) {
-    final projection = _projectOperationalArtifacts(context, frame.content);
+    // El turno vivo es la fila más nueva de su grupo de respuesta: las filas
+    // ya cerradas del mismo turno siguen en ESTA burbuja, que crece en su
+    // sitio en lugar de apilar otra cabecera.
+    final groupRows = _olderResponseGroupRows(
+      frame.metadata,
+      liveHead: frame.isStreaming,
+    );
+    final metadata = groupRows.isEmpty
+        ? frame.metadata
+        : _responseGroupMetadata(frame.metadata, head: frame.metadata);
+    final projection = _projectOperationalArtifacts(
+      context,
+      _joinResponseGroupText(
+        _responseGroupTextPrefix(groupRows),
+        frame.content,
+      ),
+    );
     final hasUnifiedActivity =
         normalizeAssistantActivityTrace(
-          frame.metadata[assistantActivityTraceKey],
+          metadata[assistantActivityTraceKey],
         ).isNotEmpty ||
-        (frame.metadata['reasoning'] is String &&
-            (frame.metadata['reasoning'] as String).trim().isNotEmpty);
+        (metadata['reasoning'] is String &&
+            (metadata['reasoning'] as String).trim().isNotEmpty);
     if (frame.isStreaming &&
         projection.visibleMarkdown.trim().isEmpty &&
         !hasUnifiedActivity) {
@@ -15739,7 +15733,7 @@ class _ChatScreenState extends State<ChatScreen>
       content: projection.visibleMarkdown,
       isUser: false,
       verbose: _devDiagnostics,
-      metadata: frame.metadata,
+      metadata: metadata,
       linkCache: _linkCache,
       fetchLinkPreview: _fetchLinkPreview,
       firstUrl: _firstUrl,

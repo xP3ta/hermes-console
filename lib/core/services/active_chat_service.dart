@@ -12996,7 +12996,11 @@ class ActiveChat {
   /// porque la lista no cambia de geometría y no generará otro evento de scroll.
   Future<bool> loadEarlierMessages({bool continuePastInvisible = false}) async {
     if (!continuePastInvisible) return _loadEarlierMessagesPage();
-    var visibleUnitCount = ChatRenderProjection.build(_messages).units.length;
+    // Rows, not units: an earlier row that joins the oldest response group is
+    // visible content even though it adds no new bubble.
+    var visibleUnitCount = ChatRenderProjection.build(
+      _messages,
+    ).renderedMessageCount;
     var loadedAnyPage = false;
     var remainingPages = _maxInitialBackfillPages;
     while (!_disposed && _earlierMessagesAvailable && remainingPages > 0) {
@@ -13006,7 +13010,7 @@ class ActiveChat {
       remainingPages -= 1;
       final nextVisibleUnitCount = ChatRenderProjection.build(
         _messages,
-      ).units.length;
+      ).renderedMessageCount;
       if (nextVisibleUnitCount > visibleUnitCount) return true;
       visibleUnitCount = nextVisibleUnitCount;
     }

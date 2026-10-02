@@ -2045,10 +2045,13 @@ void main() {
         chat.messages.any((row) => row['display_kind'] == 'hidden'),
         isFalse,
       );
-      expect(
-        ChatRenderProjection.build(chat.internalMessagesForTesting).units,
-        hasLength(121),
+      // The reasoning row joins the response group of the assistant after
+      // it: one bubble less, the same rendered rows.
+      final projection = ChatRenderProjection.build(
+        chat.internalMessagesForTesting,
       );
+      expect(projection.units, hasLength(120));
+      expect(projection.renderedMessageCount, 121);
       expect(chat.hasEarlierMessages, isTrue);
 
       expect(
@@ -10146,7 +10149,9 @@ void main() {
 // combined transcript must paint every Desktop-visible row once, in order.
 void lc1215NativeLongSessionTests() {
   Iterable<int> unitIndexes(ChatRenderUnitPlan unit) => switch (unit) {
-    ChatMessageUnitPlan(:final messageIndex) => [messageIndex],
+    // A response group renders every member row in one bubble.
+    ChatMessageUnitPlan(:final memberIndexesNewestFirst) =>
+      memberIndexesNewestFirst,
     ChatUserTurnUnitPlan(
       :final primaryMessageIndex,
       :final supplementMessageIndexes,

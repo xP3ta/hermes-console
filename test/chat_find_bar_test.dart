@@ -430,4 +430,46 @@ void main() {
     expect(find.byKey(const ValueKey('chat-find-exhausted')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('rg1215 a hit in an earlier row of a grouped turn reveals and '
+      'highlights the single response bubble', (tester) async {
+    final history = <Map<String, dynamic>>[
+      {'role': 'assistant', 'content': 'Respuesta final del turno.'},
+      {
+        'role': 'assistant',
+        'content': 'Primero reviso la AGUJA intermedia.',
+        '_activity_trace': [
+          {'kind': 'tool', 'label': 'read_file', 'id': 'rg-find-1'},
+        ],
+      },
+      {'role': 'user', 'content': 'Pregunta del turno.'},
+      ..._history().skip(2),
+    ];
+    await pumpChat(tester, history: history);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.byKey(const ValueKey('assistant-header-name')), findsWidgets);
+
+    await openFindFromAppBar(tester);
+    await typeQuery(tester, 'aguja intermedia');
+    expect(find.text('1 de 1'), findsOneWidget);
+    final hit = find.textContaining('AGUJA intermedia', findRichText: true);
+    expect(_isOnScreen(tester, hit), isTrue);
+    final highlight = find.bySemanticsLabel(
+      RegExp('^Resultado de búsqueda actual'),
+    );
+    expect(highlight, findsOneWidget);
+    // The highlighted bubble is the whole turn: the earlier row and the
+    // final answer render inside it.
+    expect(
+      find.descendant(
+        of: highlight,
+        matching: find.textContaining(
+          'Respuesta final del turno.',
+          findRichText: true,
+        ),
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }

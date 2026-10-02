@@ -54,9 +54,115 @@ sealed class ChatRenderUnitPlan {
 }
 
 final class ChatMessageUnitPlan extends ChatRenderUnitPlan {
+  /// Fila que posee la burbuja: la más nueva del grupo de respuesta.
   final int messageIndex;
+  final List<int> _olderMemberIndexes;
 
-  const ChatMessageUnitPlan(this.messageIndex);
+  const ChatMessageUnitPlan(
+    this.messageIndex, [
+    this._olderMemberIndexes = const [],
+  ]);
+
+  /// Filas del asistente que esta burbuja agrupa, más nueva primero. Cada una
+  /// conserva su identidad (anclas, búsqueda, rewind); solo comparten burbuja.
+  List<int> get memberIndexesNewestFirst => _olderMemberIndexes.isEmpty
+      ? [messageIndex]
+      : [messageIndex, ..._olderMemberIndexes];
+}
+
+/// Una fila del asistente puede compartir burbuja con las filas del asistente
+/// contiguas del mismo turno (Desktop `ResponseMessages`). Las respuestas
+/// paradas/canceladas conservan su marca propia y los eventos editoriales nunca
+/// se agrupan.
+bool _joinsResponseGroup(Map<String, dynamic> message) =>
+    message['role'] == 'assistant' &&
+    (message['display_kind']?.toString().trim().isEmpty ?? true) &&
+    message['_cancelled'] != true &&
+    message['_stopped'] != true;
+
+/// Funde las filas de un grupo de respuesta ([oldestFirst]) en los metadatos de
+/// UNA burbuja: la traza (razonamiento + herramientas) en orden, el texto
+/// visible de cada fila en orden y los medios de todas. La identidad, la hora y
+/// el estado vivo son los de la fila más nueva.
+Map<String, dynamic> mergeAssistantResponseGroup(
+  List<Map<String, dynamic>> oldestFirst,
+) {
+  if (oldestFirst.length == 1) return oldestFirst.single;
+  final newest = oldestFirst.last;
+  final steps = <Map<String, dynamic>>[];
+  final reasoning = <String>[];
+  final texts = <String>[];
+  final images = <Object?>[];
+  final toolResults = <Object?>[];
+  final toolCalls = <Object?>[];
+  var seconds = 0.0;
+  var hasSeconds = false;
+  Object? timestampKey;
+  for (final row in oldestFirst) {
+    final trace = normalizeAssistantActivityTrace(
+      row[assistantActivityTraceKey],
+    );
+    final rowReasoning = row['reasoning'];
+    final hasReasoning =
+        rowReasoning is String && rowReasoning.trim().isNotEmpty;
+    if (hasReasoning) reasoning.add(rowReasoning.trim());
+    // Un razonamiento sin paso propio ocupa su sitio cronológico en la traza.
+    if (hasReasoning && !trace.any((step) => step['kind'] == 'reasoning')) {
+      steps.add({
+        'kind': 'reasoning',
+        'text': rowReasoning,
+        'status': row['_pipeline'] == true ? 'running' : 'completed',
+      });
+    }
+    steps.addAll(trace);
+    final content = row['content'];
+    if (content is String && content.trim().isNotEmpty) texts.add(content);
+    for (final (key, sink) in [
+      ('_generatedImages', images),
+      (assistantToolResultEvidenceKey, toolResults),
+      ('tool_calls', toolCalls),
+    ]) {
+      final value = row[key];
+      if (value is List) sink.addAll(value);
+    }
+    final duration = row['_activity_duration_seconds'];
+    if (duration is num && duration.isFinite && duration > 0) {
+      seconds += duration;
+      hasSeconds = true;
+    }
+    for (final key in const ['created_at', 'timestamp', 'createdAt']) {
+      if (row[key] != null) timestampKey = key;
+    }
+  }
+  final merged = <String, dynamic>{...newest, 'content': texts.join('\n\n')};
+  if (steps.isEmpty) {
+    merged.remove(assistantActivityTraceKey);
+  } else {
+    merged[assistantActivityTraceKey] = List<Map<String, dynamic>>.unmodifiable(
+      steps,
+    );
+  }
+  if (reasoning.isEmpty) {
+    merged.remove('reasoning');
+  } else {
+    merged['reasoning'] = reasoning.join('\n\n');
+  }
+  if (images.isNotEmpty) merged['_generatedImages'] = images;
+  if (toolResults.isNotEmpty) {
+    merged[assistantToolResultEvidenceKey] = toolResults;
+  }
+  if (toolCalls.isNotEmpty) merged['tool_calls'] = toolCalls;
+  if (hasSeconds) merged['_activity_duration_seconds'] = seconds;
+  // La hora es la de la última fila que la trae.
+  if (timestampKey != null && newest[timestampKey] == null) {
+    for (final row in oldestFirst.reversed) {
+      if (row[timestampKey] != null) {
+        merged[timestampKey as String] = row[timestampKey];
+        break;
+      }
+    }
+  }
+  return Map<String, dynamic>.unmodifiable(merged);
 }
 
 final class ChatUserTurnUnitPlan extends ChatRenderUnitPlan {
@@ -97,19 +203,34 @@ final class ChatRenderProjection {
   final bool _headHasStructuredReasoning;
   final Map<Map<String, dynamic>, int> _messageIndexes;
   final Map<int, int> _userOrdinals;
+  final Map<int, List<int>> _responseGroups;
+  final bool _headCancelled;
+  final bool _streamingHead;
 
   final List<ChatRenderUnitPlan> units;
+
+  /// Filas con representación propia en la lista (miembros de grupos de
+  /// respuesta incluidos). A diferencia de `units.length`, crece cuando una
+  /// página anterior añade una fila a un grupo ya pintado.
+  final int renderedMessageCount;
   final List<int> assistantMessageIndexesNewestFirst;
   final int visibleUserCount;
 
   ChatRenderProjection._({
     required List<Map<String, dynamic>> source,
     required this.units,
+    required this.renderedMessageCount,
     required this.assistantMessageIndexesNewestFirst,
     required this.visibleUserCount,
     required this._messageIndexes,
     required this._userOrdinals,
+    required this._responseGroups,
+    required this._streamingHead,
   }) : _source = source,
+       _headCancelled =
+           source.isNotEmpty &&
+           (source.first['_cancelled'] == true ||
+               source.first['_stopped'] == true),
        _messageCount = source.length,
        _headRole = source.isEmpty ? null : source.first['role'] as String?,
        _headPipeline = source.isNotEmpty && source.first['_pipeline'] == true,
@@ -122,7 +243,10 @@ final class ChatRenderProjection {
        _headHasStructuredReasoning =
            source.isNotEmpty && _hasCanonicalReasoning(source.first);
 
-  factory ChatRenderProjection.build(List<Map<String, dynamic>> messages) {
+  factory ChatRenderProjection.build(
+    List<Map<String, dynamic>> messages, {
+    bool streamingHead = false,
+  }) {
     final chronologicalUnits = <ChatRenderUnitPlan>[];
     final delegateTaskCallIds = _delegateTaskCallIds(messages);
     final assistantIndexes = <int>[];
@@ -131,6 +255,31 @@ final class ChatRenderProjection {
     List<ChatEventInfo>? pendingTools;
     List<int>? pendingToolIndexes;
     var visibleUserCount = 0;
+
+    // Añade la burbuja de [index]. Si la unidad anterior es otra burbuja del
+    // asistente del mismo turno (sin usuario, aviso ni herramientas sueltas
+    // entre ambas), la amplía en su sitio en vez de apilar otra cabecera.
+    void addAssistantUnit(int index) {
+      final previous = chronologicalUnits.isEmpty
+          ? null
+          : chronologicalUnits.last;
+      if (previous is ChatMessageUnitPlan &&
+          _joinsResponseGroup(messages[index]) &&
+          _joinsResponseGroup(messages[previous.messageIndex]) &&
+          // A live turn without a visible prompt (started from another
+          // client) opens after an answer that already closed its turn: the
+          // live row keeps its own bubble instead of growing the finished one.
+          !(streamingHead &&
+              index == 0 &&
+              _hasVisibleText(messages[previous.messageIndex]['content']))) {
+        chronologicalUnits.removeLast();
+        chronologicalUnits.add(
+          ChatMessageUnitPlan(index, previous.memberIndexesNewestFirst),
+        );
+        return;
+      }
+      chronologicalUnits.add(ChatMessageUnitPlan(index));
+    }
 
     void flushTools() {
       final tools = pendingTools;
@@ -202,7 +351,11 @@ final class ChatRenderProjection {
 
       if (role == 'assistant_error' || isPipeline) {
         flushTools();
-        chronologicalUnits.add(ChatMessageUnitPlan(index));
+        if (role == 'assistant') {
+          addAssistantUnit(index);
+        } else {
+          chronologicalUnits.add(ChatMessageUnitPlan(index));
+        }
         continue;
       }
 
@@ -219,7 +372,7 @@ final class ChatRenderProjection {
               event.kind == ChatEventKind.approval)) {
         if (hasStructuredReasoning) {
           flushTools();
-          chronologicalUnits.add(ChatMessageUnitPlan(index));
+          addAssistantUnit(index);
           assistantIndexes.add(index);
         }
         (pendingTools ??= <ChatEventInfo>[]).add(event);
@@ -233,13 +386,38 @@ final class ChatRenderProjection {
         continue;
       }
       flushTools();
-      chronologicalUnits.add(ChatMessageUnitPlan(index));
-      if (role == 'assistant') assistantIndexes.add(index);
+      if (role == 'assistant') {
+        addAssistantUnit(index);
+        assistantIndexes.add(index);
+      } else {
+        chronologicalUnits.add(ChatMessageUnitPlan(index));
+      }
     }
     flushTools();
 
+    final responseGroups = <int, List<int>>{};
+    for (final unit in chronologicalUnits) {
+      if (unit is ChatMessageUnitPlan && unit._olderMemberIndexes.isNotEmpty) {
+        responseGroups[unit.messageIndex] = unit.memberIndexesNewestFirst;
+      }
+    }
+
+    var renderedMessageCount = 0;
+    for (final unit in chronologicalUnits) {
+      renderedMessageCount += switch (unit) {
+        ChatMessageUnitPlan(:final memberIndexesNewestFirst) =>
+          memberIndexesNewestFirst.length,
+        ChatUserTurnUnitPlan(:final supplementMessageIndexes) =>
+          1 + supplementMessageIndexes.length,
+        ChatToolActivityUnitPlan() => 0,
+      };
+    }
+
     return ChatRenderProjection._(
       source: messages,
+      streamingHead: streamingHead,
+      renderedMessageCount: renderedMessageCount,
+      responseGroups: responseGroups,
       units: List.unmodifiable(chronologicalUnits.reversed),
       assistantMessageIndexesNewestFirst: List.unmodifiable(
         assistantIndexes.reversed,
@@ -253,8 +431,13 @@ final class ChatRenderProjection {
   /// O(1): permite reutilizar la estructura mientras solo crece el contenido
   /// del mensaje de cabeza. Los cambios de rol/placeholder/texto visible
   /// fuerzan una reconstrucción; los demás eventos invalidan desde ChatScreen.
-  bool canReuseFor(List<Map<String, dynamic>> messages) {
-    if (!identical(messages, _source) || messages.length != _messageCount) {
+  bool canReuseFor(
+    List<Map<String, dynamic>> messages, {
+    bool streamingHead = false,
+  }) {
+    if (!identical(messages, _source) ||
+        messages.length != _messageCount ||
+        streamingHead != _streamingHead) {
       return false;
     }
     if (messages.isEmpty) return true;
@@ -264,7 +447,9 @@ final class ChatRenderProjection {
         (head['_steer'] == true) == _headSteer &&
         effectiveUserDisplayKind(head) == _headDisplayKind &&
         _hasVisibleText(head['content']) == _headHasVisibleText &&
-        _hasCanonicalReasoning(head) == _headHasStructuredReasoning;
+        _hasCanonicalReasoning(head) == _headHasStructuredReasoning &&
+        (head['_cancelled'] == true || head['_stopped'] == true) ==
+            _headCancelled;
   }
 
   Map<String, dynamic>? get latestUserMessage {
@@ -275,7 +460,17 @@ final class ChatRenderProjection {
   }
 
   /// Posición de [message] en la lista de origen (más nuevo primero), o `null`.
-  int? messageIndexOf(Map<String, dynamic> message) => _messageIndexes[message];
+  ///
+  /// Un flush de tokens sustituye el mapa de cabeza sin reconstruir la
+  /// proyección: la cabeza viva de la lista actual también se reconoce.
+  int? messageIndexOf(Map<String, dynamic> message) =>
+      _messageIndexes[message] ??
+      (_source.isNotEmpty && identical(_source.first, message) ? 0 : null);
+
+  /// Filas (más nueva primero) que comparten la burbuja anclada en
+  /// [anchorIndex], o `null` si esa burbuja tiene una sola fila.
+  List<int>? responseGroupMembers(int anchorIndex) =>
+      _responseGroups[anchorIndex];
 
   int? userOrdinalFor(Map<String, dynamic> message) {
     final index = _messageIndexes[message];
@@ -299,7 +494,8 @@ final class ChatRenderProjection {
     var bestDistance = 1 << 30;
     for (final unit in units) {
       final indexes = switch (unit) {
-        ChatMessageUnitPlan(:final messageIndex) => [messageIndex],
+        ChatMessageUnitPlan(:final memberIndexesNewestFirst) =>
+          memberIndexesNewestFirst,
         ChatUserTurnUnitPlan(
           :final primaryMessageIndex,
           :final supplementMessageIndexes,
