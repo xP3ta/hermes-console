@@ -23,6 +23,8 @@ import 'dart:convert';
 
 import 'session_reconciler.dart' show assistantToolResultEvidenceKey;
 import 'transcript_directive_parser.dart';
+import '../widgets/user_server_attachment_card.dart'
+    show UserServerAttachmentRef;
 
 enum ChatContentKind { image, file, link }
 
@@ -134,11 +136,6 @@ final RegExp _mediaTagRe = () {
 }();
 
 // ---- Console-only directives ------------------------------------------------
-
-final RegExp _userAttachmentLineRe = RegExp(r'^@(image|file):(.+)$');
-final RegExp _userAttachmentValueRe = RegExp(
-  r'''^(?:(`|"|')(.+?)\1|(.+?))(?::\d+(?:-\d+)?)?$''',
-);
 
 typedef _PushValue = void Function(String value, {bool explicit});
 
@@ -458,13 +455,13 @@ void _collectFromUser(String text, _PushValue push) {
     push(match.group(0) ?? '');
   }
   // Attachments Hermes persisted for this turn, after the prose they follow.
+  // A participant can type the same `@file:` syntax by hand, so a line is
+  // listed only when it passes the exact parse + path guard the chat bubble
+  // uses before it would fetch it (absolute, no traversal, not sensitive).
   for (final rawLine in text.split('\n')) {
-    final line = rawLine.trim();
-    final match = _userAttachmentLineRe.firstMatch(line);
-    if (match == null) continue;
-    final parsed = _userAttachmentValueRe.firstMatch(match.group(2)!.trim());
-    final value = (parsed?.group(2) ?? parsed?.group(3))?.trim();
-    if (value != null && value.isNotEmpty) push(value, explicit: true);
+    final ref = UserServerAttachmentRef.tryParseLine(rawLine);
+    if (ref == null || ref.fetchReference == null) continue;
+    push(ref.path, explicit: true);
   }
 }
 

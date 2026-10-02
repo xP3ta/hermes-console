@@ -441,6 +441,26 @@ void main() {
       ]);
     });
 
+    test('user @-lines only list what the chat bubble would fetch', () {
+      final items = _collect([
+        {
+          'role': 'user',
+          'content':
+              '@file:../../etc/passwd\n'
+              '@file:/srv/a/../../etc/shadow\n'
+              '@file:/home/u/.ssh/id_rsa\n'
+              '@file:/home/u/.env\n'
+              '@image:relative/foto.png\n'
+              '@file:/proc/self/environ\n'
+              '@file:/home/u/notas con espacio.txt\n'
+              '@image:/home/u/.hermes/uploads/ok.png',
+        },
+      ]);
+      expect(items.map((item) => item.value), [
+        '/home/u/.hermes/uploads/ok.png',
+      ]);
+    });
+
     test('tool results coalesced into an assistant row are indexed', () {
       final items = _collect([
         {
