@@ -1217,6 +1217,20 @@ class _UnseenClarifyUiGateway extends _InteractiveUiGateway
   }
 }
 
+/// cq1215: Hermes keeps waiting but lists a request this client cannot
+/// render, so «Mostrar pregunta» has nothing to show.
+class _UnrecoverableClarifyUiGateway extends _UnseenClarifyUiGateway {
+  @override
+  Future<List<Map<String, dynamic>>> openServerRequests(
+    String runtimeSessionId,
+  ) async {
+    openRequestReads += 1;
+    return const [
+      {'id': 'srq-unrenderable', 'method': 'clarify', 'params': 'bad'},
+    ];
+  }
+}
+
 class _NoLiveMutationGateway extends _UiRewindGateway
     implements HermesDesktopRedirectGateway {
   final List<String> redirects = [];
@@ -15708,6 +15722,62 @@ void main() {
         findsOneWidget,
       );
       expect(notice, findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'si Mostrar pregunta no recupera nada lo dice y ofrece reintentar o '
+    'detener el turno',
+    (tester) async {
+      final gateway = _UnrecoverableClarifyUiGateway();
+      var cancelCalls = 0;
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-clarify-unrecoverable'),
+        acquireDesktopRuntimeBeforeMount: true,
+        cancelStreamOverride: () async => cancelCalls++,
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(chat.awaitsUnseenInput, isTrue);
+      expect(
+        find.byKey(const ValueKey('chat-awaiting-unseen-input-stop')),
+        findsNothing,
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('chat-awaiting-unseen-input-show')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(gateway.openRequestReads, 1);
+      expect(
+        find.text(
+          'No se ha podido recuperar la pregunta. Hermes sigue esperando tu '
+          'respuesta.',
+        ),
+        findsOneWidget,
+      );
+      final retry = find.byKey(
+        const ValueKey('chat-awaiting-unseen-input-show'),
+      );
+      expect(
+        find.descendant(of: retry, matching: find.text('Reintentar')),
+        findsOneWidget,
+      );
+      await tester.tap(retry);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(gateway.openRequestReads, 2);
+
+      await tester.tap(
+        find.byKey(const ValueKey('chat-awaiting-unseen-input-stop')),
+      );
+      await tester.pump();
+      expect(cancelCalls, 1);
+      await tester.pump(const Duration(milliseconds: 1300));
       expect(tester.takeException(), isNull);
     },
   );

@@ -1322,7 +1322,7 @@ class _ChatScreenState extends State<ChatScreen>
   int? _desktopRuntimePresentationFingerprint;
   Object? _lastSessionConfigPresentation;
   (bool, int, int, int, int)? _activityPresentationFingerprint;
-  bool _lastAwaitsUnseenInput = false;
+  (bool, bool, bool) _lastAwaitsUnseenInput = (false, false, false);
   bool _lastDesktopCompacting = false;
   PendingSessionConfigChange? _pendingModelConfirmation;
   NavigatorState? _modelConfirmationNavigator;
@@ -5940,7 +5940,11 @@ class _ChatScreenState extends State<ChatScreen>
         passiveAggregate.completed,
         _chat.safeActiveSubagentCount,
       );
-      final awaitsUnseenInput = _chat.awaitsUnseenInput;
+      final awaitsUnseenInput = (
+        _chat.awaitsUnseenInput,
+        _chat.openRequestRecoveryFailed,
+        _chat.openRequestRecoveryInFlight,
+      );
       if (contextCompacting) {
         _sessionContextAwaitingPostCompactionMetrics = true;
       }
@@ -11503,10 +11507,19 @@ class _ChatScreenState extends State<ChatScreen>
                           ),
                           if (_chat.awaitsUnseenInput)
                             _AwaitingUnseenInputNotice(
-                              message: str.cr1215AwaitingUnseenInput,
-                              actionLabel: str.cr1215ShowQuestion,
+                              message: _chat.openRequestRecoveryFailed
+                                  ? str.cq1215QuestionNotRecovered
+                                  : str.cr1215AwaitingUnseenInput,
+                              actionLabel: _chat.openRequestRecoveryFailed
+                                  ? str.cq1215RetryQuestion
+                                  : str.cr1215ShowQuestion,
+                              busy: _chat.openRequestRecoveryInFlight,
                               onShow: () =>
                                   unawaited(_chat.rehydrateOpenRequests()),
+                              stopLabel: _chat.openRequestRecoveryFailed
+                                  ? str.cq1215StopTurn
+                                  : null,
+                              onStop: () => unawaited(_cancelStream()),
                             ),
                           if (_chat.localTranscriptTruncationNoticeVisible)
                             _LocalTranscriptTruncationNotice(
@@ -15821,15 +15834,35 @@ class _AwaitingUnseenInputNotice extends StatelessWidget {
     required this.message,
     required this.actionLabel,
     required this.onShow,
+    required this.onStop,
+    this.busy = false,
+    this.stopLabel,
   });
 
   final String message;
   final String actionLabel;
   final VoidCallback onShow;
+  final VoidCallback onStop;
+  final bool busy;
+
+  /// cq1215: set once a recovery came back empty, so the notice offers the
+  /// existing interrupt next to Retry instead of a button that does nothing.
+  final String? stopLabel;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final style = TextButton.styleFrom(
+      minimumSize: const Size(48, 48),
+      foregroundColor: colors.accentText,
+    );
+    final show = TextButton(
+      key: const ValueKey('chat-awaiting-unseen-input-show'),
+      onPressed: busy ? null : onShow,
+      style: style,
+      child: Text(actionLabel),
+    );
+    final stop = stopLabel;
     return Semantics(
       key: const ValueKey('chat-awaiting-unseen-input'),
       container: true,
@@ -15839,15 +15872,21 @@ class _AwaitingUnseenInputNotice extends StatelessWidget {
         icon: Icons.help_outline_rounded,
         iconColor: colors.warning,
         message: message,
-        trailing: TextButton(
-          key: const ValueKey('chat-awaiting-unseen-input-show'),
-          onPressed: onShow,
-          style: TextButton.styleFrom(
-            minimumSize: const Size(48, 48),
-            foregroundColor: colors.accentText,
-          ),
-          child: Text(actionLabel),
-        ),
+        trailing: stop == null
+            ? show
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  show,
+                  TextButton(
+                    key: const ValueKey('chat-awaiting-unseen-input-stop'),
+                    onPressed: busy ? null : onStop,
+                    style: style,
+                    child: Text(stop),
+                  ),
+                ],
+              ),
       ),
     );
   }

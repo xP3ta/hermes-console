@@ -258,5 +258,37 @@ void main() {
     expect(probe['params']['session_id'], 'live-s');
     expect(chat.pendingInteractivePrompt?.key.requestId, 'srq-restart00002');
     expect(chat.awaitsUnseenInput, isFalse);
+    expect(chat.openRequestRecoveryFailed, isFalse);
+  });
+
+  test('Show question with nothing recoverable says so instead of a dead '
+      'button, and Retry recovers once the server lists it', () async {
+    gateway.resumeResult = (_) => _waitingSnapshot();
+    final client = _clientFor(gateway);
+    final chat = _coldChat(gateway, client);
+    await chat.loadMessages();
+    await _waitUntil(() => chat.desktopRuntimeSessionId == 'live-s');
+    expect(chat.awaitsUnseenInput, isTrue);
+
+    // A malformed entry is not a question either.
+    gateway.eventsSinceResult = (_) => {
+      'events': <Object>[],
+      'open_requests': [
+        {'id': 'srq-broken000001', 'method': 'clarify', 'params': 'bad'},
+      ],
+    };
+    await chat.rehydrateOpenRequests();
+    expect(chat.pendingInteractivePrompt, isNull);
+    expect(chat.openRequestRecoveryFailed, isTrue);
+    // The notice stays (Hermes still waits) but now in its failed form.
+    expect(chat.awaitsUnseenInput, isTrue);
+
+    gateway.eventsSinceResult = (_) => {
+      'events': <Object>[],
+      'open_requests': [_batchClarify('srq-restart00003')],
+    };
+    await chat.rehydrateOpenRequests();
+    expect(chat.pendingInteractivePrompt?.key.requestId, 'srq-restart00003');
+    expect(chat.openRequestRecoveryFailed, isFalse);
   });
 }

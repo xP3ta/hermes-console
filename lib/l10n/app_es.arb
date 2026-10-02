@@ -9551,5 +9551,8 @@
   "cr1215ShowQuestion": "Mostrar pregunta",
 "ss1215StatusWorking": "Trabajando…",
 "ss1215StatusWorking": "Trabajando…",
-  "ps1215NoDetailsYet": "Sin detalles todavía: se actualizará con el siguiente evento."
+  "ps1215NoDetailsYet": "Sin detalles todavía: se actualizará con el siguiente evento.",
+  "cq1215QuestionNotRecovered": "No se ha podido recuperar la pregunta. Hermes sigue esperando tu respuesta.",
+  "cq1215RetryQuestion": "Reintentar",
+  "cq1215StopTurn": "Detener turno"
 }

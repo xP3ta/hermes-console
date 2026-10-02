@@ -5780,8 +5780,20 @@ class ActiveChat {
   void _noteServerAwaitsInput(bool value) {
     if (_serverAwaitsInput == value) return;
     _serverAwaitsInput = value;
+    if (!value) _openRequestRecoveryFailed = false;
     _emit(ActiveChatEvent.sessionInfo);
   }
+
+  /// «Mostrar pregunta» ran and Hermes still waits, but no question could be
+  /// brought back (no runtime, RPC failure, or an entry Console cannot
+  /// render). The notice then says so and offers retry / stop instead of a
+  /// button that silently does nothing.
+  bool _openRequestRecoveryFailed = false;
+
+  bool get openRequestRecoveryFailed =>
+      _openRequestRecoveryFailed && awaitsUnseenInput;
+
+  bool get openRequestRecoveryInFlight => _openRequestRehydration != null;
 
   @visibleForTesting
   bool get activityWatchdogArmed => _activityWatchdogTimer != null;
@@ -20760,8 +20772,14 @@ class ActiveChat {
       if (identical(_openRequestRehydration, run)) {
         _openRequestRehydration = null;
       }
+      if (_disposed) return;
+      // Whatever the path, a tap that left Hermes waiting with no card is a
+      // failed recovery the user must see, not a no-op.
+      _openRequestRecoveryFailed = awaitsUnseenInput;
+      _emit(ActiveChatEvent.sessionInfo);
     });
     _openRequestRehydration = run;
+    _emit(ActiveChatEvent.sessionInfo);
     return run;
   }
 

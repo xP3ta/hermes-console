@@ -7874,5 +7874,8 @@
   "cr1215ShowQuestion": "Show question",
 "ss1215StatusWorking": "Working…",
 "ss1215StatusWorking": "Working…",
-  "ps1215NoDetailsYet": "No details yet: this updates with the next event."
+  "ps1215NoDetailsYet": "No details yet: this updates with the next event.",
+  "cq1215QuestionNotRecovered": "The question could not be recovered. Hermes is still waiting for your answer.",
+  "cq1215RetryQuestion": "Retry",
+  "cq1215StopTurn": "Stop turn"
 }
