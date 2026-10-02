@@ -24,6 +24,7 @@ import '../../theme/app_theme.dart';
 import '../artifact_viewer/artifact_viewer_screen.dart';
 import '../hermes_notice.dart';
 import '../hermes_ui.dart' show HermesPanel;
+import 'project_text_editor_screen.dart';
 
 /// Server cap of the Dashboard upload routes (`_MANAGED_FILE_MAX_BYTES`).
 const int projectUploadMaxBytes = 100 * 1024 * 1024;
@@ -274,7 +275,7 @@ class ProjectFilesBrowser extends StatefulWidget {
   State<ProjectFilesBrowser> createState() => _ProjectFilesBrowserState();
 }
 
-enum _WriteKind { folder, file, upload, delete }
+enum _WriteKind { folder, file, upload, edit, delete }
 
 class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
   String? _opening;
@@ -310,9 +311,10 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
         return kind == _WriteKind.delete && folder
             ? strings.pw1215FolderNotEmpty
             : strings.pw1215NameTaken;
-      case DesktopControlFailureKind.unavailable
-          when error.code == 413 && kind == _WriteKind.upload:
-        return strings.pw1215UploadTooLarge;
+      case DesktopControlFailureKind.unavailable when error.code == 413:
+        return kind == _WriteKind.upload
+            ? strings.pw1215UploadTooLarge
+            : strings.pw1215SaveTooLarge;
       case DesktopControlFailureKind.unavailable when error.code == 404:
         return strings.pw1215Gone;
       default:
@@ -349,13 +351,7 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
               SnackBar(content: Text(strings.pf1215PreviewTruncated)),
             );
           }
-          final bytes = Uint8List.fromList(utf8.encode(preview.text));
-          show = () => _pushViewer(
-            entry.name,
-            preview.mimeType,
-            bytes,
-            preview.byteSize,
-          );
+          show = () => _pushTextViewer(entry, preview);
         }
       }
     } catch (error) {
@@ -394,6 +390,36 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
       ),
     ),
   );
+
+  /// Text preview; editable only when complete (not "Vista parcial") and the
+  /// connection may write it.
+  Future<void> _pushTextViewer(
+    ProjectFsEntry entry,
+    ProjectFilePreview preview,
+  ) {
+    final controller = widget.controller;
+    final files = controller.gateway!;
+    final writes = controller.writes;
+    final editable =
+        !preview.truncated &&
+        writes != null &&
+        controller.canWrite(ProjectFileWriteAction.writeText);
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => _EditableTextViewer(
+          name: entry.name,
+          path: entry.path,
+          mimeType: preview.mimeType,
+          initialText: preview.text,
+          sizeBytes: preview.byteSize,
+          files: files,
+          writes: editable ? writes : null,
+          canEdit: () => controller.canWrite(ProjectFileWriteAction.writeText),
+          failureText: (error) => _writeFailureText(error, _WriteKind.edit),
+        ),
+      ),
+    );
+  }
 
   bool _nameTaken(String name) =>
       widget.controller.listing?.entries.any((e) => e.name == name) ?? false;
@@ -1082,6 +1108,80 @@ class _FilesNotice extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Text preview from Projects with an "Editar" action when writable. Saving
+/// in the editor reloads the shown text from what was written.
+class _EditableTextViewer extends StatefulWidget {
+  const _EditableTextViewer({
+    required this.name,
+    required this.path,
+    required this.mimeType,
+    required this.initialText,
+    required this.sizeBytes,
+    required this.files,
+    required this.writes,
+    required this.canEdit,
+    required this.failureText,
+  });
+
+  final String name;
+  final String path;
+  final String mimeType;
+  final String initialText;
+  final int sizeBytes;
+  final HermesProjectFilesGateway files;
+
+  /// Null when the preview must stay read-only.
+  final HermesProjectFileWritesGateway? writes;
+  final bool Function() canEdit;
+  final String Function(Object failure) failureText;
+
+  @override
+  State<_EditableTextViewer> createState() => _EditableTextViewerState();
+}
+
+class _EditableTextViewerState extends State<_EditableTextViewer> {
+  late String _text = widget.initialText;
+  int _revision = 0;
+
+  Future<void> _edit() async {
+    final writes = widget.writes;
+    if (writes == null) return;
+    final saved = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => ProjectTextEditorScreen(
+          name: widget.name,
+          path: widget.path,
+          initialText: _text,
+          files: widget.files,
+          writes: writes,
+          failureText: widget.failureText,
+        ),
+      ),
+    );
+    if (saved != null && mounted) {
+      setState(() {
+        _text = saved;
+        _revision++;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = Uint8List.fromList(utf8.encode(_text));
+    return ArtifactViewerScreen(
+      key: ValueKey('pw1215-viewer-$_revision'),
+      name: widget.name,
+      mimeType: widget.mimeType,
+      loadBytes: () async => bytes,
+      sizeBytes: _revision == 0 ? widget.sizeBytes : bytes.length,
+      onEdit: widget.writes != null && widget.canEdit()
+          ? () => unawaited(_edit())
+          : null,
     );
   }
 }

@@ -195,6 +195,94 @@ void main() {
     expect(_entry('$_root/idea.md'), findsOneWidget);
   });
 
+  testWidgets('edit: Editar → change → Guardar writes and shows the result', (
+    tester,
+  ) async {
+    final gateway = Pw1215FakeWritableFilesGateway.sample();
+    await _enterFiles(tester, gateway);
+    await _tapEntry(tester, '$_root/lib');
+    await _tapEntry(tester, '$_root/lib/main.dart');
+    await _tapKey(tester, const ValueKey('artifact-viewer-edit'));
+    final editor = find.byKey(const ValueKey('pw1215-editor-field'));
+    expect(editor, findsOneWidget);
+    expect(find.textContaining('runApp(const HermesApp())'), findsOneWidget);
+
+    await tester.enterText(editor, 'void main() {}\n');
+    await tester.pumpAndSettle();
+    await _tapKey(tester, const ValueKey('pw1215-editor-save'));
+
+    expect(gateway.writeCalls, [
+      'write-text:$_root/lib/main.dart:void main() {}\n',
+    ]);
+    expect(find.text(_s(tester).pw1215Saved), findsOneWidget);
+    expect(find.byKey(const ValueKey('pw1215-editor-field')), findsNothing);
+    expect(find.byType(ArtifactViewerScreen), findsOneWidget);
+    expect(find.textContaining('void main() {}'), findsOneWidget);
+  });
+
+  testWidgets('edit: leaving with unsaved changes asks first', (tester) async {
+    final gateway = Pw1215FakeWritableFilesGateway.sample();
+    await _enterFiles(tester, gateway);
+    await _tapEntry(tester, '$_root/lib');
+    await _tapEntry(tester, '$_root/lib/main.dart');
+    await _tapKey(tester, const ValueKey('artifact-viewer-edit'));
+    await tester.enterText(
+      find.byKey(const ValueKey('pw1215-editor-field')),
+      'borrador',
+    );
+    await tester.pumpAndSettle();
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    final s = _s(tester);
+    expect(find.text(s.pw1215DiscardTitle), findsOneWidget);
+    await tester.tap(find.text(s.pw1215KeepEditing));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('pw1215-editor-field')), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(s.pw1215Discard));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('pw1215-editor-field')), findsNothing);
+    expect(gateway.writeCalls, isEmpty);
+  });
+
+  testWidgets('edit: a server-side change since opening is not clobbered', (
+    tester,
+  ) async {
+    final gateway = Pw1215FakeWritableFilesGateway.sample();
+    await _enterFiles(tester, gateway);
+    await _tapEntry(tester, '$_root/lib');
+    await _tapEntry(tester, '$_root/lib/main.dart');
+    await _tapKey(tester, const ValueKey('artifact-viewer-edit'));
+    await tester.enterText(
+      find.byKey(const ValueKey('pw1215-editor-field')),
+      'mío',
+    );
+    gateway.serverChangedText = 'del agente';
+    await _tapKey(tester, const ValueKey('pw1215-editor-save'));
+    final s = _s(tester);
+    expect(find.text(s.pw1215ConflictTitle), findsOneWidget);
+    expect(gateway.writeCalls, isEmpty);
+    await tester.tap(find.text(s.pw1215Overwrite));
+    await tester.pumpAndSettle();
+    expect(gateway.writeCalls, ['write-text:$_root/lib/main.dart:mío']);
+  });
+
+  testWidgets('partial previews and binaries cannot be edited', (tester) async {
+    final gateway = Pw1215FakeWritableFilesGateway.sample();
+    await _enterFiles(tester, gateway);
+    await _tapEntry(tester, '$_root/README.md');
+    expect(find.byType(ArtifactViewerScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey('artifact-viewer-edit')), findsNothing);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    await _tapEntry(tester, '$_root/app.keystore');
+    expect(find.byKey(const ValueKey('pf1215-file-info')), findsOneWidget);
+    expect(find.byKey(const ValueKey('artifact-viewer-edit')), findsNothing);
+  });
+
   testWidgets('upload: picks a phone file into the current folder', (
     tester,
   ) async {
@@ -315,6 +403,9 @@ void main() {
       findsNothing,
     );
     expect(find.text(_s(tester).pw1215FilesReadOnlyConnection), findsOneWidget);
+    await _tapEntry(tester, '$_root/lib');
+    await _tapEntry(tester, '$_root/lib/main.dart');
+    expect(find.byKey(const ValueKey('artifact-viewer-edit')), findsNothing);
     expect(gateway.writeCalls, isEmpty);
   });
 

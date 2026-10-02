@@ -73,6 +73,7 @@ class ArtifactViewerScreen extends StatefulWidget {
     this.onOpenExternal,
     this.onShare,
     this.onSave,
+    this.onEdit,
     this.launchExternalLink,
     this.webViewSettingsFor = defaultArtifactWebViewSettings,
   });
@@ -87,6 +88,9 @@ class ArtifactViewerScreen extends StatefulWidget {
   final VoidCallback? onOpenExternal;
   final VoidCallback? onShare;
   final VoidCallback? onSave;
+
+  /// Shown as an "Editar" action when the caller can write the file back.
+  final VoidCallback? onEdit;
 
   /// External opener for links tapped inside an HTML document. Defaults to
   /// `launchUrl(..., mode: LaunchMode.externalApplication)`.
@@ -202,6 +206,13 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
                 _showSource ? Icons.preview_outlined : Icons.code_rounded,
               ),
               onPressed: () => setState(() => _showSource = !_showSource),
+            ),
+          if (widget.onEdit != null)
+            IconButton(
+              key: const ValueKey('artifact-viewer-edit'),
+              tooltip: strings.pw1215Edit,
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: widget.onEdit,
             ),
           IconButton(
             key: const ValueKey('artifact-viewer-menu'),
