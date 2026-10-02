@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../models/dock_config.dart';
 import '../theme/app_theme.dart';
+import 'frosted_backdrop.dart';
 
 /// Metadatos visuales de un elemento de catálogo, compartidos por el dock
 /// (`dock.dart`, un único componente para los dos perfiles) y la lista de la
@@ -256,9 +257,9 @@ class DockBar extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: children,
     );
-    Widget bar = DecoratedBox(
+    Widget surface(BuildContext context, Color fill) => DecoratedBox(
       decoration: BoxDecoration(
-        color: visual.background,
+        color: fill,
         border: Border.all(color: visual.border),
         borderRadius: radius,
         boxShadow: visual.shadows,
@@ -341,19 +342,12 @@ class DockBar extends StatelessWidget {
         ),
       ),
     );
-    if (visual.blurSigma > 0) {
-      bar = ClipRRect(
-        borderRadius: radius,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(
-            sigmaX: visual.blurSigma,
-            sigmaY: visual.blurSigma,
-          ),
-          child: bar,
-        ),
-      );
-    }
-    return bar;
+    return FrostedBackdrop(
+      sigma: visual.blurSigma,
+      tint: visual.background,
+      borderRadius: radius,
+      builder: surface,
+    );
   }
 }
 
