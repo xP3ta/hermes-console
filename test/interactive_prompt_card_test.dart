@@ -194,6 +194,15 @@ void main() {
       expect(submitted, isEmpty, reason: 'a toggle must not answer');
       expect(find.byIcon(Icons.check_box_rounded), findsNWidgets(2));
 
+      // A second tap on a ticked choice unticks it and keeps it out of the
+      // answer.
+      await tester.tap(find.text('qa'));
+      await tester.pump();
+      expect(find.byIcon(Icons.check_box_rounded), findsNWidgets(3));
+      await tester.tap(find.text('qa'));
+      await tester.pump();
+      expect(find.byIcon(Icons.check_box_rounded), findsNWidgets(2));
+
       await tester.enterText(find.byType(TextField), ' otra ');
       await tester.tap(find.byIcon(Icons.send_rounded));
       await tester.pump();
