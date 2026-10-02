@@ -209,6 +209,30 @@ void main() {
     });
   });
 
+  test('mk1215: the slower racer never overwrites the winner in the cache', () {
+    fakeAsync((async) {
+      final cache = ModelPickerCache(
+        now: () => DateTime(2026).add(async.elapsed),
+      );
+      // Both fallbacks return models: the Bridge wins at 60 ms and the
+      // Dashboard answers later, at 300 ms.
+      final sources = _Sources(socketFails: true);
+
+      final cold = _measure(async, cache, sources);
+      expect(cold.result!.source, ModelPickerSource.bridge);
+      expect(sources.dashboard.calls, 1, reason: 'the loser did answer');
+      expect(
+        cache.peek('conn\u0000work')!.result.source,
+        ModelPickerSource.bridge,
+        reason: 'the next open uses the source the user was shown',
+      );
+      expect(
+        identical(cache.peek('conn\u0000work')!.result, cold.result),
+        isTrue,
+      );
+    });
+  });
+
   test('mk1215: un Bridge colgado no retiene el selector más de 4 s', () {
     fakeAsync((async) {
       final cache = ModelPickerCache(

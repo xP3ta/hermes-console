@@ -202,9 +202,11 @@ Future<ModelPickerResult> _load(
     for (final source in racers) {
       unawaited(
         attempt(source, timeout: fallbackTimeout).then((result) {
-          final won = accept(result);
           pending--;
+          // A slower racer that answers after the winner must not write the
+          // cache: the next open would switch to a source the user never saw.
           if (winner.isCompleted) return;
+          final won = accept(result);
           if (won != null) {
             winner.complete(won);
           } else if (pending == 0) {
