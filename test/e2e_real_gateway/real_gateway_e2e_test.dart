@@ -59,10 +59,6 @@ String _tag(String kind, String tag) => '[E2E:$kind:$tag$_run]';
 
 String _prompt(String kind, String tag) => '${_tag(kind, tag)} please';
 
-const _reconnectMidStreamKnownRed =
-    'known red: a mid-stream reconnect duplicates the prompt from the resume '
-    'inflight and fails idle recovery (see the comment on this test)';
-
 Future<void> _settle([Duration d = const Duration(seconds: 2)]) =>
     Future<void>.delayed(d);
 
@@ -287,14 +283,6 @@ void main() {
     expect(phone.meter.openSockets, _socketsPerChat);
   }, skip: skip);
 
-  // KNOWN RED (Console fbcbf53 against Hermes c8173e0): after the cut the
-  // resume snapshot's `inflight {user, assistant}` is projected as a NEW pair
-  // beside the local prompt and partial reply, so the prompt shows twice, the
-  // user count no longer matches the durable transcript, and idle recovery
-  // ends the turn as "No se pudo recuperar el turno" although Hermes finished
-  // it once (one model turn, one durable user/assistant pair). Skipped so the
-  // lane gates PRs; reproduce with `tool/e2e/run_local.sh --run-skipped` and
-  // delete [_reconnectMidStreamKnownRed] together with the fix.
   test('reconnect mid-stream replays the turn: one final reply, one '
       'model turn, one socket', () async {
     final proxy = await SeverableProxy.start(_env.dashboard);
@@ -341,9 +329,18 @@ void main() {
         )
         .length;
     expect(finals, 1, reason: 'the reply must not be painted twice');
+    final prompts = chat.messages
+        .where(
+          (m) =>
+              m['role'] == 'user' &&
+              '${m['content']}'.contains(_tag('SLOW', 'k1')),
+        )
+        .length;
+    expect(prompts, 1, reason: 'the prompt must not be painted twice');
+    expect(chat.messages.where((m) => m['role'] == 'assistant_error'), isEmpty);
     expect(await _env.modelTurnsFor(_tag('SLOW', 'k1')), 1);
     expect(phone.meter.openSockets, _socketsPerChat);
-  }, skip: skip ?? _reconnectMidStreamKnownRed);
+  }, skip: skip);
 
   test(
     'a prompt queued during a turn reaches the model exactly once',
