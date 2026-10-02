@@ -28986,9 +28986,10 @@ class ActiveChatService {
   /// One WebSocket per (connection, profile) for every open chat, like
   /// Desktop's single gateway client: sessions multiplex by `session_id`.
   /// Null when the chat cannot use it (an injected per-chat gateway or REST
-  /// client, the on-device loopback agent) or when the profile's socket is
-  /// known to lack per-session replay (a legacy server: each chat keeps its
-  /// own socket, as before).
+  /// client, the on-device loopback agent) or when the profile's socket
+  /// already carries chats without having proven per-session replay (a
+  /// legacy server, or one whose `gateway.ready` has not arrived yet: each
+  /// further chat keeps its own socket, as before).
   SharedGatewayLease? _acquireSharedChatGateway(
     SavedConnection connection,
     String profile, {
@@ -28999,7 +29000,7 @@ class ActiveChatService {
             (_desktopGatewayFactory != null || api != null) ||
         (connection.kind == InstanceKind.localhost &&
             connection.onDeviceLoopback) ||
-        _chatGatewayPool.chatSocketLacksReplay(connection, profile)) {
+        _chatGatewayPool.chatSocketRefusesAnotherChat(connection, profile)) {
       return null;
     }
     return _chatGatewayPool.acquireChat(

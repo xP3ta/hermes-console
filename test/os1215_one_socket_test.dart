@@ -421,6 +421,39 @@ void main() {
     },
   );
 
+  test('chats opened concurrently before the first gateway.ready of a '
+      'server without per-session replay still get one socket each', () async {
+    gateway.replayEpoch = null;
+    final chats = await Future.wait([open('a'), open('b'), open('c')]);
+
+    expect(gateway.sockets, hasLength(3));
+    expect(pool.chatClientCount, 1);
+    expect(chats.map((c) => c.desktopRuntimeSessionId).toSet(), {
+      'runtime-a',
+      'runtime-b',
+      'runtime-c',
+    });
+    // A chat opened after that keeps its own socket too.
+    await open('d');
+    expect(gateway.sockets, hasLength(4));
+  });
+
+  test('chats opened concurrently on a replay-capable server each attach '
+      'their runtime, and later chats share the proven socket', () async {
+    final chats = await Future.wait([open('a'), open('b'), open('c')]);
+    expect(chats.map((c) => c.desktopRuntimeSessionId).toSet(), {
+      'runtime-a',
+      'runtime-b',
+      'runtime-c',
+    });
+    final before = gateway.sockets.length;
+    expect(before, lessThanOrEqualTo(3));
+    await open('d');
+    await open('e');
+    expect(gateway.sockets.length, before, reason: 'shared once proven');
+    expect(pool.chatClientCount, 1);
+  });
+
   test('a silent-fanout gap on runtime B rehydrates only chat B; A keeps '
       'its runtime on the healthy shared socket', () async {
     gateway.busy.addAll({'stored-a', 'stored-b'});
