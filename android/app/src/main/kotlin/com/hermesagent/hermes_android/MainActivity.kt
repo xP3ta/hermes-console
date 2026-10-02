@@ -208,6 +208,17 @@ class MainActivity : FlutterFragmentActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "getSdkInt" -> result.success(Build.VERSION.SDK_INT)
+                "getPerformanceClass" -> {
+                    val activity =
+                        getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                    val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+                    result.success(
+                        mapOf(
+                            "lowRamDevice" to activity.isLowRamDevice,
+                            "powerSaveMode" to power.isPowerSaveMode,
+                        ),
+                    )
+                }
                 "getInstallerPackage" -> {
                     val installer =
                         try {

@@ -72,6 +72,7 @@ import 'core/theme/component_profile.dart';
 import 'core/theme/scroll_behavior.dart';
 import 'core/theme/theme_profile_store.dart';
 import 'core/widgets/attachment_source_sheet.dart';
+import 'core/widgets/frosted_backdrop.dart';
 import 'core/widgets/hermes_notice.dart';
 import 'core/widgets/hermes_premium_ui.dart';
 import 'core/services/notifications/ui_notification_actions.dart';
@@ -1189,6 +1190,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       _onHomeWidgetConnectionChanged,
     );
     unawaited(_publishHomeWidgetBase());
+    unawaited(FrostedBackdropPolicy.refresh());
     if (!_showOnboarding) {
       _scheduleHomeInitialLoad();
     }
@@ -1333,6 +1335,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appLifecycle = state;
+    // Battery saver can change while the app is in the background.
+    if (state == AppLifecycleState.resumed) {
+      unawaited(FrostedBackdropPolicy.refresh());
+    }
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
