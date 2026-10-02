@@ -340,10 +340,6 @@ final List<_Consumer> _consumers = [
   ),
 ];
 
-/// Consumers whose parser still fails the contract matrix. Each entry is
-/// removed by the commit that makes that parser family tolerant.
-const _pendingParserFix = <String>{'event gateway.ready'};
-
 /// Unknown enum values a parser is allowed to reject as a whole because the
 /// value IS the answer (an RPC status Console must not guess).
 bool _unknownEnumMayFail(_Consumer consumer, String label) =>
@@ -378,7 +374,7 @@ void main() {
   group('parsers accept every contract shape without dropping it', () {
     for (final consumer in _consumers) {
       final id = '${consumer.kind} ${consumer.name}';
-      test(id, skip: _pendingParserFix.contains(id), () {
+      test(id, () {
         final failures = <String>[];
         for (final sample in sampler.samples(consumer.schema(contract))) {
           final value = sample.value;
@@ -465,55 +461,51 @@ void main() {
     for (final sample in sampler.samples(
       contract.eventPayloadSchema('gateway.ready'),
     )) {
-      test(
-        sample.label,
-        skip: _pendingParserFix.contains('event gateway.ready'),
-        () async {
-          final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-          addTearDown(() => server.close(force: true));
-          server.listen((request) async {
-            final socket = await WebSocketTransformer.upgrade(request);
+      test(sample.label, () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        server.listen((request) async {
+          final socket = await WebSocketTransformer.upgrade(request);
+          socket.add(
+            jsonEncode({
+              'jsonrpc': '2.0',
+              'method': 'event',
+              'params': {'type': 'gateway.ready', 'payload': sample.value},
+            }),
+          );
+          await for (final raw in socket) {
+            final frame = jsonDecode(raw as String) as Map<String, dynamic>;
+            if (frame['method'] is! String) continue;
             socket.add(
               jsonEncode({
                 'jsonrpc': '2.0',
-                'method': 'event',
-                'params': {'type': 'gateway.ready', 'payload': sample.value},
+                'id': frame['id'],
+                'result': <String, dynamic>{},
               }),
             );
-            await for (final raw in socket) {
-              final frame = jsonDecode(raw as String) as Map<String, dynamic>;
-              if (frame['method'] is! String) continue;
-              socket.add(
-                jsonEncode({
-                  'jsonrpc': '2.0',
-                  'id': frame['id'],
-                  'result': <String, dynamic>{},
-                }),
-              );
-            }
-          });
-          final client = TuiGatewayClient(
-            SavedConnection(
-              id: 'conn-contract',
-              label: 'Contract',
-              host: '127.0.0.1',
-              port: 8642,
-              apiKey: 'unused',
-              dashboardUrl: 'http://127.0.0.1:${server.port}',
-            ),
-            dashboard: _TicketDashboardClient(),
-          );
-          addTearDown(client.close);
+          }
+        });
+        final client = TuiGatewayClient(
+          SavedConnection(
+            id: 'conn-contract',
+            label: 'Contract',
+            host: '127.0.0.1',
+            port: 8642,
+            apiKey: 'unused',
+            dashboardUrl: 'http://127.0.0.1:${server.port}',
+          ),
+          dashboard: _TicketDashboardClient(),
+        );
+        addTearDown(client.close);
 
-          await client.connect().timeout(const Duration(seconds: 3));
+        await client.connect().timeout(const Duration(seconds: 3));
 
-          expect(client.isConnected, isTrue);
-          expect(
-            client.changeEventsAvailable,
-            sample.value['change_events'] == true,
-          );
-        },
-      );
+        expect(client.isConnected, isTrue);
+        expect(
+          client.changeEventsAvailable,
+          sample.value['change_events'] == true,
+        );
+      });
     }
   });
 }
