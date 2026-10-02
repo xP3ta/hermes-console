@@ -5416,6 +5416,192 @@ void main() {
     expect(gateway.submitCalls, 1);
   });
 
+  // Captured from the real-gateway E2E lane (hermes serve, TCP cut after the
+  // first `message.delta`): the live assistant row already holds streamed
+  // text and reasoning when the socket drops, and the reconnect
+  // `session.resume` reports the same turn as `inflight` with
+  // `messages_omitted`. The inflight is the local open turn: it must stream
+  // into the existing prompt/reply instead of painting a second pair.
+  test('ms1215 a mid-stream cut adopts the resume inflight into the local '
+      'open turn instead of painting a second prompt and reply', () async {
+    const storedId = 'e2e-chat-05';
+    const prompt = '[E2E:SLOW:k1] please';
+    const runtimeId = '0d3f0c47';
+    const durableReply =
+        'slow reply k1 dolor sit amet dolor sit amet dolor sit amet';
+    final gateway = _NonIdempotentLifecycleGateway(storedId);
+    var durableTurnStored = false;
+    final chat = _recoverableChat(
+      'ms1215-midstream',
+      gateway,
+      desktopRecoveryRandom: () => 1.0,
+      storedMessageLoader: (_, _) async => [
+        {'id': 309, 'role': 'user', 'content': 'hello e2e-chat-05'},
+        {'id': 310, 'role': 'assistant', 'content': 'hi from e2e-chat-05'},
+        if (durableTurnStored) ...[
+          {'id': 325, 'role': 'user', 'content': prompt},
+          {'id': 326, 'role': 'assistant', 'content': durableReply},
+        ],
+      ],
+    );
+    addTearDown(chat.dispose);
+    SharedPreferences.setMockInitialValues({});
+
+    await chat.loadMessages();
+    expect(chat.messages, hasLength(2));
+    await chat.send(fullText: prompt, model: 'hermes-agent', history: const []);
+    final liveRuntime = chat.desktopRuntimeSessionId!;
+    gateway
+      ..emit('message.start', sessionId: liveRuntime)
+      ..emit(
+        'thinking.delta',
+        sessionId: liveRuntime,
+        payload: const {'text': '(¬_¬) processing...'},
+      )
+      ..emit(
+        'message.delta',
+        sessionId: liveRuntime,
+        payload: const {'text': 'slow reply'},
+      );
+    await _waitUntil(
+      () => chat.messages.any(
+        (m) => m['role'] == 'assistant' && m['content'] == 'slow reply',
+      ),
+    );
+
+    // Frame #11 of the captured reconnect: running, messages omitted.
+    gateway.recoverySnapshot = DesktopSessionSnapshot(
+      runtimeSessionId: runtimeId,
+      storedSessionId: storedId,
+      created: false,
+      messagesProvided: false,
+      messageCount: 2,
+      inflight: DesktopInflightTurn(
+        user: prompt,
+        assistant: 'slow reply k1 dolor sit amet',
+        streaming: true,
+      ),
+      running: true,
+      status: 'working',
+    );
+    gateway.failWith(const SocketException('Connection reset by peer'));
+    await _waitUntil(() => chat.desktopRuntimeSessionId == runtimeId);
+
+    List<Map<String, dynamic>> users() => chat.messages
+        .where((m) => m['role'] == 'user' && m['content'] == prompt)
+        .toList();
+    List<Map<String, dynamic>> replies() => chat.messages
+        .where(
+          (m) =>
+              m['role'] == 'assistant' &&
+              '${m['content']}'.startsWith('slow reply'),
+        )
+        .toList();
+    expect(users(), hasLength(1), reason: 'the prompt is painted once');
+    expect(replies(), hasLength(1), reason: 'one reply row for the turn');
+    expect(chat.state, ChatPipelineState.streaming);
+
+    // The replayed tail streams into that same reply and the turn ends.
+    gateway.emit(
+      'message.delta',
+      sessionId: runtimeId,
+      payload: const {'text': ' dolor sit amet'},
+    );
+    durableTurnStored = true;
+    gateway.emit(
+      'message.complete',
+      sessionId: runtimeId,
+      payload: const {
+        'text': durableReply,
+        'status': 'complete',
+        'persisted_turn': {
+          'row_ids': [325, 326],
+          'complete': true,
+          'user_row_id': 325,
+          'final_assistant_row_id': 326,
+        },
+      },
+    );
+    await _waitUntil(
+      () => chat.state == ChatPipelineState.completed,
+      timeout: const Duration(seconds: 5),
+    );
+    expect(users(), hasLength(1));
+    expect(replies(), hasLength(1));
+    expect(replies().single['content'], durableReply);
+    expect(chat.messages.where((m) => m['role'] == 'assistant_error'), isEmpty);
+    expect(gateway.submitCalls, 1);
+  });
+
+  // ms1215 negative control: the streamed reply is only re-opened for the
+  // inflight that provably continues it. A runtime turn with another prompt,
+  // or whose text does not extend what this client streamed, never wipes the
+  // local reply.
+  for (final (label, inflightUser, inflightAssistant) in const [
+    ('another prompt', 'otro prompt de otra superficie', 'slow reply k1 more'),
+    ('a diverging reply', '[E2E:SLOW:k1] please', 'different text'),
+  ]) {
+    test('ms1215 $label keeps the locally streamed reply', () async {
+      const prompt = '[E2E:SLOW:k1] please';
+      final gateway = _NonIdempotentLifecycleGateway('ms1215-negative');
+      final chat = _recoverableChat(
+        'ms1215-negative',
+        gateway,
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async => const [
+          {'id': 309, 'role': 'user', 'content': 'hello'},
+          {'id': 310, 'role': 'assistant', 'content': 'hi'},
+        ],
+      );
+      addTearDown(chat.dispose);
+      SharedPreferences.setMockInitialValues({});
+      await chat.loadMessages();
+      await chat.send(
+        fullText: prompt,
+        model: 'hermes-agent',
+        history: const [],
+      );
+      gateway.emit(
+        'message.delta',
+        sessionId: chat.desktopRuntimeSessionId!,
+        payload: const {'text': 'slow reply'},
+      );
+      await _waitUntil(
+        () => chat.messages.any((m) => m['content'] == 'slow reply'),
+      );
+      gateway.recoverySnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-ms1215-negative',
+        storedSessionId: 'ms1215-negative',
+        created: false,
+        messagesProvided: false,
+        inflight: DesktopInflightTurn(
+          user: inflightUser,
+          assistant: inflightAssistant,
+          streaming: true,
+        ),
+        running: true,
+        status: 'working',
+      );
+      gateway.failWith(const SocketException('Connection reset by peer'));
+      await _waitUntil(
+        () => chat.desktopRuntimeSessionId == 'runtime-ms1215-negative',
+      );
+      expect(
+        chat.messages.where(
+          (m) => m['role'] == 'assistant' && m['content'] == 'slow reply',
+        ),
+        hasLength(1),
+        reason: 'the locally streamed reply is never erased',
+      );
+      expect(
+        chat.messages.where(
+          (m) => m['role'] == 'user' && m['content'] == prompt,
+        ),
+        isNotEmpty,
+      );
+    });
+  }
+
   // rl1215: once the socket is back and the server answered, recovery is
   // only re-reading the transcript. The chat must not keep saying
   // "connection lost" for that sync.
