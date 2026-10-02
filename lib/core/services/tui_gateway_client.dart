@@ -274,6 +274,7 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
     super.pendingClarifyProvided,
     super.pendingApproval,
     super.pendingApprovalProvided,
+    super.openRequests,
     super.todoState,
     super.running,
     super.status,
@@ -303,6 +304,7 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
       pendingClarifyProvided: snapshot.pendingClarifyProvided,
       pendingApproval: snapshot.pendingApproval,
       pendingApprovalProvided: snapshot.pendingApprovalProvided,
+      openRequests: snapshot.openRequests,
       todoState: snapshot.todoState,
       running: snapshot.running,
       status: snapshot.status,
@@ -1901,6 +1903,36 @@ class TuiGatewayClient
     'vault.save_login': 'vault.save_login.request',
     'vault.code': 'vault.code.request',
   };
+
+  /// The legacy `*.request` event an open server request (`open_requests`
+  /// entry of a resume/activate/events.since snapshot) stands for, or null for
+  /// a kind Console does not render. Lets a chat re-hydrate a question it
+  /// missed while it had no runtime attached; answering still goes through
+  /// the response-frame path the transport registered for the same id.
+  static TuiGatewayEvent? openServerRequestEvent(Map<String, dynamic> entry) {
+    final id = entry['id'];
+    final method = entry['method'];
+    final params = entry['params'];
+    if (id is! String || id.isEmpty || method is! String || params is! Map) {
+      return null;
+    }
+    if (method == 'approval') return null;
+    final legacyType = _serverRequestLegacyEvents[method];
+    final rawSession = params['session_id'];
+    final sessionId = rawSession is String ? rawSession.trim() : '';
+    if (legacyType == null || sessionId.isEmpty) return null;
+    final payload = <String, dynamic>{
+      for (final item in params.entries)
+        if (item.key is String && item.key != 'session_id')
+          item.key as String: item.value,
+    };
+    payload['request_id'] = id;
+    return TuiGatewayEvent(
+      type: legacyType,
+      sessionId: sessionId,
+      payload: Map<String, dynamic>.unmodifiable(payload),
+    );
+  }
 
   void _deliverServerRequest(
     JsonRpcServerRequestFrame frame,
@@ -6906,6 +6938,7 @@ class TuiGatewayClient
       allowExpired: true,
     );
   }
+
 
   @override
   Future<DesktopPromptResponse> respondToSudo(

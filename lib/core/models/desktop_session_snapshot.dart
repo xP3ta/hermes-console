@@ -38,6 +38,13 @@ class DesktopSessionSnapshot {
   final Map<String, dynamic>? pendingApproval;
   final bool pendingApprovalProvided;
 
+  /// `open_requests`: server→client requests (clarify, approval, sudo, …)
+  /// still waiting on this session. Hermes only sends each request frame once,
+  /// so a client that was offline or not yet attached when it was written
+  /// learns about it here (`tui_gateway/server_requests.py::open_requests`).
+  /// Each entry is the request frame `{id, method, params}`.
+  final List<Map<String, dynamic>> openRequests;
+
   /// `todo_state` del gateway: la lista de tareas del agente para esta sesión
   /// (también la reconstruye desde el historial durable cuando no hay agente
   /// vivo). `null` si no la trae o no es utilizable.
@@ -69,6 +76,7 @@ class DesktopSessionSnapshot {
     this.pendingClarifyProvided = false,
     this.pendingApproval,
     this.pendingApprovalProvided = false,
+    this.openRequests = const [],
     this.todoState,
   });
 
@@ -95,6 +103,7 @@ class DesktopSessionSnapshot {
     pendingClarifyProvided: pendingClarifyProvided,
     pendingApproval: pendingApproval,
     pendingApprovalProvided: pendingApprovalProvided,
+    openRequests: openRequests,
     todoState: todoState,
     raw: raw,
   );
@@ -245,6 +254,7 @@ class DesktopSessionSnapshot {
       pendingClarifyProvided: json.containsKey('pending_clarify'),
       pendingApproval: _stringKeyedMap(json['pending_approval']),
       pendingApprovalProvided: json.containsKey('pending_approval'),
+      openRequests: _openServerRequests(json['open_requests']),
       todoState: AgentTaskList.tryParse(json['todo_state']),
       // Keep only unknown, non-payload extension fields. The 0.19 snapshot can
       // contain the whole transcript and a many-KiB system prompt; duplicating
@@ -891,6 +901,28 @@ DateTime? _epochSeconds(Object? value) {
   }
 }
 
+List<Map<String, dynamic>> _openServerRequests(Object? value) {
+  if (value is! List) return const [];
+  final requests = <Map<String, dynamic>>[];
+  for (final entry in value) {
+    final frame = _stringKeyedMap(entry);
+    if (frame == null) continue;
+    final id = frame['id'];
+    final method = frame['method'];
+    final params = _stringKeyedMap(frame['params']);
+    if (id is! String || id.trim().isEmpty || id != id.trim()) continue;
+    if (method is! String || method.trim().isEmpty || params == null) continue;
+    requests.add(
+      Map<String, dynamic>.unmodifiable({
+        'id': id,
+        'method': method,
+        'params': Map<String, dynamic>.unmodifiable(params),
+      }),
+    );
+  }
+  return List.unmodifiable(requests);
+}
+
 Map<String, dynamic>? _stringKeyedMap(Object? value) {
   if (value is! Map) return null;
   final result = <String, dynamic>{};
@@ -1034,6 +1066,7 @@ const _snapshotParsedKeys = <String>{
   'info',
   'pending_clarify',
   'pending_approval',
+  'open_requests',
   'todo_state',
 };
 

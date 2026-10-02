@@ -12998,6 +12998,7 @@ class ActiveChat {
     info: snapshot.info,
     pendingClarify: snapshot.pendingClarify,
     pendingClarifyProvided: snapshot.pendingClarifyProvided,
+    openRequests: snapshot.openRequests,
     raw: snapshot.raw,
   );
 
@@ -17899,8 +17900,15 @@ class ActiveChat {
         // puede reutilizar su id en el siguiente intento: fuerza un nuevo
         // session.resume sobre el socket reconectado y evita una cadena de
         // reintentos contra un runtime ya desaparecido.
+        // A dropped socket answers nothing: Hermes keeps the question open and
+        // replays it as `open_requests` on resume. Forget the cards without
+        // tombstones so that replay can show them again.
         final disconnectedRuntimeId = _desktopRuntimeSessionId;
-        _expireInteractivePromptsForRuntime(disconnectedRuntimeId);
+        if (disconnectedRuntimeId != null) {
+          _reduceInteractivePrompt(
+            InteractivePromptRuntimeDetached(disconnectedRuntimeId),
+          );
+        }
         _usingDesktopGateway = false;
         _retireDesktopRuntime(reason: _RuntimeRetirement.transportLoss);
         if (viewerRecoveryClosed) _closeViewerRecovery(gateway);
@@ -18035,6 +18043,24 @@ class ActiveChat {
           if (_recordDurablePrivateTranscriptVetoes(snapshot.messages)) {
             _emit(ActiveChatEvent.messagesHydrated);
           }
+          if (!_snapshotAwaitsUserInput(snapshot)) return;
+          // Hermes is parked on a question for this user (clarify, sudo,
+          // secret, approval). Staying detached until the roster goes idle
+          // would wait forever: the turn cannot end before someone answers.
+          // Rejoin the runtime so the question shows and can be answered.
+          _viewerTurnConvergenceEpoch = null;
+          _desktopStoredSessionId = snapshot.storedSessionId;
+          _desktopStoredSessionKnownMissing = false;
+          _adoptDesktopRuntime(runtimeId, info: snapshot.info);
+          _desktopRuntimeInfo = snapshot.info;
+          _rememberDesktopLiveStatus(
+            snapshot.status,
+            running: snapshot.running,
+          );
+          _usingDesktopGateway = true;
+          _restorePendingClarify(snapshot);
+          _restorePendingApproval(snapshot);
+          _emit(ActiveChatEvent.sessionInfo);
           return;
         }
 
@@ -18055,6 +18081,10 @@ class ActiveChat {
             ? snapshot.resolvedTurnStartedAt
             : null;
         _usingDesktopGateway = true;
+        // The question the agent is waiting on survived the cut only on the
+        // server: bring it back with the runtime.
+        _restorePendingClarify(snapshot);
+        _restorePendingApproval(snapshot);
         _emit(ActiveChatEvent.sessionInfo);
         return;
       } catch (error) {
@@ -18440,6 +18470,7 @@ class ActiveChat {
                 expectedGeneration: recoveryApprovalGeneration,
                 liveSnapshotAbsenceClears: true,
               );
+              _restorePendingClarify(binding);
               _armActivityWatchdog();
               _emit(ActiveChatEvent.waiting);
               return;
@@ -18493,6 +18524,7 @@ class ActiveChat {
                 expectedGeneration: recoveryApprovalGeneration,
                 liveSnapshotAbsenceClears: true,
               );
+              _restorePendingClarify(binding);
               _armActivityWatchdog();
               _emit(ActiveChatEvent.toolProgress);
               return;
@@ -20404,6 +20436,39 @@ class ActiveChat {
 
   void _restorePendingClarify(DesktopSessionSnapshot snapshot) {
     _reconcilePendingClarifySnapshot(snapshot, unlockResponding: false);
+    _restoreOpenServerRequests(snapshot);
+  }
+
+  bool _snapshotAwaitsUserInput(DesktopSessionSnapshot snapshot) {
+    if (!snapshot.running) return false;
+    if (snapshot.pendingApproval?.isNotEmpty == true) return true;
+    return snapshot.openRequests.any((entry) {
+      final method = entry['method'];
+      return method == 'clarify' ||
+          method == 'sudo' ||
+          method == 'secret' ||
+          method == 'approval';
+    });
+  }
+
+  /// Re-renders the server→client requests still open on the attached
+  /// runtime (`open_requests` of resume/activate/events.since). Hermes writes
+  /// each request frame once; when it lands before this chat adopted the
+  /// runtime (cold open, reconnect, another socket) the live event is dropped
+  /// and only the snapshot can bring the question back. Approvals keep their
+  /// own `pending_approval` path.
+  void _restoreOpenServerRequests(DesktopSessionSnapshot snapshot) {
+    final runtimeId = _desktopRuntimeSessionId;
+    if (runtimeId == null || snapshot.runtimeSessionId != runtimeId) return;
+    for (final entry in snapshot.openRequests) {
+      final event = TuiGatewayClient.openServerRequestEvent(entry);
+      if (event == null ||
+          event.sessionId != runtimeId ||
+          !_isInteractivePromptEvent(event.type)) {
+        continue;
+      }
+      _handleInteractivePromptEvent(event.type, runtimeId, event.payload);
+    }
   }
 
   void _reconcilePendingClarifySnapshot(
