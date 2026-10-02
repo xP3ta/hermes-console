@@ -88,6 +88,7 @@ import 'model_picker_loader.dart';
 import 'session_config_reducer.dart';
 import 'session_deletion.dart';
 import 'session_reconciler.dart';
+import 'shared_gateway_pool.dart';
 import 'transcript_publication_coordinator.dart';
 import 'subagent_activity_reducer.dart';
 import 'subagent_transcript_projection.dart';
@@ -4616,6 +4617,14 @@ class ActiveChat {
   /// remoto preferido; en tests que inyectan [ApiClient] queda desactivado salvo
   /// que se inyecte explícitamente un fake.
   final HermesDesktopGateway? _desktopGateway;
+
+  /// Set when [_desktopGateway] is the connection's shared, multiplexed
+  /// socket: [dispose] gives the chat's lease back instead of closing a
+  /// socket other chats still read.
+  final VoidCallback? _releaseSharedDesktopGateway;
+
+  /// Runtime this chat holds as a reader on a multiplexed socket.
+  String? _multiplexedRuntimeHeld;
   final CompressionRestoreStore _compressionRestoreStore;
   final int Function() _wallClockMs;
   final List<Duration> _backgroundStopRecheckDelays;
@@ -8447,6 +8456,7 @@ class ActiveChat {
     ApiClient? api,
     @visibleForTesting DashboardClient? transcriptDashboard,
     HermesDesktopGateway? desktopGateway,
+    VoidCallback? releaseSharedDesktopGateway,
     CompressionRestoreStore? compressionRestoreStore,
     int Function()? wallClockMs,
     Future<AttachmentUploadResult> Function(SavedConnection, AttachmentDraft)?
@@ -8529,6 +8539,7 @@ class ActiveChat {
            : const Duration(minutes: 10),
        _desktopRecoveryRandom =
            desktopRecoveryRandom ?? math.Random().nextDouble,
+       _releaseSharedDesktopGateway = releaseSharedDesktopGateway,
        _turnIdempotencyCapability =
            turnIdempotencyCapability ??
            (() => ConnectionManager.isTurnIdempotencySupported(connection.id)),
@@ -9221,6 +9232,7 @@ class ActiveChat {
     if (didAdopt) {
       _retireDesktopRuntime(reason: _RuntimeRetirement.adoption);
       _desktopRuntimeSessionId = runtimeId;
+      _holdMultiplexedRuntime(runtimeId);
       _retiringDesktopRuntimeSessionId = null;
       if (!_viewerTurnConvergenceIsCurrent) {
         _viewerTurnConvergenceEpoch = null;
@@ -18671,6 +18683,7 @@ class ActiveChat {
     _desktopEventSubscription ??= gateway.events.listen(
       _onDesktopEvent,
       onError: (Object error, StackTrace stackTrace) {
+        if (_isOtherRuntimesSubscriptionError(gateway, error)) return;
         final interruptedActiveTurn =
             _usingDesktopGateway && isStreaming && !_runTerminal;
         final clientSubmittedTurn = _clientSubmittedCurrentTurn;
@@ -18713,6 +18726,37 @@ class ActiveChat {
         }
       },
     );
+  }
+
+  /// On a socket shared by many chats a live-subscription error that names a
+  /// runtime (the silent-fanout watchdog) concerns only that runtime's chat;
+  /// the socket itself stays healthy.
+  bool _isOtherRuntimesSubscriptionError(
+    HermesDesktopGateway gateway,
+    Object error,
+  ) {
+    if (gateway is! TuiGatewayClient || !gateway.multiplexesSessions) {
+      return false;
+    }
+    final runtime = error is TuiGatewayRpcError
+        ? error.data['session_id']
+        : null;
+    return runtime is String && runtime != _desktopRuntimeSessionId;
+  }
+
+  /// Keeps this chat's reader slot on a multiplexed socket in step with the
+  /// runtime it adopted. A runtime nobody reads any more is forgotten by the
+  /// socket; per-chat sockets ignore this.
+  void _holdMultiplexedRuntime(String? runtimeSessionId) {
+    final gateway = _desktopGateway;
+    if (gateway is! TuiGatewayClient || !gateway.multiplexesSessions) return;
+    final held = _multiplexedRuntimeHeld;
+    if (held == runtimeSessionId) return;
+    _multiplexedRuntimeHeld = runtimeSessionId;
+    if (runtimeSessionId != null) {
+      gateway.retainSessionRuntime(runtimeSessionId);
+    }
+    if (held != null) gateway.releaseSessionRuntime(held);
   }
 
   void _scheduleAutomaticDesktopReattach(HermesDesktopGateway gateway) {
@@ -28638,7 +28682,13 @@ class ActiveChat {
       const InteractivePromptDisposed(),
     );
     _retireDesktopRuntime();
-    if (!_desktopGatewayHandedOff) unawaited(_desktopGateway?.close());
+    _holdMultiplexedRuntime(null);
+    final releaseShared = _releaseSharedDesktopGateway;
+    if (releaseShared != null) {
+      releaseShared();
+    } else if (!_desktopGatewayHandedOff) {
+      unawaited(_desktopGateway?.close());
+    }
     _api.close();
     if (_ownsTranscriptDashboard) _transcriptDashboard?.close();
     _transportStatusListenable.dispose();
@@ -28723,9 +28773,15 @@ class ActiveChatService {
     HermesDesktopGateway Function(SavedConnection connection)?
     desktopGatewayFactory,
     Listenable? connectionCredentialsRevision,
+    @visibleForTesting SharedGatewayPool? chatGatewayPool,
+    @visibleForTesting
+    TuiGatewayClient Function(SavedConnection connection)?
+    sharedChatGatewayFactory,
   }) : _prefs = prefs,
        _connectionCredentialsRevision = connectionCredentialsRevision,
        _desktopGatewayFactory = desktopGatewayFactory,
+       _chatGatewayPool = chatGatewayPool ?? SharedGatewayPool.instance,
+       _sharedChatGatewayFactory = sharedChatGatewayFactory,
        _homeWidgetNowMs =
            homeWidgetNowMs ?? (() => DateTime.now().millisecondsSinceEpoch),
        _cancelledTurnStore = cancelledTurnStore,
@@ -28905,7 +28961,9 @@ class ActiveChatService {
     SavedConnection connection, {
     ApiClient? api,
   }) {
-    final factory = _desktopGatewayFactory;
+    // A profile whose shared socket lacks per-session replay falls back to
+    // a client per chat from the same factory.
+    final factory = _desktopGatewayFactory ?? _sharedChatGatewayFactory;
     final gateway = factory != null
         ? factory(connection)
         : api == null &&
@@ -28918,6 +28976,38 @@ class ActiveChatService {
       _gatewayCredentialsEpoch[gateway] = _credentialsEpoch;
     }
     return gateway;
+  }
+
+  /// Pool owning the per-(connection, profile) chat sockets.
+  final SharedGatewayPool _chatGatewayPool;
+  final TuiGatewayClient Function(SavedConnection connection)?
+  _sharedChatGatewayFactory;
+
+  /// One WebSocket per (connection, profile) for every open chat, like
+  /// Desktop's single gateway client: sessions multiplex by `session_id`.
+  /// Null when the chat cannot use it (an injected per-chat gateway or REST
+  /// client, the on-device loopback agent) or when the profile's socket is
+  /// known to lack per-session replay (a legacy server: each chat keeps its
+  /// own socket, as before).
+  SharedGatewayLease? _acquireSharedChatGateway(
+    SavedConnection connection,
+    String profile, {
+    ApiClient? api,
+  }) {
+    final sharedFactory = _sharedChatGatewayFactory;
+    if (sharedFactory == null &&
+            (_desktopGatewayFactory != null || api != null) ||
+        (connection.kind == InstanceKind.localhost &&
+            connection.onDeviceLoopback) ||
+        _chatGatewayPool.chatSocketLacksReplay(connection, profile)) {
+      return null;
+    }
+    return _chatGatewayPool.acquireChat(
+      connection,
+      profile: profile,
+      chatLinger: warmGatewayGrace,
+      factory: sharedFactory,
+    );
   }
 
   void _parkWarmGateway(String key, ActiveChat chat) {
@@ -28975,6 +29065,8 @@ class ActiveChatService {
       parked.close();
     }
     _warmGateways.clear();
+    // The shared chat sockets no chat holds any more follow the same rule.
+    _chatGatewayPool.disconnectIdleChats();
   }
 
   void _forgetWarmGateways(String connectionId, {String? sessionId}) {
@@ -30068,8 +30160,12 @@ class ActiveChatService {
         initialStoredSessionId,
     };
     final chatApi = api ?? defaultApiForTesting?.call(connection);
+    final sharedLease = desktopGateway == null
+        ? _acquireSharedChatGateway(connection, owner, api: chatApi)
+        : null;
     final resolvedDesktopGateway =
         desktopGateway ??
+        sharedLease?.client ??
         _takeWarmGateway(key, connection) ??
         _createChatGateway(connection, api: chatApi);
     late final ActiveChat chat;
@@ -30097,6 +30193,7 @@ class ActiveChatService {
             },
       api: chatApi,
       desktopGateway: resolvedDesktopGateway,
+      releaseSharedDesktopGateway: sharedLease?.release,
       compressionRestoreStore: _compressionRestoreStore,
       storedMessageLoader:
           storedMessageLoader ?? defaultStoredMessageLoaderForTesting,
