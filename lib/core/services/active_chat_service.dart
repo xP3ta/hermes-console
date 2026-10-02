@@ -15791,11 +15791,17 @@ class ActiveChat {
       final catalog = await catalogGateway.modelOptions(
         runtimeId,
         refresh: refresh,
+        connectedOnly: connectedOnly,
       );
       _modelCatalogCache.write(connection.id, profile, catalog);
       return catalog;
     } on TuiGatewayRpcError catch (error) {
       if (error.code == 4007 || error.code == -32601) return null;
+      // A passive read whose socket dropped meanwhile fails closed.
+      if (connectedOnly &&
+          error.failureKind == TuiGatewayRpcFailureKind.connectionLost) {
+        return null;
+      }
       rethrow;
     }
   }
@@ -15834,6 +15840,7 @@ class ActiveChat {
       final catalog = await catalogGateway.globalModelOptions(
         profile: profile,
         refresh: refresh,
+        connectedOnly: connectedOnly,
       );
       _modelCatalogCache.write(connection.id, profile, catalog);
       return catalog;

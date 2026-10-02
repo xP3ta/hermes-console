@@ -1489,14 +1489,17 @@ class _ColdHistoryGateway extends _UiRewindGateway {
 class _SessionlessCatalogGateway extends _UiRewindGateway
     implements HermesDesktopGlobalModelCatalogGateway {
   int globalCalls = 0;
+  final List<bool> connectedOnlyFlags = [];
 
   @override
   Future<DesktopModelCatalog> globalModelOptions({
     String profile = '',
     bool refresh = false,
     Duration timeout = const Duration(seconds: 6),
+    bool connectedOnly = false,
   }) async {
     globalCalls++;
+    connectedOnlyFlags.add(connectedOnly);
     return DesktopModelCatalog.fromJson(const {
       'model': 'disk-model',
       'provider': 'provider-a',
@@ -1597,6 +1600,7 @@ class _ModelConfigGateway extends _UiRewindGateway
   // respuesta `deferred` (cambio a mitad de turno).
   DesktopModelCatalog? catalogOverride;
   int modelOptionsCalls = 0;
+  final List<bool> modelOptionsConnectedOnly = [];
   Completer<void>? modelGate;
   bool modelDeferred = false;
 
@@ -1604,8 +1608,10 @@ class _ModelConfigGateway extends _UiRewindGateway
   Future<DesktopModelCatalog> modelOptions(
     String runtimeSessionId, {
     bool refresh = false,
+    bool connectedOnly = false,
   }) async {
     modelOptionsCalls++;
+    modelOptionsConnectedOnly.add(connectedOnly);
     return catalogOverride ?? catalog;
   }
 
@@ -19135,6 +19141,11 @@ void main() {
           reason: 'chat open and resume never call the Bridge or Dashboard',
         );
         expect(gateway.globalCalls, 1, reason: 'resume reuses the catalog');
+        expect(
+          gateway.connectedOnlyFlags,
+          [true],
+          reason: 'the badge read never opens a socket',
+        );
 
         // A cold picker (nothing cached) also goes to the socket first.
         tester
@@ -19152,6 +19163,44 @@ void main() {
         expect(chat.hasDesktopRuntime, isFalse);
         // ignore: avoid_print
         print('mk1215 widget picker open via socket: $cold ms');
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'mk1215: with a runtime and no model in session.info the badge reads '
+      'the runtime catalog without dialling',
+      (tester) async {
+        final gateway = _ModelConfigGateway();
+        final chat = await pumpChat(
+          tester,
+          desktopGateway: gateway,
+          connection: _remoteConn('conn-mk1215-runtime-badge'),
+          messagesLoaded: false,
+        );
+        for (var frame = 0; !chat.hasDesktopRuntime && frame < 10; frame++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        expect(chat.hasDesktopRuntime, isTrue);
+        tester
+            .state<HermesAppState>(find.byType(HermesApp))
+            .activeChats
+            .modelPickerCache
+            .clear();
+        for (final state in const [
+          AppLifecycleState.inactive,
+          AppLifecycleState.hidden,
+          AppLifecycleState.paused,
+          AppLifecycleState.hidden,
+          AppLifecycleState.inactive,
+          AppLifecycleState.resumed,
+        ]) {
+          tester.binding.handleAppLifecycleStateChanged(state);
+          await tester.pump();
+        }
+        await tester.pump(const Duration(seconds: 1));
+        expect(gateway.modelOptionsConnectedOnly, isNotEmpty);
+        expect(gateway.modelOptionsConnectedOnly, everyElement(isTrue));
         expect(tester.takeException(), isNull);
       },
     );

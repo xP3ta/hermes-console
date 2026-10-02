@@ -634,9 +634,12 @@ abstract class HermesDesktopSessionActivityGateway {
 
 /// Authenticated provider/model catalog scoped to an existing live runtime.
 abstract class HermesDesktopModelCatalogGateway {
+  /// [connectedOnly] fails closed instead of (re)opening the socket, for
+  /// passive reads such as the AppBar badge.
   Future<DesktopModelCatalog> modelOptions(
     String runtimeSessionId, {
     bool refresh = false,
+    bool connectedOnly = false,
   });
 }
 
@@ -644,10 +647,12 @@ abstract class HermesDesktopModelCatalogGateway {
 /// `requestModelOptions` does over its already-open gateway (mk1215). Kept
 /// separate so legacy fakes stay valid.
 abstract class HermesDesktopGlobalModelCatalogGateway {
+  /// [connectedOnly] fails closed instead of (re)opening the socket.
   Future<DesktopModelCatalog> globalModelOptions({
     String profile = '',
     bool refresh = false,
     Duration timeout = const Duration(seconds: 6),
+    bool connectedOnly = false,
   });
 }
 
@@ -1589,6 +1594,18 @@ class TuiGatewayClient
     return future.whenComplete(() {
       if (identical(_connecting, future)) _connecting = null;
     });
+  }
+
+  /// Fail-closed guard for passive reads: throws `connectionLost` when the
+  /// socket is not connected right now, and never dials or arms a timer.
+  void _requireConnectedWithoutDialing(String method) {
+    if (_closed || !_connected || _channel == null) {
+      throw TuiGatewayRpcError(
+        method,
+        'Hermes Desktop WebSocket is not connected',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      );
+    }
   }
 
   /// Connect on behalf of an RPC: fails fast with `connectionLost` while the
@@ -2930,8 +2947,9 @@ class TuiGatewayClient
   Future<Map<String, dynamic>> _requestOptionalCapability(
     DesktopGatewayCapability capability,
     String method,
-    Map<String, dynamic> params,
-  ) async {
+    Map<String, dynamic> params, {
+    bool connectedOnly = false,
+  }) async {
     if (!_capabilityCache.canAttempt(capability)) {
       throw TuiGatewayRpcError(
         method,
@@ -2940,7 +2958,15 @@ class TuiGatewayClient
       );
     }
     try {
-      final result = await _request(method, params);
+      final Map<String, dynamic> result;
+      if (connectedOnly) {
+        // Checked and sent in the same synchronous step: a socket that
+        // dropped after the caller's own check is never redialled.
+        _requireConnectedWithoutDialing(method);
+        result = await _requestConnected(method, params);
+      } else {
+        result = await _request(method, params);
+      }
       _capabilityCache.mark(
         capability,
         DesktopGatewayCapabilityState.supported,
@@ -5054,6 +5080,7 @@ class TuiGatewayClient
   Future<DesktopModelCatalog> modelOptions(
     String runtimeSessionId, {
     bool refresh = false,
+    bool connectedOnly = false,
   }) async {
     const method = 'model.options';
     final runtime = _validatedRuntimeId(method, runtimeSessionId);
@@ -5066,6 +5093,7 @@ class TuiGatewayClient
         'include_unconfigured': false,
         'refresh': refresh,
       },
+      connectedOnly: connectedOnly,
     );
     if (result['providers'] is! List) {
       _capabilityCache.mark(
@@ -5087,6 +5115,7 @@ class TuiGatewayClient
     String profile = '',
     bool refresh = false,
     Duration timeout = const Duration(seconds: 6),
+    bool connectedOnly = false,
   }) async {
     const method = 'model.options';
     final owner = profile.trim();
@@ -5102,7 +5131,11 @@ class TuiGatewayClient
     // leaves only what is left of [timeout] for the answer.
     final deadline = _now().add(timeout);
     try {
-      await _connectForRequest(method).timeout(timeout);
+      if (connectedOnly) {
+        _requireConnectedWithoutDialing(method);
+      } else {
+        await _connectForRequest(method).timeout(timeout);
+      }
       final remaining = deadline.difference(_now());
       if (remaining <= Duration.zero) {
         throw const TuiGatewayRpcError(

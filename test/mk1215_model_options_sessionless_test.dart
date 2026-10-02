@@ -143,6 +143,7 @@ class _WarmGateway implements HermesDesktopGlobalModelCatalogGateway {
     String profile = '',
     bool refresh = false,
     Duration timeout = const Duration(seconds: 6),
+    bool connectedOnly = false,
   }) async {
     calls.add(profile);
     return DesktopModelCatalog.fromJson(_catalog);
@@ -196,6 +197,153 @@ void main() {
         (error! as TuiGatewayRpcError).failureKind,
         TuiGatewayRpcFailureKind.timeout,
       );
+      unawaited(client.close());
+      async.elapse(const Duration(seconds: 30));
+    });
+  });
+
+  test('mk1215: a passive badge read never redials a shared socket that '
+      'dropped after the caller checked it', () {
+    fakeAsync((async) {
+      final opened = <ScriptedGatewayChannel>[];
+      TuiGatewayClient scripted(String id) => TuiGatewayClient(
+        SavedConnection(
+          id: id,
+          label: id,
+          host: '127.0.0.1',
+          port: 8642,
+          apiKey: 'k',
+          dashboardUrl: 'http://127.0.0.1:1',
+        ),
+        dashboard: _Dashboard(),
+        heartbeatInterval: Duration.zero,
+        now: () => DateTime(2026).add(async.elapsed),
+        reconnectBackoff: GatewayReconnectBackoff(random: () => 0),
+        channelFactory: (_, _) {
+          final channel = ScriptedGatewayChannel(
+            respond: (frame) =>
+                frame['method'] == 'model.options' ? _catalog : {},
+          );
+          opened.add(channel);
+          return channel;
+        },
+      );
+      final warm = scripted('mk1215-toctou');
+      final own = scripted('mk1215-toctou');
+      final chat = ActiveChat(
+        connection: SavedConnection(
+          id: 'mk1215-toctou',
+          label: 'mk1215',
+          host: '127.0.0.1',
+          port: 8642,
+          apiKey: 'k',
+        ),
+        sessionId: 'draft-toctou',
+        sessionTitle: 'mk1215',
+        sessionProfile: 'work',
+        notifications: null,
+        onTerminal: () {},
+        desktopGateway: own,
+        modelCatalogCache: ModelCatalogCache(),
+        compressionRestoreStore: CompressionRestoreStore(
+          storage: _MemoryStorage(),
+          mutationNamespaceForTesting: 'mk1215-toctou',
+        ),
+        api: ApiClient(
+          baseUrl: 'http://127.0.0.1:1',
+          apiKey: 'k',
+          httpClient: MockClient((_) async => http.Response('{}', 500)),
+        ),
+      );
+      warm.connect();
+      async.flushMicrotasks();
+      expect(warm.isConnected, isTrue, reason: 'the caller saw it connected');
+      expect(opened, hasLength(1));
+
+      // The socket drops after the screen's check and before the read runs;
+      // by then its reconnect backoff has already elapsed.
+      opened.single.drop();
+      async.elapse(const Duration(seconds: 2));
+      expect(warm.isConnected, isFalse);
+
+      DesktopModelCatalog? catalog;
+      var settled = false;
+      chat.loadDesktopModelCatalog(warmGateway: warm, connectedOnly: true).then(
+        (value) {
+          catalog = value;
+          settled = true;
+        },
+      );
+      async.flushMicrotasks();
+      expect(settled, isTrue, reason: 'fails closed at once, no timer');
+      expect(catalog, isNull);
+      expect(opened, hasLength(1), reason: 'painting a badge never dials');
+      expect(own.isConnected, isFalse);
+
+      chat.dispose();
+      unawaited(warm.close());
+      unawaited(own.close());
+      async.elapse(const Duration(seconds: 30));
+    });
+  });
+
+  test('mk1215: connectedOnly catalog reads fail closed inside the gateway, '
+      'with or without a runtime', () {
+    fakeAsync((async) {
+      var opens = 0;
+      final client = TuiGatewayClient(
+        SavedConnection(
+          id: 'mk1215-fail-closed',
+          label: 'mk1215',
+          host: '127.0.0.1',
+          port: 8642,
+          apiKey: 'k',
+          dashboardUrl: 'http://127.0.0.1:1',
+        ),
+        dashboard: _Dashboard(),
+        heartbeatInterval: Duration.zero,
+        now: () => DateTime(2026).add(async.elapsed),
+        channelFactory: (_, _) {
+          opens++;
+          return ScriptedGatewayChannel(
+            respond: (frame) =>
+                frame['method'] == 'model.options' ? _catalog : {},
+          );
+        },
+      );
+      final errors = <Object>[];
+      client
+          .globalModelOptions(profile: 'work', connectedOnly: true)
+          .then<void>((_) {}, onError: errors.add);
+      client
+          .modelOptions('rt-1', connectedOnly: true)
+          .then<void>((_) {}, onError: errors.add);
+      async.flushMicrotasks();
+      expect(opens, 0, reason: 'neither read opens a socket');
+      expect(errors, hasLength(2));
+      for (final error in errors) {
+        expect(
+          (error as TuiGatewayRpcError).failureKind,
+          TuiGatewayRpcFailureKind.connectionLost,
+        );
+      }
+
+      // Once connected, the same reads are served over the open socket.
+      client.connect();
+      async.flushMicrotasks();
+      DesktopModelCatalog? global;
+      DesktopModelCatalog? runtime;
+      client
+          .globalModelOptions(profile: 'work', connectedOnly: true)
+          .then((value) => global = value);
+      client
+          .modelOptions('rt-1', connectedOnly: true)
+          .then((value) => runtime = value);
+      async.flushMicrotasks();
+      expect(global?.currentModel, 'disk-model');
+      expect(runtime?.currentModel, 'disk-model');
+      expect(opens, 1);
+
       unawaited(client.close());
       async.elapse(const Duration(seconds: 30));
     });
