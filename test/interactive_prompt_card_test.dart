@@ -164,6 +164,44 @@ void main() {
     expect(submitted, 'qa');
   });
 
+  testWidgets(
+    'clarify multi-select de una pregunta marca varias opciones y las envía '
+    'como lista JSON',
+    (tester) async {
+      final key = InteractivePromptKey(
+        runtimeSessionId: 'runtime-a',
+        requestId: 'clarify-multi',
+      );
+      final submitted = <String>[];
+      await tester.pumpWidget(
+        _app(
+          _entry(
+            ClarifyPromptRequest(
+              key: key,
+              question: '¿Qué ramas?',
+              choices: const ['main', 'qa', 'dev'],
+              multiSelect: true,
+            ),
+          ),
+          submitted.add,
+        ),
+      );
+
+      await tester.tap(find.text('main'));
+      await tester.pump();
+      await tester.tap(find.text('dev'));
+      await tester.pump();
+      expect(submitted, isEmpty, reason: 'a toggle must not answer');
+      expect(find.byIcon(Icons.check_box_rounded), findsNWidgets(2));
+
+      await tester.enterText(find.byType(TextField), ' otra ');
+      await tester.tap(find.byIcon(Icons.send_rounded));
+      await tester.pump();
+      expect(submitted, hasLength(1));
+      expect(jsonDecode(submitted.single), ['main', 'dev', 'otra']);
+    },
+  );
+
   testWidgets('terminal read explica la política y reintenta vacío', (
     tester,
   ) async {
