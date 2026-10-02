@@ -257,6 +257,19 @@ void main() {
         );
 
         expect(chat.isStreaming, isFalse);
+        // The turn end must confirm against the durable store: at least one
+        // REST read, and the shown prompt/reply are the stored rows, not the
+        // optimistic projection.
+        expect(
+          terminalReads,
+          isNotEmpty,
+          reason: 'a terminal must read the durable tail at least once',
+        );
+        expect(chat.messages[0]['id'], server.rows.last['id']);
+        expect(
+          chat.messages[1]['id'],
+          server.rows[server.rows.length - 2]['id'],
+        );
         final contents = chat.messages.map((m) => m['content']).toList();
         expect(contents.first, 'Respuesta final');
         expect(contents[1], 'Vale hazlo');
