@@ -1043,11 +1043,90 @@ const _privateTranscriptProjectionKeys = <String>{
   '_localStopProofAnchorRowId',
 };
 
+/// Whether [row] marks an in-place compaction: the summary carrier, which
+/// the API server projects as an empty hidden row and the Dashboard keeps
+/// with its compaction header.
+bool _isCompactionCarrierRow(Map<String, dynamic> row) {
+  final summary = row['_compressed_summary'];
+  if (summary == true || summary == 1) return true;
+  final role = row['role'];
+  if (role != 'user' && role != 'assistant') return false;
+  final content = row['content'];
+  final text = content is String ? content.trimLeft() : '';
+  if (row['display_kind'] == 'hidden') return text.isEmpty;
+  return text.startsWith('[CONTEXT COMPACTION') ||
+      text.startsWith('[PRIOR CONTEXT');
+}
+
+/// re1215 (QA 9481): a compaction in the middle of a turn re-inserts the
+/// turn's prompt into the new generation after the summary, with the SAME
+/// content and timestamp and a new row id. Hermes folds both copies into one
+/// logical message (`hermes_state_messages._display_dedupe_key`: role,
+/// content, timestamp), represented by the live copy at the FIRST copy's
+/// position. Console reads the live tail from the API server and the older
+/// generation from the Dashboard, so both copies reached the list and the
+/// prompt was painted twice, the second time after the turn's earlier work.
+///
+/// Only a real user prompt whose exact twin (content and timestamp) lies on
+/// the other side of a compaction carrier is folded. Two prompts the person
+/// really sent have different timestamps and are never touched.
+List<Map<String, dynamic>> _foldCompactionReinsertedPrompts(
+  List<Map<String, dynamic>> newestFirst,
+) {
+  var newestCarrier = -1;
+  for (var index = 0; index < newestFirst.length; index++) {
+    if (_isCompactionCarrierRow(newestFirst[index])) {
+      newestCarrier = index;
+      break;
+    }
+  }
+  if (newestCarrier < 0) return newestFirst;
+  String? twinKey(Map<String, dynamic> row) {
+    if (!isRealUserTurn(row) || row['_optimistic'] == true) return null;
+    final timestamp = row['timestamp'];
+    final content = row['content'];
+    if (timestamp is! num || content is! String || content.isEmpty) {
+      return null;
+    }
+    if (canonicalTranscriptIdentity(row) == null) return null;
+    return jsonEncode([content, timestamp]);
+  }
+
+  List<Map<String, dynamic>>? folded;
+  final dropped = <int>{};
+  for (var newer = 0; newer < newestFirst.length; newer++) {
+    final key = twinKey(newestFirst[newer]);
+    if (key == null) continue;
+    var carrierBetween = false;
+    for (var older = newer + 1; older < newestFirst.length; older++) {
+      final candidate = newestFirst[older];
+      if (_isCompactionCarrierRow(candidate)) {
+        carrierBetween = true;
+        continue;
+      }
+      if (!carrierBetween || dropped.contains(older)) continue;
+      if (twinKey(candidate) != key) continue;
+      folded ??= List<Map<String, dynamic>>.of(newestFirst);
+      // The live copy is the representative; the first copy keeps the place.
+      folded[older] = newestFirst[newer];
+      dropped.add(newer);
+      break;
+    }
+  }
+  if (folded == null) return newestFirst;
+  return [
+    for (var index = 0; index < folded.length; index++)
+      if (!dropped.contains(index)) folded[index],
+  ];
+}
+
 List<Map<String, dynamic>> _projectTranscriptForInternalState(
   Iterable<Map<String, dynamic>> messages,
 ) {
   final projectedCompletions = projectHistoricalSubagentCompletions(
-    messagesNewestFirst: messages.toList(growable: false),
+    messagesNewestFirst: _foldCompactionReinsertedPrompts(
+      messages.toList(growable: false),
+    ),
   );
   final projected = projectedCompletions
       .map((message) {
@@ -1984,6 +2063,42 @@ int? _durableTranscriptCoverageCount(Iterable<Map<String, dynamic>> messages) {
   return identities.length;
 }
 
+/// re1215 (QA 9481): when Hermes folds a prompt re-inserted by a compaction,
+/// the Dashboard's older display page carries it at its FIRST position, before
+/// the summary, while the API server's live tail shows it after the summary.
+/// The usual overlap trim kept the tail copy, so the turn's work done before
+/// the compaction slid above its own prompt. A real user prompt that the
+/// older page holds and that sits on screen after a compaction carrier leaves
+/// the screen position; the older page places it where Hermes orders it.
+List<Map<String, dynamic>> _releaseRowsReinsertedAfterCompaction(
+  List<Map<String, dynamic>> existingNewestFirst,
+  List<Map<String, dynamic>> olderPageNewestFirst,
+) {
+  final carrier = existingNewestFirst.indexWhere(_isCompactionCarrierRow);
+  if (carrier <= 0) return existingNewestFirst;
+  final olderPrompts = <TranscriptMessageIdentity>[
+    for (final row in olderPageNewestFirst)
+      if (isRealUserTurn(row)) ?_transcriptMessageIdentity(row),
+  ];
+  if (olderPrompts.isEmpty) return existingNewestFirst;
+  List<Map<String, dynamic>>? released;
+  for (var index = carrier - 1; index >= 0; index--) {
+    final row = existingNewestFirst[index];
+    if (!isRealUserTurn(row)) continue;
+    final identity = _transcriptMessageIdentity(row);
+    if (identity == null ||
+        !olderPrompts.any(
+          (older) =>
+              identity.sharesExactCoordinate(older) && identity.matches(older),
+        )) {
+      continue;
+    }
+    released ??= List<Map<String, dynamic>>.of(existingNewestFirst);
+    released.removeAt(index);
+  }
+  return released ?? existingNewestFirst;
+}
+
 /// Antepone una página de mensajes ANTERIORES a la lista viva (newest-first:
 /// los más antiguos van al final), deduplicando filas ya presentes. El drift
 /// de offsets (mensajes persistidos tras la hidratación) hace normal el
@@ -1996,6 +2111,10 @@ List<Map<String, dynamic>> _mergeOlderTranscriptPage(
   if (olderPageNewestFirst.isEmpty) {
     return existingNewestFirst;
   }
+  existingNewestFirst = _releaseRowsReinsertedAfterCompaction(
+    existingNewestFirst,
+    olderPageNewestFirst,
+  );
   final existingIdentities = _transcriptIdentities(existingNewestFirst);
   final fresh = olderPageNewestFirst
       .where((message) {

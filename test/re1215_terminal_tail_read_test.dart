@@ -105,14 +105,38 @@ class _Server {
   final requests = <Uri>[];
   var bytes = 0;
 
-  void append(String role, {String? content}) {
+  void append(String role, {String? content, String? displayKind}) {
     final id = rows.length + 1;
     rows.add({
       'id': id,
       'role': role,
       'content': content ?? '$role $id ${'x' * 1700}',
+      'display_kind': ?displayKind,
     });
   }
+
+  /// `tui_gateway/server.py` `_append_model_switch_marker`: a `role=user`
+  /// row persisted when the model changes, before the next prompt. Hermes
+  /// 0.19 REST omitted `display_kind`; the text prefix still identifies it.
+  void appendModelSwitch({bool withDisplayKind = true}) => append(
+    'user',
+    content:
+        '[System: The active model for this chat has changed to gpt-5 via '
+        'provider openai. From this point forward, use this runtime metadata '
+        'when answering questions about what model/provider is active.]',
+    displayKind: withDisplayKind ? 'model_switch' : null,
+  );
+
+  /// `tui_gateway/agent_callbacks.py`: the personality marker goes into the
+  /// history and is flushed with the next turn, right before its prompt.
+  void appendPersonalitySwitch() => append(
+    'user',
+    content:
+        "[System: The user has changed the assistant's personality. From "
+        'this point forward, adopt the following persona and respond '
+        'accordingly: pirate]',
+    displayKind: 'personality_switch',
+  );
 
   http.Client client() => MockClient((request) async {
     requests.add(request.url);
@@ -254,5 +278,89 @@ void main() {
         expect(terminalBytes, lessThan(3 * 220 * 1024));
       },
     );
+  }
+
+  // Editorial `role=user` rows (model/personality switch) right before a
+  // prompt: they must stay single, in place, and never count as the turn's
+  // prompt, neither on this device's terminal nor on a passive read of a turn
+  // sent from Desktop.
+  for (final (label, marker) in <(String, void Function(_Server))>[
+    ('model_switch', (s) => s.appendModelSwitch()),
+    ('legacy model switch', (s) => s.appendModelSwitch(withDisplayKind: false)),
+    ('personality_switch', (s) => s.appendPersonalitySwitch()),
+  ]) {
+    for (final fromDesktop in [false, true]) {
+      test('$label before a ${fromDesktop ? 'Desktop' : 'Console'} prompt '
+          'keeps every row once and in order', () async {
+        final server = _Server(2500);
+        final gateway = _Gateway()
+          ..snapshot = const DesktopSessionSnapshot(
+            runtimeSessionId: 'runtime-long',
+            storedSessionId: 'stored-long',
+            created: false,
+            messagesProvided: false,
+            messageCount: 2500,
+          );
+        final chat = _chat(server, gateway);
+        addTearDown(chat.dispose);
+        addTearDown(gateway.close);
+        await chat.loadMessages(expectedMessageCount: 2500);
+        await _settle();
+        expect(
+          await chat.loadEarlierMessages(continuePastInvisible: true),
+          isTrue,
+        );
+        final before = chat.messages.map((m) => m['id']).toList();
+
+        marker(server);
+        final markerId = server.rows.last['id'];
+        if (fromDesktop) {
+          server.append('user', content: 'Vale hazlo');
+          server.append('assistant', content: 'Respuesta final');
+          await chat.loadMessages(passiveOnly: true);
+          await _settle();
+        } else {
+          await chat.send(
+            fullText: 'Vale hazlo',
+            model: 'hermes-agent',
+            history: chat.buildHistory(),
+          );
+          server.append('user', content: 'Vale hazlo');
+          server.append('assistant', content: 'Respuesta final');
+          gateway.emit(
+            'message.delta',
+            payload: const {'text': 'Respuesta final'},
+          );
+          gateway.emit(
+            'message.complete',
+            payload: const {'text': 'Respuesta final'},
+          );
+          await _settle();
+          // Desktop-style passive refreshes after the turn change nothing.
+          await chat.loadMessages(passiveOnly: true);
+          await _settle();
+        }
+
+        final messages = chat.messages;
+        final contents = messages.map((m) => m['content']).toList();
+        expect(contents[0], 'Respuesta final');
+        expect(contents[1], 'Vale hazlo');
+        expect(messages[2]['id'], markerId);
+        expect(contents.where((c) => c == 'Respuesta final'), hasLength(1));
+        expect(contents.where((c) => c == 'Vale hazlo'), hasLength(1));
+        expect(
+          messages.where((m) => m['id'] == markerId),
+          hasLength(1),
+          reason: 'the editorial row is shown once',
+        );
+        final ids = messages.map((m) => m['id']).toList();
+        expect(ids.whereType<int>().toSet(), hasLength(ids.length));
+        for (var i = 1; i < ids.length; i++) {
+          expect(ids[i] as int, lessThan(ids[i - 1] as int));
+        }
+        expect(ids.where(before.contains).toList(), before);
+        expect(chat.isStreaming, isFalse);
+      });
+    }
   }
 }
