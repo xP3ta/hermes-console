@@ -36,6 +36,13 @@ and an owner-controlled local/private filesystem. No helper in this repository
 uploads or publishes anything. A separate publication operation is permitted
 only after explicit owner approval for the exact channel and exact bytes.
 
+`.github/workflows/e2e-real-gateway.yml` is verification only as well: it
+builds a throwaway Hermes from the public commit in `tool/e2e/hermes_pin`,
+runs it against Hermes' own scripted loopback model in a temporary home and
+runs `test/e2e_real_gateway` (`tool/e2e/run_local.sh`). It reads no secret,
+builds no APK and uploads no artifact; it only prints budget lines to the job
+summary.
+
 ## Reviewed source and signer continuity
 
 The source identity gate requires GitHub verification and binds both the forge
