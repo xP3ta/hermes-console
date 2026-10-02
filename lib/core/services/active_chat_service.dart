@@ -7768,6 +7768,12 @@ class ActiveChat {
   final Set<String> _queuedRetriesExhausted = <String>{};
   // Mismo techo que `MAX_AUTO_DRAIN_ATTEMPTS` gobierna en Desktop.
   static const int _maxQueuedRetryAttempts = 3;
+  // qr1215: a queued send that failed while the socket was down says nothing
+  // about the entry. It waits for the transport instead of spending the
+  // budget, polling the reconnect at most every 15 s (Desktop's cap).
+  Timer? _queuedTransportWaitTimer;
+  int _queuedTransportWaitAttempt = 0;
+  static const Duration _queuedTransportWaitCap = Duration(seconds: 15);
   String? _desktopAcceptedQueuedPrompt;
 
   /// Ids de entradas en cola que agotaron su reintento automático.
@@ -18345,6 +18351,8 @@ class ActiveChat {
         }
         _usingDesktopGateway = false;
         _retireDesktopRuntime(reason: _RuntimeRetirement.transportLoss);
+        // qr1215: the queue gets a fresh budget once this socket is back.
+        if (_hasQueuedWork) _armQueuedTransportWait();
         if (viewerRecoveryClosed) _closeViewerRecovery(gateway);
         if (interruptedActiveTurn && clientSubmittedTurn) {
           _scheduleDesktopTurnRecovery(gateway, _turnEpoch, error);
@@ -23702,6 +23710,7 @@ class ActiveChat {
   /// entrada sigue en el panel para un envío manual, pero nunca se queda ahí
   /// sin que nadie vuelva a intentarlo.
   void _scheduleQueuedTextRetry(String id) {
+    if (_waitForTransportBeforeQueuedRetry()) return;
     final attempt = (_queuedRetryAttempts[id] ?? 0) + 1;
     _queuedRetryAttempts[id] = attempt;
     _queuedTextRetryTimer?.cancel();
@@ -23726,6 +23735,7 @@ class ActiveChat {
   }
 
   void _scheduleQueuedRetry(String clientTurnId) {
+    if (_waitForTransportBeforeQueuedRetry()) return;
     final attempt = (_queuedRetryAttempts[clientTurnId] ?? 0) + 1;
     _queuedRetryAttempts[clientTurnId] = attempt;
     _queuedRetryTimer?.cancel();
@@ -23746,6 +23756,82 @@ class ActiveChat {
         unawaited(_drainQueue());
       },
     );
+  }
+
+  /// qr1215: a failure while the transport is down is not an attempt. The
+  /// reconnect backoff makes every RPC fail fast, so the 400/800/1600 ms
+  /// ladder used to run out inside one backoff window and leave the head
+  /// stuck after the socket came back. Returns true when the failure was
+  /// absorbed by waiting for the transport.
+  bool _waitForTransportBeforeQueuedRetry() {
+    if (_disposed || gatewayConnected) return false;
+    _armQueuedTransportWait();
+    return true;
+  }
+
+  void _armQueuedTransportWait() {
+    if (_disposed || _queuedTransportWaitTimer != null) return;
+    final attempt = _queuedTransportWaitAttempt++;
+    final delay = Duration(
+      milliseconds: math.min(
+        1000 * (1 << math.min(attempt, 4)),
+        _queuedTransportWaitCap.inMilliseconds,
+      ),
+    );
+    _queuedTransportWaitTimer = Timer(delay, () {
+      _queuedTransportWaitTimer = null;
+      unawaited(_probeTransportForQueuedRetry());
+    });
+  }
+
+  Future<void> _probeTransportForQueuedRetry() async {
+    if (_disposed || !_hasQueuedWork) return;
+    final gateway = _desktopGateway;
+    if (!gatewayConnected && gateway != null) {
+      // An idle chat has nothing else that redials: the same bounded connect
+      // a completed recovery uses, paced by the wait above.
+      try {
+        await gateway.connect().timeout(_queuedTransportWaitCap);
+      } catch (_) {}
+      if (_disposed || !identical(gateway, _desktopGateway)) return;
+    }
+    if (!gatewayConnected) {
+      _armQueuedTransportWait();
+      return;
+    }
+    _onQueuedTransportRestored();
+  }
+
+  /// The transport is (back) up: the queue starts a fresh retry budget, as
+  /// Desktop's drain does on every reconnect, and the head is tried again.
+  /// A parked or suspended queue only gets its budget back; it stays put.
+  void _onQueuedTransportRestored() {
+    if (_disposed) return;
+    _queuedTransportWaitTimer?.cancel();
+    _queuedTransportWaitTimer = null;
+    _queuedTransportWaitAttempt = 0;
+    if (!_hasQueuedWork) return;
+    final hadRetryState =
+        _queuedRetryAttempts.isNotEmpty || _queuedRetriesExhausted.isNotEmpty;
+    _queuedRetryAttempts.clear();
+    _queuedRetriesExhausted.clear();
+    final head = _preparedTurnQueue.isEmpty
+        ? null
+        : _preparedTurnQueue.first.turn;
+    // A prepared head blocked only by its failed send is retryable again;
+    // one blocked because its delivery started stays blocked.
+    if (head != null &&
+        _blockedPreparedTurnId == head.clientTurnId &&
+        head.queueOrder != null &&
+        head.state != PreparedTurnState.submitting &&
+        head.state != PreparedTurnState.ambiguous &&
+        head.state != PreparedTurnState.accepted &&
+        head.state != PreparedTurnState.running &&
+        !_hasMissingAttachment(head)) {
+      _blockedPreparedTurnId = null;
+    }
+    if (hadRetryState) _emit(ActiveChatEvent.queueChanged);
+    if (!_queueDrainSuspended && !isStreaming) Timer.run(_drainQueue);
   }
 
   /// Los mensajes pendientes son independientes de que el turno anterior haya
@@ -27921,6 +28007,8 @@ class ActiveChat {
     _voiceBargeHandoffPending = false;
     _queuedRetryTimer?.cancel();
     _queuedRetryTimer = null;
+    _queuedTransportWaitTimer?.cancel();
+    _queuedTransportWaitTimer = null;
     _queuedTextRetryTimer?.cancel();
     _queuedTextRetryTimer = null;
     _tokenFlushTimer?.cancel();
