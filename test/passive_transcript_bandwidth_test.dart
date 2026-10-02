@@ -8,6 +8,7 @@
 // real ApiClient parser against a fake HTTP server and count requests/bytes.
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -159,9 +160,13 @@ class _IdleGateway
   final bool changeEventsAvailable = true;
   bool connected = true;
 
-  void emit(String type) => _events.add(
-    TuiGatewayEvent(type: type, sessionId: 'runtime-bw', payload: const {}),
-  );
+  void emit(String type, {Map<String, dynamic> payload = const {}}) =>
+      _events.add(
+        TuiGatewayEvent(type: type, sessionId: 'runtime-bw', payload: payload),
+      );
+
+  void dropSocket() =>
+      _events.addError(const SocketException('Connection reset by peer'));
 
   @override
   Stream<TuiGatewayEvent> get events => _events.stream;
@@ -738,6 +743,187 @@ void main() {
       // The read that published the change re-arms the probe.
       expect(await fixture.chat.reconcileAfterResume(), isFalse);
       expect(server.heavyReads - heavyBefore, 1);
+      await _dispose(tester, fixture);
+    },
+  );
+
+  for (final (socketSurvives, awayFor, scrolledBack) in [
+    (true, Duration.zero, false),
+    (true, Duration.zero, true),
+    (true, const Duration(seconds: 5), false),
+    (true, const Duration(seconds: 5), true),
+    (true, const Duration(seconds: 90), true),
+    (false, const Duration(seconds: 5), false),
+    (false, const Duration(seconds: 90), true),
+  ]) {
+    testWidgets('re1215: a turn that ends after the user left shows its reply on '
+        're-entry without tapping anything (socket '
+        '${socketSurvives ? 'alive' : 'dropped'}, commit after ${awayFor.inSeconds} s'
+        '${scrolledBack ? ', scrolled back' : ''})', (tester) async {
+      final server = _TranscriptServer();
+      final fixture = await _mount(tester, server, attachRuntime: true);
+      await _idle(tester, const Duration(seconds: 2));
+      final chat = fixture.chat;
+      if (scrolledBack) {
+        expect(
+          await chat.loadEarlierMessages(continuePastInvisible: true),
+          isTrue,
+        );
+        expect(
+          await chat.loadEarlierMessages(continuePastInvisible: true),
+          isTrue,
+        );
+        await tester.pump();
+      }
+      final shownBefore = chat.messages.map((m) => m['id']).toList();
+      expect(
+        await chat.send(
+          fullText: 'Vale hazlo',
+          model: 'hermes-agent',
+          history: chat.buildHistory(),
+        ),
+        isTrue,
+      );
+      await tester.pump();
+      expect(chat.isStreaming, isTrue);
+
+      // The user leaves the chat while the turn runs.
+      final navigator = Navigator.of(tester.element(find.byType(ChatScreen)));
+      navigator.pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(ChatScreen), findsNothing);
+
+      if (!socketSurvives) {
+        fixture.gateway.connected = false;
+        fixture.gateway.dropSocket();
+      }
+      // The turn ends server-side while the user is away. With a zero
+      // [awayFor] the terminal arrives first and the transcript commit only
+      // lands after every terminal retry has given up.
+      await _idle(tester, awayFor);
+      void commit() {
+        server.append('user', content: 'Vale hazlo');
+        server.append('assistant', content: 'Respuesta final');
+      }
+
+      if (awayFor > Duration.zero) commit();
+      if (socketSurvives) {
+        fixture.gateway.emit(
+          'message.complete',
+          payload: const {'text': 'Respuesta final'},
+        );
+      }
+      if (awayFor == Duration.zero) {
+        await _idle(tester, const Duration(seconds: 20));
+        commit();
+      }
+      // The conversation then goes on from Desktop while the phone is away.
+      await _idle(tester, const Duration(seconds: 3));
+      server.append('user', content: 'Sigue desde Desktop');
+      server.append('assistant', content: 'Nueva respuesta en Desktop');
+      // Hermes broadcasts the store change; nobody is looking at the chat.
+      if (socketSurvives) fixture.gateway.emit('sessions.changed');
+      await _idle(tester, const Duration(seconds: 1));
+      await _idle(tester, const Duration(seconds: 5));
+      fixture.gateway.connected = true;
+
+      final bytesBeforeReentry = server.bytes;
+      final readsBeforeReentry = server.messageReads;
+      // Re-entry. A chat released while away is attached again with the
+      // same transport, as the list does before pushing the screen.
+      if (fixture0(fixture.activeChats) == null) {
+        fixture.activeChats.attach(
+          connection: _connection,
+          sessionId: _session.id,
+          sessionTitle: _session.title,
+          sessionSnapshot: _session,
+          initialStoredSessionId: _storedId,
+          api: ApiClient(
+            baseUrl: 'http://127.0.0.1:8642',
+            apiKey: 'test-key',
+            httpClient: server.client(),
+          ),
+          desktopGateway: fixture.gateway,
+          attachDesktopRuntimeOnLoad: false,
+          disableForegroundKeepAlive: true,
+        );
+      }
+      navigator.push(
+        PageRouteBuilder<void>(
+          transitionDuration: Duration.zero,
+          reverseTransitionDuration: Duration.zero,
+          pageBuilder: (_, _, _) => ChatScreen(
+            connection: _connection,
+            session: _session,
+            initialStoredSessionId: _storedId,
+          ),
+        ),
+      );
+      await tester.pump();
+      await _idle(tester, const Duration(seconds: 6));
+
+      final reopened = fixture0(fixture.activeChats)!;
+      final contents = reopened.messages.map((m) => m['content']).toList();
+      // ignore: avoid_print
+      print(
+        '[re1215] re-entry socket=$socketSurvives away=${awayFor.inSeconds} '
+        'state=${reopened.state} n=${reopened.messages.length} same=${identical(reopened, chat)} '
+        'earlier=${reopened.hasEarlierMessages} '
+        'reads=${server.messageReads - readsBeforeReentry} '
+        'bytes=${server.bytes - bytesBeforeReentry} '
+        'top=${contents.take(4).map((c) => '$c'.split(' ').take(2).join(' ')).toList()}',
+      );
+      expect(contents.first, 'Nueva respuesta en Desktop');
+      expect(contents[1], 'Sigue desde Desktop');
+      expect(contents[2], 'Respuesta final');
+      expect(contents[3], 'Vale hazlo');
+      expect(contents.where((c) => c == 'Respuesta final'), hasLength(1));
+      expect(contents.where((c) => c == 'Vale hazlo'), hasLength(1));
+      expect(contents[4], startsWith('assistant 1000 '));
+      expect(find.text('Nueva respuesta en Desktop'), findsOneWidget);
+      final allIds = reopened.messages.map((m) => m['id']).toList();
+      expect(allIds.toSet(), hasLength(allIds.length));
+      if (identical(reopened, chat)) {
+        // Nothing the reader had loaded is lost or reordered.
+        final ids = reopened.messages.map((m) => m['id']).toList();
+        final kept = ids.where(shownBefore.contains).toList();
+        expect(kept, shownBefore);
+      }
+      await _dispose(tester, fixture);
+    });
+  }
+
+  testWidgets(
+    're1215: re-entering an unchanged chat costs only the tail probe',
+    (tester) async {
+      final server = _TranscriptServer();
+      final fixture = await _mount(tester, server, attachRuntime: true);
+      await _idle(tester, const Duration(seconds: 40));
+      final navigator = Navigator.of(tester.element(find.byType(ChatScreen)));
+      for (var visit = 0; visit < 3; visit++) {
+        navigator.pop();
+        await tester.pump();
+        await _idle(tester, const Duration(seconds: 2));
+        final heavy = server.heavyReads;
+        final reads = server.messageReads;
+        navigator.push(
+          PageRouteBuilder<void>(
+            transitionDuration: Duration.zero,
+            reverseTransitionDuration: Duration.zero,
+            pageBuilder: (_, _, _) => ChatScreen(
+              connection: _connection,
+              session: _session,
+              initialStoredSessionId: _storedId,
+            ),
+          ),
+        );
+        await tester.pump();
+        await _idle(tester, const Duration(seconds: 3));
+        expect(server.heavyReads - heavy, 0);
+        expect(server.messageReads - reads, lessThanOrEqualTo(1));
+      }
+      expect(fixture.chat.messages, hasLength(_firstPage));
       await _dispose(tester, fixture);
     },
   );

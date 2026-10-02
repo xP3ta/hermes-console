@@ -4728,6 +4728,11 @@ class _ChatScreenState extends State<ChatScreen>
       _syncTransportVisibility();
       _transportVisibility.addListener(_onTransportVisibilityChanged);
       _seenDurableSessionsChangeRevision = _chat.durableSessionsChangeRevision;
+      final unseenDurableStoreChange =
+          _chat.durableSessionsChangeRevision !=
+          _chat.viewedDurableSessionsChangeRevision;
+      _chat.viewedDurableSessionsChangeRevision =
+          _seenDurableSessionsChangeRevision;
       _syncStopConfirmationVisibility();
       // Al entrar sobre un turno que ya venía corriendo (volver a la pantalla,
       // resume en frío) no llega ningún evento nuevo hasta el siguiente frame
@@ -4780,6 +4785,18 @@ class _ChatScreenState extends State<ChatScreen>
           _scrollToBottom(animate: false);
         });
         _resolveNewSinceYouLeft();
+        if (unseenDurableStoreChange && !_chat.isStreaming) {
+          // re1215: `sessions.changed` reached this chat while no screen
+          // watched it (the end of a turn the user walked away from, or
+          // Desktop going on). Nothing consumed those ticks, so the rows
+          // stayed unread until a tap on «load earlier» re-read the tail.
+          // Re-entry delivers them now, through the same tail-probe gate.
+          _durableTranscriptReadPending = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_disposed || !mounted) return;
+            _syncPassiveTranscriptRefresh(refreshNow: true);
+          });
+        }
       } else if (widget.session.isUnpersistedMobileDraft) {
         // Un chat recién creado todavía no existe en Hermes. Intentar
         // session.resume + REST aquí solo enseña un loader hasta recibir el
@@ -5944,6 +5961,7 @@ class _ChatScreenState extends State<ChatScreen>
         durableSessionsChangeRevision != _seenDurableSessionsChangeRevision;
     if (sessionsChangedTick) {
       _seenDurableSessionsChangeRevision = durableSessionsChangeRevision;
+      _chat.viewedDurableSessionsChangeRevision = durableSessionsChangeRevision;
       _durableTranscriptReadPending = true;
     }
     // re1215: the `sessionInfo` that only carries a `sessions.changed` tick

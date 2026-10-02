@@ -5030,6 +5030,11 @@ class ActiveChat {
   /// ownership or busy state — the screen reads this to reconcile the OPEN
   /// transcript against the durable store, the same trigger Desktop uses.
   int get durableSessionsChangeRevision => _durableSessionsChangeRevision;
+
+  /// re1215: the [durableSessionsChangeRevision] the last chat screen
+  /// consumed. Ticks that arrive while no screen watches this chat stay
+  /// visible as a gap, so the next screen reads the transcript on entry.
+  int viewedDurableSessionsChangeRevision = 0;
   int get adaptiveSubagentRepairRevision => _adaptiveSubagentRepairRevision;
   int get adaptiveProcessRepairRevision => _adaptiveProcessRepairRevision;
   int get adaptiveControlRepairRevision => _adaptiveControlRepairRevision;
