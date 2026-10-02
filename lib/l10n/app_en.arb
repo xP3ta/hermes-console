@@ -7905,5 +7905,6 @@
   "hr1215CommandCopied": "Command copied",
   "hr1215SignedInCheck": "I've signed in",
   "hr1215StillSignedOut": "{provider} is still signed out on the server.",
-  "hr1215SignedInAgain": "{provider} sign-in renewed"
+  "hr1215SignedInAgain": "{provider} sign-in renewed",
+  "cs1215CachedTranscript": "Saved copy · updating"
 }

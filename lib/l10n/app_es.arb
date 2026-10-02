@@ -9595,5 +9595,6 @@
   "hr1215StillSignedOut": "{provider} sigue sin sesión en el servidor.",
   "@hr1215StillSignedOut": {"placeholders": {"provider": {"type": "String"}}},
   "hr1215SignedInAgain": "Sesión de {provider} renovada",
-  "@hr1215SignedInAgain": {"placeholders": {"provider": {"type": "String"}}}
+  "@hr1215SignedInAgain": {"placeholders": {"provider": {"type": "String"}}},
+  "cs1215CachedTranscript": "Copia guardada · actualizando"
 }
