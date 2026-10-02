@@ -69,6 +69,7 @@ import 'command_risk.dart';
 import 'compression_dispatcher.dart';
 import 'connection_manager.dart';
 import 'compression_restore_store.dart';
+import 'cold_start_store.dart';
 import 'desktop_control_gateway.dart';
 import 'desktop_gateway_capabilities.dart';
 import 'home_widget_publisher.dart';
@@ -8635,11 +8636,30 @@ class ActiveChat {
   /// Paints a provisional transcript from [reopenTranscriptSnapshot] on a
   /// fresh chat. It never marks the transcript loaded or complete: the normal
   /// cold load still runs and replaces or grafts over these rows.
-  void seedReopenTranscript(List<Map<String, dynamic>> newestFirst) {
+  void seedReopenTranscript(
+    List<Map<String, dynamic>> newestFirst, {
+    bool fromDisk = false,
+  }) {
     if (_disposed || messagesLoaded || _messages.isNotEmpty) return;
     _messages = [
       for (final message in newestFirst) Map<String, dynamic>.from(message),
     ];
+    _seededFromDiskCache = fromDisk && _messages.isNotEmpty;
+  }
+
+  bool _seededFromDiskCache = false;
+
+  /// cs1215: the visible rows are the encrypted cold-start copy and no
+  /// server read has confirmed them yet. Surfaces label them as cached.
+  bool get showingCachedTranscript =>
+      _seededFromDiskCache && !messagesLoaded && !_disposed;
+
+  /// Drops still-unconfirmed cached rows (the session turned out gone), so
+  /// the gone-session fallback sees the empty chat it expects.
+  void discardCachedTranscript() {
+    if (!showingCachedTranscript) return;
+    _messages = [];
+    _seededFromDiskCache = false;
   }
 
   /// Stream de cambios. La pantalla se suscribe para re-renderizar; al cerrarse
@@ -28481,6 +28501,9 @@ class ActiveChatService {
     CompressionRestoreStore? compressionRestoreStore,
     GlobalActivityAggregate? globalActivity,
     bool attachDesktopRuntimeOnLoad = true,
+    this.coldStartStore,
+    @visibleForTesting this.defaultStoredMessageLoaderForTesting,
+    @visibleForTesting this.defaultApiForTesting,
     @visibleForTesting int Function()? homeWidgetNowMs,
     @visibleForTesting
     HermesDesktopGateway Function(SavedConnection connection)?
@@ -28566,6 +28589,18 @@ class ActiveChatService {
   final CompressionRestoreStore _compressionRestoreStore;
   final bool _attachDesktopRuntimeOnLoadByDefault;
   final GlobalActivityAggregate globalActivity;
+
+  /// cs1215: encrypted cold-start continuity (remembered route and bounded
+  /// transcript tails). Null keeps everything in memory, as before.
+  final ColdStartStore? coldStartStore;
+
+  /// Loader used when [attach] gets none (widget tests drive real screens).
+  @visibleForTesting
+  final StoredSessionMessageLoader? defaultStoredMessageLoaderForTesting;
+
+  /// REST client used when [attach] gets none (widget tests).
+  @visibleForTesting
+  final ApiClient Function(SavedConnection connection)? defaultApiForTesting;
 
   final Map<String, ActiveChat> _chats = {};
 
@@ -28792,6 +28827,66 @@ class ActiveChatService {
     return operation;
   }
 
+  /// cs1215: a profile's local conversation state was cleared; its cached
+  /// tails and remembered route go with it, in memory and on disk.
+  Future<void> forgetColdStartProfile(String connectionId, String profile) {
+    final owner = Session.profileOwner(profile);
+    _forgetReopenTranscripts(connectionId, profile: owner);
+    return _forgetColdStart(
+      () => coldStartStore?.forgetScope(connectionId, profile: owner),
+    );
+  }
+
+  /// cs1215: the connection was deleted.
+  Future<void> forgetColdStartConnection(String connectionId) {
+    _forgetReopenTranscripts(connectionId);
+    return _forgetColdStart(() => coldStartStore?.forgetScope(connectionId));
+  }
+
+  Future<int>? _coldStartTailsRestore;
+
+  /// Single restore of the persisted tails for this process.
+  Future<int> get coldStartTailsReady =>
+      _coldStartTailsRestore ??= restoreColdStartTails();
+
+  /// cs1215: one session was confirmed deleted (or gone) on the server.
+  Future<void> forgetColdStartSession({
+    required String connectionId,
+    required String profile,
+    required String sessionId,
+  }) {
+    final owner = Session.profileOwner(profile);
+    _forgetReopenTranscripts(
+      connectionId,
+      profile: owner,
+      sessionId: sessionId,
+    );
+    return _forgetColdStart(
+      () => coldStartStore?.forgetSession(
+        connectionId: connectionId,
+        profile: owner,
+        sessionId: sessionId,
+      ),
+    );
+  }
+
+  /// cs1215: credentials were wiped; no cached chat content may survive.
+  Future<void> forgetAllColdStart() {
+    _reopenTranscriptCache.clear();
+    _reopenTranscriptCacheBytes = 0;
+    return _forgetColdStart(() => coldStartStore?.clearAll());
+  }
+
+  /// Cleanup is best effort: a Keystore failure must not block a deletion
+  /// the server already confirmed (nothing readable is left in memory).
+  static Future<void> _forgetColdStart(Future<void>? Function() action) async {
+    try {
+      await action();
+    } catch (error) {
+      debugPrint('[cold-start] cleanup failed (${error.runtimeType})');
+    }
+  }
+
   Future<void> clearCompressionRestoreForSession({
     required String connectionId,
     required String profile,
@@ -28817,6 +28912,13 @@ class ActiveChatService {
       sessionId: sessionId,
     );
     _forgetWarmGateways(connectionId, sessionId: sessionId);
+    await _forgetColdStart(
+      () => coldStartStore?.forgetSession(
+        connectionId: connectionId,
+        profile: owner,
+        sessionId: sessionId,
+      ),
+    );
     final scopeIds = <String>{sessionId};
     final matchingChats = <ActiveChat>[];
     for (final chat in _chats.values) {
@@ -28873,6 +28975,7 @@ class ActiveChatService {
   Future<int> clearCancelledTurnsForConnection(String connectionId) async {
     _forgetReopenTranscripts(connectionId);
     _forgetWarmGateways(connectionId);
+    await _forgetColdStart(() => coldStartStore?.forgetScope(connectionId));
     var removed = 0;
     try {
       removed = await _cancelledTurnStore?.removeConnection(connectionId) ?? 0;
@@ -29677,10 +29780,11 @@ class ActiveChatService {
       if (initialStoredSessionId != null && initialStoredSessionId.isNotEmpty)
         initialStoredSessionId,
     };
+    final chatApi = api ?? defaultApiForTesting?.call(connection);
     final resolvedDesktopGateway =
         desktopGateway ??
         _takeWarmGateway(key, connection) ??
-        _createChatGateway(connection, api: api);
+        _createChatGateway(connection, api: chatApi);
     late final ActiveChat chat;
     chat = ActiveChat(
       connection: connection,
@@ -29704,10 +29808,11 @@ class ActiveChatService {
               await BackgroundListener.ensureAutomationForeground();
               _refreshActiveIds();
             },
-      api: api,
+      api: chatApi,
       desktopGateway: resolvedDesktopGateway,
       compressionRestoreStore: _compressionRestoreStore,
-      storedMessageLoader: storedMessageLoader,
+      storedMessageLoader:
+          storedMessageLoader ?? defaultStoredMessageLoaderForTesting,
       modelCatalogCache: modelCatalogCache,
       attachDesktopRuntimeOnLoad:
           attachDesktopRuntimeOnLoad ?? _attachDesktopRuntimeOnLoadByDefault,
@@ -29775,9 +29880,12 @@ class ActiveChatService {
               );
             },
     );
-    final cachedTranscript = _removeReopenTranscript(key);
+    final cachedTranscript = _takeReopenTranscript(key);
     if (cachedTranscript != null && cachedTranscript.matches(chat)) {
-      chat.seedReopenTranscript(cachedTranscript.newestFirst);
+      chat.seedReopenTranscript(
+        cachedTranscript.newestFirst,
+        fromDisk: cachedTranscript.fromDisk,
+      );
     }
     final provisional = _provisionalLiveStatusFor(
       key,
@@ -30103,6 +30211,7 @@ class ActiveChatService {
       },
       newestFirst: rows,
     );
+    _persistColdStartTail(chat, rows);
     while (_reopenTranscriptCache.length > reopenTranscriptCacheLimit ||
         _reopenTranscriptCacheBytes > reopenTranscriptCacheMaxBytes) {
       _removeReopenTranscript(_reopenTranscriptCache.keys.first);
@@ -30125,6 +30234,107 @@ class ActiveChatService {
       _ => 32,
     };
     return rows.fold<int>(0, (sum, row) => sum + weigh(row));
+  }
+
+  /// Consumes the cached tail of [key]. A tail restored from disk is
+  /// indexed under every route id it may be reopened with; consuming one
+  /// retires the copies under its other ids.
+  _ReopenTranscript? _takeReopenTranscript(String key) {
+    final taken = _removeReopenTranscript(key);
+    if (taken != null && taken.fromDisk) {
+      for (final other in _reopenTranscriptCache.entries.toList()) {
+        if (identical(other.value.newestFirst, taken.newestFirst)) {
+          _removeReopenTranscript(other.key);
+        }
+      }
+    }
+    return taken;
+  }
+
+  void _persistColdStartTail(ActiveChat chat, List<Map<String, dynamic>> rows) {
+    final store = coldStartStore;
+    if (store == null || _disposed) return;
+    unawaited(
+      store
+          .saveTail(
+            connectionId: chat.connection.id,
+            profile: chat.sessionProfile,
+            storedSessionId: chat.serverSessionId,
+            routeSessionId: chat.sessionId,
+            aliases: {
+              chat.sessionId,
+              chat.logicalSessionId,
+              chat.serverSessionId,
+              if (chat.storedSessionId?.isNotEmpty == true)
+                chat.storedSessionId!,
+            },
+            newestFirst: rows,
+          )
+          .catchError((Object error) {
+            debugPrint('[cold-start] tail not saved (${error.runtimeType})');
+          }),
+    );
+  }
+
+  /// cs1215: the app is leaving the foreground (Android may kill it next).
+  /// Saves the settled tail of every open chat; released chats were saved
+  /// when they were released.
+  void persistColdStartTails() {
+    if (coldStartStore == null || _disposed) return;
+    for (final chat in _chats.values) {
+      final rows = chat.reopenTranscriptSnapshot();
+      if (rows != null) _persistColdStartTail(chat, rows);
+    }
+  }
+
+  /// cs1215: loads the encrypted tails of the last opened chats into the
+  /// reopen cache, so the first frame of a cold open paints them (marked as
+  /// cached) while the server read reconciles. Never overrides a tail this
+  /// process already holds.
+  Future<int> restoreColdStartTails() async {
+    final store = coldStartStore;
+    if (store == null || _disposed) return 0;
+    List<ColdStartTail> tails;
+    try {
+      tails = await store.loadTails(limit: ColdStartStore.maxTails);
+    } catch (error) {
+      debugPrint('[cold-start] tails unavailable (${error.runtimeType})');
+      return 0;
+    }
+    if (_disposed) return 0;
+    var restored = 0;
+    // Oldest first, so the most recent tail ends as most recently used.
+    for (final tail in tails.reversed) {
+      final rows = tail.newestFirst;
+      final bytes = _estimatedTranscriptBytes(rows);
+      if (bytes > reopenTranscriptCacheMaxBytes) continue;
+      final entry = _ReopenTranscript(
+        bytes: bytes,
+        connectionId: tail.connectionId,
+        profile: tail.profile,
+        storedSessionId: tail.storedSessionId,
+        aliases: tail.aliases,
+        newestFirst: rows,
+        fromDisk: true,
+      );
+      var used = false;
+      for (final id in {tail.routeSessionId, tail.storedSessionId}) {
+        final key = _registryKey(tail.connectionId, id, tail.profile);
+        if (_reopenTranscriptCache.containsKey(key) ||
+            _chats.containsKey(key)) {
+          continue;
+        }
+        _reopenTranscriptCacheBytes += bytes;
+        _reopenTranscriptCache[key] = entry;
+        used = true;
+      }
+      if (used) restored += 1;
+    }
+    while (_reopenTranscriptCache.length > reopenTranscriptCacheLimit ||
+        _reopenTranscriptCacheBytes > reopenTranscriptCacheMaxBytes) {
+      _removeReopenTranscript(_reopenTranscriptCache.keys.first);
+    }
+    return restored;
   }
 
   void _forgetReopenTranscripts(
@@ -30360,6 +30570,7 @@ final class _ReopenTranscript {
     required this.storedSessionId,
     required this.aliases,
     required this.newestFirst,
+    this.fromDisk = false,
   });
 
   final String connectionId;
@@ -30367,6 +30578,10 @@ final class _ReopenTranscript {
   final String storedSessionId;
   final Set<String> aliases;
   final List<Map<String, dynamic>> newestFirst;
+
+  /// cs1215: restored from the encrypted cold-start store, not from this
+  /// process' memory.
+  final bool fromDisk;
 
   /// Estimated retained size; counts against the cache byte budget.
   final int bytes;

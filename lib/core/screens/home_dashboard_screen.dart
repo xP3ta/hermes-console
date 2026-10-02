@@ -238,6 +238,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   @override
   void didPopNext() {
     unawaited(DrawerGestureExclusion.setEnabled(true));
+    // cs1215: Home is on screen again; a cold start opens Home.
+    final connectionId = widget.connManager.activeConnectionId.value;
+    if (connectionId != null) {
+      unawaited(
+        _activeChats?.coldStartStore
+            ?.forgetRoute(connectionId)
+            .catchError((Object _) {}),
+      );
+    }
     // Volver de cualquier pantalla empujada (Conversaciones, un chat, Bots…)
     // no refrescaba los recientes de Inicio por sí solo — solo lo hacían los
     // sitios que encadenaban `.then(() => _refreshStatus())` a su propio
@@ -761,6 +770,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     final aggregate = _activeChats?.globalActivity;
     aggregate?.clearSession(conn.id, ownerProfile, session.id);
     await aggregate?.flushJournal();
+    await _activeChats?.forgetColdStartSession(
+      connectionId: conn.id,
+      profile: ownerProfile,
+      sessionId: session.id,
+    );
     if (!mounted) return;
     try {
       final prefs = await SharedPreferences.getInstance();

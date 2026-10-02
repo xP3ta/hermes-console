@@ -82,6 +82,7 @@ import '../navigation/chat_route.dart';
 import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
 import '../services/hermes_update_monitor.dart';
 import '../services/active_chat_service.dart';
+import '../services/cold_start_store.dart';
 import '../services/approval_policy.dart';
 import 'chat_content_screen.dart';
 import 'image_viewer_screen.dart';
@@ -1239,6 +1240,10 @@ class ChatScreen extends StatefulWidget {
   final bool requestComposerFocus;
   final String? initialStoredSessionId;
 
+  /// cs1215: reopened by the app on a cold start because it was the last
+  /// foreground route. A session that turned out deleted returns to Home.
+  final bool restoredFromColdStart;
+
   /// Carpeta del servidor donde debe arrancar un chat NUEVO abierto desde un
   /// proyecto o worktree. Viaja en `session.create` como `cwd` +
   /// `cwd_explicit`, igual que Desktop; null para un chat sin carpeta.
@@ -1291,6 +1296,7 @@ class ChatScreen extends StatefulWidget {
     this.initialVoiceMode = false,
     this.requestComposerFocus = false,
     this.initialStoredSessionId,
+    this.restoredFromColdStart = false,
     this.newChatWorkspace,
     this.providerReauthClientFactory,
     this.missionAvatarCache,
@@ -4946,6 +4952,7 @@ class _ChatScreenState extends State<ChatScreen>
       _cancelSessionContextBootstrapRetry();
     }
     _chatRouteVisible = visible;
+    if (visible) _rememberColdStartRoute();
     if (changed && mounted && !_disposed) setState(() {});
     _syncPassiveTranscriptRefresh();
     _syncSubagentPolling();
@@ -5407,6 +5414,65 @@ class _ChatScreenState extends State<ChatScreen>
   void didPop() {
     _invalidateOwnedNativeVoicePreparation();
     _markChatVisible(false); // esta pantalla se va
+    _forgetColdStartRoute();
+  }
+
+  /// cs1215: remembers this chat as the connection's last foreground route,
+  /// so a cold start reopens it (identifiers only, encrypted). A chat that
+  /// does not exist on the server yet is not remembered.
+  void _rememberColdStartRoute() {
+    if (!_chatBound || _disposed) return;
+    final store = _chatService.coldStartStore;
+    if (store == null) return;
+    final storedId = _chat.storedSessionId;
+    final durable = storedId != null && storedId.isNotEmpty
+        ? storedId
+        : widget.session.isUnpersistedMobileDraft
+        ? null
+        : _chat.serverSessionId;
+    if (!_isBotChatSurface && (durable == null || durable.isEmpty)) return;
+    unawaited(
+      store
+          .rememberRoute(
+            ColdStartRoute(
+              kind: _isBotChatSurface
+                  ? ColdStartRouteKind.bot
+                  : ColdStartRouteKind.chat,
+              connectionId: widget.connection.id,
+              profile: _chat.sessionProfile,
+              sessionId: durable ?? '',
+              source: widget.session.source,
+            ),
+          )
+          .catchError((Object error) {
+            debugPrint('[cold-start] route not saved (${error.runtimeType})');
+          }),
+    );
+  }
+
+  /// This chat left the stack: forget it as the remembered route, so the
+  /// surface below (Home, Bot Mode) is what a cold start shows.
+  void _forgetColdStartRoute() {
+    if (!_chatBound) return;
+    final store = _chatService.coldStartStore;
+    if (store == null) return;
+    final ids = <String>{
+      widget.session.id,
+      _chat.sessionId,
+      _chat.serverSessionId,
+      if (_chat.storedSessionId != null) _chat.storedSessionId!,
+    };
+    unawaited(
+      store
+          .forgetRoute(
+            widget.connection.id,
+            when: (route) =>
+                (route.kind == ColdStartRouteKind.chat ||
+                    route.kind == ColdStartRouteKind.bot) &&
+                ids.contains(route.sessionId),
+          )
+          .catchError((Object _) {}),
+    );
   }
 
   /// ¿El modo voz global está activo y atado a ESTA sesión? La orquestación de
@@ -6817,6 +6883,8 @@ class _ChatScreenState extends State<ChatScreen>
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
       _persistLastRead();
+      // cs1215: a chat created during this visit has a durable id now.
+      if (_chatRouteVisible) _rememberColdStartRoute();
       // A setup that began while this route owned the foreground cannot regain
       // authority after an asynchronous dashboard response. This only revokes
       // the opaque preparation; an already-active opted-in conversation stays
@@ -7599,17 +7667,38 @@ class _ChatScreenState extends State<ChatScreen>
             widget.session.source == 'mobile' &&
             widget.session.messageCount == 0 &&
             _messages.isEmpty;
+        // cs1215: rows painted from the cold-start cache are not evidence
+        // that the session still exists.
+        final onlyCachedRows = _chat.showingCachedTranscript;
         // Hermes Desktop drops a verifiably gone id (its transcript AND its
         // row 404) to a fresh draft instead of an error; a 404 on the
         // transcript alone keeps the stable error with retry.
         final storedSessionGone =
             !isUnpersistedMobileChat &&
-            _messages.isEmpty &&
+            (_messages.isEmpty || onlyCachedRows) &&
             await _storedSessionIsGone();
         if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
           return false;
         }
         if (storedSessionGone) {
+          _chat.discardCachedTranscript();
+          unawaited(
+            _chatService.forgetColdStartSession(
+              connectionId: widget.connection.id,
+              profile: _chat.sessionProfile,
+              sessionId: _chat.serverSessionId,
+            ),
+          );
+          if (widget.restoredFromColdStart) {
+            // The remembered chat was deleted elsewhere: back to Home, never
+            // a draft that silently replaces it.
+            HermesNotice.of(context).showSnackBar(
+              SnackBar(content: Text(Strings.of(context).chaSessionGone)),
+              kind: HermesNoticeKind.warning,
+            );
+            unawaited(Navigator.of(context).maybePop());
+            return false;
+          }
           _chat.markStoredSessionGone();
           setState(() => _error = null);
           HermesNotice.of(context).showSnackBar(
@@ -15189,6 +15278,9 @@ class _ChatScreenState extends State<ChatScreen>
     );
     return ChatRefreshStatusOverlay(
       loading: _interactiveMessageRefreshPending,
+      cachedLabel: _chat.showingCachedTranscript
+          ? Strings.of(context).cs1215CachedTranscript
+          : null,
       errorMessage: _error == null || _refreshErrorNoticeDismissed
           ? null
           : Strings.of(context).chaMessagesError,
@@ -20912,11 +21004,16 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
     required this.child,
     this.errorTopInset = 8,
     this.onDismissError,
+    this.cachedLabel,
     super.key,
   });
 
   final bool loading;
   final String? errorMessage;
+
+  /// cs1215: the rows shown are the encrypted cold-start copy, not yet
+  /// confirmed by the server.
+  final String? cachedLabel;
   final Widget child;
 
   /// Con valor, el aviso de error muestra una X para cerrarlo.
@@ -20932,6 +21029,57 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
     return Stack(
       children: [
         Positioned.fill(child: child),
+        if (cachedLabel != null)
+          Positioned(
+            // Below the error notice when both show: the copy is still the
+            // unconfirmed cache whatever the read did.
+            top: errorTopInset + (errorMessage == null ? 0 : 52),
+            left: 12,
+            right: 12,
+            child: Center(
+              child: Semantics(
+                key: const ValueKey('chat-cached-transcript'),
+                container: true,
+                liveRegion: true,
+                label: cachedLabel,
+                child: ExcludeSemantics(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colors.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: colors.divider.withValues(alpha: 0.78),
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.history,
+                            size: 14,
+                            color: colors.textSecondary,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            cachedLabel!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         if (loading)
           Positioned(
             top: 0,
