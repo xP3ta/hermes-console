@@ -838,4 +838,133 @@ void main() {
       expect(projection.canReuseFor(messages), isFalse);
     },
   );
+
+  group('rg1215 grupo de respuesta', () {
+    Map<String, dynamic> toolRow(String id, String label) => {
+      'role': 'assistant',
+      'content': '',
+      'id': id,
+      '_activity_trace': [
+        {'kind': 'tool', 'label': label, 'status': 'completed', 'id': id},
+      ],
+    };
+
+    test('filas consecutivas del asistente forman una sola unidad', () {
+      final messages = <Map<String, dynamic>>[
+        {'role': 'assistant', 'content': 'RESPUESTA_FINAL', 'id': 'r4'},
+        toolRow('r3', 'terminal'),
+        toolRow('r2', 'write_file'),
+        toolRow('r1', 'skill_view'),
+        {'role': 'user', 'content': 'Pregunta', 'id': 'u1'},
+      ];
+      final projection = ChatRenderProjection.build(messages);
+
+      expect(projection.units, hasLength(2));
+      final group = projection.units.first as ChatMessageUnitPlan;
+      expect(group.messageIndex, 0);
+      // Más nuevo primero, sin perder ni duplicar ninguna fila.
+      expect(group.memberIndexesNewestFirst, [0, 1, 2, 3]);
+      for (var index = 0; index < 4; index++) {
+        expect(projection.nearestRenderableMessageIndex(index), index);
+      }
+      expect(projection.renderedMessageCount, 5);
+    });
+
+    test('un usuario o un aviso editorial cortan el grupo', () {
+      final messages = <Map<String, dynamic>>[
+        toolRow('r4', 'terminal'),
+        {
+          'role': 'user',
+          'content': 'aviso',
+          'display_kind': 'process_complete',
+          'id': 'p1',
+        },
+        toolRow('r3', 'write_file'),
+        {'role': 'user', 'content': 'Segunda', 'id': 'u2'},
+        toolRow('r2', 'read_file'),
+        {'role': 'user', 'content': 'Primera', 'id': 'u1'},
+      ];
+      final projection = ChatRenderProjection.build(messages);
+      final groups = projection.units.whereType<ChatMessageUnitPlan>().where(
+        (unit) => messages[unit.messageIndex]['role'] == 'assistant',
+      );
+      expect(groups.map((unit) => unit.memberIndexesNewestFirst), [
+        [0],
+        [2],
+        [4],
+      ]);
+    });
+
+    test('un turno vivo sin prompt visible no crece la respuesta anterior', () {
+      final messages = <Map<String, dynamic>>[
+        {'role': 'assistant', 'content': 'NUEVO'},
+        {'role': 'assistant', 'content': 'RESPUESTA_ANTERIOR'},
+        {'role': 'user', 'content': 'Pregunta'},
+      ];
+      ChatRenderProjection build() =>
+          ChatRenderProjection.build(messages, streamingHead: true);
+      expect(build().units, hasLength(3));
+      expect(build().canReuseFor(messages), isFalse);
+      // Las filas solo-traza del turno vivo sí comparten su burbuja.
+      messages[1] = toolRow('r1', 'terminal');
+      expect(build().units, hasLength(2));
+    });
+
+    test('una respuesta parada queda fuera del grupo', () {
+      final messages = <Map<String, dynamic>>[
+        {
+          'role': 'assistant',
+          'content': 'PARADA',
+          '_cancelled': true,
+          '_stopped': true,
+        },
+        toolRow('r1', 'terminal'),
+        {'role': 'user', 'content': 'Pregunta'},
+      ];
+      final projection = ChatRenderProjection.build(messages);
+      expect(projection.units, hasLength(3));
+    });
+
+    test('fusiona traza, razonamiento, texto y medios en orden', () {
+      final merged = mergeAssistantResponseGroup([
+        {
+          'role': 'assistant',
+          'content': '',
+          'reasoning': 'primero pienso',
+          '_activity_duration_seconds': 10,
+          '_activity_trace': [
+            {'kind': 'tool', 'label': 'skill_view', 'id': 'a'},
+          ],
+          '_generatedImages': [
+            {'tool_call_id': 'a', 'source': 'uno.png'},
+          ],
+        },
+        {
+          'role': 'assistant',
+          'content': 'Voy a escribir.',
+          '_activity_trace': [
+            {'kind': 'tool', 'label': 'write_file', 'id': 'b'},
+          ],
+        },
+        {
+          'role': 'assistant',
+          'content': 'RESPUESTA_FINAL',
+          'timestamp': 99,
+          '_activity_duration_seconds': 5,
+        },
+      ]);
+      expect(merged['content'], 'Voy a escribir.\n\nRESPUESTA_FINAL');
+      expect(merged['timestamp'], 99);
+      expect(merged['_activity_duration_seconds'], 15);
+      expect(
+        [
+          for (final step in merged['_activity_trace'] as List)
+            step['label'] ?? step['kind'],
+        ],
+        ['reasoning', 'skill_view', 'write_file'],
+      );
+      expect(merged['reasoning'], 'primero pienso');
+      expect((merged['_generatedImages'] as List), hasLength(1));
+    });
+  });
 }

@@ -22412,6 +22412,241 @@ void main() {
     });
   });
 
+  group('rg1215 un turno del agente es un único grupo de respuesta', () {
+    Map<String, dynamic> toolRow(int n, String label, String detail) => {
+      'role': 'assistant',
+      'content': '',
+      'id': 'rg-tool-$n',
+      'timestamp': 1700000000 + n,
+      '_activity_trace': [
+        {
+          'kind': 'tool',
+          'label': label,
+          'status': 'completed',
+          'id': 'rg-call-$n',
+          'detail': detail,
+        },
+      ],
+    };
+    final assistantCopy = find.byWidgetPredicate(
+      (widget) =>
+          widget is Icon &&
+          widget.icon == Icons.copy_rounded &&
+          widget.size == 16,
+    );
+    final turn = <Map<String, dynamic>>[
+      {
+        'role': 'assistant',
+        'content': 'RG_FINAL_ANSWER',
+        'id': 'rg-final',
+        'timestamp': 1700000400,
+      },
+      toolRow(3, 'terminal', 'flutter test'),
+      toolRow(2, 'write_file', 'notas.md'),
+      toolRow(1, 'skill_view', 'github'),
+      {'role': 'user', 'content': 'RG_PROMPT', 'id': 'rg-user'},
+    ];
+
+    testWidgets('tres filas solo-herramienta y el texto final: una burbuja', (
+      tester,
+    ) async {
+      await pumpChat(tester, messages: turn);
+      expect(
+        find.byKey(const ValueKey('assistant-header-name')),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.expand_more), findsOneWidget);
+      expect(find.text('RG_FINAL_ANSWER'), findsOneWidget);
+      expect(assistantCopy, findsOneWidget);
+      await tester.tap(find.byIcon(Icons.expand_more));
+      await tester.pump(const Duration(milliseconds: 300));
+      final labels = [
+        'skill_view · github',
+        'write_file · notas.md',
+        'terminal · flutter test',
+      ];
+      final tops = [
+        for (final label in labels)
+          tester.getTopLeft(find.text(label, findRichText: true)).dy,
+      ];
+      // La traza lista lo más reciente arriba (como siempre en la tarjeta).
+      expect(tops, orderedEquals([...tops]..sort((a, b) => b.compareTo(a))));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('sin texto final siguen siendo una sola burbuja', (
+      tester,
+    ) async {
+      await pumpChat(tester, messages: turn.sublist(1));
+      expect(
+        find.byKey(const ValueKey('assistant-header-name')),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.expand_more), findsOneWidget);
+      expect(assistantCopy, findsOneWidget);
+    });
+
+    testWidgets('copiar copia el texto del grupo completo', (tester) async {
+      await pumpChat(
+        tester,
+        messages: [
+          turn[0],
+          {...turn[1], 'content': 'RG_INTERIM_TEXT'},
+          ...turn.sublist(2),
+        ],
+      );
+      expect(
+        find.byKey(const ValueKey('assistant-header-name')),
+        findsOneWidget,
+      );
+      await tester.tap(assistantCopy);
+      await tester.pump();
+      final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
+      expect(clipboard?.text, 'RG_INTERIM_TEXT\n\nRG_FINAL_ANSWER');
+      await tester.pump(const Duration(seconds: 2));
+    });
+
+    testWidgets('el grupo vivo crece en su sitio con todas las herramientas', (
+      tester,
+    ) async {
+      final chat = await pumpChat(
+        tester,
+        chatState: ChatPipelineState.executing,
+        messages: [
+          {
+            'role': 'assistant',
+            'content': '',
+            '_pipeline': true,
+            '_activity_trace': [
+              {
+                'kind': 'tool',
+                'label': 'read_file',
+                'status': 'running',
+                'id': 'rg-live',
+                'detail': 'AGENTS.md',
+              },
+            ],
+          },
+          ...turn.sublist(1),
+        ],
+      );
+      List<String> traceLabels() => [
+        for (final event
+            in tester
+                .widget<ThinkingTraceCard>(find.byType(ThinkingTraceCard))
+                .events)
+          event.label,
+      ];
+      expect(
+        find.byKey(const ValueKey('assistant-header-name')),
+        findsOneWidget,
+      );
+      expect(traceLabels(), [
+        'skill_view',
+        'write_file',
+        'terminal',
+        'read_file',
+      ]);
+      final groupTop = tester
+          .getTopLeft(find.byKey(const ValueKey('assistant-header-name')))
+          .dy;
+
+      chat.internalMessagesForTesting = [
+        {
+          'role': 'assistant',
+          'content': '',
+          '_pipeline': true,
+          '_activity_trace': [
+            {
+              'kind': 'tool',
+              'label': 'read_file',
+              'status': 'completed',
+              'id': 'rg-live',
+              'detail': 'AGENTS.md',
+            },
+          ],
+        },
+        toolRow(4, 'patch', 'chat.dart'),
+        ...turn.sublist(1),
+      ];
+      chat.debugEmitMessagesHydrated();
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('assistant-header-name')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .getTopLeft(find.byKey(const ValueKey('assistant-header-name')))
+            .dy,
+        groupTop,
+      );
+      expect(traceLabels(), [
+        'skill_view',
+        'write_file',
+        'terminal',
+        'patch',
+        'read_file',
+      ]);
+      chat.state = ChatPipelineState.idle;
+      await tester.pump(const Duration(minutes: 1));
+    });
+
+    testWidgets('el texto en streaming crece dentro del mismo grupo', (
+      tester,
+    ) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('rg1215-live-host'),
+        desktopGateway: gateway,
+      );
+      expect(
+        await chat.send(
+          fullText: 'RG_PROMPT',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      await tester.pump();
+      // A reconcile mid-turn delivers the durable tool-only rows of this
+      // turn beneath the live head.
+      final live = chat.internalMessagesForTesting;
+      final userIndex = live.indexWhere((m) => m['role'] == 'user');
+      chat.internalMessagesForTesting = [
+        ...live.sublist(0, userIndex),
+        toolRow(2, 'write_file', 'notas.md'),
+        toolRow(1, 'skill_view', 'github'),
+        ...live.sublist(userIndex),
+      ];
+      await pumpDesktopDelta(
+        tester,
+        gateway,
+        chat,
+        'RG_STREAMING_TEXT',
+        expectedFragment: 'RG_STREAMING_TEXT',
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(chatLiveAssistantViewportKey), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('assistant-header-name')),
+        findsOneWidget,
+      );
+      final trace = tester.widget<ThinkingTraceCard>(
+        find.byType(ThinkingTraceCard),
+      );
+      expect(trace.events.map((event) => event.label), [
+        'skill_view',
+        'write_file',
+      ]);
+      gateway.emit('message.complete', const {'text': 'RG_STREAMING_TEXT'});
+      await tester.pump();
+      await tester.pump(const Duration(minutes: 2));
+    });
+  });
+
   testWidgets(
     'una respuesta sin texto y sin nada que desplegar no pinta ni la cabecera',
     (tester) async {
