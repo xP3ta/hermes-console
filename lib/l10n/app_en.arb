@@ -7877,5 +7877,14 @@
   "ps1215NoDetailsYet": "No details yet: this updates with the next event.",
   "cq1215QuestionNotRecovered": "The question could not be recovered. Hermes is still waiting for your answer.",
   "cq1215RetryQuestion": "Retry",
-  "cq1215StopTurn": "Stop turn"
+  "cq1215StopTurn": "Stop turn",
+"tg1215ProcessCompleted": "Background process finished",
+  "tg1215ProcessExited": "Background process finished with an error",
+  "tg1215ProcessTerminated": "Background process stopped",
+  "tg1215ProcessLost": "Background process lost",
+  "tg1215ProcessFailedToStart": "Background process failed to start",
+  "tg1215ProcessExitCode": "exit {code}",
+  "tg1215ProcessShowOutput": "Show output",
+  "tg1215ProcessHideOutput": "Hide output",
+  "tg1215ProcessNoOutput": "No output"
 }

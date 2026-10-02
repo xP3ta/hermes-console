@@ -1,14 +1,86 @@
 import 'bot_mention_text.dart';
+
 final RegExp _asyncDelegationMarkerPattern = RegExp(
   r'^\[ASYNC DELEGATION (?:BATCH )?COMPLETE — deleg_[0-9a-f]{8}\](?:\r?\n|$)',
 );
 
+/// Estados de cierre que Hermes escribe en el carrier de un proceso en
+/// segundo plano (`_completion_status` y `_REASON_STATUS` en
+/// tools/process_registry_notifications.py). Cada alternativa es una frase
+/// exacta; `terminated by` solo acepta un identificador de origen sin espacios
+/// (`process.kill`, `kill_all`, `Hermes`, `gateway_shutdown`…).
+const String _backgroundProcessStatusSource =
+    r'(completed normally|exited|terminated by [A-Za-z0-9_.:-]{1,64}'
+    r'|marked lost because the process backend disappeared|failed to start)';
+
+const String _backgroundProcessHeadlineSource =
+    r'\[IMPORTANT: Background process proc_[0-9a-f]{12} '
+    '$_backgroundProcessStatusSource'
+    r' \(exit code (\?|-?(?:[0-9]|[1-9][0-9]{1,2}))(?:, SIGTERM)?\)\.';
+
+/// Línea de procedencia opcional cuando el proceso lo lanzó un subagente.
+const String _backgroundProcessAttributionSource =
+    r'(?:Started by subagent sa-[^\r\n]+'
+    r'|Handed off to you by a subagent before it finished\. Purpose: [^\r\n]*)';
+
 final RegExp _backgroundProcessCarrierPattern = RegExp(
-  r'^\[IMPORTANT: Background process proc_[0-9a-f]{12} exited \(exit code (?:[0-9]|[1-9][0-9]{1,2})\)\.\r?\n'
-  r'Command: [^\r\n]+\r?\n'
+  '^$_backgroundProcessHeadlineSource'
+  r'\r?\n'
+  '(?:$_backgroundProcessAttributionSource'
+  r'\r?\n)?'
+  r'Command: (\S[\s\S]*?)\r?\n'
   r'Output:\r?\n'
-  r'[\s\S]*\r?\n\]$',
+  r'([\s\S]*)\]$',
 );
+
+enum BackgroundProcessCarrierStatus {
+  completed,
+  exited,
+  terminated,
+  lost,
+  failedToStart,
+}
+
+/// Vista de presentación de un carrier canónico. El texto durable no cambia.
+class BackgroundProcessCarrier {
+  const BackgroundProcessCarrier({
+    required this.status,
+    required this.exitCode,
+    required this.command,
+    required this.output,
+  });
+
+  final BackgroundProcessCarrierStatus status;
+
+  /// Código tal como lo escribió Hermes (`0`, `-15`, `?`).
+  final String exitCode;
+  final String command;
+  final String output;
+}
+
+/// Devuelve el carrier solo cuando TODO [raw] es el carrier canónico.
+BackgroundProcessCarrier? parseBackgroundProcessCarrier(String raw) {
+  final match = _backgroundProcessCarrierPattern.firstMatch(raw);
+  if (match == null) return null;
+  final phrase = match.group(1)!;
+  final status = switch (phrase) {
+    'completed normally' => BackgroundProcessCarrierStatus.completed,
+    'exited' => BackgroundProcessCarrierStatus.exited,
+    'failed to start' => BackgroundProcessCarrierStatus.failedToStart,
+    _ when phrase.startsWith('marked lost') =>
+      BackgroundProcessCarrierStatus.lost,
+    _ => BackgroundProcessCarrierStatus.terminated,
+  };
+  return BackgroundProcessCarrier(
+    status: status,
+    exitCode: match.group(2)!,
+    command: match.group(3)!,
+    output: match.group(4)!.replaceFirst(RegExp(r'\r?\n$'), ''),
+  );
+}
+
+bool isBackgroundProcessCarrier(String raw) =>
+    _backgroundProcessCarrierPattern.hasMatch(raw);
 
 String stripBackgroundProcessCarrier(String raw) {
   var from = 0;
@@ -26,13 +98,17 @@ String stripBackgroundProcessCarrier(String raw) {
   }
 }
 
+/// Preview de SessionDB: 60 caracteres de cabeza más `...`. Solo se aceptan
+/// los cortes exactos de cada frase de estado conocida.
 bool isBackgroundProcessBackendPreview(String raw) => RegExp(
-  r'^\[IMPORTANT: Background process proc_[0-9a-f]{12} exited \(exi\.\.\.$',
+  r'^\[IMPORTANT: Background process proc_[0-9a-f]{12} '
+  r'(?:exited \(exi|completed n|terminated |marked lost|failed to s)\.\.\.$',
 ).hasMatch(raw);
 
 bool isBackgroundProcessFlattenedPreview(String raw) => RegExp(
-  r'^\[IMPORTANT: Background process proc_[0-9a-f]{12} exited '
-  r'\(exit code (?:[0-9]|[1-9][0-9]{1,2})\)\. '
+  '^$_backgroundProcessHeadlineSource '
+  r'(?:(?:Started by subagent sa-|Handed off to you by a subagent before it '
+  r'finished\. Purpose: )\S(?:.*\S)? )?'
   r'Command: \S(?:.*\S)? Output: (?:\S(?:.*\S)? )?\]$',
 ).hasMatch(raw);
 
@@ -207,6 +283,12 @@ String effectiveUserDisplayKind(Map<String, dynamic> message) {
     r'^\[Continuing toward your standing goal(?: — a quality gate failed)?\]\nGoal:',
   ).hasMatch(rawContent)) {
     return 'auto_continue';
+  }
+  // Hermes persiste el aviso de fin de proceso como `role=user`. Si llega sin
+  // `display_kind` (REST antiguo), el carrier canónico completo basta para
+  // pintarlo como aviso de sistema, igual que Desktop.
+  if (_backgroundProcessCarrierPattern.hasMatch(rawContent)) {
+    return 'process_complete';
   }
   if (projectedUserVisibleContent(message).trim().isEmpty &&
       rawContent.trim().isNotEmpty) {

@@ -3682,6 +3682,119 @@ void main() {
     });
   }
 
+  for (final variant in const [
+    (
+      headline: 'completed normally (exit code 0)',
+      es: 'Proceso en segundo plano terminado · exit 0',
+      en: 'Background process finished · exit 0',
+      displayKind: false,
+    ),
+    (
+      headline: 'exited (exit code 1)',
+      es: 'Proceso en segundo plano terminado con error · exit 1',
+      en: 'Background process finished with an error · exit 1',
+      displayKind: false,
+    ),
+    (
+      headline: 'terminated by process.kill (exit code -15, SIGTERM)',
+      es: 'Proceso en segundo plano detenido · exit -15',
+      en: 'Background process stopped · exit -15',
+      displayKind: true,
+    ),
+  ]) {
+    for (final language in const ['es', 'en']) {
+      testWidgets('tg1215 aviso de proceso compacto y desplegable '
+          '(${variant.headline}, $language)', (tester) async {
+        final carrier =
+            '[IMPORTANT: Background process proc_f4c048969c1b ${variant.headline}.\n'
+            'Command: cd /srv/app && flutter test\n'
+            'Output:\n'
+            'bash: no se puede establecer el grupo de proceso de terminal (-1)\n'
+            'TG1215_OUTPUT_LINE\n'
+            ']';
+        await pumpChat(
+          tester,
+          messages: [
+            {'role': 'assistant', 'content': 'Respuesta posterior'},
+            {
+              'id': 'tg1215-process',
+              'message_id': 'tg1215-process',
+              'role': 'user',
+              'content': carrier,
+              if (variant.displayKind) 'display_kind': 'process_complete',
+            },
+            {
+              'id': 'tg1215-human',
+              'message_id': 'tg1215-human',
+              'role': 'user',
+              'content': 'Pregunta humana',
+            },
+          ],
+          desktopGateway: _UiRewindGateway(),
+          attachDesktopRuntimeOnLoad: false,
+        );
+        tester.platformDispatcher.localesTestValue = [Locale(language)];
+        addTearDown(tester.platformDispatcher.clearLocalesTestValue);
+        await tester.pump();
+
+        final title = language == 'es' ? variant.es : variant.en;
+        expect(find.text('Pregunta humana'), findsOneWidget);
+        expect(find.text(title), findsOneWidget);
+        expect(find.textContaining('[IMPORTANT:'), findsNothing);
+        expect(find.textContaining('TG1215_OUTPUT_LINE'), findsNothing);
+        expect(find.textContaining('Output:'), findsNothing);
+        // Solo la pregunta humana es un turno editable.
+        expect(
+          find.byTooltip(language == 'es' ? 'Editar mensaje' : 'Edit message'),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.text(title));
+        await tester.pump();
+        expect(find.textContaining('TG1215_OUTPUT_LINE'), findsOneWidget);
+        expect(
+          find.textContaining('no se puede establecer el grupo de proceso'),
+          findsOneWidget,
+        );
+        expect(find.textContaining('[IMPORTANT:'), findsNothing);
+
+        await tester.tap(find.text(title));
+        await tester.pump();
+        expect(find.textContaining('TG1215_OUTPUT_LINE'), findsNothing);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
+  testWidgets('tg1215 un parecido escrito por la persona sigue en su burbuja', (
+    tester,
+  ) async {
+    const lookalike =
+        '[IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).\n'
+        'Command: x\n'
+        'Output:\n'
+        'y\n'
+        '] ¿esto lo pegó Hermes?';
+    await pumpChat(
+      tester,
+      messages: const [
+        {
+          'id': 'tg1215-lookalike',
+          'message_id': 'tg1215-lookalike',
+          'role': 'user',
+          'content': lookalike,
+        },
+      ],
+      desktopGateway: _UiRewindGateway(),
+      attachDesktopRuntimeOnLoad: false,
+    );
+    expect(find.textContaining('¿esto lo pegó Hermes?'), findsOneWidget);
+    expect(
+      find.text('Proceso en segundo plano terminado · exit 0'),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
   testWidgets(
     'la burbuja conserva texto humano y elimina el carrier background completo',
     (tester) async {

@@ -9554,5 +9554,21 @@
   "ps1215NoDetailsYet": "Sin detalles todavía: se actualizará con el siguiente evento.",
   "cq1215QuestionNotRecovered": "No se ha podido recuperar la pregunta. Hermes sigue esperando tu respuesta.",
   "cq1215RetryQuestion": "Reintentar",
-  "cq1215StopTurn": "Detener turno"
+  "cq1215StopTurn": "Detener turno",
+"tg1215ProcessCompleted": "Proceso en segundo plano terminado",
+  "tg1215ProcessExited": "Proceso en segundo plano terminado con error",
+  "tg1215ProcessTerminated": "Proceso en segundo plano detenido",
+  "tg1215ProcessLost": "Proceso en segundo plano perdido",
+  "tg1215ProcessFailedToStart": "El proceso en segundo plano no pudo arrancar",
+  "tg1215ProcessExitCode": "exit {code}",
+  "@tg1215ProcessExitCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "tg1215ProcessShowOutput": "Ver salida",
+  "tg1215ProcessHideOutput": "Ocultar salida",
+  "tg1215ProcessNoOutput": "Sin salida"
 }

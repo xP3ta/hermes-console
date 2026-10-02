@@ -15244,6 +15244,16 @@ class _ChatScreenState extends State<ChatScreen>
       );
     }
 
+    // Aviso de fin de proceso en segundo plano: Hermes lo guarda como
+    // `role=user`; igual que Desktop se pinta como aviso compacto con la salida
+    // plegada, nunca como burbuja de la persona.
+    if (role == 'user' && effectiveUserDisplayKind(msg) == 'process_complete') {
+      final carrier = parseBackgroundProcessCarrier(sourceContent.trimRight());
+      if (carrier != null) {
+        return _ProcessNotificationRow(carrier: carrier, raw: sourceContent);
+      }
+    }
+
     final timelineEvent = _timelineSystemEventPresentation(context, msg);
     if (timelineEvent != null) {
       return _TimelineSystemEventRow(
@@ -17631,6 +17641,152 @@ class _SystemBlobChip extends StatelessWidget {
 /// Evento durable del transcript con tratamiento editorial, no una burbuja.
 /// El contenido interno solo queda accesible mediante pulsación larga para
 /// diagnóstico; rutas, roles y payloads nunca se vuelcan en el chat.
+/// Aviso compacto de un proceso en segundo plano terminado. La cabecera
+/// resume estado y código; la salida solo se muestra al desplegarla.
+class _ProcessNotificationRow extends StatefulWidget {
+  final BackgroundProcessCarrier carrier;
+  final String raw;
+
+  const _ProcessNotificationRow({required this.carrier, required this.raw});
+
+  @override
+  State<_ProcessNotificationRow> createState() =>
+      _ProcessNotificationRowState();
+}
+
+class _ProcessNotificationRowState extends State<_ProcessNotificationRow> {
+  bool _expanded = false;
+
+  String _statusLabel(Strings strings) => switch (widget.carrier.status) {
+    BackgroundProcessCarrierStatus.completed => strings.tg1215ProcessCompleted,
+    BackgroundProcessCarrierStatus.exited => strings.tg1215ProcessExited,
+    BackgroundProcessCarrierStatus.terminated =>
+      strings.tg1215ProcessTerminated,
+    BackgroundProcessCarrierStatus.lost => strings.tg1215ProcessLost,
+    BackgroundProcessCarrierStatus.failedToStart =>
+      strings.tg1215ProcessFailedToStart,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.hermes;
+    final strings = Strings.of(context);
+    final carrier = widget.carrier;
+    final title = [
+      _statusLabel(strings),
+      if (carrier.exitCode != '?')
+        strings.tg1215ProcessExitCode(carrier.exitCode),
+    ].join(' · ');
+    // El comando y la salida pueden llevar rutas o prompts privados: solo se
+    // construyen cuando la persona despliega el aviso.
+    final output = carrier.output.trimRight();
+    final details = [
+      '\$ ${carrier.command}',
+      output.isEmpty ? strings.tg1215ProcessNoOutput : output,
+    ].join('\n\n');
+    final failed = carrier.status != BackgroundProcessCarrierStatus.completed;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Semantics(
+            button: true,
+            expanded: _expanded,
+            label: title,
+            hint: _expanded
+                ? strings.tg1215ProcessHideOutput
+                : strings.tg1215ProcessShowOutput,
+            excludeSemantics: true,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => setState(() => _expanded = !_expanded),
+              onLongPress: () {
+                Clipboard.setData(ClipboardData(text: widget.raw));
+                HermesNotice.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(strings.chaCopied),
+                    duration: const Duration(seconds: 1),
+                  ),
+                  kind: HermesNoticeKind.success,
+                );
+              },
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 28,
+                      child: Icon(
+                        Icons.terminal_rounded,
+                        size: 16,
+                        color: failed
+                            ? colors.error.withValues(alpha: 0.8)
+                            : colors.textSecondary.withValues(alpha: 0.72),
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colors.textSecondary,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      _expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      size: 18,
+                      color: colors.textSecondary.withValues(alpha: 0.72),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (_expanded)
+            Container(
+              margin: const EdgeInsets.only(left: 28, top: 2, bottom: 6),
+              padding: const EdgeInsets.all(10),
+              constraints: const BoxConstraints(maxHeight: 320),
+              decoration: BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: colors.divider.withValues(alpha: 0.5),
+                ),
+              ),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  details,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 11.5,
+                    height: 1.35,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TimelineSystemEventRow extends StatelessWidget {
   final String title;
   final String? detail;

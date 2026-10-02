@@ -268,12 +268,13 @@ void main() {
           ']';
       final carrier = _message('user', raw)..['row_id'] = 1210;
 
-      expect(effectiveUserDisplayKind(carrier), 'hidden');
+      // Igual que Desktop: aviso de proceso (no burbuja ni turno de usuario).
+      expect(effectiveUserDisplayKind(carrier), 'process_complete');
       expect(isRealUserTurn(carrier), isFalse);
 
       final projection = ChatRenderProjection.build([carrier]);
 
-      expect(projection.units, isEmpty);
+      expect(projection.units.single, isA<ChatMessageUnitPlan>());
       expect(projection.visibleUserCount, 0);
       expect(projection.userOrdinalFor(carrier), isNull);
       expect(carrier['content'], raw, reason: 'la historia durable no se muta');
@@ -426,25 +427,22 @@ void main() {
     expect(projection.units.whereType<ChatUserTurnUnitPlan>(), hasLength(1));
   });
 
-  test(
-    'un carrier interno sin display_kind sigue oculto junto a process_complete',
-    () {
-      final carrier = _message('user', _processCompleteCarrier)
-        ..['row_id'] = 9102;
+  test('un carrier sin display_kind se proyecta como process_complete', () {
+    final carrier = _message('user', _processCompleteCarrier)
+      ..['row_id'] = 9102;
 
-      expect(effectiveUserDisplayKind(carrier), 'hidden');
+    expect(effectiveUserDisplayKind(carrier), 'process_complete');
 
-      final hidden = _message('user', 'payload interno de otro carrier')
-        ..['display_kind'] = 'hidden';
+    final hidden = _message('user', 'payload interno de otro carrier')
+      ..['display_kind'] = 'hidden';
 
-      expect(normalizeTranscriptMessageForDisplay(hidden), isNull);
+    expect(normalizeTranscriptMessageForDisplay(hidden), isNull);
 
-      final projection = ChatRenderProjection.build([carrier, hidden]);
+    final projection = ChatRenderProjection.build([carrier, hidden]);
 
-      expect(projection.units, isEmpty);
-      expect(projection.visibleUserCount, 0);
-    },
-  );
+    expect(projection.units.single, isA<ChatMessageUnitPlan>());
+    expect(projection.visibleUserCount, 0);
+  });
 
   test(
     'un prompt real parecido a un aviso de proceso sigue siendo del usuario',
@@ -496,6 +494,113 @@ void main() {
       expect(projectedUserVisibleContent(mixed), 'Pregunta visible');
       expect(effectiveUserDisplayKind(mixed), isEmpty);
     }
+  });
+
+  group('tg1215 carriers de proceso con todos los estados de Hermes', () {
+    // `_completion_status` de tools/process_registry_notifications.py.
+    const headlines = [
+      'completed normally (exit code 0)',
+      'exited (exit code 1)',
+      'exited (exit code 137)',
+      'terminated by process.kill (exit code -15, SIGTERM)',
+      'terminated by Hermes (exit code -15, SIGTERM)',
+      'terminated by api_server_run_stop (exit code 143, SIGTERM)',
+      'marked lost because the process backend disappeared (exit code -1)',
+      'failed to start (exit code -1)',
+    ];
+    for (final headline in headlines) {
+      test('se proyecta como aviso de proceso: $headline', () {
+        final carrier =
+            '[IMPORTANT: Background process proc_f4c048969c1b $headline.\n'
+            'Command: cd /tmp && flutter test\n'
+            'Output:\n'
+            'bash: no se puede establecer el grupo de proceso de terminal (-1)\n'
+            'All tests passed!\n'
+            ']';
+        final user = _message('user', carrier)..['row_id'] = 77;
+        expect(stripBackgroundProcessCarrier(carrier), isEmpty);
+        expect(effectiveUserDisplayKind(user), 'process_complete');
+        expect(isRealUserTurn(user), isFalse);
+        final projection = ChatRenderProjection.build([user]);
+        expect(projection.units.single, isA<ChatMessageUnitPlan>());
+        expect(projection.visibleUserCount, 0);
+        expect(projection.userOrdinalFor(user), isNull);
+        expect(user['content'], carrier, reason: 'la historia no se muta');
+
+        final mixed = _message('user', 'Pregunta visible\n\n$carrier');
+        expect(projectedUserVisibleContent(mixed), 'Pregunta visible');
+        expect(effectiveUserDisplayKind(mixed), isEmpty);
+      });
+    }
+
+    test('acepta salida vacía, sin salto final y con atribución', () {
+      for (final carrier in const [
+        '[IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).\n'
+            'Command: true\nOutput:\n]',
+        '[IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).\n'
+            'Command: echo hi\nOutput:\nhi]',
+        '[IMPORTANT: Background process proc_f4c048969c1b exited (exit code 2).\n'
+            'Started by subagent sa-1-abc of delegation deleg_12345678. Task: "x"\n'
+            'Command: make\nOutput:\nerror\n]',
+        '[IMPORTANT: Background process proc_f4c048969c1b exited (exit code 2).\r\n'
+            'Command: make\r\nOutput:\r\nerror\r\n]',
+      ]) {
+        expect(
+          effectiveUserDisplayKind(_message('user', carrier)),
+          'process_complete',
+          reason: carrier,
+        );
+      }
+    });
+
+    test('un parecido escrito por la persona sigue siendo su mensaje', () {
+      for (final raw in const [
+        '[IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).',
+        '[IMPORTANT: Background process proc_f4c048969c1b finished happily (exit code 0).\n'
+            'Command: x\nOutput:\ny\n]',
+        '[IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).\n'
+            'Command: x\nOutput:\ny\n] ¿y esto qué es?',
+        '[IMPORTANT: Background process proc_f4c048969c1b terminated by (exit code 0).\n'
+            'Command: x\nOutput:\ny\n]',
+        '[IMPORTANT: Background process proc_SHORT completed normally (exit code 0).\n'
+            'Command: x\nOutput:\ny\n]',
+        'Mira: [IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).\n'
+            'Command: x\nOutput:\ny\n]',
+        '[IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).\n'
+            'Output:\ny\n]',
+      ]) {
+        final user = _message('user', raw);
+        expect(projectedUserVisibleContent(user), raw, reason: raw);
+        expect(effectiveUserDisplayKind(user), isEmpty, reason: raw);
+        expect(isRealUserTurn(user), isTrue, reason: raw);
+      }
+    });
+
+    test('parsea estado, código, comando y salida sin tocar el texto', () {
+      const carrier =
+          '[IMPORTANT: Background process proc_f4c048969c1b completed normally (exit code 0).\n'
+          'Command: flutter test\n'
+          'Output:\n'
+          'bash: no se puede establecer el grupo de proceso de terminal (-1)\n'
+          'ok\n'
+          ']';
+      final parsed = parseBackgroundProcessCarrier(carrier)!;
+      expect(parsed.status, BackgroundProcessCarrierStatus.completed);
+      expect(parsed.exitCode, '0');
+      expect(parsed.command, 'flutter test');
+      expect(
+        parsed.output,
+        'bash: no se puede establecer el grupo de proceso de terminal (-1)\nok',
+      );
+      expect(
+        parseBackgroundProcessCarrier(
+          '[IMPORTANT: Background process proc_f4c048969c1b terminated by process.kill '
+          '(exit code -15, SIGTERM).\nCommand: sleep 9\nOutput:\n]',
+        )?.status,
+        BackgroundProcessCarrierStatus.terminated,
+      );
+      expect(parseBackgroundProcessCarrier('hola'), isNull);
+    });
   });
 
   test(
