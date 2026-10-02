@@ -869,6 +869,87 @@ void main() {
     expect(chat.messages.first['content'], 'msg 300');
   });
 
+  test('co1215 a hung REST tail does not hold the open behind native '
+      'history on a healthy socket', () async {
+    final rows = _rows(300);
+    final gateway = _HistoryGateway()
+      ..snapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-co1215-hung',
+        storedSessionId: 'stored-chat',
+        created: false,
+        messagesProvided: false,
+        messageCount: 300,
+      )
+      ..loader = () async => SessionMessagesPage.fromRaw(
+        rawMessages: rows,
+        pagination: null,
+        paginationProvided: false,
+      );
+    final restRequests = <Uri>[];
+    final restReply = Completer<http.Response>();
+    final chat = _chat(
+      'co1215-open-hung-rest',
+      MockClient((request) {
+        restRequests.add(request.url);
+        // The REST read stays on the wire, as when the server or its proxy
+        // stalls; only the WebSocket is healthy.
+        return restReply.future;
+      }),
+      gateway: gateway,
+    );
+    addTearDown(() {
+      if (!restReply.isCompleted) {
+        restReply.complete(http.Response('unavailable', 503));
+      }
+      chat.dispose();
+    });
+
+    var settled = false;
+    final loading = chat
+        .loadMessages(expectedMessageCount: 300)
+        .whenComplete(() => settled = true);
+    // Far below the REST client timeout: the native history answer is
+    // already in hand, so the open must not wait for the stalled page.
+    for (var i = 0; i < 200 && !settled; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(restRequests, hasLength(1));
+    expect(gateway.historyRequests, hasLength(1));
+    expect(settled, isTrue);
+    expect(chat.messages, hasLength(300));
+    expect(chat.messages.first['content'], 'msg 300');
+    expect(chat.messages.last['content'], 'msg 1');
+
+    // The late REST answer after native painted adds nothing and reorders
+    // nothing.
+    restReply.complete(
+      http.Response(
+        jsonEncode({
+          'object': 'list',
+          'session_id': 'stored-chat',
+          'data': rows.sublist(180),
+          'pagination': {
+            'limit': 120,
+            'offset': 0,
+            'order': 'latest',
+            'returned': 120,
+          },
+        }),
+        200,
+        headers: {'content-type': 'application/json'},
+      ),
+    );
+    await loading;
+    for (var i = 0; i < 5; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(chat.messages, hasLength(300));
+    expect(chat.messages.map((row) => row['content']), [
+      for (var i = 300; i >= 1; i--) 'msg $i',
+    ]);
+  });
+
   for (final edited in <bool>[false, true]) {
     test(
       'complete native ${edited ? 'edited' : 'short'} transcript does not invent earlier history',

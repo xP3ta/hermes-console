@@ -9885,13 +9885,31 @@ class ActiveChat {
                 // Consumed below; an unused failure must not surface.
                 flight.ignore();
                 restTail = flight;
-                final canonical = await _captureAsync<SessionMessagesPage>(
+                // xr1215: a stalled REST read (the client waits up to 15 s)
+                // must not hold an open whose socket is healthy. Once resume
+                // has bound the runtime, the tail only gets a short grace;
+                // after it native history answers, as before co1215.
+                ({Object? error, SessionMessagesPage? value})? canonical;
+                final restSettled = _captureAsync<SessionMessagesPage>(
                   () => flight,
+                ).then((result) => canonical = result);
+                final graceElapsed = Completer<void>();
+                Timer? graceTimer;
+                unawaited(
+                  resumeFuture.then((_) {
+                    if (canonical != null || graceElapsed.isCompleted) return;
+                    graceTimer = Timer(_openingRestTailGraceAfterResume, () {
+                      if (!graceElapsed.isCompleted) graceElapsed.complete();
+                    });
+                  }),
                 );
+                await Future.any<Object?>([restSettled, graceElapsed.future]);
+                graceTimer?.cancel();
+                if (!graceElapsed.isCompleted) graceElapsed.complete();
                 if (!loadStillAuthorized()) {
                   throw StateError('Viewer ownership revoked');
                 }
-                if (canonical.value case final page?
+                if (canonical?.value case final page?
                     when _openingRestTailIsDisplayAuthority(page)) {
                   // Reuses the flight; only adds the exact-page end proof.
                   return _fetchStoredMessagesPage(
@@ -10802,6 +10820,12 @@ class ActiveChat {
     }
     throw StateError('Stored message lookahead retry exhausted');
   }
+
+  /// xr1215: how long the opening REST tail may still win after resume has
+  /// bound the runtime and native history could answer instead.
+  static const Duration _openingRestTailGraceAfterResume = Duration(
+    milliseconds: 600,
+  );
 
   /// co1215: whether the opening REST tail can paint on its own, without the
   /// full native lineage. Same evidence the native branch requires before it
