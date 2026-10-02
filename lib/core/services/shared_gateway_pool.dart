@@ -18,8 +18,14 @@ import 'tui_gateway_client.dart';
 /// cierra ya los que no tienen préstamo (app en segundo plano sin servicio
 /// que los necesite).
 ///
-/// Los chats conservan su cliente propio: su ciclo de vida (resume, turnos,
-/// liberación a Desktop) es por sesión y no se comparte.
+/// Los chats abiertos de una conexión comparten otro socket propio
+/// ([acquireChat]), multiplexado por `session_id` como el único
+/// `JsonRpcGatewayClient` de Desktop: un handshake, un heartbeat y una
+/// reconexión para todos, cada chat con su sesión, su watermark y su estado.
+/// Va aparte de los observadores para que estos sigan sin recibir los frames
+/// de los chats y para que, al soltar el último chat, el socket se cierre tras
+/// la gracia corta de un chat y Hermes recoja los runtimes que nadie lee
+/// (igual que al cerrar el socket propio de cada chat).
 class SharedGatewayPool {
   SharedGatewayPool._() : factory = null, linger = null;
 
@@ -55,14 +61,59 @@ class SharedGatewayPool {
   SharedGatewayLease acquire(
     SavedConnection connection, {
     TuiGatewayClient Function(SavedConnection connection)? factory,
+  }) => _acquire(_keyFor(connection), connection, factory: factory);
+
+  /// The chat socket of ([connection], [profile]): one WebSocket that every
+  /// open chat of that profile multiplexes its session over. After the last
+  /// chat lets go it lingers [chatLinger] (a reopen skips the handshake) and
+  /// then closes.
+  SharedGatewayLease acquireChat(
+    SavedConnection connection, {
+    required String profile,
+    required Duration chatLinger,
+    TuiGatewayClient Function(SavedConnection connection)? factory,
+  }) => _acquire(
+    _chatKeyFor(connection, profile),
+    connection,
+    factory: factory,
+    chatLinger: chatLinger,
+  );
+
+  static const String _chatLane = '|chat';
+
+  static String _chatKeyFor(SavedConnection connection, String profile) =>
+      '${_keyFor(connection)}|${profile.trim()}$_chatLane';
+
+  /// The chat socket of ([connection], [profile]) is open, connected and
+  /// known to lack per-session replay (`gateway.ready` without
+  /// `replay_epoch`). Such a server cannot re-attach each chat from its own
+  /// watermark after a drop, so further chats keep their own socket there.
+  bool chatSocketLacksReplay(SavedConnection connection, String profile) {
+    final entry = _entries[_chatKeyFor(connection, profile)];
+    return entry != null &&
+        !entry.client.isClosed &&
+        entry.client.knownLegacyReplayTransport;
+  }
+
+  /// Live chat sockets (diagnostics/tests).
+  @visibleForTesting
+  int get chatClientCount =>
+      _entries.keys.where((key) => key.endsWith(_chatLane)).length;
+
+  SharedGatewayLease _acquire(
+    String key,
+    SavedConnection connection, {
+    TuiGatewayClient Function(SavedConnection connection)? factory,
+    Duration? chatLinger,
   }) {
-    final key = _keyFor(connection);
     var entry = _entries[key];
     if (entry == null || entry.client.isClosed) {
       entry?.linger?.cancel();
-      entry = _PoolEntry(
-        (factory ?? this.factory ?? TuiGatewayClient.new)(connection),
+      final client = (factory ?? this.factory ?? TuiGatewayClient.new)(
+        connection,
       );
+      if (chatLinger != null) client.enableSessionMultiplexing();
+      entry = _PoolEntry(client, linger: chatLinger);
       _entries[key] = entry;
     }
     entry.linger?.cancel();
@@ -94,7 +145,11 @@ class SharedGatewayPool {
       return;
     }
     entry.linger?.cancel();
-    final wait = _effectiveLinger;
+    // Widget suites pin [debugDefaultLinger] to zero so no timer outlives
+    // the tree; that applies to chat sockets too.
+    final wait = entry.ownLinger == null
+        ? _effectiveLinger
+        : debugDefaultLinger ?? entry.ownLinger!;
     if (wait <= Duration.zero) {
       _closeEntry(key, entry);
       return;
@@ -115,6 +170,16 @@ class SharedGatewayPool {
   void disconnectIdle() {
     for (final entry in _entries.entries.toList()) {
       if (entry.value.refs <= 0) _closeEntry(entry.key, entry.value);
+    }
+  }
+
+  /// Cierra ya los sockets de chat sin préstamo (en su gracia tras soltar el
+  /// último chat): cambio de red, presión de memoria o segundo plano.
+  void disconnectIdleChats() {
+    for (final entry in _entries.entries.toList()) {
+      if (entry.key.endsWith(_chatLane) && entry.value.refs <= 0) {
+        _closeEntry(entry.key, entry.value);
+      }
     }
   }
 
@@ -152,9 +217,13 @@ class SharedGatewayPool {
 }
 
 class _PoolEntry {
-  _PoolEntry(this.client);
+  _PoolEntry(this.client, {Duration? linger}) : ownLinger = linger;
 
   final TuiGatewayClient client;
+
+  /// Linger of this entry after its last release (chat sockets); null uses
+  /// the pool default.
+  final Duration? ownLinger;
   int refs = 0;
   Timer? linger;
 }
