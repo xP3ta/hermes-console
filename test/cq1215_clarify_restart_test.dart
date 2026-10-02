@@ -321,4 +321,45 @@ void main() {
     expect(chat.state, ChatPipelineState.connecting);
     expect(chat.observesRemoteTurnAfterReconnect, isTrue);
   });
+
+  // External review of da30cd0: a reconnected viewer may say it watches a
+  // running turn only with fresh busy evidence. A resume snapshot that
+  // reports the session idle is not that evidence; until the roster settles
+  // the turn, the chat must not claim Hermes is working.
+  test('a viewer that reconnects to an idle snapshot is not observing a '
+      'running turn', () async {
+    gateway.resumeResult = (_) => {
+      'session_id': 'live-s',
+      'stored_session_id': 'stored-1',
+      'running': true,
+      'status': 'working',
+    };
+    final client = _clientFor(gateway);
+    final chat = _coldChat(gateway, client);
+    await chat.loadMessages();
+    await _waitUntil(() => chat.desktopRuntimeSessionId == 'live-s');
+    expect(chat.isStreaming, isTrue);
+
+    gateway.resumeResult = (_) => {
+      'session_id': 'live-s2',
+      'stored_session_id': 'stored-1',
+      'running': false,
+      'status': 'idle',
+    };
+    final resumesBefore = gateway.rpcCalls('session.resume').length;
+    await gateway.sockets.single.close(1001);
+    await _waitUntil(() => !chat.transportStatus.isConnected);
+    await _waitUntil(
+      () => gateway.rpcCalls('session.resume').length > resumesBefore,
+      timeout: const Duration(seconds: 20),
+    );
+    await _waitUntil(() => chat.transportStatus.isConnected);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(chat.transportStatus.isConnected, isTrue);
+    expect(
+      chat.observesRemoteTurnAfterReconnect,
+      isFalse,
+      reason: 'an idle snapshot is no fresh evidence of a running turn',
+    );
+  });
 }

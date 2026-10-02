@@ -3464,16 +3464,32 @@ void main() {
   testWidgets(
     'a viewer back on a live socket shows the running turn, not Conectando',
     (tester) async {
+      mockCompanionStorage();
       final gateway = _RunningViewerDropGateway();
       final chat = await pumpChat(
         tester,
         connection: _remoteConn('conn-viewer-reconnected'),
+        // The running turn's live row, whose header wears the companion.
+        messages: const [
+          {'role': 'assistant', 'content': '', '_pipeline': true},
+          {'role': 'user', 'content': 'PUBLIC_VIEWER_PROMPT'},
+        ],
         desktopGateway: gateway,
         initialStoredSessionId: 'sess-viewer-reconnected',
         acquireDesktopRuntimeBeforeMount: true,
+        initialPreferences: const {'companion.presence_level': 'full'},
       );
+      await enableFullCompanion(tester);
       await tester.pump(const Duration(milliseconds: 100));
       expect(chat.isStreaming, isTrue);
+      HermesSparkMood? companionMood() {
+        final companions = find.byType(CompanionStatusIndicator);
+        if (companions.evaluate().isEmpty) return null;
+        return tester.widget<CompanionStatusIndicator>(companions.first).mood;
+      }
+
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(companionMood(), HermesSparkMood.thinking);
 
       String? headline() => tester
           .widget<ActivityPillHost>(
@@ -3502,6 +3518,7 @@ void main() {
       expect(chat.state, ChatPipelineState.connecting);
       expect(chat.transportStatus.isConnected, isFalse);
       expect(headline(), 'Conectando…');
+      expect(companionMood(), HermesSparkMood.connecting);
 
       gateway.reconnect(chat.serverSessionId);
       for (var frame = 0; frame < 10; frame++) {
@@ -3513,6 +3530,8 @@ void main() {
       expect(chat.transportStatus.isConnected, isTrue);
       expect(chat.observesRemoteTurnAfterReconnect, isTrue);
       expect(headline(), 'Trabajando…');
+      // The live companion follows the same edge: thinking, not connecting.
+      expect(companionMood(), HermesSparkMood.thinking);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       chat.dispose();

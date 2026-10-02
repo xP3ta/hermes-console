@@ -5293,6 +5293,12 @@ class ActiveChat {
   int _rosterRuntimeAbsenceStreak = 0;
   int? _viewerTurnConvergenceEpoch;
 
+  /// Turn epoch whose post-cut viewer saw fresh busy evidence (a resume
+  /// snapshot or roster row reporting the session busy) after the transport
+  /// came back. Without it a reconnected viewer must not claim Hermes is
+  /// working: an idle snapshot only means the roster has yet to settle it.
+  int? _viewerFreshBusyEpoch;
+
   /// El reattach automático en curso se lanzó durante la convergencia del
   /// visor (solo lee; nunca adopta runtime).
   bool _desktopAutomaticReattachForConvergence = false;
@@ -5325,6 +5331,7 @@ class ActiveChat {
   bool get observesRemoteTurnAfterReconnect =>
       state == ChatPipelineState.connecting &&
       _viewerTurnConvergenceIsCurrent &&
+      _viewerFreshBusyEpoch == _turnEpoch &&
       _transportStatus.isConnected;
 
   PassiveActivityAggregate get passiveActivityAggregate {
@@ -5799,7 +5806,15 @@ class ActiveChat {
     );
     if (matchingRows.any((row) => rosterStatusIsBusy(row.status))) {
       _rosterRuntimeAbsenceStreak = 0;
+      if (_viewerFreshBusyEpoch != _turnEpoch) {
+        _viewerFreshBusyEpoch = _turnEpoch;
+        _emit(ActiveChatEvent.sessionInfo);
+      }
       return;
+    }
+    if (_viewerFreshBusyEpoch == _turnEpoch) {
+      _viewerFreshBusyEpoch = null;
+      _emit(ActiveChatEvent.sessionInfo);
     }
     if (++_rosterRuntimeAbsenceStreak < _terminalAuthorityAbsenceStreak) return;
     _rosterRuntimeAbsenceStreak = 0;
@@ -18528,6 +18543,7 @@ class ActiveChat {
         } else if (!viewerRecoveryClosed) {
           if (interruptedActiveTurn) {
             _viewerTurnConvergenceEpoch = _turnEpoch;
+            _viewerFreshBusyEpoch = null;
             _rosterRuntimeAbsenceStreak = 0;
             state = ChatPipelineState.connecting;
             _emit(ActiveChatEvent.connected);
@@ -18647,6 +18663,14 @@ class ActiveChat {
         if (!identityAccepted) {
           _closeViewerRecovery(gateway);
           return;
+        }
+        if (_viewerTurnConvergenceIsCurrent) {
+          // Only a snapshot reporting the session busy is fresh evidence
+          // that the viewer watches a running turn; an idle one is not.
+          _viewerFreshBusyEpoch =
+              snapshot.running || rosterStatusIsBusy(snapshot.status)
+              ? _turnEpoch
+              : null;
         }
         _publishTransportState(ChatTransportState.connected);
         if (_viewerTurnConvergenceIsCurrent) {
