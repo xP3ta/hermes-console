@@ -5098,15 +5098,26 @@ class TuiGatewayClient
       );
     }
     final Map<String, dynamic> result;
+    // One budget for the handshake and the RPC together: a slow connect
+    // leaves only what is left of [timeout] for the answer.
+    final deadline = _now().add(timeout);
     try {
       await _connectForRequest(method).timeout(timeout);
+      final remaining = deadline.difference(_now());
+      if (remaining <= Duration.zero) {
+        throw const TuiGatewayRpcError(
+          method,
+          'Timeout waiting for JSON-RPC response',
+          failureKind: TuiGatewayRpcFailureKind.timeout,
+        );
+      }
       result = await _requestConnected(method, {
         if (owner.isNotEmpty && owner != 'default')
           ..._petParams(owner, method: method),
         'explicit_only': true,
         'include_unconfigured': false,
         'refresh': refresh,
-      }, timeout: timeout);
+      }, timeout: remaining);
     } on TuiGatewayRpcError catch (error) {
       if (error.code == -32601) {
         _capabilityCache.mark(

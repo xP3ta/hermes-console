@@ -104,6 +104,8 @@ import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'package:hermes_android/core/services/shared_gateway_pool.dart';
+import 'support/mk1215_scripted_gateway_channel.dart';
 import 'package:hermes_android/core/services/model_picker_loader.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/services/voice/stt_engine.dart';
@@ -1509,6 +1511,16 @@ class _SessionlessCatalogGateway extends _UiRewindGateway
       ],
     });
   }
+}
+
+/// mk1215: ws ticket for a scripted shared gateway socket.
+final class _Mk1215WarmTicket extends DashboardClient {
+  _Mk1215WarmTicket()
+    : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
+
+  @override
+  Future<DashboardWebSocketAuth> webSocketAuth() async =>
+      const DashboardWebSocketAuth(queryName: 'ticket', credential: 'mk1215');
 }
 
 /// mk1215: counting fakes for the picker's HTTP fallbacks, with the costs the
@@ -19140,6 +19152,75 @@ void main() {
         expect(chat.hasDesktopRuntime, isFalse);
         // ignore: avoid_print
         print('mk1215 widget picker open via socket: $cold ms');
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'mk1215: the badge and the picker return the shared socket they '
+      'borrowed',
+      (tester) async {
+        // The chat's own socket is not connected, so both reads ride the
+        // already connected shared gateway socket and must release its lease.
+        final connection = _remoteConn('conn-mk1215-warm-lease');
+        final channel = ScriptedGatewayChannel(
+          respond: (frame) => frame['method'] == 'model.options'
+              ? const {
+                  'model': 'disk-model',
+                  'provider': 'provider-a',
+                  'providers': [
+                    {
+                      'slug': 'provider-a',
+                      'name': 'Proveedor A',
+                      'authenticated': true,
+                      'is_current': true,
+                      'models': ['disk-model', 'other-model'],
+                    },
+                  ],
+                }
+              : <String, dynamic>{},
+        );
+        final pool = SharedGatewayPool.instance;
+        final held = pool.acquire(
+          connection,
+          factory: (c) => TuiGatewayClient(
+            c,
+            dashboard: _Mk1215WarmTicket(),
+            heartbeatInterval: Duration.zero,
+            channelFactory: (_, _) => channel,
+          ),
+        );
+        addTearDown(() {
+          held.release();
+          pool.disconnectIdle();
+        });
+        await held.client.connect();
+        expect(held.client.isConnected, isTrue);
+        final baseline = pool.leaseCount;
+
+        final gateway = _UiRewindGateway()..connected = false;
+        await pumpChat(
+          tester,
+          desktopGateway: gateway,
+          connection: connection,
+          attachDesktopRuntimeOnLoad: false,
+          modelPickerFallbacks: _PickerFallbacks().map,
+        );
+        await tester.pump(const Duration(seconds: 1));
+        expect(
+          channel.methods.where((m) => m == 'model.options'),
+          hasLength(1),
+          reason: 'the badge read the warm shared socket',
+        );
+        expect(pool.leaseCount, baseline, reason: 'badge lease released');
+
+        tester
+            .state<HermesAppState>(find.byType(HermesApp))
+            .activeChats
+            .modelPickerCache
+            .clear();
+        await openModelSheetTimed(tester);
+        expect(pool.leaseCount, baseline, reason: 'picker lease released');
         expect(tester.takeException(), isNull);
       },
     );

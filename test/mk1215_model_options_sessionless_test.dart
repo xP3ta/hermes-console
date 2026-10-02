@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+// ignore: depend_on_referenced_packages
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -12,6 +15,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/model_catalog_cache.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
+import 'support/mk1215_scripted_gateway_channel.dart';
 import 'support/rpc_frame_helpers.dart';
 
 // mk1215: the chat model picker must read `model.options` over the chat's own
@@ -146,6 +150,57 @@ class _WarmGateway implements HermesDesktopGlobalModelCatalogGateway {
 }
 
 void main() {
+  test('mk1215: the sessionless read keeps one 6 s budget for the handshake '
+      'and the RPC together', () {
+    fakeAsync((async) {
+      final client = TuiGatewayClient(
+        SavedConnection(
+          id: 'mk1215-budget',
+          label: 'mk1215 budget',
+          host: '127.0.0.1',
+          port: 8642,
+          apiKey: 'k',
+          dashboardUrl: 'http://127.0.0.1:1',
+        ),
+        dashboard: _Dashboard(),
+        heartbeatInterval: Duration.zero,
+        now: () => DateTime(2026).add(async.elapsed),
+        // The handshake takes 5 s and model.options never answers.
+        channelFactory: (_, _) => ScriptedGatewayChannel(
+          readyAfter: const Duration(seconds: 5),
+          respond: (frame) =>
+              frame['method'] == 'model.options' ? null : <String, dynamic>{},
+        ),
+      );
+      Object? error;
+      Duration? settledAt;
+      client
+          .globalModelOptions(profile: 'work')
+          .then<void>(
+            (_) => settledAt = async.elapsed,
+            onError: (Object e) {
+              error = e;
+              settledAt = async.elapsed;
+            },
+          );
+      async.elapse(const Duration(milliseconds: 5999));
+      expect(settledAt, isNull, reason: 'still inside the budget');
+      async.elapse(const Duration(milliseconds: 1));
+      expect(
+        settledAt,
+        const Duration(seconds: 6),
+        reason: 'a 5 s handshake leaves 1 s for the RPC, not another 6 s',
+      );
+      expect(error, isA<TuiGatewayRpcError>());
+      expect(
+        (error! as TuiGatewayRpcError).failureKind,
+        TuiGatewayRpcFailureKind.timeout,
+      );
+      unawaited(client.close());
+      async.elapse(const Duration(seconds: 30));
+    });
+  });
+
   test(
     'mk1215: sin runtime, model.options va por el socket del chat sin sesión '
     'y con el perfil del chat',
