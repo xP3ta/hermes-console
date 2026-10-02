@@ -162,6 +162,33 @@ void main() {
     },
   );
 
+  testWidgets(
+    'sessions.changed during the opening refresh is read right after it',
+    (tester) async {
+      final manager = await _manager();
+      final server = _HeldServer();
+      addTearDown(server.close);
+      final cache = MissionSnapshotCache()..write(_connection, _lastSeen());
+      await tester.pumpWidget(_host(manager, server.repository(), cache));
+      expect(server.count('profiles.list'), 1);
+
+      // A turn ends while the opening refresh is still on the wire: that
+      // read may predate the change, so it must not swallow the event.
+      server.sessionsChanged();
+      await tester.pump();
+      server.network.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(
+        server.count('profiles.list'),
+        2,
+        reason: 'roster re-read now, not at the 120 s backstop',
+      );
+      expect(server.count('kanban.board'), 1, reason: 'only the roster');
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('a cold open still says it is reading the team', (tester) async {
     final manager = await _manager();
     final server = _HeldServer();

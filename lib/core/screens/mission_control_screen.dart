@@ -488,6 +488,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   /// Roster ticks since the last full reload (the backstop counts these).
   int _ticksSinceFullLoad = 0;
 
+  /// A change event arrived while a full read was in flight.
+  bool _changeDuringLoad = false;
+
   /// Running for [liveEventRefreshGap] after each partial refresh.
   Timer? _eventRefreshTimer;
 
@@ -557,6 +560,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   void _onLiveChange(TuiGatewayEvent event) {
     if (event.type != 'sessions.changed') return;
+    if (_loading || _refreshing) {
+      // The full read on the wire may predate this change: read the roster
+      // again once it lands instead of waiting for the backstop.
+      _changeDuringLoad = true;
+      return;
+    }
     if (!_liveChangesOk) {
       // First event after a dropped socket: the stream is back but events
       // were lost meanwhile, so reload everything now. Without
@@ -682,6 +691,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }) async {
     final generation = ++_loadGeneration;
     _quietRefresh = quiet && refresh && _snapshot != null;
+    _changeDuringLoad = false;
     if (mounted) {
       setState(() {
         if (refresh && _snapshot != null) {
@@ -722,6 +732,16 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       _syncLiveSubscriptions();
       _subscribeKanban(incoming);
       _scheduleInitialOpen(snapshot);
+      if (_changeDuringLoad) {
+        _changeDuringLoad = false;
+        if (_liveChangesHealthy &&
+            _refreshAllowed &&
+            _eventRefreshTimer == null) {
+          unawaited(_refreshPartial());
+        } else {
+          _liveChangeDirty = true;
+        }
+      }
     } catch (error) {
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
