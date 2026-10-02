@@ -27,6 +27,11 @@ class _FlakyGateway
   bool down = false;
   int holdNextActiveLists = 0;
   int activeListCalls = 0;
+  // xr1215: when set, only [connect] brings a dropped socket back, as with
+  // a real `TuiGatewayClient`; [reachable] says whether the server answers.
+  bool onlyConnectRestores = false;
+  bool reachable = false;
+  int connectCalls = 0;
 
   Never _lost() => throw const TuiGatewayRpcError(
     'gateway.connect',
@@ -40,6 +45,11 @@ class _FlakyGateway
   bool get isConnected => !down;
   @override
   Future<void> connect() async {
+    connectCalls += 1;
+    if (down && onlyConnectRestores && reachable) {
+      down = false;
+      return;
+    }
     if (down) _lost();
   }
 
@@ -351,6 +361,38 @@ void main() {
       expect(gateway.submissions, ['turno vivo']);
       expect(chat.queueParked, isTrue);
       expect(chat.queuedMessages, ['retenido']);
+
+      chat.dispose();
+      async.flushTimers();
+    });
+  });
+  test('xr1215 a queued head waits for connect() itself to redial the '
+      'socket', () {
+    fakeAsync((async) {
+      final gateway = _FlakyGateway()..onlyConnectRestores = true;
+      final chat = _chat('xr-redial', gateway);
+      chat.send(fullText: 'turno vivo', model: 'hermes-agent', history: []);
+      async.flushMicrotasks();
+      expect(gateway.submissions, ['turno vivo']);
+      chat.state = ChatPipelineState.completed;
+
+      gateway.down = true;
+      chat.enqueue('seguimiento');
+      async.elapse(const Duration(seconds: 6));
+      expect(gateway.submissions, ['turno vivo']);
+      expect(chat.queuedRetriesExhausted, isEmpty);
+
+      // The server is reachable again, but nothing flips the socket up from
+      // outside: only the queue's own redial can restore it.
+      gateway.reachable = true;
+      final connectsBefore = gateway.connectCalls;
+      async.elapse(const Duration(seconds: 20));
+      expect(gateway.connectCalls, greaterThan(connectsBefore));
+      expect(gateway.isConnected, isTrue);
+      expect(gateway.submissions, ['turno vivo', 'seguimiento']);
+      expect(chat.queuedMessages, isEmpty);
+      async.elapse(const Duration(seconds: 30));
+      expect(gateway.submissions, ['turno vivo', 'seguimiento']);
 
       chat.dispose();
       async.flushTimers();
