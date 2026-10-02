@@ -27330,7 +27330,10 @@ class ActiveChatService {
     CompressionRestoreStore? compressionRestoreStore,
     GlobalActivityAggregate? globalActivity,
     bool attachDesktopRuntimeOnLoad = true,
+    @visibleForTesting int Function()? homeWidgetNowMs,
   }) : _prefs = prefs,
+       _homeWidgetNowMs =
+           homeWidgetNowMs ?? (() => DateTime.now().millisecondsSinceEpoch),
        _cancelledTurnStore = cancelledTurnStore,
        _attachDesktopRuntimeOnLoadByDefault = attachDesktopRuntimeOnLoad,
        globalActivity =
@@ -27377,6 +27380,7 @@ class ActiveChatService {
   static const _observedFirstTokenLatencyPrefsKey =
       'active_chat_observed_ttft_v1';
   HermesHomeWidgetPublisher? _homeWidgetPublisher;
+  final int Function() _homeWidgetNowMs;
   String? _homeWidgetActiveConnectionId;
   HermesHomeWidgetSnapshot? _lastHomeWidgetSemantic;
   bool _disposed = false;
@@ -27608,6 +27612,7 @@ class ActiveChatService {
     _homeWidgetPublisher = publisher;
     _homeWidgetActiveConnectionId = activeConnectionId;
     _lastHomeWidgetSemantic = null;
+    _cancelPendingHomeWidgetMetrics();
   }
 
   /// Cambiar de instancia invalida inmediatamente toda identidad y métrica de
@@ -27616,6 +27621,7 @@ class ActiveChatService {
     if (_homeWidgetActiveConnectionId == connectionId) return;
     _homeWidgetActiveConnectionId = connectionId;
     _lastHomeWidgetSemantic = null;
+    _cancelPendingHomeWidgetMetrics();
     final publisher = _homeWidgetPublisher;
     if (publisher == null) return;
     try {
@@ -27878,6 +27884,11 @@ class ActiveChatService {
     _publishHomeWidgetChat(chat, event: event);
   }
 
+  /// Feeds one chat event through the widget reducer without a live stream.
+  @visibleForTesting
+  void debugHomeWidgetChatEvent(ActiveChat chat, ActiveChatEvent event) =>
+      _onHomeWidgetChatEvent(chat, event);
+
   HomeWidgetAgentState _homeWidgetAgentState(
     ActiveChat chat,
     ActiveChatEvent? event,
@@ -27987,7 +27998,14 @@ class ActiveChatService {
     final toolName = agentState == HomeWidgetAgentState.toolExecution
         ? _runningHomeWidgetTool(chat)
         : null;
-    final previousSessionActivity = current.sessionId == chat.serverSessionId
+    // A throttled metric redraw may still be pending; its activity time is
+    // newer than the published one and must not be lost or re-stamped.
+    final pendingMetrics = _pendingHomeWidgetMetrics;
+    final previousSessionActivity =
+        pendingMetrics != null &&
+            pendingMetrics.sessionId == chat.serverSessionId
+        ? pendingMetrics.lastActivityAtMs
+        : current.sessionId == chat.serverSessionId
         ? current.lastActivityAtMs
         : null;
     var next = HermesHomeWidgetSnapshot(
@@ -28038,16 +28056,147 @@ class ActiveChatService {
       showAdvancedMetrics: current.showAdvancedMetrics,
     );
     var semantic = next.copyWith(updatedAtMs: 0);
-    if (semantic == _lastHomeWidgetSemantic) return;
+    final previous = _lastHomeWidgetSemantic;
+    if (semantic == previous) return;
     if (_homeWidgetEventTouchesActivity(chat, event)) {
-      next = next.copyWith(
-        lastActivityAtMs: DateTime.now().millisecondsSinceEpoch,
-      );
+      next = next.copyWith(lastActivityAtMs: _homeWidgetNowMs());
       semantic = next.copyWith(updatedAtMs: 0);
     }
     _lastHomeWidgetSemantic = semantic;
-    unawaited(_publishHomeWidgetSnapshot(publisher, next));
+    // Every launcher redraw is an AppWidgetService broadcast to each placed
+    // widget. A busy turn changes token, context and activity metrics several
+    // times per second, so those metrics are throttled while the agent works;
+    // identity, connection and agent-state transitions still go out at once.
+    final busy = switch (next.agentState) {
+      HomeWidgetAgentState.thinking ||
+      HomeWidgetAgentState.streaming ||
+      HomeWidgetAgentState.toolExecution => true,
+      _ => false,
+    };
+    final metricsOnly =
+        previous != null &&
+        _homeWidgetIdentity(previous) == _homeWidgetIdentity(semantic);
+    if (busy && metricsOnly) {
+      _scheduleHomeWidgetMetrics(publisher, next);
+      return;
+    }
+    _publishHomeWidgetNow(publisher, next);
   }
+
+  /// Minimum spacing between metric-only launcher redraws of a running turn.
+  static const homeWidgetMetricsInterval = Duration(seconds: 30);
+  Timer? _homeWidgetMetricsTimer;
+  HermesHomeWidgetSnapshot? _pendingHomeWidgetMetrics;
+  int? _lastHomeWidgetPublishAtMs;
+
+  void _publishHomeWidgetNow(
+    HermesHomeWidgetPublisher publisher,
+    HermesHomeWidgetSnapshot snapshot,
+  ) {
+    _cancelPendingHomeWidgetMetrics();
+    _lastHomeWidgetPublishAtMs = _homeWidgetNowMs();
+    unawaited(_publishHomeWidgetSnapshot(publisher, snapshot));
+  }
+
+  /// Leading edge after a quiet interval, otherwise one trailing redraw that
+  /// carries the newest metrics. Later changes only replace the pending value.
+  void _scheduleHomeWidgetMetrics(
+    HermesHomeWidgetPublisher publisher,
+    HermesHomeWidgetSnapshot snapshot,
+  ) {
+    _pendingHomeWidgetMetrics = snapshot;
+    if (_homeWidgetMetricsTimer != null) return;
+    final interval = homeWidgetMetricsInterval.inMilliseconds;
+    final last = _lastHomeWidgetPublishAtMs;
+    final waitMs = last == null ? 0 : last + interval - _homeWidgetNowMs();
+    if (waitMs <= 0) {
+      _publishHomeWidgetNow(publisher, snapshot);
+      return;
+    }
+    _homeWidgetMetricsTimer = Timer(Duration(milliseconds: waitMs), () {
+      _homeWidgetMetricsTimer = null;
+      final pending = _pendingHomeWidgetMetrics;
+      _pendingHomeWidgetMetrics = null;
+      if (pending == null ||
+          _disposed ||
+          !identical(publisher, _homeWidgetPublisher)) {
+        return;
+      }
+      _lastHomeWidgetPublishAtMs = _homeWidgetNowMs();
+      unawaited(_publishHomeWidgetMetrics(publisher, pending));
+    });
+  }
+
+  void _cancelPendingHomeWidgetMetrics() {
+    _homeWidgetMetricsTimer?.cancel();
+    _homeWidgetMetricsTimer = null;
+    _pendingHomeWidgetMetrics = null;
+  }
+
+  /// Applies only the throttled counters on top of the newest shared snapshot,
+  /// so a theme or health update published meanwhile is never rolled back and
+  /// metrics from another session or instance can never leak in.
+  Future<void> _publishHomeWidgetMetrics(
+    HermesHomeWidgetPublisher publisher,
+    HermesHomeWidgetSnapshot metrics,
+  ) async {
+    try {
+      await publisher.update((current) {
+        if (current.instanceId != metrics.instanceId ||
+            current.sessionId != metrics.sessionId) {
+          return current;
+        }
+        return HermesHomeWidgetSnapshot(
+          configured: current.configured,
+          instanceId: current.instanceId,
+          instanceLabel: current.instanceLabel,
+          connectionState: current.connectionState,
+          model: current.model,
+          provider: current.provider,
+          sessionId: current.sessionId,
+          sessionTitle: current.sessionTitle,
+          agentState: current.agentState,
+          toolName: current.toolName,
+          contextUsed: metrics.contextUsed,
+          contextMax: metrics.contextMax,
+          contextPercent: metrics.contextPercent,
+          inputTokens: metrics.inputTokens,
+          outputTokens: metrics.outputTokens,
+          cacheReadTokens: metrics.cacheReadTokens,
+          cacheWriteTokens: metrics.cacheWriteTokens,
+          firstTokenLatencyMs: metrics.firstTokenLatencyMs,
+          lastActivityAtMs: metrics.lastActivityAtMs,
+          updatedAtMs: current.updatedAtMs,
+          theme: current.theme,
+          showAdvancedMetrics: current.showAdvancedMetrics,
+        );
+      });
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint(
+          '[home-widget] chat metrics unavailable (${error.runtimeType})',
+        );
+      }
+    }
+  }
+
+  /// Everything the widget shows except the throttled counters.
+  static HermesHomeWidgetSnapshot _homeWidgetIdentity(
+    HermesHomeWidgetSnapshot snapshot,
+  ) => HermesHomeWidgetSnapshot(
+    configured: snapshot.configured,
+    instanceId: snapshot.instanceId,
+    instanceLabel: snapshot.instanceLabel,
+    connectionState: snapshot.connectionState,
+    model: snapshot.model,
+    provider: snapshot.provider,
+    sessionId: snapshot.sessionId,
+    sessionTitle: snapshot.sessionTitle,
+    agentState: snapshot.agentState,
+    toolName: snapshot.toolName,
+    theme: snapshot.theme,
+    showAdvancedMetrics: snapshot.showAdvancedMetrics,
+  );
 
   Future<void> _publishHomeWidgetSnapshot(
     HermesHomeWidgetPublisher publisher,
@@ -28628,6 +28777,7 @@ class ActiveChatService {
     _chats.clear();
     _reopenTranscriptCache.clear();
     _homeWidgetMetadata.clear();
+    _cancelPendingHomeWidgetMetrics();
     _observedFirstTokenLatencyCache.clear();
     globalActivity.dispose();
     activeIds.dispose();
