@@ -334,7 +334,6 @@ final List<_Consumer> _consumers = [
 /// Consumers whose parser still fails the contract matrix. Each entry is
 /// removed by the commit that makes that parser family tolerant.
 const _pendingParserFix = <String>{
-  'request clarify',
   'result subagent.list',
   'result subagent.tail',
   'result config.set',
