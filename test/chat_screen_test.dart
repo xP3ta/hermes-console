@@ -29069,6 +29069,39 @@ void main() {
       await tester.pump(const Duration(seconds: 10));
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets('an unstored turn stays queued with a note and no bubble', (
+      tester,
+    ) async {
+      final (chat, gateway) = await queueDuringCompaction(
+        tester,
+        'conn-qp1215-unstored',
+        'sin guardar',
+      );
+      final id = chat.queuedEntries.single.id;
+      failOutboxWrites = true;
+      await tester.tap(find.byKey(ValueKey('chat-queue-send-now-$id')));
+      for (var frame = 0; frame < 40; frame++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      expect(gateway.submissions, ['turno largo']);
+      expect(userRows(chat, 'sin guardar'), 0);
+      expect(errorRows(chat), 0);
+      expect(chat.queuedMessages, ['sin guardar']);
+      expect(find.byKey(ValueKey('chat-queue-not-stored-$id')), findsOneWidget);
+      expect(
+        find.text(
+          'No se ha podido guardar de forma segura en este móvil y no se ha '
+          'enviado. Sigue en la cola: pulsa Enviar siguiente para '
+          'reintentarlo.',
+        ),
+        findsOneWidget,
+      );
+      failOutboxWrites = false;
+      await tester.pump(const Duration(seconds: 12));
+      expect(tester.takeException(), isNull);
+    });
   });
 
   testWidgets('panel de cola expone acciones nativas por identidad', (

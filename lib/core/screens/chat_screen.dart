@@ -19280,6 +19280,12 @@ class _QueuedRow extends StatelessWidget {
                     key: ValueKey('chat-queue-missing-attachment-${entry.id}'),
                     style: TextStyle(fontSize: 10.5, color: colors.warning),
                   )
+                else if (entry.persistenceFailed)
+                  Text(
+                    strings.qp1215QueueNotStored,
+                    key: ValueKey('chat-queue-not-stored-${entry.id}'),
+                    style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
                 else if (entry.blocked)
                   Text(
                     Strings.of(context).chatQueueBlockedRetry,

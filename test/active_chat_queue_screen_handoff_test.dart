@@ -129,6 +129,18 @@ class _HandoffGateway
   Future<void> close() => controller.close();
 }
 
+class _FailingOutbox implements TurnOutboxPersistence {
+  bool fail = false;
+
+  @override
+  Future<void> save(PreparedTurn turn) async {
+    if (fail) throw StateError('keystore unavailable');
+  }
+
+  @override
+  Future<void> delete(PreparedTurn turn) async {}
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final secure = <String, String>{};
@@ -339,6 +351,49 @@ void main() {
     expect(chat.queuedEntries, isEmpty);
   });
 
+  test('a queued turn whose durable write fails keeps its place in the queue '
+      'and leaves no user bubble or error card', () async {
+    const session = 'stored-handoff-keystore';
+    final first = openScreen(session);
+    final chat = attach(session, first.lifecycle);
+    expect(
+      await chat.send(
+        fullText: 'turno largo',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    final outbox = _FailingOutbox();
+    expect(
+      await chat.enqueuePreparedTurn(
+        queued(session, 'unsaved', 'sin guardar', outbox),
+      ),
+      isTrue,
+    );
+    outbox.fail = true;
+
+    expect(await chat.sendQueuedNow('prepared:unsaved'), isTrue);
+    // Long enough for the bounded retry ladder to run out.
+    await settle(80);
+
+    expect(gateway.submissions, ['turno largo']);
+    expect(userRows(chat, 'sin guardar'), isEmpty);
+    expect(errorRows(chat), isEmpty);
+    expect(chat.queuedEntries.map((entry) => entry.text), ['sin guardar']);
+    expect(chat.queuedEntries.single.persistenceFailed, isTrue);
+    expect(chat.isStreaming, isFalse);
+
+    // Storage recovers: an explicit Send now delivers it once.
+    outbox.fail = false;
+    expect(await chat.sendQueuedNow('prepared:unsaved'), isTrue);
+    await settle(10);
+    expect(gateway.submissions, ['turno largo', 'sin guardar']);
+    expect(userRows(chat, 'sin guardar'), ['sin guardar']);
+    expect(errorRows(chat), isEmpty);
+    expect(chat.queuedEntries, isEmpty);
+  });
+
   test('a queued turn already running when the chat is reopened closes its '
       'durable record through the new screen', () async {
     const session = 'stored-handoff-running';
@@ -377,5 +432,34 @@ void main() {
       profile: _profile,
     );
     expect(stored.where((turn) => turn.clientTurnId == 'running'), isEmpty);
+  });
+
+  test('a composer turn that cannot be stored keeps its error card', () async {
+    const session = 'stored-handoff-composer';
+    final first = openScreen(session);
+    final chat = attach(session, first.lifecycle);
+    final outbox = _FailingOutbox()..fail = true;
+    final delivery = queued(session, 'composer', 'del composer', outbox);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final composer = ActiveTurnDelivery(
+      prepared: delivery.current.copyWith(queued: false, updatedAtMs: now),
+      store: outbox,
+    );
+
+    expect(
+      await chat.send(
+        fullText: 'del composer',
+        model: 'hermes-agent',
+        history: const [],
+        delivery: composer,
+      ),
+      isFalse,
+    );
+
+    expect(gateway.submissions, isEmpty);
+    expect(userRows(chat, 'del composer'), ['del composer']);
+    expect(errorRows(chat).map((row) => row['content']), [
+      'No se pudo conservar el turno antes de enviarlo.',
+    ]);
   });
 }

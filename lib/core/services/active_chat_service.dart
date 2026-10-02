@@ -3330,6 +3330,7 @@ class QueuedEntryView {
     this.serverAccepted = false,
     this.stopWaitingAvailable = false,
     this.missingAttachment = false,
+    this.persistenceFailed = false,
   });
 
   final String id;
@@ -3357,6 +3358,10 @@ class QueuedEntryView {
   /// An attachment's local file is gone (cache cleared, app reinstalled).
   /// The turn cannot be sent as it is; only deleting it gets it out.
   final bool missingAttachment;
+
+  /// The phone could not store this turn before sending it, so it was not
+  /// sent. It keeps its place; Send now tries again.
+  final bool persistenceFailed;
 
   bool get isSteerable =>
       text.trim().isNotEmpty &&
@@ -7566,6 +7571,7 @@ class ActiveChat {
   void _clearQueuedRetryState(String id) {
     _queuedRetryAttempts.remove(id);
     _queuedRetriesExhausted.remove(id);
+    _queuedTurnsNotStored.remove(id);
   }
 
   List<String> get queuedTextMessages => List<String>.unmodifiable([
@@ -7615,6 +7621,9 @@ class ActiveChat {
           serverAccepted: item.delivery.acknowledged,
           stopWaitingAvailable: _isUncertainQueued(item),
           missingAttachment: _hasMissingAttachment(item.turn),
+          persistenceFailed: _queuedTurnsNotStored.contains(
+            item.turn.clientTurnId,
+          ),
         ),
       ),
     ]..sort((left, right) => left.queueOrder.compareTo(right.queueOrder));
@@ -13635,6 +13644,7 @@ class ActiveChat {
     _queueAdmissionToken = queueAdmissionToken;
     _queueAdmissionAllowTransportFallback =
         capturedSessionConfig.allowTransportFallback;
+    final stateBeforeTurn = state;
     late final int turnEpoch;
     try {
       final beforeAdmission = beforeSendAdmissionForTesting;
@@ -13775,23 +13785,33 @@ class ActiveChat {
     _settlePipelinePlaceholders();
     // Un rewind ya dejó la misma fila user en su slot. Los envíos normales sí
     // crean una fila optimista nueva.
-    if (reusedOptimisticUserRow == null) {
-      _messages.insert(0, {
-        'role': 'user',
-        'content': fullText,
-        '_optimistic': true,
-        if (transcriptOperation != null)
-          '_localOperationId': transcriptOperation.operationId,
-      });
-    }
+    final optimisticUserRow = reusedOptimisticUserRow == null
+        ? <String, dynamic>{
+            'role': 'user',
+            'content': fullText,
+            '_optimistic': true,
+            if (transcriptOperation != null)
+              '_localOperationId': transcriptOperation.operationId,
+          }
+        : null;
+    if (optimisticUserRow != null) _messages.insert(0, optimisticUserRow);
     // Burbuja placeholder del asistente con el estado del pipeline.
-    _messages.insert(0, {
+    final pipelineRow = <String, dynamic>{
       'role': 'assistant',
       'content': '',
       '_pipeline': true,
       if (transcriptOperation != null)
         '_localOperationId': transcriptOperation.operationId,
-    });
+    };
+    _messages.insert(0, pipelineRow);
+    _withdrawableQueuedTurn = queued && delivery != null
+        ? (
+            turnEpoch: turnEpoch,
+            delivery: delivery,
+            rows: [?optimisticUserRow, pipelineRow],
+            previousState: stateBeforeTurn,
+          )
+        : null;
     _emit(ActiveChatEvent.started);
     if (rewriteReservation != null) {
       rewriteReservation.transcriptRevision = _transcriptRevision;
@@ -13906,9 +13926,55 @@ class ActiveChat {
     if (delivery == null) return true;
     final ready = await delivery.beginTransport(transport);
     if (!ready && _turnEpoch == turnEpoch && !_runTerminal) {
-      _failRun('No se pudo conservar el turno antes de enviarlo.');
+      if (!_withdrawUnstoredQueuedTurn(turnEpoch, delivery)) {
+        _failRun('No se pudo conservar el turno antes de enviarlo.');
+      }
     }
     return ready;
+  }
+
+  /// The queued turn whose send is starting, with the rows it projected.
+  ({
+    int turnEpoch,
+    ActiveTurnDelivery delivery,
+    List<Map<String, dynamic>> rows,
+    ChatPipelineState previousState,
+  })?
+  _withdrawableQueuedTurn;
+
+  /// Queued turns that could not be stored before their last send attempt.
+  final Set<String> _queuedTurnsNotStored = <String>{};
+
+  /// A queued turn that could not be stored never reached the gateway, and the
+  /// queue still holds it. Leaving its bubble and an error card behind would
+  /// show it as sent, and every retry would add another copy. Its projection
+  /// is withdrawn instead, so the queue row stays its only copy.
+  bool _withdrawUnstoredQueuedTurn(int turnEpoch, ActiveTurnDelivery delivery) {
+    final turn = _withdrawableQueuedTurn;
+    if (turn == null ||
+        turn.turnEpoch != turnEpoch ||
+        !identical(turn.delivery, delivery) ||
+        !delivery.persistenceFailed ||
+        delivery.transportStarted) {
+      return false;
+    }
+    _withdrawableQueuedTurn = null;
+    for (final row in turn.rows) {
+      _messages.removeWhere((message) => identical(message, row));
+    }
+    _queuedTurnsNotStored.add(delivery.current.clientTurnId);
+    if (identical(_activeTurnDelivery, delivery)) _activeTurnDelivery = null;
+    _runTerminal = true;
+    _desktopTurnStartedAt = null;
+    _turnSubmittedAtMs = null;
+    _activityWatchdogTimer?.cancel();
+    _activityWatchdogTimer = null;
+    _setNoActivityHint(false);
+    traceActive = false;
+    state = turn.previousState;
+    _emit(ActiveChatEvent.cancelled);
+    _onTerminal();
+    return true;
   }
 
   List<int> _durableRowIdsForRebind() {

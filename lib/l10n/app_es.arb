@@ -9094,6 +9094,7 @@
   "cq1215QueuedUntilCompacted": "Mensaje en cola: se enviará cuando termine la compactación.",
   "cq1215CommandWaitsForCompaction": "Los comandos esperan a que termine la compactación. Los mensajes normales se ponen en cola.",
   "cq1215QueueParkedAfterCompaction": "en pausa: la compactación no terminó",
+  "qp1215QueueNotStored": "No se ha podido guardar de forma segura en este móvil y no se ha enviado. Sigue en la cola: pulsa Enviar siguiente para reintentarlo.",
 "tp1216PillCompacting": "Compactando…",
   "@tp1216PillCompacting": {
     "description": "Short label in the context pill under the composer while the conversation is being compacted."

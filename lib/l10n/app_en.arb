@@ -7562,6 +7562,7 @@
   "cq1215QueuedUntilCompacted": "Message queued: it will be sent when the compaction finishes.",
   "cq1215CommandWaitsForCompaction": "Commands wait until the compaction finishes. Normal messages are queued.",
   "cq1215QueueParkedAfterCompaction": "paused: the compaction did not finish",
+  "qp1215QueueNotStored": "This phone could not store it safely, so it was not sent. It stays in the queue: tap Send next to try again.",
 "tp1216PillCompacting": "Compacting…",
   "tp1216PillCompacted": "Compacted",
   "tp1216PillNothingToCompact": "No changes",
