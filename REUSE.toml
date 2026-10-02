@@ -84,3 +84,11 @@ path = "assets/companions/**"
 precedence = "override"
 SPDX-FileCopyrightText = "Copyright (c) 2026 XPeta Lab"
 SPDX-License-Identifier = "CC0-1.0"
+
+# Test-only verbatim copy of Hermes Agent's generated gateway wire contract
+# (tool/contract/update_contract.sh; upstream commit in SOURCE). Never packaged.
+[[annotations]]
+path = "test/fixtures/contract/gateway-contract.openrpc.json"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (c) 2025 Nous Research"
+SPDX-License-Identifier = "MIT"
