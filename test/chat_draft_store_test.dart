@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:hermes_android/core/bots/ui/room/room_launcher.dart';
 import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -76,6 +77,29 @@ void main() {
             return null;
           },
         );
+  });
+
+  test('a room send acknowledged before its draft save lands leaves no '
+      'draft', () async {
+    final rooms = ChatDraftRoomStore(
+      store: ChatDraftStore(await SharedPreferences.getInstance()),
+      connectionId: 'conn-room',
+      profile: 'default',
+      sessionId: 'mob-room-ack-race',
+    );
+    // RoomScreen fires both without awaiting: the save of the in-flight
+    // text, then the clear of the acknowledgement.
+    final save = rooms.save('sent text', preparedId: 'attempt-1');
+    final clear = rooms.clear(preparedId: 'attempt-1');
+    await Future.wait([save, clear]);
+    final draft = await rooms.load();
+    expect(draft.text, isEmpty);
+    expect(draft.preparedId, isNull);
+
+    // Control: a newer unsent draft survives the stale acknowledgement.
+    await rooms.save('newer', preparedId: 'attempt-2');
+    await rooms.clear(preparedId: 'attempt-1');
+    expect((await rooms.load()).text, 'newer');
   });
 
   test(
