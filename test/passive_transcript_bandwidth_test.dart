@@ -477,6 +477,49 @@ void main() {
     },
   );
 
+  testWidgets(
+    're1215: sessions.changed from other sessions every 2 s probes this chat '
+    'at most once per 10 s (Desktop gap), and a real change still lands',
+    (tester) async {
+      // QA 9480: another agent kept writing state.db, so `sessions.changed`
+      // arrived every ~2 s and each one fired an immediate tail probe of the
+      // open idle chat (16 probes in 33 s).
+      final server = _TranscriptServer();
+      final fixture = await _mount(tester, server, attachRuntime: true);
+      await _idle(tester, const Duration(seconds: 40));
+      final start = server.messageReads;
+
+      for (var second = 0; second < 60; second += 2) {
+        fixture.gateway.emit('sessions.changed');
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump(const Duration(seconds: 1));
+      }
+      final reads = server.messageReads - start;
+      // ignore: avoid_print
+      print('[re1215] 30 sessions.changed in 60 s: message reads=$reads');
+      expect(reads, lessThanOrEqualTo(7));
+
+      // This chat changes while the storm goes on: it shows up within the gap.
+      server.append('assistant', content: 'Written during the storm');
+      for (var second = 0; second < 12; second += 2) {
+        fixture.gateway.emit('sessions.changed');
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump(const Duration(seconds: 1));
+      }
+      expect(
+        fixture.chat.messages.first['content'],
+        'Written during the storm',
+      );
+      expect(
+        fixture.chat.messages.where(
+          (m) => m['content'] == 'Written during the storm',
+        ),
+        hasLength(1),
+      );
+      await _dispose(tester, fixture);
+    },
+  );
+
   testWidgets('idle backstop picks up a row appended elsewhere exactly once', (
     tester,
   ) async {

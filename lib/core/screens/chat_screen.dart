@@ -5946,15 +5946,28 @@ class _ChatScreenState extends State<ChatScreen>
       _seenDurableSessionsChangeRevision = durableSessionsChangeRevision;
       _durableTranscriptReadPending = true;
     }
+    // re1215: the `sessionInfo` that only carries a `sessions.changed` tick
+    // goes through the reader's 10 s gap (see notifyDurableStoreChanged):
+    // another session writing every 2 s must not poll this chat every 2 s.
+    final storeChangeOnly =
+        sessionsChangedTick &&
+        event == ActiveChatEvent.sessionInfo &&
+        !passiveTerminalEvent &&
+        !passiveRuntimeEvent;
     _syncPassiveTranscriptRefresh(
       refreshNow:
-          sessionsChangedTick ||
-          passiveTerminalEvent ||
-          passiveRecoveryEvent ||
-          passiveRuntimeEvent,
-      recoveryConverging: passiveRecoveryEvent || sessionsChangedTick,
+          !storeChangeOnly &&
+          (sessionsChangedTick ||
+              passiveTerminalEvent ||
+              passiveRecoveryEvent ||
+              passiveRuntimeEvent),
+      recoveryConverging:
+          !storeChangeOnly && (passiveRecoveryEvent || sessionsChangedTick),
       terminal: passiveTerminalEvent,
     );
+    if (storeChangeOnly && _canProbePassiveRemoteActivity) {
+      _passiveConversationReader?.notifyDurableStoreChanged();
+    }
     if (_editingRewriteSubmitted &&
         ((event == ActiveChatEvent.started && _editingTranscriptChanged) ||
             event == ActiveChatEvent.done ||

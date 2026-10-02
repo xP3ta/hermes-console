@@ -70,6 +70,33 @@ void main() {
     },
   );
 
+  testWidgets('re1215: store-change ticks read at most once per 10 s gap', (
+    tester,
+  ) async {
+    final gateway = _FakeGateway();
+    final reader = _reader(gateway: gateway)..setVisible(true);
+
+    reader.notifyDurableStoreChanged();
+    await _pumpImmediate(tester);
+    expect(gateway.reads, 1, reason: 'first tick after quiet reads at once');
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(seconds: 2));
+      reader.notifyDurableStoreChanged();
+    }
+    expect(gateway.reads, 1);
+    await tester.pump(const Duration(seconds: 2));
+    await _pumpImmediate(tester);
+    expect(gateway.reads, 2, reason: 'pending ticks collapse into one read');
+    await tester.pump(const Duration(seconds: 15));
+    expect(gateway.reads, 2, reason: 'no tick since: no extra read');
+    final before = gateway.reads;
+    reader.notifyDurableStoreChanged();
+    await _pumpImmediate(tester);
+    expect(gateway.reads, before + 1, reason: 'quiet gap: reads at once');
+
+    reader.dispose();
+  });
+
   testWidgets('matching sessions.changed coalesces one immediate read', (
     tester,
   ) async {
