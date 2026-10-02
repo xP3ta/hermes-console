@@ -355,6 +355,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             _session.id,
           );
           await app?.activeChats.globalActivity.flushJournal();
+          await app?.activeChats.forgetColdStartSession(
+            connectionId: widget.connection.id,
+            profile: ownerProfile,
+            sessionId: _session.id,
+          );
           if (!mounted) return;
           Navigator.pop(context, true);
           break;

@@ -17,6 +17,7 @@ import '../models/kanban.dart';
 import '../models/mission_control.dart';
 import '../navigation/chat_route.dart';
 import '../services/active_chat_service.dart';
+import '../services/cold_start_store.dart';
 import '../services/chat_draft_store.dart';
 import '../services/connection_manager.dart';
 import '../bots/data/desktop_projection_rooms.dart';
@@ -391,6 +392,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _activeChats = service;
     _activeChats?.activeIds.addListener(_onActiveIdsChanged);
     _syncLiveSubscriptions();
+    if (_pendingTarget == null) {
+      _rememberColdStartRoute(ColdStartRouteKind.missionControl);
+    }
   }
 
   @override
@@ -782,6 +786,16 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   ) async {
     _targetRoute = route;
     _targetKey = MissionControlScreen._targetKeyOf(target);
+    final roomId = target.roomId;
+    if (target.surface == MissionControlOwnedSurface.room &&
+        roomId != null &&
+        roomId.isNotEmpty) {
+      _rememberColdStartRoute(
+        ColdStartRouteKind.room,
+        roomId: roomId,
+        profile: target.profile,
+      );
+    }
     try {
       await Navigator.of(context).push(route);
     } finally {
@@ -789,7 +803,35 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         _targetRoute = null;
         _targetKey = null;
       }
+      // Back on Bot Mode itself.
+      if (!_disposed) {
+        _rememberColdStartRoute(ColdStartRouteKind.missionControl);
+      }
     }
+  }
+
+  /// cs1215: Bot Mode (or the room opened in it) is the connection's last
+  /// foreground route; a cold start reopens it. Identifiers only.
+  void _rememberColdStartRoute(
+    ColdStartRouteKind kind, {
+    String? roomId,
+    String? profile,
+  }) {
+    final store = _activeChats?.coldStartStore;
+    if (store == null) return;
+    unawaited(
+      store
+          .rememberRoute(
+            ColdStartRoute(
+              kind: kind,
+              connectionId: widget.connection.id,
+              profile: profile ?? '',
+              sessionId: '',
+              roomId: roomId,
+            ),
+          )
+          .catchError((Object _) {}),
+    );
   }
 
   Future<void> _openInitialTarget(

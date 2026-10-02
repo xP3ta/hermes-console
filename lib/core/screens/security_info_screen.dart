@@ -159,6 +159,12 @@ class _SecurityInfoScreenState extends State<SecurityInfoScreen> {
     );
     if (confirm != true || !mounted) return;
     await widget.connManager.wipeAllApiKeys();
+    // cs1215: no cached chat content survives a credential wipe.
+    if (!mounted) return;
+    await context
+        .findAncestorStateOfType<HermesAppState>()
+        ?.activeChats
+        .forgetAllColdStart();
     if (!mounted) return;
     HermesNotice.of(context).showSnackBar(
       SnackBar(content: Text(Strings.of(context).secKeysWiped)),
