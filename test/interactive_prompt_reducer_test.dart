@@ -641,6 +641,48 @@ void main() {
       },
     );
 
+    test('null optional fields from the Hermes wire mean absent', () {
+      // `_clarify_block` writes `"choices": null` for an open-ended batch
+      // question; the contract types every optional field `T | null`.
+      final batch =
+          InteractivePromptRequest.fromGatewayEvent(
+                type: 'clarify.request',
+                runtimeSessionId: 'runtime-a',
+                payload: const {
+                  'request_id': 'null-fields',
+                  'questions': [
+                    {
+                      'qid': 'q0',
+                      'question': '¿Par?',
+                      'choices': null,
+                      'multi_select': null,
+                    },
+                  ],
+                  'answers': null,
+                },
+              )
+              as ClarifyPromptRequest;
+      expect(batch.isBatch, isTrue);
+      expect(batch.questions.single.choices, isEmpty);
+      expect(batch.questions.single.multiSelect, isFalse);
+      expect(batch.lockedAnswers, isEmpty);
+
+      final single =
+          InteractivePromptRequest.fromGatewayEvent(
+                type: 'clarify.request',
+                runtimeSessionId: 'runtime-a',
+                payload: const {
+                  'request_id': 'null-single',
+                  'question': '¿Seguimos?',
+                  'choices': null,
+                  'questions': null,
+                },
+              )
+              as ClarifyPromptRequest;
+      expect(single.isBatch, isFalse);
+      expect(single.choices, isEmpty);
+    });
+
     test('legacy single-question payload still works', () {
       final request = InteractivePromptRequest.fromGatewayEvent(
         type: 'clarify.request',

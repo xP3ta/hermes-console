@@ -174,7 +174,10 @@ final class ClarifyPromptRequest extends InteractivePromptRequest {
     required Map<String, dynamic> payload,
   }) {
     final key = _requestKey(runtimeSessionId, payload);
-    final hasBatch = payload.containsKey('questions');
+    // Hermes writes absent optional fields as JSON null (`_clarify_block`
+    // sends `"choices": null` for an open-ended question; the wire contract
+    // types them `T | null`). Null means "not given", never malformed.
+    final hasBatch = payload['questions'] != null;
     final questions = hasBatch
         ? _normalizeClarifyQuestions(payload['questions'])
         : const <ClarifyQuestion>[];
@@ -430,8 +433,8 @@ Map<String, dynamic>? _stringKeyedMap(Object? value) {
 }
 
 List<String> _parseClarifyChoices(Map<String, dynamic> json) {
-  if (!json.containsKey('choices')) return const [];
   final value = json['choices'];
+  if (value == null) return const [];
   if (value is! List) {
     throw const FormatException('Invalid clarify choices');
   }
@@ -453,8 +456,8 @@ List<String> _parseClarifyChoices(Map<String, dynamic> json) {
 }
 
 bool _parseClarifyMultiSelect(Map<String, dynamic> json, List<String> choices) {
-  if (!json.containsKey('multi_select')) return false;
   final value = json['multi_select'];
+  if (value == null) return false;
   if (value is! bool) {
     throw const FormatException('Invalid clarify multi_select');
   }
@@ -481,8 +484,8 @@ List<ClarifyQuestion> _normalizeClarifyQuestions(Object? value) {
 }
 
 Map<String, String> _parseLockedAnswers(Map<String, dynamic> payload) {
-  if (!payload.containsKey('answers')) return const {};
   final value = payload['answers'];
+  if (value == null) return const {};
   if (value is! Map) {
     throw const FormatException('Invalid clarify answers');
   }
