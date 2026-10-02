@@ -4766,6 +4766,88 @@ void main() {
     });
   }
 
+  // rl1215 (review): the editorial-row relaxation is gated by serverIdle.
+  // The first adoption attempt runs right after reconnect, before any fresh
+  // snapshot, and must keep the strict verdict: a `process_complete` row in
+  // the tail while the server may still be running the turn is not proof
+  // that the phone's turn ended. Only an idle snapshot may relax it.
+  for (final editorialKind in const [
+    'process_complete',
+    'async_delegation_complete',
+  ]) {
+    test('rl1215 a running server never lets an editorial tail settle the '
+        'turn ($editorialKind)', () async {
+      const storedId = 'session-rl1215-running';
+      const prompt = 'genera las poses que faltan';
+      const partialAnswer = 'respuesta parcial antes del evento';
+      final gateway = _NonIdempotentLifecycleGateway(storedId);
+      var loaderCalls = 0;
+      var tailVisible = false;
+      final chat = _recoverableChat(
+        'rl1215-running-$editorialKind',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 1),
+        ],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async {
+          loaderCalls++;
+          return [
+            const {'id': 201, 'role': 'user', 'content': prompt},
+            if (tailVisible) ...[
+              const {'id': 202, 'role': 'assistant', 'content': partialAnswer},
+              {
+                'id': 203,
+                'role': 'user',
+                'display_kind': editorialKind,
+                'content': '[IMPORTANT: background work finished]',
+              },
+              const {
+                'id': 204,
+                'role': 'assistant',
+                'content': 'respuesta al evento',
+              },
+            ],
+          ];
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: prompt,
+        model: 'hermes-agent',
+        history: const [],
+      );
+      tailVisible = true;
+      gateway.recoverySnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-rl1215-running',
+        storedSessionId: storedId,
+        created: false,
+        messagesProvided: false,
+        running: true,
+        status: 'running',
+      );
+      gateway.failWith(const SocketException('Connection attempt cancelled'));
+
+      await _waitUntil(() => loaderCalls >= 1);
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+
+      expect(loaderCalls, greaterThanOrEqualTo(1));
+      expect(
+        chat.state,
+        isNot(ChatPipelineState.completed),
+        reason: 'an editorial tail must not settle a turn the server runs',
+      );
+      expect(
+        chat.messages.where((m) => m['content'] == partialAnswer),
+        isEmpty,
+        reason: 'the durable tail must not be adopted as authoritative',
+      );
+      expect(gateway.submitCalls, 1);
+    });
+  }
+
   // rl1215 (Pixel 02/10, 94 attempts, 265 GET /messages in 15 min): an idle
   // server whose transcript never proves this turn's final answer kept the
   // chat in "connection lost" + "working" and re-read the whole transcript
