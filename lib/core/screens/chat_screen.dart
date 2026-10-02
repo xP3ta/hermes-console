@@ -15425,7 +15425,7 @@ class _ChatScreenState extends State<ChatScreen>
       // slice pinta su parte y solo el cierre lleva la marca 'cancelled'.
       return _AssistantMessageWithMark(
         content: displayContent,
-        mark: 'cancelled',
+        mark: _AssistantMessageMark.cancelled,
         verbose: _devDiagnostics,
         metadata: msg,
         linkCache: _linkCache,
@@ -15532,7 +15532,7 @@ class _ChatScreenState extends State<ChatScreen>
         projection.visibleMarkdown.trim().isNotEmpty) {
       return _AssistantMessageWithMark(
         content: projection.visibleMarkdown,
-        mark: 'cancelled',
+        mark: _AssistantMessageMark.cancelled,
         verbose: _devDiagnostics,
         metadata: frame.metadata,
         linkCache: _linkCache,
@@ -16894,10 +16894,14 @@ class _ErrorBubbleAction extends StatelessWidget {
   }
 }
 
-/// Assistant message with a subtle status mark (e.g. "cancelled").
+/// Estado terminal que se marca bajo una respuesta. Se localiza al pintar;
+/// nunca se muestra el identificador interno.
+enum _AssistantMessageMark { cancelled }
+
+/// Assistant message with a subtle status mark (e.g. "Cancelado").
 class _AssistantMessageWithMark extends StatelessWidget {
   final String content;
-  final String mark;
+  final _AssistantMessageMark mark;
   final bool verbose;
   final Map<String, dynamic> metadata;
   final Map<String, _LinkPreviewData?> linkCache;
@@ -16927,6 +16931,10 @@ class _AssistantMessageWithMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    final markLabel = switch (mark) {
+      _AssistantMessageMark.cancelled => strings.tg1215TurnCancelled,
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -16950,7 +16958,7 @@ class _AssistantMessageWithMark extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(left: 14, bottom: 4),
             child: Text(
-              mark,
+              markLabel,
               style: TextStyle(fontSize: 10, color: colors.textDisabled),
             ),
           ),

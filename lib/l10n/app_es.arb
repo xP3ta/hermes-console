@@ -9570,5 +9570,6 @@
   },
   "tg1215ProcessShowOutput": "Ver salida",
   "tg1215ProcessHideOutput": "Ocultar salida",
-  "tg1215ProcessNoOutput": "Sin salida"
+  "tg1215ProcessNoOutput": "Sin salida",
+  "tg1215TurnCancelled": "Cancelado"
 }

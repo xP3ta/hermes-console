@@ -7886,5 +7886,6 @@
   "tg1215ProcessExitCode": "exit {code}",
   "tg1215ProcessShowOutput": "Show output",
   "tg1215ProcessHideOutput": "Hide output",
-  "tg1215ProcessNoOutput": "No output"
+  "tg1215ProcessNoOutput": "No output",
+  "tg1215TurnCancelled": "Cancelled"
 }

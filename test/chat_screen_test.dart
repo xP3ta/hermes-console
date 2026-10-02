@@ -3766,6 +3766,36 @@ void main() {
     }
   }
 
+  for (final (language, label) in const [
+    ('es', 'Cancelado'),
+    ('en', 'Cancelled'),
+  ]) {
+    testWidgets('tg1215 la marca de respuesta cancelada está localizada '
+        '($language)', (tester) async {
+      await pumpChat(
+        tester,
+        messages: const [
+          {
+            'role': 'assistant',
+            'content': 'Respuesta parcial antes de parar',
+            '_cancelled': true,
+          },
+          {'role': 'user', 'content': 'Pregunta'},
+        ],
+        desktopGateway: _UiRewindGateway(),
+        attachDesktopRuntimeOnLoad: false,
+      );
+      tester.platformDispatcher.localesTestValue = [Locale(language)];
+      addTearDown(tester.platformDispatcher.clearLocalesTestValue);
+      await tester.pump();
+
+      expect(find.textContaining('Respuesta parcial'), findsOneWidget);
+      expect(find.text(label), findsOneWidget);
+      expect(find.text('cancelled'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('tg1215 un parecido escrito por la persona sigue en su burbuja', (
     tester,
   ) async {
@@ -24385,7 +24415,7 @@ void main() {
       expect(chat.messages.first['_cancelled'], isTrue);
       expect(chat.messages.first['_stopped'], isTrue);
       expect(
-        find.text('cancelled'),
+        find.text('Cancelado'),
         findsOneWidget,
         reason:
             'la marca pertenece al mensaje: solo la lleva el slice de cierre',
@@ -25318,7 +25348,7 @@ void main() {
         findsNothing,
       );
       expect(find.byKey(chatLiveAssistantViewportKey), findsNothing);
-      expect(find.text('cancelled'), findsNothing);
+      expect(find.text('Cancelado'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
@@ -25364,7 +25394,8 @@ void main() {
       expect(chat.messages.first['_cancelled'], isTrue);
       expect(chat.messages.first['_stopped'], isTrue);
       expect(liveAssistant, findsOneWidget);
-      expect(find.text('cancelled'), findsOneWidget);
+      expect(find.text('Cancelado'), findsOneWidget);
+      expect(find.text('cancelled'), findsNothing);
       expect(
         find.descendant(
           of: liveAssistant,
