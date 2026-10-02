@@ -105,6 +105,15 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   late final RoomLogPoller _poller;
   final TextEditingController _composer = TextEditingController();
   final FocusNode _focus = FocusNode();
+
+  /// Focus scope of the transcript. Tapping a message gives focus to its
+  /// selection region; when that row later leaves the lazy list (scrolled
+  /// away or rebuilt) the framework hands focus back to the scope's
+  /// previously focused child. Without a scope of its own that child is the
+  /// composer, and the keyboard opens by itself mid-scroll.
+  final FocusScopeNode _transcriptFocus = FocusScopeNode(
+    debugLabel: 'room-transcript',
+  );
   final ScrollController _transcriptScroll = ScrollController();
   final GlobalKey _transcriptKey = GlobalKey(debugLabel: 'room-transcript');
   bool _openAnchored = false;
@@ -566,6 +575,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     _composer.removeListener(_onComposerChanged);
     _composer.dispose();
     _focus.dispose();
+    _transcriptFocus.dispose();
     _transcriptScroll.dispose();
     super.dispose();
   }
@@ -2256,7 +2266,12 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                 Expanded(
                   child: Stack(
                     children: [
-                      Positioned.fill(child: view.widget),
+                      Positioned.fill(
+                        child: FocusScope(
+                          node: _transcriptFocus,
+                          child: view.widget,
+                        ),
+                      ),
                       if (view.unread > 0)
                         Positioned(
                           bottom: 20,
