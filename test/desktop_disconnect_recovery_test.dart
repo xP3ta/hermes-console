@@ -4848,6 +4848,90 @@ void main() {
     });
   }
 
+  // rl1215 (external review): the editorial relaxation may only settle a
+  // turn whose runtime-event turn already has its durable assistant reply.
+  // `[prompt, older reply, process_complete]` must not be reduced to
+  // `[prompt, older reply]` and closed: the event's reply has not landed yet
+  // and adopting now would drop it. Recovery must wait for it.
+  for (final editorialKind in const [
+    'process_complete',
+    'async_delegation_complete',
+  ]) {
+    test('rl1215 idle recovery waits for the reply of a trailing '
+        '$editorialKind row', () async {
+      const storedId = 'session-rl1215-orphan-editorial';
+      const prompt = 'genera las poses que faltan';
+      const firstAnswer = 'respuesta del turno del teléfono';
+      const eventAnswer = 'respuesta tardía al proceso terminado';
+      final gateway = _NonIdempotentLifecycleGateway(storedId);
+      var loaderCalls = 0;
+      var serverFinished = false;
+      var readsAfterLoss = 0;
+      final chat = _recoverableChat(
+        'rl1215-orphan-editorial-$editorialKind',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 1),
+        ],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async {
+          loaderCalls++;
+          if (serverFinished) readsAfterLoss++;
+          return [
+            const {'id': 101, 'role': 'user', 'content': prompt},
+            if (serverFinished) ...[
+              const {'id': 102, 'role': 'assistant', 'content': firstAnswer},
+              {
+                'id': 103,
+                'role': 'user',
+                'display_kind': editorialKind,
+                'content': '[IMPORTANT: background work finished]',
+              },
+              // The event's reply becomes durable only on the third read.
+              if (readsAfterLoss >= 3)
+                const {'id': 104, 'role': 'assistant', 'content': eventAnswer},
+            ],
+          ];
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: prompt,
+        model: 'hermes-agent',
+        history: const [],
+      );
+      serverFinished = true;
+      gateway.recoverySnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-rl1215-orphan-editorial',
+        storedSessionId: storedId,
+        created: false,
+        messagesProvided: false,
+        running: false,
+        status: 'idle',
+      );
+      gateway.failWith(const SocketException('Connection attempt cancelled'));
+
+      await _waitUntil(
+        () =>
+            chat.state == ChatPipelineState.completed ||
+            chat.awaitingDurableTurnRecovery ||
+            loaderCalls > 25,
+      );
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.isStreaming, isFalse);
+      for (final text in const [prompt, firstAnswer, eventAnswer]) {
+        expect(
+          chat.messages.where((message) => message['content'] == text),
+          hasLength(1),
+          reason: '$text must be adopted exactly once',
+        );
+      }
+      expect(gateway.submitCalls, 1);
+    });
+  }
+
   // rl1215 (Pixel 02/10, 94 attempts, 265 GET /messages in 15 min): an idle
   // server whose transcript never proves this turn's final answer kept the
   // chat in "connection lost" + "working" and re-read the whole transcript

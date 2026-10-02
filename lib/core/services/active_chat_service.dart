@@ -19892,17 +19892,28 @@ class ActiveChat {
     if (latestUser < 0) return null;
     final view = chronological.sublist(0, latestUser + 1);
     var removed = false;
+    // Every runtime-event turn must already hold its durable assistant reply;
+    // an editorial row still awaiting it means that turn has not landed yet,
+    // and dropping the row would close the tail without that reply.
+    var awaitingEventReply = false;
     for (final message in chronological.skip(latestUser + 1)) {
       if (message['role'] == 'user') {
         final kind = effectiveUserDisplayKind(message);
         if (kind != 'process_complete' && kind != 'async_delegation_complete') {
           return null;
         }
+        if (awaitingEventReply) return null;
         removed = true;
+        awaitingEventReply = true;
         continue;
+      }
+      if (message['role'] == 'assistant' &&
+          (message['content'] ?? '').toString().trim().isNotEmpty) {
+        awaitingEventReply = false;
       }
       view.add(message);
     }
+    if (awaitingEventReply) return null;
     return removed ? view : null;
   }
 
