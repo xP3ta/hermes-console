@@ -50,6 +50,8 @@ void main() {
               apiKey: saved.apiKey,
               httpClient: MockClient((request) async {
                 expect(request.url.path, '/api/sessions');
+                // Four rows need one Desktop-sized page (audit item 7).
+                expect(request.url.queryParameters['limit'], '40');
                 return http.Response(
                   jsonEncode({
                     'object': 'list',

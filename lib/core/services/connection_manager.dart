@@ -1377,11 +1377,20 @@ class ApiClient {
   /// quedan ocultas y no se pueden borrar desde la app. [includeChildren] pide
   /// `?include_children=true` para ver TODAS (necesario para limpiar de verdad).
   /// `limit=200` evita el tope por defecto de 50 del servidor.
+  ///
+  /// [pageSize] and [enough] bound the walk for surfaces that only show the
+  /// newest rows (Home, drawer): the read stops after the first page for
+  /// which `enough(sessionsSoFar)` is true, or after [maxPages] pages. Without
+  /// them every page is read, as cleanup and lineage resolution require.
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async {
-    const pageLimit = 200;
+    final pageLimit = pageSize.clamp(1, 200);
+    var pagesRead = 0;
     final owner = validateCronProfile(profile);
     final endpoint = profileEndpoint('api/sessions', profile: owner);
     final sessions = <Session>[];
@@ -1459,6 +1468,9 @@ class ApiClient {
         }
       }
       if (!hasMore) return sessions;
+      pagesRead += 1;
+      if (enough != null && enough(sessions)) return sessions;
+      if (maxPages != null && pagesRead >= maxPages) return sessions;
       if (added == 0 || pageLimitPublished <= 0) {
         throw const CoreReadException(CoreReadErrorKind.paginationStalled);
       }

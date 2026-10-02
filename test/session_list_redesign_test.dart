@@ -130,6 +130,9 @@ class _HomeActivityClient extends ApiClient {
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async {
     sessionReads += 1;
     return sessions;

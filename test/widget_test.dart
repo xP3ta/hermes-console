@@ -64,6 +64,9 @@ class _EmptyHomeClient extends ApiClient {
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async => [
     Session(
       id: 'mob-aux-voice-old-session',
@@ -113,6 +116,9 @@ class _DeferredHomeClient extends ApiClient {
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async => [
     Session(
       id: 'chat-loaded',

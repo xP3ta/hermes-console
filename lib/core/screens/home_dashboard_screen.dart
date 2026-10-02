@@ -1054,7 +1054,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                       (c) => checkSavedDashboardLogin(widget.connManager, c))
                   .call(conn);
           try {
-            sessions = await client.getSessions(profile: ownerProfile);
+            // Home shows the newest chats only: one Desktop-sized page
+            // (`listSessions(limit = 40)`), plus a bounded follow-up when
+            // automation rows fill it. Deep links, notifications and Bot
+            // Mode resolve their session directly, never through this list.
+            final wanted = _homeRecentLimit();
+            sessions = await client.getSessions(
+              profile: ownerProfile,
+              pageSize: homeSessionPageSize,
+              maxPages: homeSessionMaxPages,
+              enough: (rows) =>
+                  rows
+                      .where((row) => _isHomeRecentCandidate(row, archive))
+                      .length >=
+                  wanted,
+            );
           } on CoreReadException catch (error) {
             // A rejected key is a real outage of this connection.
             if (error.kind == CoreReadErrorKind.auth ||
@@ -1121,14 +1135,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         // pestaña "Chats" de Conversaciones (la que abre "Ver todas" por
         // defecto) — el "aparece en Inicio y luego no está" reportado en
         // dispositivo real. Mismo criterio que `SessionCategory.chats`.
-        .where(
-          (s) =>
-              !s.isJob &&
-              !archive.isSessionHidden(s) &&
-              !archive.isSessionArchived(s) &&
-              !archive.isHidden(s.id) &&
-              SessionCategory.chats.includesSource(s.source),
-        )
+        .where((s) => _isHomeRecentCandidate(s, archive))
         .toList();
     final recentLimit = _homeRecentLimit();
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
@@ -1185,6 +1192,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       ),
     );
   }
+
+  bool _isHomeRecentCandidate(Session s, SessionArchive archive) =>
+      !s.isJob &&
+      !archive.isSessionHidden(s) &&
+      !archive.isSessionArchived(s) &&
+      !archive.isHidden(s.id) &&
+      SessionCategory.chats.includesSource(s.source);
 
   int _homeRecentLimit() {
     final media = MediaQuery.of(context);
