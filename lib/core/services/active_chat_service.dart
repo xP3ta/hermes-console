@@ -82,6 +82,7 @@ import 'notifications/background_listener.dart';
 import 'notifications/notification_service.dart';
 import 'run_registry.dart';
 import 'model_catalog_cache.dart';
+import 'model_picker_loader.dart';
 import 'session_config_reducer.dart';
 import 'session_deletion.dart';
 import 'session_reconciler.dart';
@@ -27921,6 +27922,11 @@ class ActiveChatService {
   /// reopening the picker (or another chat on the same connection) does not
   /// re-read the whole catalog.
   final ModelCatalogCache modelCatalogCache = ModelCatalogCache();
+
+  /// mk1215: whatever source answered the chat model picker (socket, Bridge,
+  /// Dashboard or gateway list), per connection and profile, with the
+  /// failure memory that keeps a broken source out of every open.
+  final ModelPickerCache modelPickerCache = ModelPickerCache();
   ActiveChatService({
     this.notifications,
     this.policy,

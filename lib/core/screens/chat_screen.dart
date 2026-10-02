@@ -109,6 +109,7 @@ import '../services/session_archive.dart';
 import '../services/session_artifact_download_service.dart';
 import '../services/session_config_reducer.dart';
 import '../services/session_deletion.dart';
+import '../services/model_picker_loader.dart';
 import '../services/shared_gateway_pool.dart';
 import '../services/subagent_transcript_projection.dart';
 import '../services/tui_gateway_client.dart'
@@ -1268,6 +1269,11 @@ class ChatScreen extends StatefulWidget {
   final Future<void> Function(String path, File destination)?
   userServerMediaFetcher;
 
+  /// Replaces the HTTP fallbacks of the model picker (Mobile Bridge,
+  /// Dashboard, gateway model list) in widget tests.
+  @visibleForTesting
+  final Map<ModelPickerSource, ModelPickerFallback>? modelPickerFallbacks;
+
   const ChatScreen({
     required this.connection,
     required this.session,
@@ -1287,6 +1293,7 @@ class ChatScreen extends StatefulWidget {
     this.sendAttemptObserver,
     this.draftStoreOverride,
     this.userServerMediaFetcher,
+    this.modelPickerFallbacks,
     super.key,
   });
 
@@ -3729,6 +3736,14 @@ class _ChatScreenState extends State<ChatScreen>
   Future<(ModelActiveInfo, List<ModelProvider>)>? _modelOptionsFuture;
   DesktopModelCatalog? _desktopModelCatalog;
 
+  /// mk1215: catalog painted from the picker cache while [_modelOptionsFuture]
+  /// revalidates it in the background (stale-while-revalidate).
+  (ModelActiveInfo, List<ModelProvider>)? _modelOptionsPainted;
+
+  ModelPickerCache get _modelPickerCache => _chatService.modelPickerCache;
+  String get _modelPickerKey =>
+      ModelPickerCache.key(widget.connection.id, _chat.sessionProfile);
+
   /// Modelo que debe pintar esta sesión mientras haya una elección del usuario
   /// registrada en el reducer de config.
   ///
@@ -4089,64 +4104,44 @@ class _ChatScreenState extends State<ChatScreen>
         info.installWarning,
       ]);
 
-  /// Lee el modelo activo para pintar el badge del AppBar. Intenta primero el
-  /// BRIDGE (un token, automático: no necesita login del Dashboard) — el mismo
-  /// camino que el selector de modelos — y solo si no hay bridge cae al
-  /// Dashboard. Así el modelo del servidor se muestra aunque el Dashboard no
-  /// esté configurado (antes solo miraba el Dashboard y salía vacío).
+  /// Lee el modelo activo para pintar el badge del AppBar. Con runtime vivo,
+  /// `session.info` es la fuente. Sin él (mk1215), el catálogo ya cacheado del
+  /// selector o `model.options` sin sesión por el socket del gateway, como
+  /// Desktop. Abrir, volver o reanudar el chat nunca llama al Mobile Bridge ni
+  /// al Dashboard: solo el selector abierto recurre a ellos.
   Future<void> _loadActiveModel() async {
-    if (_chatBound && _chat.hasDesktopRuntime) {
+    if (!_chatBound) {
+      // initState: el chat se enlaza en didChangeDependencies, justo después.
+      await null;
+      if (!mounted || !_chatBound) return;
+    }
+    if (_chat.hasDesktopRuntime) {
       _syncDesktopSessionConfig();
       if (_activeModel?.model.isNotEmpty == true) return;
     }
-    // 1) Bridge: mismo camino "un token" que la pantalla de Modelos.
-    try {
-      final viaBridge = await _bridgeModelOptions();
-      if (viaBridge != null) {
-        final (info, providers) = viaBridge;
-        // Punto 2 (spec 028): no mostrar como activo el model.default del
-        // servidor (p.ej. claude-opus-4.6 de fábrica) si NINGÚN proveedor
-        // tiene credencial detrás — en un servidor virgen sin key el modelo
-        // no es usable; el badge cae a "servidor" en vez de fingir uno activo.
-        final usable = providers.any((p) => p.authenticated);
-        if (info.model.isNotEmpty && usable) {
-          if (mounted) {
-            setState(() => _activeModel = info);
-            if (_chatBound) {
-              _chatService.updateHomeWidgetSessionMetadata(
-                _chat,
-                model: info.model,
-                provider: info.provider,
-              );
-            }
-          }
-          return;
-        }
-        if (!usable) return; // hay default declarado pero sin key: no fingir.
+    final key = _modelPickerKey;
+    var catalog = _modelPickerCache.peek(key)?.result;
+    if (catalog == null &&
+        !_modelPickerCache.isCoolingDown(key, ModelPickerSource.socket)) {
+      catalog = await _socketModelPickerResult();
+      if (catalog != null && catalog.hasModels) {
+        _modelPickerCache.write(key, catalog);
       }
-    } catch (_) {
-      // Sigue con el Dashboard.
     }
-    // 2) Fallback: Dashboard (si está configurado/accesible).
-    final client = DashboardClient.lazy(widget.connection);
-    try {
-      final info = await client.getModelInfo();
-      if (mounted) {
-        setState(() => _activeModel = info);
-        if (_chatBound) {
-          _chatService.updateHomeWidgetSessionMetadata(
-            _chat,
-            model: info.model,
-            provider: info.provider,
-          );
-        }
-      }
-    } catch (_) {
-      // El Dashboard puede no estar configurado/accesible: el badge cae al
-      // texto neutro. No es fatal para el chat.
-    } finally {
-      client.close();
+    if (catalog == null || !mounted || _chat.hasDesktopRuntime) return;
+    final info = catalog.info;
+    // Punto 2 (spec 028): no mostrar como activo el model.default del
+    // servidor si NINGÚN proveedor tiene credencial detrás.
+    if (info.model.isEmpty || !catalog.providers.any((p) => p.authenticated)) {
+      return;
     }
+    if (catalog.source == ModelPickerSource.gateway) return;
+    setState(() => _activeModel = info);
+    _chatService.updateHomeWidgetSessionMetadata(
+      _chat,
+      model: info.model,
+      provider: info.provider,
+    );
   }
 
   /// Carga modelo activo + proveedores configurados (autenticados y con modelos)
@@ -4186,6 +4181,9 @@ class _ChatScreenState extends State<ChatScreen>
       _modelOptionsFuture = null;
     });
     if (_chatBound) {
+      // The cached catalog marks the old model as current: repaint it at
+      // once on the next open but revalidate it.
+      _modelPickerCache.invalidate(_modelPickerKey);
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
       _chatService.updateHomeWidgetSessionMetadata(
         _chat,
@@ -4385,13 +4383,28 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<(ModelActiveInfo, List<ModelProvider>)> _loadModelOptions() async {
-    final (info, providers) = await _loadModelOptionsRaw();
-    // Respeta lo que el usuario ocultó en la pantalla de Modelos (spec 028 U-05):
-    // esas mismas claves de SharedPreferences se aplican también aquí, para que
-    // el selector del chat no muestre proveedores/modelos que el usuario quitó
-    // de la vista. Proveedores = slugs; modelos = "slug/modelId".
+    final result = await _loadModelPickerResult();
+    SharedPreferences? prefs;
     try {
-      final prefs = await SharedPreferences.getInstance();
+      prefs = await SharedPreferences.getInstance();
+    } catch (_) {
+      prefs = null;
+    }
+    return _withoutHiddenModels(result, prefs);
+  }
+
+  /// Respeta lo que el usuario ocultó en la pantalla de Modelos (spec 028 U-05):
+  /// esas mismas claves de SharedPreferences se aplican también aquí, para que
+  /// el selector del chat no muestre proveedores/modelos que el usuario quitó
+  /// de la vista. Proveedores = slugs; modelos = "slug/modelId".
+  (ModelActiveInfo, List<ModelProvider>) _withoutHiddenModels(
+    ModelPickerResult result,
+    SharedPreferences? prefs,
+  ) {
+    final info = result.info;
+    final providers = result.providers;
+    if (prefs == null) return (info, providers);
+    try {
       final hiddenProviders =
           (prefs.getStringList('hidden_providers') ?? const []).toSet();
       final hiddenModels = (prefs.getStringList('hidden_models') ?? const [])
@@ -4415,25 +4428,67 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<(ModelActiveInfo, List<ModelProvider>)> _loadModelOptionsRaw() async {
-    // 1) RPC oficial 0.19 para una sesión viva. Nunca crea runtimes solo para
-    // listar: los borradores degradan a las superficies de lectura existentes.
-    final desktop = await _desktopSessionModelOptions();
-    if (desktop != null) {
-      _modelSource = _ModelSource.desktop;
-      return desktop;
-    }
-    _desktopModelCatalog = null;
+  /// Fuente de la que vino el catálogo: decide por dónde se persiste la
+  /// selección y qué filas son elegibles.
+  void _adoptModelPickerResult(ModelPickerResult result) {
+    _modelSource = switch (result.source) {
+      ModelPickerSource.socket => _ModelSource.desktop,
+      ModelPickerSource.bridge => _ModelSource.bridge,
+      ModelPickerSource.dashboard => _ModelSource.dashboard,
+      ModelPickerSource.gateway => _ModelSource.gateway,
+    };
+    _desktopModelCatalog = result.desktopCatalog;
+  }
 
-    // 2) BRIDGE: un SOLO token (auto-provisionado desde la API key del
-    // gateway) lista TODOS los modelos configurados, sin el login del Dashboard.
-    // Es el camino que recupera la experiencia "un token, automático".
-    final bridge = await _bridgeModelOptions();
-    if (bridge != null) {
-      _modelSource = _ModelSource.bridge;
-      return bridge;
-    }
-    // 3) DASHBOARD (con su propio login si lo exige).
+  /// mk1215: como Desktop, `model.options` por el socket del gateway primero
+  /// (con o sin runtime). Bridge y Dashboard solo como respaldo, en paralelo y
+  /// con un plazo corto; la lista del gateway al final. Gane quien gane, el
+  /// catálogo queda cacheado por conexión y perfil, y una fuente que falla se
+  /// recuerda un rato para no reintentarla en cada apertura.
+  Future<ModelPickerResult> _loadModelPickerResult() async {
+    ModelPickerSourceLoader fallback(
+      ModelPickerSource source,
+      Future<(ModelActiveInfo, List<ModelProvider>)?> Function() read,
+    ) => () async {
+      final result = await read();
+      if (result == null) return null;
+      return ModelPickerResult(
+        info: result.$1,
+        providers: result.$2,
+        source: source,
+      );
+    };
+
+    final result = await loadModelPickerCatalog(
+      cache: _modelPickerCache,
+      key: _modelPickerKey,
+      sources: {
+        ModelPickerSource.socket: _socketModelPickerResult,
+        ModelPickerSource.bridge: fallback(
+          ModelPickerSource.bridge,
+          _bridgeModelOptions,
+        ),
+        ModelPickerSource.dashboard: fallback(
+          ModelPickerSource.dashboard,
+          _dashboardModelOptions,
+        ),
+        ModelPickerSource.gateway: fallback(
+          ModelPickerSource.gateway,
+          _gatewayModelOptions,
+        ),
+      },
+    );
+    if (mounted) _adoptModelPickerResult(result);
+    return result;
+  }
+
+  /// Catálogo del Dashboard (con su propio login si lo exige): solo los
+  /// proveedores autenticados con modelos. Una lista vacía no gana a otra
+  /// fuente, pero se muestra como «sin modelos» si nadie más responde.
+  Future<(ModelActiveInfo, List<ModelProvider>)?>
+  _dashboardModelOptions() async {
+    final fake = widget.modelPickerFallbacks?[ModelPickerSource.dashboard];
+    if (fake != null) return fake();
     final client = DashboardClient.lazy(widget.connection);
     try {
       final info = await client.getModelInfo();
@@ -4441,33 +4496,24 @@ class _ChatScreenState extends State<ChatScreen>
       final usable = providers
           .where((p) => p.authenticated && p.models.isNotEmpty)
           .toList();
-      if (usable.isNotEmpty) {
-        _modelSource = _ModelSource.dashboard;
-        return (info, usable);
-      }
-      // El Dashboard respondió pero sin proveedores usables: prueba el gateway.
-      final gw = await _gatewayModelOptions();
-      if (gw != null) {
-        _modelSource = _ModelSource.gateway;
-        return gw;
-      }
-      _modelSource = _ModelSource.dashboard;
       return (info, usable);
-    } catch (_) {
-      // 4) GATEWAY como último recurso: /v1/models (alias hermes-agent) + tags
-      // Ollama; enruta el modelo por petición con el mismo token.
-      final fb = await _gatewayModelOptions();
-      if (fb != null) {
-        _modelSource = _ModelSource.gateway;
-        return fb;
-      }
-      rethrow;
     } finally {
       client.close();
     }
   }
 
-  Future<(ModelActiveInfo, List<ModelProvider>)?>
+  Future<ModelPickerResult?> _socketModelPickerResult() async {
+    final catalog = await _desktopSessionModelOptions();
+    if (catalog == null) return null;
+    return ModelPickerResult(
+      info: catalog.$1,
+      providers: catalog.$2,
+      source: ModelPickerSource.socket,
+      desktopCatalog: catalog.$3,
+    );
+  }
+
+  Future<(ModelActiveInfo, List<ModelProvider>, DesktopModelCatalog)?>
   _desktopSessionModelOptions() async {
     // mk1215: without a runtime the catalog is read sessionless; an already
     // connected shared socket saves the chat's own handshake.
@@ -4495,7 +4541,6 @@ class _ChatScreenState extends State<ChatScreen>
             ),
       ];
       if (providers.isEmpty) return null;
-      _desktopModelCatalog = catalog;
       return (
         ModelActiveInfo(
           model: catalog.currentModel ?? _selectedModel,
@@ -4503,6 +4548,7 @@ class _ChatScreenState extends State<ChatScreen>
           effectiveContextLength: 0,
         ),
         providers,
+        catalog,
       );
     } catch (_) {
       return null;
@@ -4516,6 +4562,8 @@ class _ChatScreenState extends State<ChatScreen>
   /// depende del login del Dashboard. Devuelve null si no hay bridge (el llamante
   /// cae al Dashboard). El bridge devuelve la misma forma que `/api/model/options`.
   Future<(ModelActiveInfo, List<ModelProvider>)?> _bridgeModelOptions() async {
+    final fake = widget.modelPickerFallbacks?[ModelPickerSource.bridge];
+    if (fake != null) return fake().then((r) => r, onError: (Object _) => null);
     final url = widget.connection.derivedBridgeUrl;
     if (url.isEmpty) return null;
     String? token;
@@ -4566,6 +4614,8 @@ class _ChatScreenState extends State<ChatScreen>
   /// Opciones de modelo a partir SOLO del gateway (con el token de la conexión).
   /// Devuelve null si el gateway tampoco da modelos.
   Future<(ModelActiveInfo, List<ModelProvider>)?> _gatewayModelOptions() async {
+    final fake = widget.modelPickerFallbacks?[ModelPickerSource.gateway];
+    if (fake != null) return fake().then((r) => r, onError: (Object _) => null);
     try {
       final api = ApiClient(
         baseUrl: widget.connection.gatewayUrl,
@@ -12123,7 +12173,15 @@ class _ChatScreenState extends State<ChatScreen>
       final catalog = await _bridgeModelOptions();
       if (!mounted) return;
       if (catalog != null) {
-        _modelSource = _ModelSource.bridge;
+        final result = ModelPickerResult(
+          info: catalog.$1,
+          providers: catalog.$2,
+          source: ModelPickerSource.bridge,
+        );
+        _modelPickerCache
+          ..noteSuccess(_modelPickerKey, ModelPickerSource.bridge)
+          ..write(_modelPickerKey, result);
+        _adoptModelPickerResult(result);
         _modelOptionsFuture = Future.value(catalog);
         HermesNotice.of(
           context,
@@ -12215,7 +12273,15 @@ class _ChatScreenState extends State<ChatScreen>
   /// este flujo ("Ya lo ejecuté — Verificar").
   Future<bool> _verifyBridge() async {
     try {
-      return await _bridgeModelOptions() != null;
+      final ok = await _bridgeModelOptions() != null;
+      if (ok && mounted) {
+        // A repaired Bridge must not wait out its failure cooldown.
+        _modelPickerCache.noteSuccess(
+          _modelPickerKey,
+          ModelPickerSource.bridge,
+        );
+      }
+      return ok;
     } catch (_) {
       return false;
     }
@@ -12226,8 +12292,20 @@ class _ChatScreenState extends State<ChatScreen>
       showReadOnlyNotice(context);
       return;
     }
-    // El catálogo se refresca al abrir; si ya hay runtime, `session.info` sigue
+    // mk1215: un catálogo cacheado se pinta al instante; si está caducado se
+    // revalida en segundo plano. Si ya hay runtime, `session.info` sigue
     // siendo la única fuente del badge efectivo.
+    final cached = _modelPickerCache.peek(_modelPickerKey);
+    if (cached != null) {
+      _adoptModelPickerResult(cached.result);
+      _modelOptionsPainted = _withoutHiddenModels(
+        cached.result,
+        _lastReadPrefs,
+      );
+      if (cached.fresh) {
+        _modelOptionsFuture ??= Future.value(_modelOptionsPainted!);
+      }
+    }
     _modelOptionsFuture ??= _loadModelOptions()
       ..then((res) {
         if (!mounted ||
@@ -12254,13 +12332,17 @@ class _ChatScreenState extends State<ChatScreen>
               builder: (ctx, setSheet) {
                 return FutureBuilder<(ModelActiveInfo, List<ModelProvider>)>(
                   future: _modelOptionsFuture ??= _loadModelOptions(),
+                  initialData: _modelOptionsPainted,
                   builder: (ctx, snap) {
+                    // A failed background refresh keeps the painted catalog.
+                    final data = snap.data ?? _modelOptionsPainted;
                     final loading =
+                        data == null &&
                         snap.connectionState == ConnectionState.waiting;
                     final active = _chat.hasDesktopRuntime
                         ? _activeModel
-                        : snap.data?.$1;
-                    final providers = snap.data?.$2 ?? const <ModelProvider>[];
+                        : data?.$1;
+                    final providers = data?.$2 ?? const <ModelProvider>[];
                     final visibleProviders = filterModelProviders(
                       providers,
                       modelQuery,
@@ -12499,7 +12581,7 @@ class _ChatScreenState extends State<ChatScreen>
                             padding: EdgeInsets.all(24),
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        else if (snap.hasError)
+                        else if (data == null && snap.hasError)
                           Padding(
                             padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                             child: Text(
@@ -12596,7 +12678,10 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         );
       },
-    ).whenComplete(() => _modelOptionsFuture = null);
+    ).whenComplete(() {
+      _modelOptionsFuture = null;
+      _modelOptionsPainted = null;
+    });
   }
 
   Widget _modelTile(

@@ -102,6 +102,7 @@ import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'package:hermes_android/core/services/model_picker_loader.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/services/voice/stt_engine.dart';
 import 'package:hermes_android/core/services/voice/stt_remote.dart';
@@ -1480,6 +1481,83 @@ class _ColdHistoryGateway extends _UiRewindGateway {
   );
 }
 
+/// mk1215: a gateway that answers `model.options` without a runtime.
+class _SessionlessCatalogGateway extends _UiRewindGateway
+    implements HermesDesktopGlobalModelCatalogGateway {
+  int globalCalls = 0;
+
+  @override
+  Future<DesktopModelCatalog> globalModelOptions({
+    String profile = '',
+    bool refresh = false,
+    Duration timeout = const Duration(seconds: 6),
+  }) async {
+    globalCalls++;
+    return DesktopModelCatalog.fromJson(const {
+      'model': 'disk-model',
+      'provider': 'provider-a',
+      'providers': [
+        {
+          'slug': 'provider-a',
+          'name': 'Proveedor A',
+          'authenticated': true,
+          'is_current': true,
+          'models': ['disk-model', 'other-model'],
+        },
+      ],
+    });
+  }
+}
+
+/// mk1215: counting fakes for the picker's HTTP fallbacks, with the costs the
+/// audit measured (Bridge 500 after ~60 ms, Dashboard ~300 ms).
+class _PickerFallbacks {
+  final calls = <ModelPickerSource, int>{};
+  bool bridgeFails = true;
+
+  Future<(ModelActiveInfo, List<ModelProvider>)?> _answer(
+    ModelPickerSource source,
+    Duration delay,
+  ) async {
+    calls[source] = (calls[source] ?? 0) + 1;
+    await Future<void>.delayed(delay);
+    if (source == ModelPickerSource.bridge && bridgeFails) {
+      throw Exception('server 500');
+    }
+    return (
+      const ModelActiveInfo(
+        model: 'disk-model',
+        provider: 'provider-a',
+        effectiveContextLength: 0,
+      ),
+      const [
+        ModelProvider(
+          slug: 'provider-a',
+          name: 'Proveedor A',
+          isCurrent: true,
+          authenticated: true,
+          authType: '',
+          oauthProviderId: '',
+          keyEnv: '',
+          warning: '',
+          models: ['disk-model', 'other-model'],
+        ),
+      ],
+    );
+  }
+
+  Map<ModelPickerSource, ModelPickerFallback> get map => {
+    ModelPickerSource.bridge: () =>
+        _answer(ModelPickerSource.bridge, const Duration(milliseconds: 60)),
+    ModelPickerSource.dashboard: () =>
+        _answer(ModelPickerSource.dashboard, const Duration(milliseconds: 300)),
+    ModelPickerSource.gateway: () =>
+        _answer(ModelPickerSource.gateway, const Duration(milliseconds: 150)),
+  };
+
+  int of(ModelPickerSource source) => calls[source] ?? 0;
+}
+
 class _ModelConfigGateway extends _UiRewindGateway
     implements
         HermesDesktopSessionConfigGateway,
@@ -2542,6 +2620,7 @@ void main() {
     Future<void> Function(String path, File destination)?
     userServerMediaFetcher,
     String? newChatWorkspace,
+    Map<ModelPickerSource, ModelPickerFallback>? modelPickerFallbacks,
   }) async {
     // Forzar locale español para que las cadenas i18n de ChatScreen coincidan
     // con las expectativas del test (el test fue escrito en español).
@@ -2691,6 +2770,7 @@ void main() {
           draftStoreOverride: draftStore,
           userServerMediaFetcher: userServerMediaFetcher,
           newChatWorkspace: newChatWorkspace,
+          modelPickerFallbacks: modelPickerFallbacks,
         ),
       ),
     );
@@ -18966,6 +19046,108 @@ void main() {
           2,
           reason: 'un cambio aplicado invalida el catálogo cacheado',
         );
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    /// Fake-time milliseconds from the tap until a catalog row is painted.
+    Future<int> openModelSheetTimed(WidgetTester tester) async {
+      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.pump();
+      await tester.pump();
+      var ms = 0;
+      while (find.text('other-model').evaluate().isEmpty && ms < 20000) {
+        await tester.pump(const Duration(milliseconds: 10));
+        ms += 10;
+      }
+      expect(find.text('other-model'), findsWidgets);
+      return ms;
+    }
+
+    testWidgets(
+      'mk1215: sin runtime el selector abre por el socket y abrir, volver o '
+      'reanudar nunca llama al Bridge ni al Dashboard',
+      (tester) async {
+        final gateway = _SessionlessCatalogGateway();
+        final fallbacks = _PickerFallbacks();
+        final chat = await pumpChat(
+          tester,
+          desktopGateway: gateway,
+          connection: _remoteConn('conn-mk1215-socket'),
+          attachDesktopRuntimeOnLoad: false,
+          modelPickerFallbacks: fallbacks.map,
+        );
+        await tester.pump(const Duration(seconds: 1));
+        expect(chat.hasDesktopRuntime, isFalse);
+
+        for (final state in const [
+          AppLifecycleState.inactive,
+          AppLifecycleState.hidden,
+          AppLifecycleState.paused,
+          AppLifecycleState.hidden,
+          AppLifecycleState.inactive,
+          AppLifecycleState.resumed,
+        ]) {
+          tester.binding.handleAppLifecycleStateChanged(state);
+          await tester.pump();
+        }
+        await tester.pump(const Duration(seconds: 1));
+        expect(
+          fallbacks.calls,
+          isEmpty,
+          reason: 'chat open and resume never call the Bridge or Dashboard',
+        );
+        expect(gateway.globalCalls, 1, reason: 'resume reuses the catalog');
+
+        // A cold picker (nothing cached) also goes to the socket first.
+        tester
+            .state<HermesAppState>(find.byType(HermesApp))
+            .activeChats
+            .modelPickerCache
+            .clear();
+        final cold = await openModelSheetTimed(tester);
+        expect(fallbacks.calls, isEmpty);
+        expect(
+          gateway.globalCalls,
+          1,
+          reason: 'the socket catalog cache still answers without a request',
+        );
+        expect(chat.hasDesktopRuntime, isFalse);
+        // ignore: avoid_print
+        print('mk1215 widget picker open via socket: $cold ms');
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'mk1215: con el Bridge roto el selector compite con el Dashboard y '
+      'reabre al instante desde caché',
+      (tester) async {
+        final fallbacks = _PickerFallbacks();
+        await pumpChat(
+          tester,
+          connection: _remoteConn('conn-mk1215-fallback'),
+          modelPickerFallbacks: fallbacks.map,
+        );
+        await tester.pump(const Duration(seconds: 1));
+        expect(
+          fallbacks.calls,
+          isEmpty,
+          reason: 'opening the chat never calls the Bridge or Dashboard',
+        );
+
+        final cold = await openModelSheetTimed(tester);
+        await closeModelSheet(tester);
+        final warm = await openModelSheetTimed(tester);
+        // ignore: avoid_print
+        print(
+          'mk1215 widget picker open, bridge failing: cold $cold ms, '
+          'warm $warm ms',
+        );
+        expect(cold, lessThan(400));
+        expect(warm, 0, reason: 'painted on the first frame from cache');
+        expect(fallbacks.of(ModelPickerSource.bridge), 1);
+        expect(fallbacks.of(ModelPickerSource.dashboard), 1);
         expect(tester.takeException(), isNull);
       },
     );
