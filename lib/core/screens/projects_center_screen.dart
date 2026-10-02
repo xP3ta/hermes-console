@@ -57,12 +57,17 @@ class ProjectsCenterScreen extends StatefulWidget {
   @visibleForTesting
   final ProjectChatLauncher? chatLauncher;
 
+  /// Replaces the system file picker for project uploads in widget tests.
+  @visibleForTesting
+  final ProjectUploadPicker? projectUploadPicker;
+
   const ProjectsCenterScreen({
     required this.connection,
     required this.connectionManager,
     required this.gateway,
     this.disposeGateway,
     this.chatLauncher,
+    this.projectUploadPicker,
     super.key,
   });
 
@@ -285,6 +290,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
           launch: _launch,
           onChanged: _load,
           onHide: (id) => _writeHidden({..._hidden, id}),
+          uploadPicker: widget.projectUploadPicker,
         ),
       ),
     );
@@ -977,6 +983,7 @@ class _ProjectDetailScreen extends StatefulWidget {
   final void Function(BuildContext, ProjectChatRequest) launch;
   final Future<void> Function() onChanged;
   final Future<void> Function(String id) onHide;
+  final ProjectUploadPicker? uploadPicker;
 
   const _ProjectDetailScreen({
     required this.project,
@@ -987,6 +994,7 @@ class _ProjectDetailScreen extends StatefulWidget {
     required this.launch,
     required this.onChanged,
     required this.onHide,
+    this.uploadPicker,
   });
 
   @override
@@ -1017,6 +1025,10 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
             gateway: gateway is HermesProjectFilesGateway
                 ? gateway as HermesProjectFilesGateway
                 : null,
+            writes: gateway is HermesProjectFileWritesGateway
+                ? gateway as HermesProjectFileWritesGateway
+                : null,
+            readOnlyConnection: widget.connection.readOnly,
           );
     unawaited(_load());
   }
@@ -1226,6 +1238,7 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
                   key: const ValueKey('pf1215-files'),
                   controller: files,
                   failureText: (error) => projectFailureText(error, strings),
+                  uploadPicker: widget.uploadPicker,
                 )
               else ...[
                 if (_failure != null)
