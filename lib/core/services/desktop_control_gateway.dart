@@ -160,6 +160,40 @@ abstract class HermesProjectFilesGateway {
   Future<Uint8List> readProjectFileBytes(String path);
 }
 
+/// One write route of the project file browser, gated on its own: an older
+/// Hermes may serve some of them and not others.
+enum ProjectFileWriteAction { createFolder, writeText, upload, delete }
+
+/// Optional writes for the project file browser, kept apart from
+/// [HermesProjectFilesGateway] so read-only fakes and servers stay read-only.
+/// Exactly the Dashboard routes Hermes Desktop/Web use:
+/// `POST /api/files/mkdir {path}`, `POST /api/fs/write-text {path, content}`,
+/// `POST /api/files/upload-stream` (multipart `file`, `path`, `overwrite`)
+/// and `DELETE /api/files {path, recursive}`.
+abstract class HermesProjectFileWritesGateway {
+  /// False on a read-only connection: no write is ever sent.
+  bool get projectFileWritesAllowed;
+
+  /// True once [action]'s route answered 404/405 (405 only for delete).
+  bool projectFileWriteKnownUnsupported(ProjectFileWriteAction action);
+
+  /// Creates [path] and returns the folder the server reports.
+  Future<String> createProjectFolder(String path);
+
+  /// Creates or overwrites the UTF-8 text file at [path].
+  Future<void> writeProjectFileText(String path, String content);
+
+  /// Uploads the local file at [localPath] to [path]; never overwrites.
+  Future<String> uploadProjectFile(
+    String path, {
+    required String localPath,
+    required String filename,
+  });
+
+  /// Deletes a file or an empty folder (never recursive).
+  Future<void> deleteProjectEntry(String path);
+}
+
 abstract class HermesDesktopSessionControlGateway {
   Future<SessionControlSnapshot> readSessionControl(String runtimeSessionId);
 

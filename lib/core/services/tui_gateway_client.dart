@@ -1352,6 +1352,7 @@ class TuiGatewayClient
         HermesDesktopSessionControlGateway,
         HermesProjectManagementGateway,
         HermesProjectFilesGateway,
+        HermesProjectFileWritesGateway,
         HermesExtensionManagementGateway,
         HermesMcpProvisioningGateway,
         HermesWebhookManagementGateway,
@@ -6275,6 +6276,124 @@ class TuiGatewayClient
         );
       }
       return base64Decode(dataUrl.substring(comma + 1));
+    });
+  }
+
+  // ── Project file writes (Desktop remote mode / Dashboard Files routes) ──
+
+  static DesktopGatewayCapability _fileWriteCapability(
+    ProjectFileWriteAction action,
+  ) => switch (action) {
+    ProjectFileWriteAction.createFolder =>
+      DesktopGatewayCapability.projectFileMkdir,
+    ProjectFileWriteAction.writeText =>
+      DesktopGatewayCapability.projectFileWriteText,
+    ProjectFileWriteAction.upload => DesktopGatewayCapability.projectFileUpload,
+    ProjectFileWriteAction.delete => DesktopGatewayCapability.projectFileDelete,
+  };
+
+  @override
+  bool get projectFileWritesAllowed => !_connection.readOnly;
+
+  @override
+  bool projectFileWriteKnownUnsupported(ProjectFileWriteAction action) =>
+      !_capabilityCache.canAttempt(_fileWriteCapability(action));
+
+  /// Runs one write route. A read-only connection never reaches the wire.
+  /// 404/405 gate only that route; on `DELETE /api/files` a 404 means the
+  /// entry vanished, so only 405 gates it there.
+  Future<T> _projectFileWrite<T>(
+    ProjectFileWriteAction action,
+    Future<T> Function() request,
+  ) async {
+    _requireWritableControlConnection();
+    final capability = _fileWriteCapability(action);
+    if (!_capabilityCache.canAttempt(capability)) {
+      throw const DesktopControlFailure(
+        DesktopControlFailureKind.unsupported,
+        code: 404,
+      );
+    }
+    try {
+      final value = await _dashboardExtensionRequest(request);
+      _capabilityCache.mark(
+        capability,
+        DesktopGatewayCapabilityState.supported,
+      );
+      return value;
+    } on DesktopControlFailure catch (failure) {
+      if (failure.kind == DesktopControlFailureKind.unsupported) {
+        if (action == ProjectFileWriteAction.delete && failure.code == 404) {
+          throw const DesktopControlFailure(
+            DesktopControlFailureKind.unavailable,
+            code: 404,
+          );
+        }
+        _capabilityCache.mark(
+          capability,
+          DesktopGatewayCapabilityState.unsupported,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<String> createProjectFolder(String path) async {
+    final value = _validatedControlValue(path, maxLength: 4096);
+    return _projectFileWrite(ProjectFileWriteAction.createFolder, () async {
+      final result = await _dashboard.apiPost(
+        'files/mkdir',
+        body: {'path': value},
+      );
+      final created = result['path'];
+      return created is String && created.trim().isNotEmpty
+          ? created.trim()
+          : value;
+    });
+  }
+
+  @override
+  Future<void> writeProjectFileText(String path, String content) async {
+    final value = _validatedControlValue(path, maxLength: 4096);
+    return _projectFileWrite(ProjectFileWriteAction.writeText, () async {
+      await _dashboard.apiPost(
+        'fs/write-text',
+        body: {'path': value, 'content': content},
+      );
+    });
+  }
+
+  @override
+  Future<String> uploadProjectFile(
+    String path, {
+    required String localPath,
+    required String filename,
+  }) async {
+    final value = _validatedControlValue(path, maxLength: 4096);
+    return _projectFileWrite(ProjectFileWriteAction.upload, () async {
+      final result = await _dashboard.apiPostMultipartFile(
+        'files/upload-stream',
+        fieldName: 'file',
+        filePath: localPath,
+        filename: filename,
+        fields: {'path': value, 'overwrite': 'false'},
+      );
+      final stored = result['path'];
+      return stored is String && stored.trim().isNotEmpty
+          ? stored.trim()
+          : value;
+    });
+  }
+
+  @override
+  Future<void> deleteProjectEntry(String path) async {
+    final value = _validatedControlValue(path, maxLength: 4096);
+    return _projectFileWrite(ProjectFileWriteAction.delete, () async {
+      await _dashboard.apiDelete(
+        'files',
+        body: {'path': value, 'recursive': false},
+      );
     });
   }
 
