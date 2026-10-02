@@ -1596,6 +1596,9 @@ class _ModelConfigGateway extends _UiRewindGateway
   final List<bool> modelConfirmationFlags = [];
   Object? modelError;
   bool modelConfirmRequired = false;
+  // ConfigSetResult types confirm_message as `str | null`: a guarded switch
+  // may arrive without its own text.
+  bool modelConfirmMessageAbsent = false;
   // md1215: catálogo alternativo, contador de lecturas, ACK retenido y
   // respuesta `deferred` (cambio a mitad de turno).
   DesktopModelCatalog? catalogOverride;
@@ -1642,7 +1645,10 @@ class _ModelConfigGateway extends _UiRewindGateway
       key: DesktopSessionConfigKey.model,
       value: selection.sessionWireValue,
       confirmRequired: modelConfirmRequired && !confirmExpensiveModel,
-      confirmMessage: modelConfirmRequired && !confirmExpensiveModel
+      confirmMessage:
+          modelConfirmRequired &&
+              !confirmExpensiveModel &&
+              !modelConfirmMessageAbsent
           ? 'Confirm expensive model'
           : null,
     );
@@ -18775,6 +18781,71 @@ void main() {
       );
       expect(chat.effectiveSessionConfig.model, 'old-model');
       expect(chat.canReleaseToDesktop, isTrue);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'una confirmación de modelo sin confirm_message muestra el texto propio',
+    (tester) async {
+      final gateway = _ModelConfigGateway()
+        ..modelConfirmRequired = true
+        ..modelConfirmMessageAbsent = true;
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-model-confirm-no-message'),
+        messagesLoaded: false,
+        attachDesktopRuntimeOnLoad: false,
+        allowUnownedDesktopSnapshotForTesting: false,
+        turnIdempotencyCapability: () async => true,
+        storedMessageLoader: (_, _) async => const [
+          {
+            'message_id': 'ui-user',
+            'role': 'user',
+            'content': 'prime release ownership',
+          },
+          {
+            'message_id': 'ui-assistant',
+            'role': 'assistant',
+            'content': 'ownership accepted',
+          },
+        ],
+      );
+      chat.markStoredSessionMissing();
+      await _primeUiReleaseOwnership(tester, chat, gateway);
+      gateway.emit('session.info', const {
+        'info': {'model': 'old-model', 'provider': 'provider-a'},
+      });
+      await tester.pump();
+
+      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 240));
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.text('new-model').first);
+      await tester.pump();
+
+      expect(
+        chat.pendingSessionConfigChange(DesktopSessionConfigKey.model)?.status,
+        SessionConfigChangeStatus.confirmRequired,
+      );
+      final dialog = find.byType(AlertDialog);
+      expect(dialog, findsOneWidget);
+      expect(
+        find.descendant(
+          of: dialog,
+          matching: find.text('Este cambio de modelo necesita confirmación.'),
+        ),
+        findsOneWidget,
+        reason: 'the dialog must explain itself without the server text',
+      );
+
+      await tester.tap(find.text('Cambiar').last);
+      await tester.pump();
+      await tester.pump();
+
+      expect(gateway.modelConfirmationFlags, [false, true]);
       expect(tester.takeException(), isNull);
     },
   );
