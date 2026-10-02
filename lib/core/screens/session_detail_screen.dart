@@ -11,6 +11,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -99,6 +100,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   @override
   void dispose() {
+    _archive?.removeListener(_onArchiveChanged);
     _repository.close();
     _client.close();
     super.dispose();
@@ -107,7 +109,25 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Future<void> _loadArchive() async {
     final prefs = await SharedPreferences.getInstance();
     final archive = await SessionArchive.load(prefs, widget.connection.id);
-    if (mounted) setState(() => _archive = archive);
+    if (!mounted) return;
+    setState(() {
+      _archive?.removeListener(_onArchiveChanged);
+      _archive = archive;
+      archive.addListener(_onArchiveChanged);
+    });
+  }
+
+  void _onArchiveChanged() {
+    if (!mounted) return;
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.idle ||
+        phase == SchedulerPhase.postFrameCallbacks) {
+      setState(() {});
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    }
   }
 
   Future<void> _refresh({bool refreshSession = true}) async {
