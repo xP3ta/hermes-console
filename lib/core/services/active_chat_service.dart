@@ -7198,6 +7198,7 @@ class ActiveChat {
   DesktopPassiveActivityState _passiveRemoteActivityState =
       DesktopPassiveActivityState.unknown;
   bool _desktopQueueAuthorityCheckInFlight = false;
+  bool _queueDrainAfterAuthorityCheck = false;
   bool _desktopTerminalRequiresLifecycleEvidence = false;
   int _passiveRemoteActivityRequestGeneration = 0;
   final TranscriptPublicationCoordinator _transcriptPublication =
@@ -23503,8 +23504,14 @@ class ActiveChat {
         return true;
       }
     }
-    if (gateway is! HermesDesktopSessionActivityGateway ||
-        _desktopQueueAuthorityCheckInFlight) {
+    if (gateway is! HermesDesktopSessionActivityGateway) {
+      _passiveRemoteActivityState = DesktopPassiveActivityState.unknown;
+      return false;
+    }
+    if (_desktopQueueAuthorityCheckInFlight) {
+      // qr1215: this drain was dropped with nothing re-arming it, and the
+      // check in flight may come back stale. Ask again once it settles.
+      _queueDrainAfterAuthorityCheck = true;
       _passiveRemoteActivityState = DesktopPassiveActivityState.unknown;
       return false;
     }
@@ -23554,6 +23561,17 @@ class ActiveChat {
       return false;
     } finally {
       _desktopQueueAuthorityCheckInFlight = false;
+      if (_queueDrainAfterAuthorityCheck) {
+        _queueDrainAfterAuthorityCheck = false;
+        // A drain that proceeds on this answer marks itself in flight before
+        // this timer runs, so the rerun cannot send the same head twice.
+        if (!_disposed &&
+            _hasQueuedWork &&
+            !_queueDrainSuspended &&
+            !isStreaming) {
+          Timer.run(_drainQueue);
+        }
+      }
     }
   }
 

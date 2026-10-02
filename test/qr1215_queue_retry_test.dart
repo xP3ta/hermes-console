@@ -234,6 +234,67 @@ void main() {
     });
   });
 
+  test('a drain skipped behind an in-flight authority check is '
+      'rescheduled and sends exactly once', () {
+    fakeAsync((async) {
+      final gateway = _FlakyGateway()..holdNextActiveLists = 1;
+      final chat = _chat('qr-authority', gateway);
+
+      // Drain A starts its active_list check and is held there.
+      chat.enqueue('seguimiento');
+      async.flushMicrotasks();
+      async.elapse(Duration.zero);
+      expect(gateway.heldActiveLists, hasLength(1));
+
+      // A passive inventory read proves the session idle and asks for a drain
+      // while A still holds the authority check: that drain is skipped. It
+      // also makes A's answer stale.
+      chat.refreshPassiveRemoteActivity();
+      async.flushMicrotasks();
+      expect(gateway.submissions, isEmpty);
+
+      gateway.heldActiveLists.single.complete();
+      async.elapse(const Duration(seconds: 5));
+
+      expect(gateway.submissions, ['seguimiento']);
+      expect(chat.queuedMessages, isEmpty);
+      async.elapse(const Duration(seconds: 30));
+      expect(gateway.submissions, ['seguimiento']);
+
+      chat.dispose();
+      async.flushTimers();
+    });
+  });
+
+  test('a drain queued behind a check that then authorizes does not send '
+      'the head twice', () {
+    fakeAsync((async) {
+      final gateway = _FlakyGateway()..holdNextActiveLists = 1;
+      final chat = _chat('qr-authority-current', gateway);
+
+      chat.enqueue('primero');
+      async.flushMicrotasks();
+      async.elapse(Duration.zero);
+      expect(gateway.heldActiveLists, hasLength(1));
+      // A second admission asks for a drain while the first check is held.
+      chat.enqueue('segundo');
+      async.elapse(Duration.zero);
+
+      gateway.heldActiveLists.single.complete();
+      async.elapse(const Duration(seconds: 5));
+
+      // The current answer drains the head once; the rerun finds the turn
+      // running and leaves the rest queued.
+      expect(gateway.submissions, ['primero']);
+      expect(chat.queuedMessages, ['segundo']);
+      async.elapse(const Duration(seconds: 30));
+      expect(gateway.submissions, ['primero']);
+
+      chat.dispose();
+      async.flushTimers();
+    });
+  });
+
   test('a budget used up on a healthy socket comes back with the next '
       'reconnect', () {
     fakeAsync((async) {
