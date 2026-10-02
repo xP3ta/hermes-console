@@ -677,8 +677,7 @@ abstract final class SessionConfigReducer {
 
     final warning = _optionalInfoValue(event.result.warning, 512);
     final confirmMessage = _optionalInfoValue(event.result.confirmMessage, 512);
-    if (_optionalInfoValue(event.result.value, 512) == null ||
-        (event.result.confirmRequired && confirmMessage == null)) {
+    if (_optionalInfoValue(event.result.value, 512) == null) {
       return _replaceChange(
         state,
         event.scope,
