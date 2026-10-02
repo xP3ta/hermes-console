@@ -28223,6 +28223,27 @@ class ActiveChatService {
     this.globalActivity.addListener(_onGlobalActivityChanged);
   }
 
+  /// re1215: this chat saw its own turn end on its own socket, which the
+  /// roster aggregate never hears. Without this the list and Inicio kept
+  /// the busy row observed during the turn (Hermes keeps the session's
+  /// runtime busy for a background review it never shows) and the chat,
+  /// once released, read «trabajando» from that stale row.
+  void _settleRosterAfterOwnTerminal(ActiveChat chat) {
+    final endedAt = chat.lastTerminalAt;
+    if (_disposed || endedAt == null || chat.isStreaming) return;
+    globalActivity.settleTurnEnded(
+      connectionId: chat.connection.id,
+      profile: chat.sessionProfile,
+      durableSessionIds: {
+        chat.sessionId,
+        chat.logicalSessionId,
+        chat.serverSessionId,
+        ?chat.storedSessionId,
+      },
+      endedAt: endedAt,
+    );
+  }
+
   /// ss1215: a provisional status rests on the roster; when the roster stops
   /// proving the session busy, the provisional value goes at once.
   void _onGlobalActivityChanged() {
@@ -29421,6 +29442,11 @@ class ActiveChatService {
       onEvent: (event) {
         _onHomeWidgetChatEvent(chat, event);
         _refreshActiveIds(force: event == ActiveChatEvent.subagentActivity);
+        if (event == ActiveChatEvent.done ||
+            event == ActiveChatEvent.error ||
+            event == ActiveChatEvent.cancelled) {
+          _settleRosterAfterOwnTerminal(chat);
+        }
         _publishLiveStatus(key, chat);
         if (event == ActiveChatEvent.subagentActivity) {
           _onChatUnused(key);

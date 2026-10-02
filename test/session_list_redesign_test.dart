@@ -1091,12 +1091,13 @@ void main() {
 
       expect(find.text(strings.slActivityBackground), findsNothing);
       expect(find.text(strings.chaBackgroundActivityCount(1)), findsNothing);
-      // The roster still proves the turn busy: Home says so with the shared
-      // wording, never «trabajo en segundo plano».
-      expect(find.text(strings.ss1215StatusWorking), findsOneWidget);
+      // re1215: the busy roster row was read right after this chat saw its
+      // own turn end (Hermes clears `running` after post-processing and may
+      // run a background review); it is the finished turn, not new work.
+      expect(find.text(strings.ss1215StatusWorking), findsNothing);
       expect(
         find.byKey(const ValueKey('home-activity-background-1')),
-        findsOneWidget,
+        findsNothing,
       );
 
       for (var probe = 0; probe < 2; probe++) {

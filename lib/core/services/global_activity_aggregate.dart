@@ -249,6 +249,14 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       if (terminalGeneration != null) {
         _terminalRosterGeneration.remove(scope.exactKey);
       }
+      final settled = _settledRosterGeneration[scope.durableKey];
+      if (settled != null) {
+        if (requestGeneration <= settled.generation ||
+            now.difference(settled.at) < ownTurnEndGrace) {
+          continue;
+        }
+        _settledRosterGeneration.remove(scope.durableKey);
+      }
       final prior = _byDurable[scope.durableKey];
       final sameIncarnation = prior?.scope.exactKey == scope.exactKey;
       if (!rosterStatusIsBusy(row.status)) {
@@ -290,6 +298,51 @@ final class GlobalActivityAggregate extends ChangeNotifier {
     }
     _changed();
   }
+
+  /// re1215: an attached chat saw its own turn end (each chat has its own
+  /// socket, so that terminal never reaches this aggregate as an event).
+  /// A busy row observed before [endedAt] is older evidence: it goes, and a
+  /// roster read already in flight cannot bring it back. Hermes clears the
+  /// session's `running` flag only after the turn's post-processing, a few
+  /// seconds after `message.complete`, so a busy row read within
+  /// [ownTurnEndGrace] is that same turn and is ignored too. A later read
+  /// (another surface began a turn) is applied normally.
+  void settleTurnEnded({
+    required String connectionId,
+    required String profile,
+    required Iterable<String> durableSessionIds,
+    required DateTime endedAt,
+  }) {
+    final generation = _rosterGeneration[_ownerKey(connectionId, profile)] ?? 0;
+    var changed = false;
+    for (final id in durableSessionIds) {
+      if (id.isEmpty) continue;
+      final durableKey = GlobalActivityScope(
+        connectionId: connectionId,
+        profile: profile,
+        durableSessionId: id,
+        runtimeSessionId: '',
+        replayEpoch: '',
+      ).durableKey;
+      _settledRosterGeneration[durableKey] = (
+        generation: generation,
+        at: _now().toUtc(),
+      );
+      while (_settledRosterGeneration.length > 256) {
+        _settledRosterGeneration.remove(_settledRosterGeneration.keys.first);
+      }
+      final current = _byDurable[durableKey];
+      if (current == null || current.observedAt.isAfter(endedAt)) continue;
+      _byDurable.remove(durableKey);
+      _nonBusyRosterStreak.remove(durableKey);
+      changed = true;
+    }
+    if (changed) _changed();
+  }
+
+  final Map<String, ({int generation, DateTime at})> _settledRosterGeneration =
+      {};
+  static const ownTurnEndGrace = Duration(seconds: 10);
 
   void _recordNonBusyRoster(String durableKey) {
     if (!_byDurable.containsKey(durableKey) &&
