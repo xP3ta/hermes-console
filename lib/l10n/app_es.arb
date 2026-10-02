@@ -9571,5 +9571,6 @@
   "tg1215ProcessShowOutput": "Ver salida",
   "tg1215ProcessHideOutput": "Ocultar salida",
   "tg1215ProcessNoOutput": "Sin salida",
-  "tg1215TurnCancelled": "Cancelado"
+  "tg1215TurnCancelled": "Cancelado",
+"qr1215QueueRetryExhausted": "No se pudo enviar — Reintentar"
 }

@@ -14348,6 +14348,7 @@ class _ChatScreenState extends State<ChatScreen>
             for (var i = 0; i < queuedEntries.length; i++) ...[
               _QueuedRow(
                 entry: queuedEntries[i],
+                retryExhausted: _queuedRetryExhausted(queuedEntries[i]),
                 attachmentNames: queuedEntries[i].attachments
                     .map((item) => item.name)
                     .toList(growable: false),
@@ -14387,12 +14388,19 @@ class _ChatScreenState extends State<ChatScreen>
     if (_chat.isStreaming || entries.isEmpty) return false;
     final head = entries.first;
     if (head.kind == QueuedEntryKind.desktopAccepted) return false;
-    final retryKey = head.id.startsWith('prepared:')
-        ? head.id.substring('prepared:'.length)
-        : head.id;
     return head.stopWaitingAvailable ||
         head.missingAttachment ||
-        _chat.queuedRetriesExhausted.contains(retryKey);
+        _queuedRetryExhausted(head);
+  }
+
+  /// The entry used up its automatic retries on a healthy socket and will
+  /// not go on its own until the user retries it.
+  bool _queuedRetryExhausted(QueuedEntryView entry) {
+    if (entry.kind == QueuedEntryKind.desktopAccepted) return false;
+    final retryKey = entry.id.startsWith('prepared:')
+        ? entry.id.substring('prepared:'.length)
+        : entry.id;
+    return _chat.queuedRetriesExhausted.contains(retryKey);
   }
 
   Future<void> _abandonUncertainQueued(QueuedEntryView entry) async {
@@ -19624,6 +19632,7 @@ class _MetaBlock extends StatelessWidget {
 /// no ocupa un turno visual y se puede retirar antes del envío automático.
 class _QueuedRow extends StatelessWidget {
   final QueuedEntryView entry;
+  final bool retryExhausted;
   final List<String> attachmentNames;
   final bool busy;
   final bool transportCanSteer;
@@ -19636,6 +19645,7 @@ class _QueuedRow extends StatelessWidget {
 
   const _QueuedRow({
     required this.entry,
+    this.retryExhausted = false,
     this.attachmentNames = const [],
     required this.busy,
     required this.transportCanSteer,
@@ -19738,6 +19748,27 @@ class _QueuedRow extends StatelessWidget {
                     strings.qp1215QueueNotStored,
                     key: ValueKey('chat-queue-not-stored-${entry.id}'),
                     style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
+                else if (retryExhausted)
+                  // qr1215: never silently stuck. Retrying is the same
+                  // exactly-once send as the row's send action.
+                  Semantics(
+                    button: true,
+                    excludeSemantics: true,
+                    label: strings.qr1215QueueRetryExhausted,
+                    onTap: isEditing ? null : onSendNow,
+                    child: InkWell(
+                      key: ValueKey('chat-queue-retry-exhausted-${entry.id}'),
+                      onTap: isEditing ? null : onSendNow,
+                      child: Text(
+                        strings.qr1215QueueRetryExhausted,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: colors.warning,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                   )
                 else if (entry.blocked)
                   Text(

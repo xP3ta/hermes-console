@@ -7887,5 +7887,6 @@
   "tg1215ProcessShowOutput": "Show output",
   "tg1215ProcessHideOutput": "Hide output",
   "tg1215ProcessNoOutput": "No output",
-  "tg1215TurnCancelled": "Cancelled"
+  "tg1215TurnCancelled": "Cancelled",
+"qr1215QueueRetryExhausted": "Couldn't send — Retry"
 }
