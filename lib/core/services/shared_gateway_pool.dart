@@ -84,15 +84,22 @@ class SharedGatewayPool {
   static String _chatKeyFor(SavedConnection connection, String profile) =>
       '${_keyFor(connection)}|${profile.trim()}$_chatLane';
 
-  /// The chat socket of ([connection], [profile]) is open, connected and
-  /// known to lack per-session replay (`gateway.ready` without
-  /// `replay_epoch`). Such a server cannot re-attach each chat from its own
-  /// watermark after a drop, so further chats keep their own socket there.
-  bool chatSocketLacksReplay(SavedConnection connection, String profile) {
+  /// Another chat may not join the chat socket of ([connection], [profile]):
+  /// chats already ride it and it has not proven per-session replay (a
+  /// connected `gateway.ready` with `replay_epoch`). Before that frame the
+  /// transport is unknown (several chats opened at once would otherwise all
+  /// ride a socket that may turn out legacy), and a legacy server cannot
+  /// re-attach each chat from its own watermark after a drop. Such chats keep
+  /// their own socket; with no rider yet the chat may take it alone.
+  bool chatSocketRefusesAnotherChat(
+    SavedConnection connection,
+    String profile,
+  ) {
     final entry = _entries[_chatKeyFor(connection, profile)];
     return entry != null &&
         !entry.client.isClosed &&
-        entry.client.knownLegacyReplayTransport;
+        entry.refs > 0 &&
+        !entry.client.knownPerSessionReplayTransport;
   }
 
   /// Live chat sockets (diagnostics/tests).

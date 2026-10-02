@@ -1485,11 +1485,11 @@ class TuiGatewayClient
   /// Opts this socket into many-session use. Idempotent.
   void enableSessionMultiplexing() => _multiplexed = true;
 
-  /// The connected server announced no `replay_epoch`: a legacy transport
-  /// that cannot re-attach each session from its own watermark after a drop.
-  /// False while not connected: nothing is known yet.
-  bool get knownLegacyReplayTransport =>
-      _connected && !_connectionReplayCapable;
+  /// The connected server announced a `replay_epoch`: each session can be
+  /// re-attached from its own watermark after a drop. False while not
+  /// connected: nothing is proven yet.
+  bool get knownPerSessionReplayTransport =>
+      _connected && _connectionReplayCapable;
 
   /// Runtimes released by every chat on this multiplexed socket. Hermes has
   /// no per-session detach, so it keeps streaming them here (as to Desktop's
