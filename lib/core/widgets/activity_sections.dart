@@ -596,6 +596,15 @@ class ActivityNowSection extends StatelessWidget {
         now: now,
       );
     }
+    // ps1215: with no step running, nothing finished in this turn and no
+    // task list, the panel would only repeat the pill's headline. Say
+    // honestly that the detail arrives with the next event.
+    final nothingKnown =
+        current == null &&
+        !snapshot.noActivityHint &&
+        !snapshot.waitingForUser &&
+        snapshot.done.isEmpty &&
+        !snapshot.showTasks;
     return Column(
       key: sectionKey,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -615,6 +624,15 @@ class ActivityNowSection extends StatelessWidget {
             child: row,
           ),
         ),
+        if (nothingKnown)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
+            child: Text(
+              s.ps1215NoDetailsYet,
+              key: const ValueKey('activity-now-no-details'),
+              style: TextStyle(fontSize: 12, color: colors.textSecondary),
+            ),
+          ),
       ],
     );
   }

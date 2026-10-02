@@ -558,5 +558,54 @@ void main() {
       );
       await tearDownApp(tester, service);
     });
+
+    testWidgets('resumed with nothing known: the panel says so instead of '
+        'repeating the headline; the next tool event fills it', (tester) async {
+      final wall = _Wall()..advance(const Duration(seconds: 12));
+      final service = newService();
+      final gateway = peer.PeerGateway(
+        _snapshot(running: true, turnStartedAt: _turnStart),
+      );
+      final chat = attach(service, gateway, wall);
+      await tester.runAsync(chat.loadMessages);
+      await boot(tester, service);
+      push(tester);
+      await tester.pump();
+      expect(_pill, findsOneWidget);
+      expect(_textIn(_pill), isNot(contains('Ejecutando herramientas')));
+
+      await tester.tap(_pill);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        find.byKey(const ValueKey('activity-now-no-details')),
+        findsOneWidget,
+      );
+      expect(
+        _textIn(_panel),
+        isNot(contains('Ejecutando herramientas')),
+        reason: 'never claims tools it cannot list',
+      );
+      expect(
+        find.text(
+          'Sin detalles todavía: se actualizará con el siguiente evento.',
+        ),
+        findsOneWidget,
+      );
+
+      gateway.emit('tool.start', {
+        'tool_id': 't3',
+        'name': 'web_search',
+        'args': {'query': 'flutter'},
+      });
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(_textIn(_panel), contains('web_search'));
+      expect(
+        find.byKey(const ValueKey('activity-now-no-details')),
+        findsNothing,
+      );
+      await tearDownApp(tester, service);
+    });
   });
 }

@@ -9549,5 +9549,7 @@
   "pw1215FilesReadOnlyConnection": "Conexión de solo lectura: puedes ver los archivos, pero no cambiarlos.",
   "cr1215AwaitingUnseenInput": "Hermes espera tu respuesta a una pregunta que no se ha mostrado.",
   "cr1215ShowQuestion": "Mostrar pregunta",
-"ss1215StatusWorking": "Trabajando…"
+"ss1215StatusWorking": "Trabajando…",
+"ss1215StatusWorking": "Trabajando…",
+  "ps1215NoDetailsYet": "Sin detalles todavía: se actualizará con el siguiente evento."
 }
