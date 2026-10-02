@@ -53,4 +53,13 @@ void main() {
       'a',
     ]);
   });
+
+  test(
+    'the duplicate-key reader detects a key repeated with the same value',
+    () {
+      expect(_duplicateTopLevelKeys('{"a": "same", "b": "x", "a": "same"}'), [
+        'a',
+      ]);
+    },
+  );
 }
