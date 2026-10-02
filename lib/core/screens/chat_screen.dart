@@ -109,6 +109,7 @@ import '../services/session_archive.dart';
 import '../services/session_artifact_download_service.dart';
 import '../services/session_config_reducer.dart';
 import '../services/session_deletion.dart';
+import '../services/shared_gateway_pool.dart';
 import '../services/subagent_transcript_projection.dart';
 import '../services/tui_gateway_client.dart'
     show TuiGatewayClient, TuiGatewayRpcError;
@@ -4468,8 +4469,15 @@ class _ChatScreenState extends State<ChatScreen>
 
   Future<(ModelActiveInfo, List<ModelProvider>)?>
   _desktopSessionModelOptions() async {
+    // mk1215: without a runtime the catalog is read sessionless; an already
+    // connected shared socket saves the chat's own handshake.
+    final warm = SharedGatewayPool.instance.acquireIfConnected(
+      widget.connection,
+    );
     try {
-      final catalog = await _chat.loadDesktopModelCatalog();
+      final catalog = await _chat.loadDesktopModelCatalog(
+        warmGateway: warm?.client,
+      );
       if (catalog == null) return null;
       final providers = <ModelProvider>[
         for (final provider in catalog.providers)
@@ -4498,6 +4506,8 @@ class _ChatScreenState extends State<ChatScreen>
       );
     } catch (_) {
       return null;
+    } finally {
+      warm?.release();
     }
   }
 

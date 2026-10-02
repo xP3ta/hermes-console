@@ -15503,10 +15503,17 @@ class ActiveChat {
   /// Loads the authenticated 0.19 catalog for this live session without ever
   /// creating a runtime. Drafts and legacy servers return `null` so the caller
   /// can use its existing Dashboard/Bridge read-only fallback.
+  ///
+  /// mk1215: without a runtime the catalog is read sessionless; [warmGateway]
+  /// (an already connected shared socket) is used when this chat's own socket
+  /// is not connected yet, so the picker does not wait for a handshake.
   Future<DesktopModelCatalog?> loadDesktopModelCatalog({
     bool refresh = false,
+    HermesDesktopGlobalModelCatalogGateway? warmGateway,
   }) async {
-    if (!await ensureDesktopRuntime()) return null;
+    if (!await ensureDesktopRuntime()) {
+      return _loadGlobalModelCatalog(refresh, warmGateway);
+    }
     final gateway = _desktopGateway;
     final runtimeId = _desktopRuntimeSessionId;
     if (gateway is! HermesDesktopModelCatalogGateway || runtimeId == null) {
@@ -15530,6 +15537,47 @@ class ActiveChat {
     } on TuiGatewayRpcError catch (error) {
       if (error.code == 4007 || error.code == -32601) return null;
       rethrow;
+    }
+  }
+
+  /// mk1215: without a live runtime, read the profile's catalog over this
+  /// chat's socket like Desktop (`model.options` without `session_id`). It
+  /// never acquires or creates a runtime; any failure returns `null` so the
+  /// caller can use its read-only fallbacks.
+  Future<DesktopModelCatalog?> _loadGlobalModelCatalog(
+    bool refresh,
+    HermesDesktopGlobalModelCatalogGateway? warmGateway,
+  ) async {
+    final own = _desktopGateway;
+    final HermesDesktopGlobalModelCatalogGateway catalogGateway;
+    if (warmGateway != null && own?.isConnected != true) {
+      catalogGateway = warmGateway;
+    } else if (own is HermesDesktopGlobalModelCatalogGateway) {
+      catalogGateway = own as HermesDesktopGlobalModelCatalogGateway;
+    } else if (warmGateway != null) {
+      catalogGateway = warmGateway;
+    } else {
+      return null;
+    }
+    final profile = sessionProfile;
+    if (refresh) {
+      _modelCatalogCache.invalidate(connection.id, profile);
+    } else if (_modelCatalogCache.read(connection.id, profile)
+        case final cached?) {
+      return cached;
+    }
+    try {
+      final catalog = await catalogGateway.globalModelOptions(
+        profile: profile,
+        refresh: refresh,
+      );
+      _modelCatalogCache.write(connection.id, profile, catalog);
+      return catalog;
+    } catch (error) {
+      debugPrint(
+        '[active-chat] sessionless model.options failed (${error.runtimeType})',
+      );
+      return null;
     }
   }
 

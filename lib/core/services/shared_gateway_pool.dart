@@ -71,6 +71,21 @@ class SharedGatewayPool {
     return SharedGatewayLease._(this, key, entry);
   }
 
+  /// Lends the shared socket only when it is already open and connected, so
+  /// a one-shot read (the chat model picker, mk1215) can ride a warm socket
+  /// without ever opening a new one. `null` otherwise; nothing is created.
+  SharedGatewayLease? acquireIfConnected(SavedConnection connection) {
+    final key = _keyFor(connection);
+    final entry = _entries[key];
+    if (entry == null || entry.client.isClosed || !entry.client.isConnected) {
+      return null;
+    }
+    entry.linger?.cancel();
+    entry.linger = null;
+    entry.refs++;
+    return SharedGatewayLease._(this, key, entry);
+  }
+
   void _release(String key, _PoolEntry entry) {
     entry.refs--;
     if (entry.refs > 0) return;

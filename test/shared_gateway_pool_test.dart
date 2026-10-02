@@ -149,6 +149,23 @@ void main() {
       async.elapse(const Duration(seconds: 2));
     });
   });
+
+  test('mk1215: acquireIfConnected never opens or lends a cold socket', () {
+    final pool = SharedGatewayPool.forTesting();
+    expect(pool.acquireIfConnected(_conn('pool-mk-a')), isNull);
+    expect(pool.liveClientCount, 0, reason: 'nothing is created');
+
+    final lease = pool.acquire(_conn('pool-mk-a'));
+    addTearDown(pool.disconnectIdle);
+    addTearDown(lease.release);
+    expect(lease.client.isConnected, isFalse);
+    expect(
+      pool.acquireIfConnected(_conn('pool-mk-a')),
+      isNull,
+      reason: 'a socket that is not connected is not lent',
+    );
+    expect(pool.leaseCount, 1);
+  });
 }
 
 final class _Ticket extends DashboardClient {

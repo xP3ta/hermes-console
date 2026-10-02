@@ -640,6 +640,17 @@ abstract class HermesDesktopModelCatalogGateway {
   });
 }
 
+/// Profile-scoped catalog read without a live runtime, as Desktop's
+/// `requestModelOptions` does over its already-open gateway (mk1215). Kept
+/// separate so legacy fakes stay valid.
+abstract class HermesDesktopGlobalModelCatalogGateway {
+  Future<DesktopModelCatalog> globalModelOptions({
+    String profile = '',
+    bool refresh = false,
+    Duration timeout = const Duration(seconds: 6),
+  });
+}
+
 /// Desglose opcional de la ventana de contexto del runtime vivo.
 ///
 /// Se mantiene separado del gateway base para conservar compatibilidad con
@@ -1351,6 +1362,7 @@ class TuiGatewayClient
         HermesDesktopSessionConfigGateway,
         HermesDesktopSessionActivityGateway,
         HermesDesktopModelCatalogGateway,
+        HermesDesktopGlobalModelCatalogGateway,
         HermesDesktopContextUsageGateway,
         HermesDesktopProfileAssetsGateway,
         HermesDesktopBotCreationGateway,
@@ -5065,6 +5077,55 @@ class TuiGatewayClient
         'Hermes returned an invalid model catalog',
       );
     }
+    return DesktopModelCatalog.fromJson(result);
+  }
+
+  /// mk1215: `model.options` without `session_id`; the server resolves the
+  /// catalog from the profile's config (`_profile_scoped`, no live agent).
+  @override
+  Future<DesktopModelCatalog> globalModelOptions({
+    String profile = '',
+    bool refresh = false,
+    Duration timeout = const Duration(seconds: 6),
+  }) async {
+    const method = 'model.options';
+    final owner = profile.trim();
+    if (!_capabilityCache.canAttempt(DesktopGatewayCapability.modelOptions)) {
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes Desktop capability is unavailable',
+        code: -32601,
+      );
+    }
+    final Map<String, dynamic> result;
+    try {
+      await _connectForRequest(method).timeout(timeout);
+      result = await _requestConnected(method, {
+        if (owner.isNotEmpty && owner != 'default')
+          ..._petParams(owner, method: method),
+        'explicit_only': true,
+        'include_unconfigured': false,
+        'refresh': refresh,
+      }, timeout: timeout);
+    } on TuiGatewayRpcError catch (error) {
+      if (error.code == -32601) {
+        _capabilityCache.mark(
+          DesktopGatewayCapability.modelOptions,
+          DesktopGatewayCapabilityState.unsupported,
+        );
+      }
+      rethrow;
+    }
+    if (result['providers'] is! List) {
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid model catalog',
+      );
+    }
+    _capabilityCache.mark(
+      DesktopGatewayCapability.modelOptions,
+      DesktopGatewayCapabilityState.supported,
+    );
     return DesktopModelCatalog.fromJson(result);
   }
 
