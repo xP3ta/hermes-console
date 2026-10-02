@@ -115,4 +115,75 @@ void main() {
     );
     expect(reopened.messages, isEmpty);
   });
+
+  Future<void> openAndCloseWith(
+    String sessionId,
+    List<Map<String, dynamic>> rows,
+  ) async {
+    final chat = attach(sessionId: sessionId, loader: (_, _) async => rows);
+    await chat.loadMessages(expectedMessageCount: rows.length);
+    service.release(_connection.id, sessionId);
+  }
+
+  bool cachedOnReopen(String sessionId) {
+    final reopened = attach(
+      sessionId: sessionId,
+      loader: (_, _) => Completer<List<Map<String, dynamic>>>().future,
+    );
+    final cached = reopened.messages.isNotEmpty;
+    service.debugDisposeChatForTesting(_connection.id, sessionId);
+    return cached;
+  }
+
+  test('co1215 the warm cache keeps the last 24 released chats', () async {
+    for (var i = 0; i < 25; i++) {
+      await openAndCloseWith('chat-$i', List.of(_rows));
+    }
+    expect(service.reopenTranscriptCountForTesting, 24);
+    // Probe newest first: each probe re-caches the probed chat.
+    expect(cachedOnReopen('chat-24'), isTrue);
+    expect(cachedOnReopen('chat-1'), isTrue);
+    expect(cachedOnReopen('chat-0'), isFalse);
+  });
+
+  test(
+    'co1215 reopening a chat refreshes its recency in the warm cache',
+    () async {
+      for (var i = 0; i < 24; i++) {
+        await openAndCloseWith('chat-$i', List.of(_rows));
+      }
+      // chat-0 is used again, so chat-1 becomes the least recently used.
+      await openAndCloseWith('chat-0', List.of(_rows));
+      await openAndCloseWith('chat-24', List.of(_rows));
+      expect(service.reopenTranscriptCountForTesting, 24);
+      expect(cachedOnReopen('chat-0'), isTrue);
+      expect(cachedOnReopen('chat-1'), isFalse);
+    },
+  );
+
+  test(
+    'co1215 the warm cache evicts least recently used chats by bytes',
+    () async {
+      // ~4 MB per transcript: 200 rows × ~10 KB.
+      List<Map<String, dynamic>> heavy(String tag) => [
+        for (var i = 1; i <= 200; i++)
+          {
+            'id': i,
+            'role': i.isOdd ? 'user' : 'assistant',
+            'content': '$tag ${'x' * 10000}',
+          },
+      ];
+      for (var i = 0; i < 12; i++) {
+        await openAndCloseWith('heavy-$i', heavy('h$i'));
+      }
+      expect(
+        service.reopenTranscriptBytesForTesting,
+        lessThanOrEqualTo(ActiveChatService.reopenTranscriptCacheMaxBytes),
+      );
+      expect(service.reopenTranscriptCountForTesting, lessThan(12));
+      expect(service.reopenTranscriptCountForTesting, greaterThan(0));
+      expect(cachedOnReopen('heavy-11'), isTrue);
+      expect(cachedOnReopen('heavy-0'), isFalse);
+    },
+  );
 }

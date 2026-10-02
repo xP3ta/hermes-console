@@ -28214,7 +28214,26 @@ class ActiveChatService {
     });
   }
 
-  static const int _reopenTranscriptCacheLimit = 8;
+  /// co1215: like Desktop's warm session cache (session-state-cache.ts),
+  /// up to 24 released transcripts within ~32 MB, evicting the least
+  /// recently used by bytes. In memory only; remote transcripts are never
+  /// written to disk.
+  static const int reopenTranscriptCacheLimit = 24;
+  static const int reopenTranscriptCacheMaxBytes = 32 * 1024 * 1024;
+  int _reopenTranscriptCacheBytes = 0;
+
+  @visibleForTesting
+  int get reopenTranscriptCountForTesting => _reopenTranscriptCache.length;
+
+  @visibleForTesting
+  int get reopenTranscriptBytesForTesting => _reopenTranscriptCacheBytes;
+
+  _ReopenTranscript? _removeReopenTranscript(String key) {
+    final removed = _reopenTranscriptCache.remove(key);
+    if (removed != null) _reopenTranscriptCacheBytes -= removed.bytes;
+    return removed;
+  }
+
   final Map<ActiveChat, _HomeWidgetChatMetadata> _homeWidgetMetadata = {};
   final LinkedHashMap<String, int> _observedFirstTokenLatencyCache =
       LinkedHashMap<String, int>();
@@ -29257,7 +29276,7 @@ class ActiveChatService {
               );
             },
     );
-    final cachedTranscript = _reopenTranscriptCache.remove(key);
+    final cachedTranscript = _removeReopenTranscript(key);
     if (cachedTranscript != null && cachedTranscript.matches(chat)) {
       chat.seedReopenTranscript(cachedTranscript.newestFirst);
     }
@@ -29564,10 +29583,16 @@ class ActiveChatService {
   }
 
   void _rememberReopenTranscript(String key, ActiveChat chat) {
-    _reopenTranscriptCache.remove(key);
+    _removeReopenTranscript(key);
     final rows = chat.reopenTranscriptSnapshot();
     if (rows == null) return;
+    final bytes = _estimatedTranscriptBytes(rows);
+    // One transcript larger than the whole budget is not cached: it never
+    // flushes every other warm chat to make room for itself.
+    if (bytes > reopenTranscriptCacheMaxBytes) return;
+    _reopenTranscriptCacheBytes += bytes;
     _reopenTranscriptCache[key] = _ReopenTranscript(
+      bytes: bytes,
       connectionId: chat.connection.id,
       profile: chat.sessionProfile,
       storedSessionId: chat.serverSessionId,
@@ -29579,9 +29604,28 @@ class ActiveChatService {
       },
       newestFirst: rows,
     );
-    while (_reopenTranscriptCache.length > _reopenTranscriptCacheLimit) {
-      _reopenTranscriptCache.remove(_reopenTranscriptCache.keys.first);
+    while (_reopenTranscriptCache.length > reopenTranscriptCacheLimit ||
+        _reopenTranscriptCacheBytes > reopenTranscriptCacheMaxBytes) {
+      _removeReopenTranscript(_reopenTranscriptCache.keys.first);
     }
+  }
+
+  /// Approximate retained size, as Desktop weighs it: two bytes per UTF-16
+  /// code unit of every key and string, plus a small cost per value. Walks
+  /// the rows without serialising a second copy.
+  static int _estimatedTranscriptBytes(List<Map<String, dynamic>> rows) {
+    int weigh(Object? value) => switch (value) {
+      null || bool() => 4,
+      num() => 8,
+      String() => 16 + value.length * 2,
+      Map() => value.entries.fold<int>(
+        32,
+        (sum, entry) => sum + weigh(entry.key) + weigh(entry.value),
+      ),
+      Iterable() => value.fold<int>(24, (sum, item) => sum + weigh(item)),
+      _ => 32,
+    };
+    return rows.fold<int>(0, (sum, row) => sum + weigh(row));
   }
 
   void _forgetReopenTranscripts(
@@ -29589,12 +29633,14 @@ class ActiveChatService {
     String? profile,
     String? sessionId,
   }) {
-    _reopenTranscriptCache.removeWhere(
-      (_, entry) =>
+    _reopenTranscriptCache.removeWhere((_, entry) {
+      final forget =
           entry.connectionId == connectionId &&
           (profile == null || entry.profile == profile) &&
-          (sessionId == null || entry.aliases.contains(sessionId)),
-    );
+          (sessionId == null || entry.aliases.contains(sessionId));
+      if (forget) _reopenTranscriptCacheBytes -= entry.bytes;
+      return forget;
+    });
   }
 
   void _dispose(String key, {bool keepGatewayWarm = false}) {
@@ -29771,6 +29817,7 @@ class ActiveChatService {
     _chats.clear();
     closeWarmGateways();
     _reopenTranscriptCache.clear();
+    _reopenTranscriptCacheBytes = 0;
     _homeWidgetMetadata.clear();
     _cancelPendingHomeWidgetMetrics();
     _observedFirstTokenLatencyCache.clear();
@@ -29808,6 +29855,7 @@ final class _WarmChatGateway {
 /// lets a reopen paint the last settled rows while the durable read runs.
 final class _ReopenTranscript {
   const _ReopenTranscript({
+    required this.bytes,
     required this.connectionId,
     required this.profile,
     required this.storedSessionId,
@@ -29820,6 +29868,9 @@ final class _ReopenTranscript {
   final String storedSessionId;
   final Set<String> aliases;
   final List<Map<String, dynamic>> newestFirst;
+
+  /// Estimated retained size; counts against the cache byte budget.
+  final int bytes;
 
   bool matches(ActiveChat chat) =>
       chat.connection.id == connectionId &&
