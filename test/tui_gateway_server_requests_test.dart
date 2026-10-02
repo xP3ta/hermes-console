@@ -464,10 +464,12 @@ void main() {
       expect(responded.payload['request_id'], 'apr-3');
       expect(events.where((e) => e.type == 'request.cancel'), isEmpty);
 
-      // Nothing is open any more: a late answer takes the compat RPC path
-      // instead of writing an orphan response frame.
+      // Nothing is open any more: a late answer takes the `request.answer`
+      // proxy (current Hermes has no `clarify.respond`) instead of writing an
+      // orphan response frame.
       await client.respondToClarify('srq-clarify0002', 'sí');
-      expect(gateway.rpcCalls('clarify.respond'), hasLength(1));
+      expect(gateway.rpcCalls('request.answer'), hasLength(1));
+      expect(gateway.rpcCalls('clarify.respond'), isEmpty);
       expect(
         gateway.frames.where(
           (frame) =>

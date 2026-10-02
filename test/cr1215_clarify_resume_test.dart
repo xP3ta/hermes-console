@@ -397,6 +397,20 @@ void main() {
     },
   );
 
+  test('a clarify registered on another socket is answered through the '
+      'request.answer proxy, never the removed clarify.respond', () async {
+    final client = _clientFor(gateway);
+    await client.connect();
+    final response = await client.respondToClarify('srq-elsewhere001', 'si');
+    expect(response.status, DesktopPromptResponseStatus.ok);
+    final proxy = gateway.rpcCalls('request.answer').single;
+    expect(proxy['params'], {
+      'id': 'srq-elsewhere001',
+      'result': {'answer': 'si'},
+    });
+    expect(gateway.rpcCalls('clarify.respond'), isEmpty);
+  });
+
   test('connectivity flips every 200 ms with clarify traffic raise no '
       'uncaught error and the question survives', () async {
     gateway.resumeResult = (_) => {

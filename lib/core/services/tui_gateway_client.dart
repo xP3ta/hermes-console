@@ -6926,6 +6926,40 @@ class TuiGatewayClient
       }
       return const DesktopPromptResponse._(DesktopPromptResponseStatus.ok);
     }
+    if (requestId.startsWith(_serverRequestIdPrefix)) {
+      // A v7 server request that is not open on this socket: it reached
+      // another socket, or this one was replaced after the card was drawn.
+      // Hermes has no `clarify.respond` any more; `clarify.lock` and the
+      // `request.answer` proxy settle the request from any connection.
+      try {
+        if (questionId != null) {
+          const lockMethod = 'clarify.lock';
+          final result = await _request(lockMethod, {
+            'request_id': requestId,
+            'question_id': questionId,
+            'answer': answer,
+          });
+          return DesktopPromptResponse.fromJson(
+            result,
+            method: lockMethod,
+            allowExpired: true,
+          );
+        }
+        const answerMethod = 'request.answer';
+        final result = await _request(answerMethod, {
+          'id': requestId,
+          'result': {'answer': answer},
+        });
+        return DesktopPromptResponse.fromJson(
+          result,
+          method: answerMethod,
+          allowExpired: true,
+        );
+      } on TuiGatewayRpcError catch (error) {
+        // Older v7 builds without the proxy keep the legacy RPC below.
+        if (error.code != -32601) rethrow;
+      }
+    }
     final params = <String, Object?>{
       'request_id': _interactiveRequestId(method, requestId),
       'answer': answer,
@@ -6939,6 +6973,9 @@ class TuiGatewayClient
     );
   }
 
+  /// Hermes mints every server→client request id as `srq-<hex>`
+  /// (`tui_gateway/server_requests.py`); legacy prompt ids never use it.
+  static const _serverRequestIdPrefix = 'srq-';
 
   @override
   Future<DesktopPromptResponse> respondToSudo(
