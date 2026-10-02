@@ -631,9 +631,16 @@ class DesktopSessionReconciler {
       message['role'] == 'user' &&
       message['display_kind']?.toString().trim() == 'process_complete';
 
+  /// Corrección en vuelo: proyección local (`_steer`) o fila durable que
+  /// Hermes guarda como `display_kind=steer` antes de normalizarla.
+  static bool _isSteerInput(Map<String, dynamic> message) =>
+      message['role'] == 'user' &&
+      (message['_steer'] == true ||
+          message['display_kind']?.toString().trim() == 'steer');
+
   static bool _isDurableOpenInput(Map<String, dynamic> message) =>
       isRealUserTurn(message) ||
-      (message['role'] == 'user' && message['_steer'] == true) ||
+      _isSteerInput(message) ||
       _isStructuredUserEvent(message);
 
   /// Removes the single optimistic prompt of the open turn (after the last
@@ -759,8 +766,15 @@ class DesktopSessionReconciler {
   /// projection being empty: reopening mid-turn hydrates several times, and from
   /// the second pass the client already holds its own projection of the same
   /// durable rows, which used to bring the inflight user twin back.
+  ///
+  /// Hermes persiste cada corrección en vuelo como su propia fila
+  /// `display_kind=steer`. Si el turno abierto ya contiene el prompt y esas
+  /// correcciones como filas durables (con identidad, en el mismo orden que
+  /// `inflight.user` + `inflight.corrections`), quedan representadas y el
+  /// snapshot no debe volver a emitirlas.
   static _LiveUserProjectionPlan _firstOpenTurnPlan(
     List<Map<String, dynamic>> chronological,
+    List<String> liveUsers,
   ) {
     var terminalBoundary = -1;
     for (var index = 0; index < chronological.length; index++) {
@@ -780,14 +794,32 @@ class DesktopSessionReconciler {
         openInputs.add(index);
       }
     }
-    if (openInputs.length != 1) return _LiveUserProjectionPlan.none;
-    final inputIndex = openInputs.single;
+    if (openInputs.isEmpty) return _LiveUserProjectionPlan.none;
+    final inputIndex = openInputs.first;
     final hasOpenActivity = chronological
         .skip(inputIndex + 1)
         .any(_isDurableOpenTurnActivity);
     if (!hasOpenActivity) return _LiveUserProjectionPlan.none;
-    return const _LiveUserProjectionPlan(
-      representedPrefixLength: 1,
+    if (openInputs.length == 1) {
+      return const _LiveUserProjectionPlan(
+        representedPrefixLength: 1,
+        proof: _LiveUserProjectionProof.openTurn,
+      );
+    }
+    // Varias entradas durables: el prompt va primero y el resto son
+    // correcciones; deben coincidir, en orden, con el prefijo vivo.
+    if (openInputs.length > liveUsers.length) {
+      return _LiveUserProjectionPlan.none;
+    }
+    for (var index = 0; index < openInputs.length; index++) {
+      final message = chronological[openInputs[index]];
+      if ((index > 0) != _isSteerInput(message) ||
+          message['content']?.toString() != liveUsers[index]) {
+        return _LiveUserProjectionPlan.none;
+      }
+    }
+    return _LiveUserProjectionPlan(
+      representedPrefixLength: openInputs.length,
       proof: _LiveUserProjectionProof.openTurn,
     );
   }
@@ -812,9 +844,32 @@ class DesktopSessionReconciler {
       bridgeOwnedLiveUser,
     );
     if (anchorIndex == null) {
-      return _firstOpenTurnPlan(chronological);
+      return _firstOpenTurnPlan(chronological, liveUsers);
     }
+    final anchored = _anchoredLiveUserProjectionPlan(
+      chronological,
+      liveUsers,
+      anchorIndex,
+      turnStartedAt,
+    );
+    if (anchored.proof != _LiveUserProjectionProof.none) return anchored;
+    // El ancla previa puede caer dentro del propio turno abierto (p. ej. la
+    // fila de herramientas anterior a una corrección ya persistida). Solo se
+    // acepta entonces la prueba estructural estricta: prompt y correcciones
+    // durables, con identidad y el mismo texto y orden que el snapshot vivo.
+    // Una sola entrada no compara texto y aquí podría ocultar otro prompt.
+    final structural = _firstOpenTurnPlan(chronological, liveUsers);
+    return structural.representedPrefixLength > 1
+        ? structural
+        : _LiveUserProjectionPlan.none;
+  }
 
+  static _LiveUserProjectionPlan _anchoredLiveUserProjectionPlan(
+    List<Map<String, dynamic>> chronological,
+    List<String> liveUsers,
+    int anchorIndex,
+    DateTime? turnStartedAt,
+  ) {
     var terminalBoundary = anchorIndex;
     var terminalFoundAfterAnchor = false;
     for (var index = anchorIndex + 1; index < chronological.length; index++) {
@@ -871,7 +926,7 @@ class DesktopSessionReconciler {
     if (durableOpenInputs.length > liveUsers.length &&
         durableOpenInputs
             .skip(liveUsers.length)
-            .any((message) => message['_steer'] != true)) {
+            .any((message) => !_isSteerInput(message))) {
       return _LiveUserProjectionPlan.none;
     }
     return _LiveUserProjectionPlan(

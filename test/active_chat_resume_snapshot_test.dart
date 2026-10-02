@@ -6372,4 +6372,367 @@ void main() {
       expect(gateway.historyCalls, 1, reason: 'afterTurns=$callsAfterTurn');
     },
   );
+  group('tg1215 una corrección durable aparece una sola vez', () {
+    const steer = 'Lo quité ese modelo, puse otro';
+    const toolCall = {
+      'id': 'call-tg1215',
+      'type': 'function',
+      'function': {'name': 'terminal', 'arguments': '{}'},
+    };
+
+    List<String> visibleSteers(ActiveChat chat) => [
+      for (final message in chat.messages)
+        if (message['content'] == steer) message['content'] as String,
+    ];
+
+    /// Texto del bubble de usuario al que cuelga cada aparición de [steer].
+    List<String> steerOwners(ActiveChat chat) {
+      final messages = chat.messages;
+      final projection = ChatRenderProjection.build(messages);
+      return [
+        for (final unit in projection.units.reversed)
+          if (unit is ChatUserTurnUnitPlan)
+            for (final index in [
+              unit.primaryMessageIndex,
+              ...unit.supplementMessageIndexes,
+            ])
+              if (messages[index]['content'] == steer)
+                messages[unit.primaryMessageIndex]['content'] as String,
+      ];
+    }
+
+    for (final variant in const ['tras herramientas', 'ventana ampliada']) {
+      test(
+        'la proyección local no duplica la fila durable ($variant)',
+        () async {
+          final rows = <Map<String, dynamic>>[
+            if (variant == 'ventana ampliada') ...[
+              {'role': 'user', 'content': 'turno antiguo', 'row_id': 8},
+              {'role': 'assistant', 'content': 'antiguo listo', 'row_id': 9},
+            ],
+            {'role': 'user', 'content': 'cambia el modelo', 'row_id': 10},
+            {
+              'role': 'assistant',
+              'content': '',
+              'row_id': 11,
+              'tool_calls': [toolCall],
+            },
+            {
+              'role': 'tool',
+              'name': 'terminal',
+              'context': 'ls',
+              'tool_call_id': 'call-tg1215',
+            },
+            {
+              'role': 'user',
+              'content': steer,
+              'display_kind': 'steer',
+              'row_id': 12,
+            },
+            {'role': 'assistant', 'content': 'Hecho.', 'row_id': 13},
+            {'role': 'user', 'content': 'siguiente turno', 'row_id': 14},
+            {'role': 'assistant', 'content': 'ok', 'row_id': 15},
+          ];
+          final gateway = _SnapshotGateway()
+            ..snapshot = _snapshot({
+              'session_id': 'runtime-tg1215-steer',
+              'session_key': 'stored-chat',
+              'message_count': rows.length,
+              'messages': rows,
+            });
+          final chat = _chat(
+            'tg1215-steer-$variant',
+            gateway,
+            // Proyección local guardada al enviar la corrección: el ordinal 0
+            // era «cambia el modelo» en la ventana de entonces.
+            initialSteerProjections: const [
+              (anchorUserOrdinal: 0, content: steer),
+            ],
+          );
+          addTearDown(chat.dispose);
+
+          await chat.loadMessages();
+          await chat.loadMessages();
+
+          expect(visibleSteers(chat), [steer]);
+          expect(steerOwners(chat), isNot(contains('turno antiguo')));
+          expect(steerOwners(chat), isNot(contains('siguiente turno')));
+          // La fila durable ya es la autoridad: la proyección local se retira.
+          expect(chat.steerProjections, isEmpty);
+        },
+      );
+    }
+
+    test('dos correcciones idénticas reales se conservan las dos', () async {
+      final rows = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'primero', 'row_id': 20},
+        {
+          'role': 'user',
+          'content': steer,
+          'display_kind': 'steer',
+          'row_id': 21,
+        },
+        {'role': 'assistant', 'content': 'uno', 'row_id': 22},
+        {'role': 'user', 'content': 'segundo', 'row_id': 23},
+        {'role': 'assistant', 'content': 'dos', 'row_id': 24},
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-tg1215-twins',
+          'session_key': 'stored-chat',
+          'message_count': rows.length,
+          'messages': rows,
+        });
+      final chat = _chat(
+        'tg1215-steer-twins',
+        gateway,
+        // La segunda corrección, idéntica, aún no se ha persistido.
+        initialSteerProjections: const [
+          (anchorUserOrdinal: 0, content: steer),
+          (anchorUserOrdinal: 1, content: steer),
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      expect(visibleSteers(chat), [steer, steer]);
+      expect(steerOwners(chat), ['primero', 'segundo']);
+      expect(chat.steerProjections, [(anchorUserOrdinal: 1, content: steer)]);
+    });
+
+    test('la corrección en vuelo ya persistida no se repite', () async {
+      final rows = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'turno cerrado', 'row_id': 30},
+        {'role': 'assistant', 'content': 'cerrado', 'row_id': 31},
+        {'role': 'user', 'content': 'cambia el modelo', 'row_id': 32},
+        {
+          'role': 'assistant',
+          'content': '',
+          'row_id': 33,
+          'tool_calls': [toolCall],
+        },
+        {
+          'role': 'tool',
+          'name': 'terminal',
+          'context': 'ls',
+          'tool_call_id': 'call-tg1215',
+        },
+        {
+          'role': 'user',
+          'content': steer,
+          'display_kind': 'steer',
+          'row_id': 34,
+        },
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-tg1215-inflight',
+          'session_key': 'stored-chat',
+          'message_count': rows.length,
+          'messages': rows,
+          'inflight': {
+            'user': 'cambia el modelo',
+            'corrections': [steer],
+            'assistant': 'Sigo con ello',
+            'streaming': true,
+          },
+          'running': true,
+        });
+      final chat = _chat('tg1215-steer-inflight', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+      await chat.loadMessages();
+
+      expect(visibleSteers(chat), [steer]);
+      expect(
+        chat.messages.where((m) => m['content'] == 'cambia el modelo'),
+        hasLength(1),
+      );
+    });
+    test(
+      'una corrección en vuelo distinta de la durable sí se muestra',
+      () async {
+        final rows = <Map<String, dynamic>>[
+          {'role': 'user', 'content': 'turno cerrado', 'row_id': 40},
+          {'role': 'assistant', 'content': 'cerrado', 'row_id': 41},
+          {'role': 'user', 'content': 'cambia el modelo', 'row_id': 42},
+          {
+            'role': 'assistant',
+            'content': '',
+            'row_id': 43,
+            'tool_calls': [toolCall],
+          },
+          {
+            'role': 'tool',
+            'name': 'terminal',
+            'context': 'ls',
+            'tool_call_id': 'call-tg1215',
+          },
+          {
+            'role': 'user',
+            'content': steer,
+            'display_kind': 'steer',
+            'row_id': 44,
+          },
+        ];
+        final gateway = _SnapshotGateway()
+          ..snapshot = _snapshot({
+            'session_id': 'runtime-tg1215-other',
+            'session_key': 'stored-chat',
+            'message_count': rows.length,
+            'messages': rows,
+            'inflight': {
+              'user': 'cambia el modelo',
+              'corrections': [steer, 'y otra cosa nueva'],
+              'assistant': 'Sigo con ello',
+              'streaming': true,
+            },
+            'running': true,
+          });
+        final chat = _chat('tg1215-steer-other', gateway);
+        addTearDown(chat.dispose);
+
+        await chat.loadMessages();
+        await chat.loadMessages();
+
+        expect(visibleSteers(chat), [steer]);
+        expect(
+          chat.messages.where((m) => m['content'] == 'y otra cosa nueva'),
+          hasLength(1),
+        );
+        expect(
+          chat.messages.where((m) => m['content'] == 'cambia el modelo'),
+          hasLength(1),
+        );
+      },
+    );
+    Future<ActiveChat> openTurn(
+      String id, {
+      required List<String> corrections,
+      String inflightUser = 'cambia el modelo',
+      String? durableSteer = steer,
+    }) async {
+      final rows = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'turno cerrado', 'row_id': 50},
+        {'role': 'assistant', 'content': 'cerrado', 'row_id': 51},
+        {'role': 'user', 'content': 'cambia el modelo', 'row_id': 52},
+        {
+          'role': 'assistant',
+          'content': '',
+          'row_id': 53,
+          'tool_calls': [toolCall],
+        },
+        {
+          'role': 'tool',
+          'name': 'terminal',
+          'context': 'ls',
+          'tool_call_id': 'call-tg1215',
+        },
+        if (durableSteer != null)
+          {
+            'role': 'user',
+            'content': durableSteer,
+            'display_kind': 'steer',
+            'row_id': 54,
+          },
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-$id',
+          'session_key': 'stored-chat',
+          'message_count': rows.length,
+          'messages': rows,
+          'inflight': {
+            'user': inflightUser,
+            'corrections': corrections,
+            'assistant': 'Sigo con ello',
+            'streaming': true,
+          },
+          'running': true,
+        });
+      final chat = _chat(id, gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      await chat.loadMessages();
+      return chat;
+    }
+
+    test('una corrección viva con otro texto nunca se oculta', () async {
+      final chat = await openTurn(
+        'tg1215-steer-mismatch',
+        corrections: const ['otra corrección distinta'],
+      );
+      expect(visibleSteers(chat), [steer]);
+      expect(
+        chat.messages.where((m) => m['content'] == 'otra corrección distinta'),
+        hasLength(1),
+      );
+    });
+
+    test('un prompt vivo distinto del durable nunca se oculta', () async {
+      final chat = await openTurn(
+        'tg1215-prompt-mismatch',
+        corrections: const [],
+        inflightUser: 'otro prompt real',
+        durableSteer: null,
+      );
+      expect(
+        chat.messages.where((m) => m['content'] == 'otro prompt real'),
+        hasLength(1),
+      );
+    });
+
+    Future<ActiveChat> closedTurns(
+      String id,
+      List<SteerProjection> projections,
+    ) async {
+      final rows = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'primero', 'row_id': 60},
+        {
+          'role': 'user',
+          'content': steer,
+          'display_kind': 'steer',
+          'row_id': 61,
+        },
+        {'role': 'assistant', 'content': 'uno', 'row_id': 62},
+        {'role': 'user', 'content': 'segundo', 'row_id': 63},
+        {'role': 'assistant', 'content': 'dos', 'row_id': 64},
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-$id',
+          'session_key': 'stored-chat',
+          'message_count': rows.length,
+          'messages': rows,
+        });
+      final chat = _chat(id, gateway, initialSteerProjections: projections);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      return chat;
+    }
+
+    test(
+      'una fila durable de un turno anterior no retira otra proyección',
+      () async {
+        final chat = await closedTurns('tg1215-steer-earlier', const [
+          (anchorUserOrdinal: 1, content: steer),
+        ]);
+        expect(visibleSteers(chat), [steer, steer]);
+        expect(steerOwners(chat), ['primero', 'segundo']);
+        expect(chat.steerProjections, [(anchorUserOrdinal: 1, content: steer)]);
+      },
+    );
+
+    test('una fila durable solo retira una proyección idéntica', () async {
+      final chat = await closedTurns('tg1215-steer-one-claim', const [
+        (anchorUserOrdinal: 0, content: steer),
+        (anchorUserOrdinal: 0, content: steer),
+      ]);
+      expect(visibleSteers(chat), [steer, steer]);
+      expect(steerOwners(chat), ['primero', 'primero']);
+      expect(chat.steerProjections, [(anchorUserOrdinal: 0, content: steer)]);
+    });
+  });
 }

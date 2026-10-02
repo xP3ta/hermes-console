@@ -13382,8 +13382,67 @@ class ActiveChat {
     }
   }
 
+  /// Retira las proyecciones locales cuyo eco durable ya está en el
+  /// transcript. Hermes persiste cada corrección como su propia fila
+  /// `display_kind=steer` con identidad de fila; desde entonces esa fila es la
+  /// autoridad y reinsertar la proyección la duplicaría (y, si el ordinal del
+  /// ancla se desplazó al paginar o reabrir, la colgaría de otra burbuja).
+  ///
+  /// Cada fila durable satisface como mucho una proyección, en orden de envío,
+  /// y solo si está en el turno ancla o después: dos correcciones idénticas
+  /// reales siguen siendo dos.
+  static bool _isDurableSteerEcho(Map<String, dynamic> message) =>
+      message['role'] == 'user' &&
+      message['_steer'] == true &&
+      message['_desktopSnapshotKind'] != 'inflight' &&
+      canonicalTranscriptIdentity(message) != null;
+
+  void _retireSteerRecordsWithDurableEcho() {
+    final durableSteers = <({int turnOrdinal, String content})>[];
+    var turnOrdinal = -1;
+    for (var index = _messages.length - 1; index >= 0; index--) {
+      final message = _messages[index];
+      if (isRealUserTurn(message)) {
+        turnOrdinal++;
+        continue;
+      }
+      if (turnOrdinal < 0 || !_isDurableSteerEcho(message)) continue;
+      durableSteers.add((
+        turnOrdinal: turnOrdinal,
+        content: message['content']?.toString() ?? '',
+      ));
+    }
+    if (durableSteers.isEmpty) return;
+    final claimed = List<bool>.filled(durableSteers.length, false);
+    final retired = <int>{};
+    for (var record = 0; record < _steerRecords.length; record++) {
+      final projection = _steerRecords[record];
+      for (var index = 0; index < durableSteers.length; index++) {
+        final durable = durableSteers[index];
+        if (claimed[index] ||
+            durable.turnOrdinal < projection.anchorUserOrdinal ||
+            durable.content != projection.content) {
+          continue;
+        }
+        claimed[index] = true;
+        retired.add(record);
+        break;
+      }
+    }
+    if (retired.isEmpty) return;
+    final kept = [
+      for (var record = 0; record < _steerRecords.length; record++)
+        if (!retired.contains(record)) _steerRecords[record],
+    ];
+    _steerRecords
+      ..clear()
+      ..addAll(kept);
+  }
+
   void _mergeSteerRecords() {
     if (_steerRecords.isEmpty || _messages.isEmpty) return;
+    _retireSteerRecordsWithDurableEcho();
+    if (_steerRecords.isEmpty) return;
     final anchors = <int, List<String>>{};
     final authoritativeCorrectionCounts = <String, int>{};
     var latestUserOrdinal = -1;
@@ -13442,7 +13501,11 @@ class ActiveChat {
       for (final content in anchors[ordinal]!) {
         var matchingIndex = -1;
         for (var index = 0; index < existingChronological.length; index++) {
+          // Una fila durable ya retiró su proyección en
+          // `_retireSteerRecordsWithDurableEcho`; reutilizarla aquí fundiría
+          // una segunda corrección idéntica real con la ya persistida.
           if (unusedExisting[index] &&
+              !_isDurableSteerEcho(existingChronological[index]) &&
               existingChronological[index]['content'] == content) {
             matchingIndex = index;
             break;
