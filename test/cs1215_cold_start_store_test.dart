@@ -27,6 +27,48 @@ class MemoryColdStartStorage implements ColdStartStorage {
 
   @override
   Future<void> delete(String key) async => values.remove(key);
+
+  @override
+  Future<Iterable<String>> keys() async => values.keys.toList();
+}
+
+/// Simulated process death: the first write whose key matches [crashOn]
+/// throws and nothing after it in that operation runs.
+class CrashingColdStartStorage extends MemoryColdStartStorage {
+  CrashingColdStartStorage(this.crashOn);
+
+  bool Function(String key)? crashOn;
+
+  @override
+  Future<void> write(String key, String value) async {
+    final crash = crashOn;
+    if (crash != null && crash(key)) {
+      crashOn = null;
+      throw StateError('process killed');
+    }
+    await super.write(key, value);
+  }
+}
+
+const _tailKeyPrefix = 'cold_start_tail_v1.';
+
+/// Tail blobs on disk that the persisted index does not reference: they are
+/// invisible to [ColdStartStore.loadTails] and must never exist.
+Set<String> _unindexedTails(MemoryColdStartStorage storage) {
+  final raw = storage.values[ColdStartStore.indexKey];
+  final indexed = <String>{};
+  if (raw != null) {
+    try {
+      final data = jsonDecode(raw);
+      for (final item in (data['tails'] as List? ?? const [])) {
+        indexed.add((item as Map)['k'] as String);
+      }
+    } catch (_) {}
+  }
+  return {
+    for (final key in storage.values.keys)
+      if (key.startsWith(_tailKeyPrefix) && !indexed.contains(key)) key,
+  };
 }
 
 final _connection = SavedConnection(
@@ -120,6 +162,25 @@ void main() {
       expect(storage.writes, tailWrites + 1);
     });
 
+    test('remembering the same route again renews its age', () async {
+      final storage = MemoryColdStartStorage();
+      var now = 1000;
+      final store = ColdStartStore(storage: storage, nowMs: () => now);
+      const route = ColdStartRoute(
+        kind: ColdStartRouteKind.chat,
+        connectionId: 'c',
+        profile: 'default',
+        sessionId: 's',
+      );
+      await store.rememberRoute(route);
+      now += ColdStartStore.maxAge.inMilliseconds - 1000;
+      // Still on the same chat, close to expiry: the route is renewed.
+      await store.rememberRoute(route);
+      now += 2000;
+      final fresh = ColdStartStore(storage: storage, nowMs: () => now);
+      expect((await fresh.routeFor('c'))?.sessionId, 's');
+    });
+
     test('a corrupt index never blocks and is rebuilt', () async {
       final storage = MemoryColdStartStorage()
         ..values[ColdStartStore.indexKey] = '{corrupt';
@@ -203,6 +264,108 @@ void main() {
       final store = await seeded(storage);
       await store.clearAll();
       expect(storage.values, isEmpty);
+    });
+  });
+
+  group('ColdStartStore crash safety', () {
+    Future<void> save(ColdStartStore store, String id, {String conn = 'c'}) =>
+        store.saveTail(
+          connectionId: conn,
+          profile: 'default',
+          storedSessionId: id,
+          routeSessionId: 'route-$id',
+          aliases: {id, 'route-$id'},
+          newestFirst: _rows(id, 2),
+        );
+
+    test('the index is written before the tail: a crash between both '
+        'writes never leaves an undiscoverable blob', () async {
+      final storage = CrashingColdStartStorage(
+        (key) => key == ColdStartStore.indexKey,
+      );
+      await expectLater(
+        save(ColdStartStore(storage: storage), 's1'),
+        throwsStateError,
+      );
+      expect(_unindexedTails(storage), isEmpty);
+      expect(
+        storage.values.keys.where((k) => k.startsWith(_tailKeyPrefix)),
+        isEmpty,
+      );
+    });
+
+    test('a normal save leaves every blob indexed and discoverable', () async {
+      final storage = MemoryColdStartStorage();
+      final store = ColdStartStore(storage: storage);
+      await save(store, 's1');
+      await save(store, 's2');
+      expect(_unindexedTails(storage), isEmpty);
+      expect(
+        (await ColdStartStore(
+          storage: storage,
+        ).loadTails()).map((t) => t.storedSessionId),
+        ['s2', 's1'],
+      );
+    });
+
+    test('a crash after the index but before the tail heals on load and '
+        'cleanup leaves nothing', () async {
+      final storage = CrashingColdStartStorage(
+        (key) => key.startsWith(_tailKeyPrefix),
+      );
+      await expectLater(
+        save(ColdStartStore(storage: storage), 's1'),
+        throwsStateError,
+      );
+      final restarted = ColdStartStore(storage: storage);
+      expect(await restarted.loadTails(), isEmpty);
+      await restarted.clearAll();
+      expect(storage.values, isEmpty);
+    });
+
+    group('a corrupt index never strands encrypted tails', () {
+      Future<MemoryColdStartStorage> corrupted() async {
+        final storage = MemoryColdStartStorage();
+        final store = ColdStartStore(storage: storage);
+        await save(store, 'a', conn: 'c1');
+        await save(store, 'b', conn: 'c2');
+        storage.values[ColdStartStore.indexKey] = '{corrupt';
+        return storage;
+      }
+
+      test('clearAll', () async {
+        final storage = await corrupted();
+        await ColdStartStore(storage: storage).clearAll();
+        expect(storage.values, isEmpty);
+      });
+
+      test('forgetScope', () async {
+        final storage = await corrupted();
+        await ColdStartStore(storage: storage).forgetScope('c1');
+        expect(
+          storage.values.keys.where(
+            (k) => k.startsWith(ColdStartStore.tailKey('c1', 'default', 'a')),
+          ),
+          isEmpty,
+        );
+        expect(_unindexedTails(storage), isEmpty);
+      });
+
+      test('forgetSession', () async {
+        final storage = await corrupted();
+        await ColdStartStore(storage: storage).forgetSession(
+          connectionId: 'c1',
+          profile: 'default',
+          sessionId: 'route-a',
+        );
+        expect(
+          storage.values.containsKey(
+            ColdStartStore.tailKey('c1', 'default', 'a'),
+          ),
+          isFalse,
+        );
+        expect(_unindexedTails(storage), isEmpty);
+      });
     });
   });
 

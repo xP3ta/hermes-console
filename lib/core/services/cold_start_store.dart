@@ -15,6 +15,9 @@ abstract interface class ColdStartStorage {
   Future<void> write(String key, String value);
 
   Future<void> delete(String key);
+
+  /// Every key in the store, so cleanup can sweep blobs the index lost.
+  Future<Iterable<String>> keys();
 }
 
 final class SecureColdStartStorage implements ColdStartStorage {
@@ -33,6 +36,9 @@ final class SecureColdStartStorage implements ColdStartStorage {
 
   @override
   Future<void> delete(String key) => _secure.delete(key: key);
+
+  @override
+  Future<Iterable<String>> keys() async => (await _secure.readAll()).keys;
 }
 
 /// Surface the app was showing when it last went to the background.
@@ -174,6 +180,7 @@ class ColdStartStore {
   static const Duration maxAge = Duration(days: 30);
 
   static const indexKey = 'cold_start_index_v1';
+  static const Duration _routeRenewal = Duration(hours: 1);
   static const _tailPrefix = 'cold_start_tail_v1.';
 
   final ColdStartStorage _storage;
@@ -241,7 +248,13 @@ class ColdStartStore {
       savedAtMs: _nowMs(),
     );
     final previous = index.routes[route.connectionId];
-    if (previous != null && previous.sameTarget(stamped)) return;
+    // Staying on the same surface keeps it alive: its age is renewed, at most
+    // once per [_routeRenewal] so a visibility tick never rewrites the index.
+    if (previous != null &&
+        previous.sameTarget(stamped) &&
+        stamped.savedAtMs - previous.savedAtMs < _routeRenewal.inMilliseconds) {
+      return;
+    }
     index.routes[route.connectionId] = stamped;
     await _saveIndex(index);
   });
@@ -307,10 +320,6 @@ class ColdStartStore {
         '"a":${jsonEncode(aliases.where((a) => a.isNotEmpty).toList()..sort())},'
         '"rows":[${encodedRows.join(',')}]}';
     final unchanged = _written[key] == payload && index.tails.containsKey(key);
-    if (!unchanged) {
-      await _storage.write(key, payload);
-      _written[key] = payload;
-    }
     index.tails.remove(key);
     index.tails[key] = _TailMeta(
       connectionId: connectionId,
@@ -331,11 +340,20 @@ class ColdStartStore {
       index.tails.remove(oldest);
       evicted.add(oldest);
     }
+    // Crash-safe order: evicted blobs go first (an index entry without its
+    // blob is dropped on load), then the index records the intent, and only
+    // then is the tail written. A process death between any two writes never
+    // leaves an encrypted blob that the index cannot reach.
     for (final stale in evicted) {
       _written.remove(stale);
       await _storage.delete(stale);
     }
     await _saveIndex(index);
+    if (!unchanged) {
+      _written.remove(key);
+      await _storage.write(key, payload);
+      _written[key] = payload;
+    }
   });
 
   /// Newest-first list of persisted tails (most recently saved first).
@@ -419,6 +437,19 @@ class ColdStartStore {
     if (changed) await _saveIndex(index);
   }
 
+  /// Deletes every tail blob the index does not reference. Such a blob is
+  /// unreachable (corrupt index, older crash) and must not outlive a
+  /// cleanup.
+  Future<void> _sweepUnindexedTails(_ColdStartIndex index) async {
+    for (final key in (await _storage.keys()).toList()) {
+      if (!key.startsWith(_tailPrefix) || index.tails.containsKey(key)) {
+        continue;
+      }
+      _written.remove(key);
+      await _storage.delete(key);
+    }
+  }
+
   /// A confirmed remote deletion: drops the tail and a route naming it.
   Future<void> forgetSession({
     required String connectionId,
@@ -446,6 +477,7 @@ class ColdStartStore {
     if (routeGone) index.routes.remove(connectionId);
     await _deleteTails(index, keys);
     if (routeGone && keys.isEmpty) await _saveIndex(index);
+    await _sweepUnindexedTails(index);
   });
 
   /// Connection deleted, a profile's local history cleared, or credentials
@@ -466,6 +498,7 @@ class ColdStartStore {
         if (routeGone) index.routes.remove(connectionId);
         await _deleteTails(index, keys);
         if (routeGone && keys.isEmpty) await _saveIndex(index);
+        await _sweepUnindexedTails(index);
       });
 
   /// Removes everything this store ever wrote.
@@ -476,6 +509,7 @@ class ColdStartStore {
     }
     index.tails.clear();
     index.routes.clear();
+    await _sweepUnindexedTails(index);
     _written.clear();
     await _storage.delete(indexKey);
   });
