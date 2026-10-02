@@ -155,6 +155,8 @@ import 'cron_screen.dart';
 import 'extensions_center_screen.dart';
 import 'memory_screen.dart';
 import 'models_screen.dart';
+import '../models/provider_auth_failure.dart';
+import '../widgets/provider_reauth.dart';
 import 'recovery_center_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
@@ -1242,6 +1244,12 @@ class ChatScreen extends StatefulWidget {
   /// `cwd_explicit`, igual que Desktop; null para un chat sin carpeta.
   final String? newChatWorkspace;
 
+  /// Dashboard client for the provider sign-in started from a credential
+  /// error; tests inject a fake Dashboard.
+  @visibleForTesting
+  final DashboardClient Function(SavedConnection connection)?
+  providerReauthClientFactory;
+
   /// Caché de identidad que Mission Control ya mantiene para Bot Chat.
   final MissionProfileAvatarCache? missionAvatarCache;
 
@@ -1284,6 +1292,7 @@ class ChatScreen extends StatefulWidget {
     this.requestComposerFocus = false,
     this.initialStoredSessionId,
     this.newChatWorkspace,
+    this.providerReauthClientFactory,
     this.missionAvatarCache,
     this.missionBotProfile,
     this.performanceProbe,
@@ -8376,6 +8385,46 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
+  bool _providerReauthRunning = false;
+
+  /// "Volver a iniciar sesión" / "Revisar la clave" on a provider credential
+  /// failure. After a successful sign-in the turn can be retried in place.
+  Future<void> _reauthProvider(
+    ProviderAuthFailure failure, {
+    VoidCallback? onRetry,
+  }) async {
+    if (_providerReauthRunning) return;
+    setState(() => _providerReauthRunning = true);
+    var renewed = false;
+    try {
+      renewed = await runProviderReauth(
+        context: context,
+        connection: widget.connection,
+        failure: failure,
+        profile: Session.profileOwner(_chat.sessionProfile),
+        clientFactory: widget.providerReauthClientFactory,
+      );
+    } finally {
+      if (mounted) setState(() => _providerReauthRunning = false);
+    }
+    if (!renewed || !mounted) return;
+    if (failure.origin == ProviderAuthOrigin.compaction) {
+      _chat.dismissCompactionAuthFailure();
+    }
+    final s = Strings.of(context);
+    final label = failure.label.isEmpty ? failure.provider : failure.label;
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(
+        content: Text(s.hr1215SignedInAgain(label)),
+        duration: const Duration(seconds: 10),
+        action: onRetry == null
+            ? null
+            : SnackBarAction(label: s.chaRetry, onPressed: onRetry),
+      ),
+      kind: HermesNoticeKind.success,
+    );
+  }
+
   /// Retry the last failed send.
   Future<void> _retryLastPrompt([String? bubblePrompt]) async {
     // The error bubble remembers its own prompt; after a relaunch the screen's
@@ -11914,6 +11963,18 @@ class _ChatScreenState extends State<ChatScreen>
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                if (_chat.compactionAuthFailure
+                                    case final compactionAuth?)
+                                  ProviderAuthBanner(
+                                    failure: compactionAuth,
+                                    onAction: _providerReauthRunning
+                                        ? null
+                                        : () => unawaited(
+                                            _reauthProvider(compactionAuth),
+                                          ),
+                                    onDismiss:
+                                        _chat.dismissCompactionAuthFailure,
+                                  ),
                                 if (_chat.offerStaleResumedSessionStop)
                                   StaleRunningSessionBanner(
                                     enabled: _chat.gatewayConnected,
@@ -15380,14 +15441,22 @@ class _ChatScreenState extends State<ChatScreen>
     // Error bubble with retry
     if (role == 'assistant_error') {
       final prompt = (msg['_prompt'] as String?) ?? _lastPrompt;
+      final authFailure = ProviderAuthFailure.fromJson(
+        msg[providerAuthFailureKey],
+      );
+      final onRetry = _chat.conflictReadOnly
+          ? null
+          : () => unawaited(_retryLastPrompt(prompt));
       return _ErrorBubble(
         error: activeChatStoredErrorUiMessage(content),
-        onRetry: _chat.conflictReadOnly
-            ? null
-            : () => unawaited(_retryLastPrompt(prompt)),
+        onRetry: onRetry,
         prompt: prompt,
         onRestartGateway: _restartGatewayFromChat,
         onNewSession: _chat.conflictReadOnly ? null : _newChat,
+        authFailure: authFailure,
+        onReauth: authFailure == null || _providerReauthRunning
+            ? null
+            : () => unawaited(_reauthProvider(authFailure, onRetry: onRetry)),
       );
     }
 
@@ -16783,12 +16852,19 @@ class _ErrorBubble extends StatefulWidget {
   /// contexto del modelo (reintentar repetiría el mismo fallo).
   final VoidCallback? onNewSession;
 
+  /// The provider rejected its credential: the card names it and offers the
+  /// fix (sign in again / check the key) before Retry, as Desktop does.
+  final ProviderAuthFailure? authFailure;
+  final VoidCallback? onReauth;
+
   const _ErrorBubble({
     required this.error,
     required this.prompt,
     required this.onRetry,
     this.onRestartGateway,
     this.onNewSession,
+    this.authFailure,
+    this.onReauth,
   });
 
   @override
@@ -16827,10 +16903,16 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
     final colors = Theme.of(context).hermes;
     final str = Strings.of(context);
     final kind = _classifyError(widget.error);
-    final summary = widget.error.length > 140
+    final authFailure = widget.authFailure;
+    final summary = authFailure != null
+        ? providerAuthBody(str, authFailure)
+        : widget.error.length > 140
         ? '${widget.error.substring(0, 140)}…'
         : widget.error;
-    final hasMore = widget.error.length > 140 || widget.error.contains('\n');
+    final hasMore =
+        authFailure != null ||
+        widget.error.length > 140 ||
+        widget.error.contains('\n');
 
     return Padding(
       padding: const EdgeInsets.only(left: 12, right: 56, top: 11, bottom: 3),
@@ -16872,14 +16954,22 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
               children: [
                 Row(
                   children: [
-                    Icon(kind.icon, size: 14, color: colors.error),
+                    Icon(
+                      authFailure != null ? Icons.key_off_rounded : kind.icon,
+                      size: 14,
+                      color: colors.error,
+                    ),
                     const SizedBox(width: 6),
-                    Text(
-                      _kindLabel(kind, str),
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: colors.error,
+                    Flexible(
+                      child: Text(
+                        authFailure != null
+                            ? providerAuthTitle(str, authFailure)
+                            : _kindLabel(kind, str),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: colors.error,
+                        ),
                       ),
                     ),
                   ],
@@ -16894,7 +16984,9 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                     fontFamily: _expanded ? 'monospace' : null,
                   ),
                 ),
-                if (_kindHint(kind, str) != null && !_expanded) ...[
+                if (authFailure == null &&
+                    _kindHint(kind, str) != null &&
+                    !_expanded) ...[
                   const SizedBox(height: 4),
                   Text(
                     _kindHint(kind, str)!,
@@ -16905,10 +16997,20 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                 // A-114 (spec 028): las acciones de recuperación pasan a
                 // targets ≥48dp con rol de botón (eran texto de 11px con
                 // ~25dp tocables); el visual compacto se conserva.
-                Row(
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
                   children: [
+                    if (authFailure != null)
+                      _ErrorBubbleAction(
+                        key: const ValueKey('hr1215-error-reauth'),
+                        label: providerAuthActionLabel(str, authFailure),
+                        color: colors.error,
+                        onTap: widget.onReauth,
+                      ),
                     if (kind == _ErrorKind.sessionTooLarge &&
-                        widget.onNewSession != null)
+                        widget.onNewSession != null &&
+                        authFailure == null)
                       _ErrorBubbleAction(
                         label: Strings.of(context).chaNewChatTooltip,
                         color: colors.error,
@@ -16923,17 +17025,15 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                     // En errores de "agente colgado"/conexión, ofrecer reiniciar
                     // el gateway del servidor (puede estar atascado).
                     if (widget.onRestartGateway != null &&
+                        authFailure == null &&
                         (kind == _ErrorKind.firstTokenTimeout ||
-                            kind == _ErrorKind.connection)) ...[
-                      const SizedBox(width: 8),
+                            kind == _ErrorKind.connection))
                       _ErrorBubbleAction(
                         label: Strings.of(context).chaRestartGateway,
                         color: colors.error,
                         onTap: widget.onRestartGateway,
                       ),
-                    ],
-                    if (hasMore) ...[
-                      const SizedBox(width: 8),
+                    if (hasMore)
                       _ErrorBubbleAction(
                         label: _expanded
                             ? Strings.of(context).chaErrHideDetails
@@ -16942,7 +17042,6 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                         outlined: false,
                         onTap: () => setState(() => _expanded = !_expanded),
                       ),
-                    ],
                   ],
                 ),
               ],
@@ -16964,6 +17063,7 @@ class _ErrorBubbleAction extends StatelessWidget {
   final bool outlined;
 
   const _ErrorBubbleAction({
+    super.key,
     required this.label,
     required this.onTap,
     required this.color,
@@ -16980,6 +17080,9 @@ class _ErrorBubbleAction extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           child: Center(
+            // Shrink to the pill: inside the card's Wrap an unbounded Center
+            // would take a whole line per action.
+            widthFactor: 1,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: outlined

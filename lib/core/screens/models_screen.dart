@@ -1264,7 +1264,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
     final ok = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => _OAuthLoginScreen(
+        builder: (_) => ProviderOAuthLoginScreen(
           providerName: provider.name,
           providerSlug: oauthProviderId,
           url: url,
@@ -1292,55 +1292,14 @@ class _ModelsScreenState extends State<ModelsScreen> {
   static String _firstOAuthString(
     Map<String, dynamic> data,
     List<String> keys,
-  ) {
-    for (final key in keys) {
-      final value = data[key]?.toString().trim();
-      if (value != null && value.isNotEmpty) return value;
-    }
-    return '';
-  }
+  ) => providerOAuthStartField(data, keys);
 
-  String _normalizeOAuthBrowserUrl(String rawUrl) {
-    final uri = Uri.tryParse(rawUrl);
-    if (uri == null) return rawUrl;
-    // Agente on-device (Termux): el callback OAuth corre en ESTE mismo
-    // dispositivo, así que `localhost` en el redirect_uri ya apunta a la máquina
-    // correcta. Reescribir host/puerto al del dashboard rompe flujos con puerto
-    // fijo registrado — caso OpenAI Codex, cuyo callback escucha en
-    // localhost:1455 (único redirect_uri permitido por su client_id): tras
-    // reescribirlo a :9119 el código nunca llega al listener → el poll se queda
-    // "pending" y la app acaba diciendo "login no completado / no aprobado".
-    if (widget.connection.onDeviceLoopback) return rawUrl;
-    final dashboard = Uri.tryParse(_client.baseUrl);
-    if (dashboard == null || dashboard.host.isEmpty) return rawUrl;
-
-    final query = Map<String, String>.from(uri.queryParameters);
-    var changed = false;
-    for (final key in const ['redirect_uri', 'redirect_url', 'callback_url']) {
-      final value = query[key];
-      if (value == null || value.isEmpty) continue;
-      final redirect = Uri.tryParse(value);
-      if (redirect == null) continue;
-      final local =
-          redirect.host == 'localhost' ||
-          redirect.host == '127.0.0.1' ||
-          redirect.host == '0.0.0.0';
-      if (!local) continue;
-      query[key] = redirect
-          .replace(
-            scheme: dashboard.scheme,
-            host: dashboard.host,
-            port: dashboard.hasPort ? dashboard.port : null,
-          )
-          .toString();
-      changed = true;
-    }
-
-    if (changed && kDebugMode) {
-      debugPrint('OAuth URL redirect normalized for ${dashboard.origin}');
-    }
-    return changed ? uri.replace(queryParameters: query).toString() : rawUrl;
-  }
+  String _normalizeOAuthBrowserUrl(String rawUrl) =>
+      normalizeProviderOAuthBrowserUrl(
+        rawUrl,
+        connection: widget.connection,
+        dashboardBaseUrl: _client.baseUrl,
+      );
 
   Future<void> _setFallback(List<Map<String, String>> providers) async {
     final client = await _bridgeMgr.clientFor(widget.connection.id);
@@ -2662,7 +2621,67 @@ class _ModelTonalGroup extends StatelessWidget {
   }
 }
 
-class _OAuthLoginScreen extends StatefulWidget {
+/// First non-empty value among [keys] of an OAuth `start` response (device
+/// code flows name the same field differently per provider).
+String providerOAuthStartField(Map<String, dynamic> data, List<String> keys) {
+  for (final key in keys) {
+    final value = data[key]?.toString().trim();
+    if (value != null && value.isNotEmpty) return value;
+  }
+  return '';
+}
+
+/// The verification URL a phone can open: a loopback `redirect_uri` points at
+/// the Dashboard host instead of the phone itself.
+String normalizeProviderOAuthBrowserUrl(
+  String rawUrl, {
+  required SavedConnection connection,
+  required String dashboardBaseUrl,
+}) {
+  final uri = Uri.tryParse(rawUrl);
+  if (uri == null) return rawUrl;
+  // Agente on-device (Termux): el callback OAuth corre en ESTE mismo
+  // dispositivo, así que `localhost` en el redirect_uri ya apunta a la máquina
+  // correcta. Reescribir host/puerto al del dashboard rompe flujos con puerto
+  // fijo registrado — caso OpenAI Codex, cuyo callback escucha en
+  // localhost:1455 (único redirect_uri permitido por su client_id): tras
+  // reescribirlo a :9119 el código nunca llega al listener → el poll se queda
+  // "pending" y la app acaba diciendo "login no completado / no aprobado".
+  if (connection.onDeviceLoopback) return rawUrl;
+  final dashboard = Uri.tryParse(dashboardBaseUrl);
+  if (dashboard == null || dashboard.host.isEmpty) return rawUrl;
+
+  final query = Map<String, String>.from(uri.queryParameters);
+  var changed = false;
+  for (final key in const ['redirect_uri', 'redirect_url', 'callback_url']) {
+    final value = query[key];
+    if (value == null || value.isEmpty) continue;
+    final redirect = Uri.tryParse(value);
+    if (redirect == null) continue;
+    final local =
+        redirect.host == 'localhost' ||
+        redirect.host == '127.0.0.1' ||
+        redirect.host == '0.0.0.0';
+    if (!local) continue;
+    query[key] = redirect
+        .replace(
+          scheme: dashboard.scheme,
+          host: dashboard.host,
+          port: dashboard.hasPort ? dashboard.port : null,
+        )
+        .toString();
+    changed = true;
+  }
+
+  if (changed && kDebugMode) {
+    debugPrint('OAuth URL redirect normalized for ${dashboard.origin}');
+  }
+  return changed ? uri.replace(queryParameters: query).toString() : rawUrl;
+}
+
+/// Device-code sign-in: shows the code, opens the browser and polls until the
+/// provider confirms. Pops `true` on success.
+class ProviderOAuthLoginScreen extends StatefulWidget {
   final String providerName;
   final String providerSlug;
   final String url;
@@ -2670,7 +2689,8 @@ class _OAuthLoginScreen extends StatefulWidget {
   final int expiresIn;
   final Future<Map<String, dynamic>> Function() poll;
 
-  const _OAuthLoginScreen({
+  const ProviderOAuthLoginScreen({
+    super.key,
     required this.providerName,
     required this.providerSlug,
     required this.url,
@@ -2680,10 +2700,11 @@ class _OAuthLoginScreen extends StatefulWidget {
   });
 
   @override
-  State<_OAuthLoginScreen> createState() => _OAuthLoginScreenState();
+  State<ProviderOAuthLoginScreen> createState() =>
+      _ProviderOAuthLoginScreenState();
 }
 
-class _OAuthLoginScreenState extends State<_OAuthLoginScreen> {
+class _ProviderOAuthLoginScreenState extends State<ProviderOAuthLoginScreen> {
   Timer? _timer;
   Timer? _countdown;
   String? _error;

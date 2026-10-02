@@ -4246,12 +4246,40 @@ class DashboardClient {
       apiDelete('providers/oauth/$providerId');
 
   /// POST /api/providers/oauth/{id}/start — inicia el login OAuth (device_code).
-  Future<Map<String, dynamic>> startOAuth(String providerId) =>
-      apiPost('providers/oauth/$providerId/start');
+  /// [profile] renueva la credencial de ese perfil del gateway, no la del
+  /// perfil principal (Desktop `startManualProviderOAuth(provider, profile)`).
+  Future<Map<String, dynamic>> startOAuth(
+    String providerId, {
+    String? profile,
+  }) => apiPost(
+    'providers/oauth/${Uri.encodeComponent(providerId)}/start'
+    '${_profileQuery(profile)}',
+  );
 
   /// GET /api/providers/oauth/{id}/poll/{session} — estado del login OAuth.
-  Future<Map<String, dynamic>> pollOAuth(String providerId, String sessionId) =>
-      apiGet('providers/oauth/$providerId/poll/$sessionId');
+  Future<Map<String, dynamic>> pollOAuth(
+    String providerId,
+    String sessionId, {
+    String? profile,
+  }) => apiGet(
+    'providers/oauth/${Uri.encodeComponent(providerId)}/poll/'
+    '${Uri.encodeComponent(sessionId)}${_profileQuery(profile)}',
+  );
+
+  /// GET /api/providers/oauth — the Accounts catalog of [profile]: one row per
+  /// provider with `id`, `name`, `flow` (device_code / external),
+  /// `cli_command` and `status.logged_in`.
+  Future<List<Map<String, dynamic>>> getOAuthProviders({
+    String? profile,
+  }) async {
+    final res = await apiGet('providers/oauth${_profileQuery(profile)}');
+    final list = res['providers'];
+    if (list is! List) return const [];
+    return [
+      for (final row in list)
+        if (row is Map) Map<String, dynamic>.from(row),
+    ];
+  }
 
   Future<List<Map<String, dynamic>>> getSkills({String? profile}) async {
     final data = await apiGetList('skills${_profileQuery(profile)}');

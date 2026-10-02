@@ -21,6 +21,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart' show MarkdownBody;
@@ -29,6 +30,7 @@ import 'package:flutter/services.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter_test/flutter_test.dart';
 import 'pill_copy_fit_test.dart' show expectPillLabelsFit;
+import 'support/design_shots.dart' show loadDesignFonts;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -2621,6 +2623,7 @@ void main() {
     userServerMediaFetcher,
     String? newChatWorkspace,
     Map<ModelPickerSource, ModelPickerFallback>? modelPickerFallbacks,
+    DashboardClient Function(SavedConnection)? providerReauthClientFactory,
   }) async {
     // Forzar locale español para que las cadenas i18n de ChatScreen coincidan
     // con las expectativas del test (el test fue escrito en español).
@@ -2771,6 +2774,7 @@ void main() {
           userServerMediaFetcher: userServerMediaFetcher,
           newChatWorkspace: newChatWorkspace,
           modelPickerFallbacks: modelPickerFallbacks,
+          providerReauthClientFactory: providerReauthClientFactory,
         ),
       ),
     );
@@ -29540,6 +29544,395 @@ void main() {
     expect(find.text(reason), findsNWidgets(2));
     await tester.pump(const Duration(seconds: 8));
     expect(tester.takeException(), isNull);
+  });
+
+  group('hr1215 provider sign-in expired', () {
+    // The owner's server lost its Anthropic OAuth grant: every turn and every
+    // compaction failed with a provider 401 and the chat only said "No se
+    // pudo completar la respuesta". Desktop shows "Sign in again" for that
+    // failure (assistant-message.tsx, lib/error-surface.ts).
+    const revoked =
+        'HTTP 401: {"type":"error","error":{"type":"authentication_error",'
+        '"message":"OAuth access token has been revoked."}}';
+
+    ({DashboardClient client, List<String> calls}) fakeDashboard({
+      required List<Map<String, dynamic>> providers,
+      bool Function()? loggedIn,
+    }) {
+      final calls = <String>[];
+      final client = DashboardClient(
+        host: '127.0.0.1',
+        manualToken: 'dashboard-token',
+        httpClientOverride: MockClient((request) async {
+          calls.add(
+            '${request.method} ${request.url.path}?${request.url.query}',
+          );
+          final path = request.url.path;
+          if (path == '/api/providers/oauth') {
+            return http.Response(
+              jsonEncode({
+                'providers': [
+                  for (final row in providers)
+                    {
+                      ...row,
+                      'status': {'logged_in': loggedIn?.call() ?? false},
+                    },
+                ],
+              }),
+              200,
+            );
+          }
+          if (path.endsWith('/start')) {
+            return http.Response(
+              jsonEncode({
+                'session_id': 'oauth-1',
+                'verification_url': 'https://auth.example/device',
+                'user_code': 'ABCD-1234',
+                'expires_in': 600,
+              }),
+              200,
+            );
+          }
+          if (path.contains('/poll/')) {
+            return http.Response(jsonEncode({'status': 'approved'}), 200);
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      return (client: client, calls: calls);
+    }
+
+    Future<(ActiveChat, _UiRewindGateway)> failTurn(
+      WidgetTester tester, {
+      required Map<String, dynamic> payload,
+      DashboardClient Function(SavedConnection)? dashboard,
+      String profile = 'default',
+    }) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-hr1215'),
+        messagesLoaded: true,
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+        session: profile == 'default'
+            ? null
+            : _session().copyWith(profile: profile),
+        providerReauthClientFactory: dashboard,
+      );
+      expect(
+        await chat.send(
+          fullText: 'Resume el informe',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      gateway.emit('message.complete', payload);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      return (chat, gateway);
+    }
+
+    testWidgets('a revoked OAuth grant offers to sign in again, then retry', (
+      tester,
+    ) async {
+      final dashboard = fakeDashboard(
+        providers: [
+          {'id': 'openai-codex', 'name': 'ChatGPT', 'flow': 'device_code'},
+        ],
+      );
+      await failTurn(
+        tester,
+        dashboard: (_) => dashboard.client,
+        payload: const {
+          'text': 'Your sign-in expired.',
+          'status': 'error',
+          'error': revoked,
+          'recoverable': true,
+          'error_surface': {
+            'layer': 'auth',
+            'code': 'auth',
+            'retryable': false,
+            'provider': 'openai-codex',
+            'provider_label': 'ChatGPT',
+            'auth_kind': 'oauth',
+          },
+        },
+      );
+
+      expect(find.text('La sesión de ChatGPT ha caducado'), findsOneWidget);
+      final action = find.byKey(const ValueKey('hr1215-error-reauth'));
+      expect(action, findsOneWidget);
+      expect(
+        find.descendant(
+          of: action,
+          matching: find.text('Volver a iniciar sesión'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('↺ reintentar'), findsOneWidget);
+
+      await tester.tap(action);
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('ABCD-1234'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      expect(
+        dashboard.calls,
+        containsAllInOrder([
+          'GET /api/providers/oauth?',
+          'POST /api/providers/oauth/openai-codex/start?',
+          'GET /api/providers/oauth/openai-codex/poll/oauth-1?',
+        ]),
+      );
+      expect(find.text('Sesión de ChatGPT renovada'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(HermesNoticeCard),
+          matching: find.text('↺ reintentar'),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the sign-in renews the chat gateway profile', (tester) async {
+      final dashboard = fakeDashboard(
+        providers: [
+          {'id': 'nous', 'name': 'Nous Portal', 'flow': 'device_code'},
+        ],
+      );
+      await failTurn(
+        tester,
+        profile: 'bot-ana',
+        dashboard: (_) => dashboard.client,
+        payload: const {
+          'text': 'x',
+          'status': 'error',
+          'error': 'refresh token expired',
+          'error_surface': {
+            'layer': 'auth',
+            'code': 'auth_permanent',
+            'retryable': false,
+            'provider': 'nous',
+            'provider_label': 'Nous Portal',
+            'auth_kind': 'oauth',
+          },
+        },
+      );
+      await tester.tap(find.byKey(const ValueKey('hr1215-error-reauth')));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(dashboard.calls.first, 'GET /api/providers/oauth?profile=bot-ana');
+      expect(
+        dashboard.calls,
+        contains('POST /api/providers/oauth/nous/start?profile=bot-ana'),
+      );
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pump(const Duration(milliseconds: 400));
+    });
+
+    testWidgets(
+      'Anthropic reported as api_key but naming an OAuth token signs in '
+      'from the server terminal',
+      (tester) async {
+        var signedIn = false;
+        final dashboard = fakeDashboard(
+          providers: [
+            {
+              'id': 'anthropic',
+              'name': 'Anthropic Account',
+              'flow': 'external',
+              'cli_command': 'hermes auth add anthropic',
+            },
+          ],
+          loggedIn: () => signedIn,
+        );
+        await failTurn(
+          tester,
+          dashboard: (_) => dashboard.client,
+          payload: const {
+            'text': 'x',
+            'status': 'error',
+            'error': revoked,
+            'error_surface': {
+              'layer': 'auth',
+              'code': 'auth',
+              'retryable': false,
+              'provider': 'anthropic',
+              'provider_label': 'Anthropic',
+              'auth_kind': 'api_key',
+            },
+          },
+        );
+        expect(find.text('La sesión de Anthropic ha caducado'), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey('hr1215-error-reauth')));
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        expect(
+          find.textContaining('hermes auth add anthropic'),
+          findsOneWidget,
+        );
+        signedIn = true;
+        await tester.tap(find.byKey(const ValueKey('hr1215-signed-in')));
+        for (var i = 0; i < 10; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        expect(
+          dashboard.calls.where((c) => c.contains('/start')),
+          isEmpty,
+          reason: 'Hermes never mints Claude tokens over HTTP',
+        );
+        expect(find.text('Sesión de Anthropic renovada'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('a rejected API key points at the key, not a sign-in', (
+      tester,
+    ) async {
+      await failTurn(
+        tester,
+        payload: const {
+          'text': 'x',
+          'status': 'error',
+          'error': 'Error code: 401 - invalid x-api-key',
+          'error_surface': {
+            'layer': 'auth',
+            'code': 'auth',
+            'retryable': false,
+            'provider': 'openrouter',
+            'provider_label': 'OpenRouter',
+            'auth_kind': 'api_key',
+          },
+        },
+      );
+      expect(find.text('Revisa la clave de OpenRouter'), findsOneWidget);
+      expect(find.text('Revisar la clave'), findsOneWidget);
+      expect(find.text('Volver a iniciar sesión'), findsNothing);
+    });
+
+    testWidgets('a non-auth failure keeps the plain error card', (
+      tester,
+    ) async {
+      await failTurn(
+        tester,
+        payload: const {
+          'text': 'x',
+          'status': 'error',
+          'error': 'upstream 503',
+          'error_surface': {
+            'layer': 'provider',
+            'code': 'server_error',
+            'retryable': true,
+            'provider': 'openai-codex',
+          },
+        },
+      );
+      expect(find.byKey(const ValueKey('hr1215-error-reauth')), findsNothing);
+      expect(find.text('↺ reintentar'), findsOneWidget);
+    });
+
+    testWidgets('error card fits 412x915 (PNG with DESIGN_SHOTS_DIR)', (
+      tester,
+    ) async {
+      await loadDesignFonts();
+      // The capture runs in real async, where the app shell reaches
+      // path_provider; answer it so the screenshot is the only side effect.
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      final support = Directory.systemTemp.createTempSync('hr1215-shot');
+      addTearDown(() => support.deleteSync(recursive: true));
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        pathProvider,
+        (_) async => support.path,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          pathProvider,
+          null,
+        ),
+      );
+      tester.view.physicalSize = const Size(412, 915);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await failTurn(
+        tester,
+        payload: const {
+          'text': 'x',
+          'status': 'error',
+          'error': revoked,
+          'error_surface': {
+            'layer': 'auth',
+            'code': 'auth',
+            'retryable': false,
+            'provider': 'anthropic',
+            'provider_label': 'Anthropic',
+            'auth_kind': 'api_key',
+          },
+        },
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('La sesión de Anthropic ha caducado'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      final dir = Platform.environment['DESIGN_SHOTS_DIR'];
+      if (dir == null || dir.isEmpty) return;
+      await tester.runAsync(() async {
+        final image = await captureImage(
+          tester.element(find.byType(ChatScreen)),
+        );
+        final data = await image.toByteData(format: ui.ImageByteFormat.png);
+        image.dispose();
+        Directory(dir).createSync(recursive: true);
+        File(
+          '$dir/hr1215_reauth_error_card_es_dark.png',
+        ).writeAsBytesSync(data!.buffer.asUint8List());
+      });
+    });
+
+    testWidgets('a compaction refused by the provider shows a chat banner', (
+      tester,
+    ) async {
+      final gateway = _UiRewindGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-hr1215-compact'),
+        messagesLoaded: true,
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+      gateway.emit('status.update', const {
+        'kind': 'warn',
+        'text':
+            '⚠ Compression aborted: $revoked. No messages were dropped — '
+            'conversation continues unchanged.',
+      });
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('hr1215-provider-auth-banner')),
+        findsOneWidget,
+      );
+      expect(find.text('La sesión del proveedor ha caducado'), findsOneWidget);
+      expect(find.text('Volver a iniciar sesión'), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('hr1215-provider-auth-dismiss')),
+      );
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('hr1215-provider-auth-banner')),
+        findsNothing,
+      );
+    });
   });
 
   group('qp1215 queued turn after the chat screen is reopened', () {

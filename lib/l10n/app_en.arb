@@ -7888,5 +7888,22 @@
   "tg1215ProcessHideOutput": "Hide output",
   "tg1215ProcessNoOutput": "No output",
   "tg1215TurnCancelled": "Cancelled",
-"qr1215QueueRetryExhausted": "Couldn't send — Retry"
+"qr1215QueueRetryExhausted": "Couldn't send — Retry",
+  "hr1215AuthExpiredTitle": "Your {provider} sign-in has expired",
+  "hr1215AuthExpiredTitleGeneric": "Your provider sign-in has expired",
+  "hr1215AuthExpiredBody": "The provider rejected access because the sign-in expired or was revoked. Sign in again and retry the message.",
+  "hr1215KeyRejectedTitle": "Check your {provider} key",
+  "hr1215KeyRejectedTitleGeneric": "Check your provider key",
+  "hr1215KeyRejectedBody": "The provider rejected the saved key. Change it in Models and retry the message.",
+  "hr1215CompactionAuthBody": "The conversation could not be summarised because the provider rejected access. Nothing was lost, but the next messages will fail until you fix it.",
+  "hr1215SignInAgain": "Sign in again",
+  "hr1215CheckKey": "Check the key",
+  "hr1215ExternalTitle": "Sign in to {provider}",
+  "hr1215ExternalBody": "Hermes can only renew this sign-in from the server terminal. Run there:\n\n{command}\n\nThen tap “I've signed in”.",
+  "hr1215ExternalBodyNoCommand": "Hermes can only renew this sign-in from the server terminal. Once you have signed in there, tap “I've signed in”.",
+  "hr1215CopyCommand": "Copy command",
+  "hr1215CommandCopied": "Command copied",
+  "hr1215SignedInCheck": "I've signed in",
+  "hr1215StillSignedOut": "{provider} is still signed out on the server.",
+  "hr1215SignedInAgain": "{provider} sign-in renewed"
 }

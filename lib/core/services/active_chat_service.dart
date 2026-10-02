@@ -51,6 +51,7 @@ import '../models/deferred_tool_call.dart';
 import '../models/home_widget_snapshot.dart';
 import '../models/interactive_prompt.dart';
 import '../models/prepared_turn.dart';
+import '../models/provider_auth_failure.dart';
 import '../models/session_activity.dart';
 import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
@@ -718,6 +719,12 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
       final prompt = message['_prompt'];
       if (prompt is String) normalized['_prompt'] = prompt;
       normalized['error'] = content;
+      final authFailure = ProviderAuthFailure.fromJson(
+        message[providerAuthFailureKey],
+      );
+      if (authFailure != null) {
+        normalized[providerAuthFailureKey] = authFailure.toJson();
+      }
       final legacyPartial = message[_legacyRecoveryPartialProjectionKey];
       if (legacyPartial is Map<String, dynamic>) {
         final normalizedPartial = normalizeTranscriptMessageForDisplay(
@@ -19458,8 +19465,16 @@ class ActiveChat {
           snapshot.inflight?.error ??
           StateError('desktop recovery snapshot reported failure');
       debugPrint(activeChatDesktopRecoveryDiagnostic(failure));
+      final authFailure = ProviderAuthFailure.classify(
+        errorSurface: snapshot.inflight?.errorSurface,
+        errorText: snapshot.inflight?.error,
+        sessionProvider: snapshot.info.provider,
+      );
       _failRun(
         activeChatDesktopSnapshotFailureUiMessage(snapshot.inflight?.error),
+        failureMetadata: {
+          if (authFailure != null) providerAuthFailureKey: authFailure.toJson(),
+        },
       );
       return;
     }
@@ -20527,6 +20542,11 @@ class ActiveChat {
         final reasoning = durableAssistantReasoningText(payload);
         if ((payload['status'] ?? '').toString().trim().toLowerCase() ==
             'error') {
+          final authFailure = ProviderAuthFailure.classify(
+            errorSurface: payload['error_surface'],
+            errorText: payload['error'] ?? payload['message'],
+            sessionProvider: _desktopRuntimeInfo.provider,
+          );
           _failRun(
             activeChatDesktopEventFailureUiMessage(payload['message']),
             terminalText: null,
@@ -20536,6 +20556,8 @@ class ActiveChat {
               'partial': payload['partial'] == true,
               if (payload['recoverable'] is bool)
                 'recoverable': payload['recoverable'],
+              if (authFailure != null)
+                providerAuthFailureKey: authFailure.toJson(),
             },
           );
           break;
@@ -20556,7 +20578,17 @@ class ActiveChat {
         );
       case 'error':
         _clearDesktopCompactingIndicator();
-        _failRun(activeChatDesktopEventFailureUiMessage(payload['message']));
+        final authFailure = ProviderAuthFailure.classify(
+          errorText: payload['message'],
+          sessionProvider: _desktopRuntimeInfo.provider,
+        );
+        _failRun(
+          activeChatDesktopEventFailureUiMessage(payload['message']),
+          failureMetadata: {
+            if (authFailure != null)
+              providerAuthFailureKey: authFailure.toJson(),
+          },
+        );
     }
   }
 
@@ -20634,6 +20666,10 @@ class ActiveChat {
     if (kind == 'compressing') {
       _noteDesktopCompressingText(payload['text']);
       _noteDesktopCompactionChunks(payload);
+      return;
+    }
+    if (kind == 'warn' || kind == 'lifecycle') {
+      _noteCompactionAuthWarning(payload['text']);
       return;
     }
     if (kind != 'compacting') return;
@@ -20749,6 +20785,36 @@ class ActiveChat {
         passiveOnly: true,
       ).catchError((_) {}),
     );
+  }
+
+  /// A compaction whose summary call was refused by the provider (revoked
+  /// OAuth grant, rejected key). Hermes keeps the session unchanged and only
+  /// says so in a `warn` status line (agent/conversation_compression.py
+  /// "Compression aborted: …" / "Compression summary failed: …"), so this is
+  /// the only signal a chat without a failed turn gets.
+  ProviderAuthFailure? _compactionAuthFailure;
+  ProviderAuthFailure? get compactionAuthFailure => _compactionAuthFailure;
+
+  void dismissCompactionAuthFailure() {
+    if (_compactionAuthFailure == null) return;
+    _compactionAuthFailure = null;
+    _emit(ActiveChatEvent.warning);
+  }
+
+  void _noteCompactionAuthWarning(Object? raw) {
+    if (raw is! String) return;
+    final lower = raw.toLowerCase();
+    if (!lower.contains('compression') && !lower.contains('compaction')) {
+      return;
+    }
+    final failure = ProviderAuthFailure.classify(
+      errorText: raw,
+      sessionProvider: _desktopRuntimeInfo.provider,
+      origin: ProviderAuthOrigin.compaction,
+    );
+    if (failure == null) return;
+    _compactionAuthFailure = failure;
+    _emit(ActiveChatEvent.warning);
   }
 
   void _clearDesktopCompactingIndicator() {

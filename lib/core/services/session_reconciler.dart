@@ -4,6 +4,7 @@ import '../models/activity_snapshot.dart'
     show MemoryWrite, activityToolDetail, isMemoryTool, memoryWriteStepKey;
 import '../models/deferred_tool_call.dart';
 import '../models/desktop_session_snapshot.dart';
+import '../models/provider_auth_failure.dart';
 import '../models/transcript_privacy_state.dart';
 import '../utils/assistant_content.dart';
 import '../utils/chat_turn.dart';
@@ -1281,6 +1282,11 @@ class DesktopSessionReconciler {
       final error = inflightError.isEmpty
           ? 'Hermes reported an error'
           : inflightError;
+      final authFailure = ProviderAuthFailure.classify(
+        errorSurface: inflight?.errorSurface,
+        errorText: inflight?.error,
+        sessionProvider: snapshot.info.provider,
+      );
       chronological.add(
         Map<String, dynamic>.unmodifiable({
           'role': 'assistant_error',
@@ -1290,6 +1296,7 @@ class DesktopSessionReconciler {
           'error': error,
           'partial': partial.isNotEmpty,
           'recoverable': ?inflight?.recoverable,
+          providerAuthFailureKey: ?authFailure?.toJson(),
           '_desktopSnapshotKey': 'assistant-error-${snapshot.runtimeSessionId}',
           '_desktopSnapshotKind': 'inflight',
         }),
