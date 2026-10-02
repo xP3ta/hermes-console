@@ -290,6 +290,7 @@
   "chaUploadTitle": "Upload attachment",
   "chaUploadError": "Couldn't upload the attachment: {err}",
   "chaNoMatch": "No matches for «{arg}». Choose one:",
+  "chaModelChangeConfirmBody": "This model switch needs confirmation.",
   "chaModelChangeTitle": "Change active model",
   "chaModelChangeBody": "The agent will use {model} ({provider}) for all sessions from the next turn.",
   "chaCancel": "Cancel",

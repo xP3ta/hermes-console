@@ -342,7 +342,7 @@ final List<_Consumer> _consumers = [
 
 /// Consumers whose parser still fails the contract matrix. Each entry is
 /// removed by the commit that makes that parser family tolerant.
-const _pendingParserFix = <String>{'result config.set', 'event gateway.ready'};
+const _pendingParserFix = <String>{'event gateway.ready'};
 
 /// Unknown enum values a parser is allowed to reject as a whole because the
 /// value IS the answer (an RPC status Console must not guess).

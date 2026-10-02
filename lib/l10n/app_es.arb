@@ -575,6 +575,7 @@
       }
     }
   },
+  "chaModelChangeConfirmBody": "Este cambio de modelo necesita confirmación.",
   "chaModelChangeTitle": "Cambiar modelo activo",
   "chaModelChangeBody": "El agente usará {model} ({provider}) en todas las sesiones a partir del próximo turno.",
   "@chaModelChangeBody": {

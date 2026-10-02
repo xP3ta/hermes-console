@@ -9625,7 +9625,9 @@ class _ChatScreenState extends State<ChatScreen>
             builder: (dctx) => AlertDialog(
               backgroundColor: Theme.of(dctx).hermes.surface,
               title: Text(str.chaModelChangeTitle),
-              content: Text(confirmation.confirmMessage ?? ''),
+              content: Text(
+                confirmation.confirmMessage ?? str.chaModelChangeConfirmBody,
+              ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dctx, false),
