@@ -18898,6 +18898,12 @@ class ActiveChat {
           epochInvalidated,
         );
         if (snapshot == null || !_canRecoverTurn(turnEpoch)) return;
+        // rl1215: the server answered on a live socket. What follows is a
+        // transcript re-sync, not a lost connection: the chat must not keep
+        // saying "connection lost" while it runs.
+        if (gateway.isConnected) {
+          _publishTransportState(ChatTransportState.connected);
+        }
         if (snapshot is DesktopSessionBinding) {
           debugPrint(
             '[active-chat] snapshot recovery result kind=legacy_binding',
@@ -18965,6 +18971,9 @@ class ActiveChat {
         lastError = error;
         if (_isDashboardAuthRequired(error)) {
           _publishDashboardAuthRequired(true);
+        }
+        if (!gateway.isConnected) {
+          _publishTransportState(ChatTransportState.offline);
         }
         final terminal = _isTerminalDesktopRecoveryError(error);
         debugPrint(

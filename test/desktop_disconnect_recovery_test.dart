@@ -4850,6 +4850,79 @@ void main() {
     });
   }
 
+  // rl1215: once the socket is back and the server answered, recovery is
+  // only re-reading the transcript. The chat must not keep saying
+  // "connection lost" for that sync.
+  test(
+    'rl1215 transcript re-sync over a healthy socket reads as connected',
+    () async {
+      const storedId = 'session-rl1215-resync';
+      const prompt = 'resincroniza sin decir que no hay conexión';
+      final gateway = _NonIdempotentLifecycleGateway(storedId);
+      var lossReads = 0;
+      var lost = false;
+      final held = Completer<void>();
+      final heldReached = Completer<void>();
+      final chat = _recoverableChat(
+        'rl1215-resync',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 1),
+        ],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async {
+          if (lost && ++lossReads == 2) {
+            heldReached.complete();
+            await held.future;
+          }
+          return const [];
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: prompt,
+        model: 'hermes-agent',
+        history: const [],
+      );
+      gateway.recoverySnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-rl1215-resync',
+        storedSessionId: storedId,
+        created: false,
+        messagesProvided: false,
+        running: false,
+        status: 'idle',
+      );
+      lost = true;
+      gateway.failWith(const SocketException('Connection attempt cancelled'));
+      await heldReached.future.timeout(const Duration(seconds: 5));
+
+      expect(gateway.isConnected, isTrue);
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+
+      // The network drops again mid re-sync: the chat is honest about it.
+      gateway.networkAvailable = false;
+      gateway.failWith(const SocketException('Connection attempt cancelled'));
+      held.complete();
+      await _waitUntil(
+        () => chat.transportStatus.state == ChatTransportState.offline,
+      );
+      expect(chat.isStreaming, isTrue);
+
+      gateway.networkAvailable = true;
+      await _waitUntil(() => !chat.isStreaming);
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+      expect(
+        chat.messages.where(
+          (message) =>
+              message['role'] == 'user' && message['content'] == prompt,
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
   test(
     'V5 client-owned turn keeps submitted-turn recovery after stream loss',
     () async {
