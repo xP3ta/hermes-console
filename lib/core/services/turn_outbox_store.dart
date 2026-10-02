@@ -385,6 +385,15 @@ class TurnOutboxStore
            deletePrivateCopy ?? AttachmentUploader.deletePrivateDraftCopy,
        _nowMs = nowMs ?? (() => DateTime.now().millisecondsSinceEpoch);
 
+  /// The same encrypted outbox written on behalf of another chat screen.
+  TurnOutboxStore withLifecycle(LocalConversationLifecycle? next) =>
+      TurnOutboxStore(
+        secureStorage: _secure,
+        deletePrivateCopy: _deletePrivateCopy,
+        nowMs: _nowMs,
+        lifecycle: next,
+      );
+
   /// Cada widget test usa una zona FakeAsync distinta. Un Future estático que
   /// quedó ligado a la zona anterior no puede avanzar en la siguiente aunque
   /// ya estuviera completado. Producción tiene un único isolate/zona; este reset

@@ -15,6 +15,11 @@ class ModelProvider {
   /// nativos (OpenAI, Nous, etc.).
   final String baseUrl;
 
+  /// Lower-cased identities Hermes accepts for a user-defined endpoint
+  /// (`aliases` in `/api/model/options`): `/api/model/info` names it
+  /// `custom:<key>` while [slug] is the bare key. Empty when not published.
+  final Set<String> aliases;
+
   const ModelProvider({
     required this.slug,
     required this.name,
@@ -26,6 +31,7 @@ class ModelProvider {
     required this.warning,
     required this.models,
     this.baseUrl = '',
+    this.aliases = const {},
   });
 
   ModelProvider copyWith({List<String>? models}) => ModelProvider(
@@ -39,6 +45,7 @@ class ModelProvider {
     warning: warning,
     models: models ?? this.models,
     baseUrl: baseUrl,
+    aliases: aliases,
   );
 
   factory ModelProvider.fromJson(Map<String, dynamic> json) => ModelProvider(
@@ -65,7 +72,16 @@ class ModelProvider {
           json['catalog'],
     ),
     baseUrl: _string(json['base_url'] ?? json['url'] ?? json['endpoint'] ?? ''),
+    aliases: _parseAliases(json['aliases']),
   );
+
+  static Set<String> _parseAliases(Object? value) {
+    if (value is! List) return const {};
+    return {
+      for (final raw in value.take(32))
+        if (raw is String && raw.trim().isNotEmpty) raw.trim().toLowerCase(),
+    };
+  }
 
   static List<String> _parseModels(Object? value) {
     final seen = <String>{};

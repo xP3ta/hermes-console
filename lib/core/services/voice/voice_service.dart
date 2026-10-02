@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 import 'package:whisper_ggml_plus/whisper_ggml_plus.dart';
 
 import '../secure_storage.dart';
@@ -297,6 +298,27 @@ class VoiceService {
     return tail;
   }
 
+  // Paradas de dictado que todavía esperan su transcripción final. Los motores
+  // que graban y transcriben (servidor Hermes, Whisper) entregan el texto
+  // cuando termina esa parada; liberar el motor antes lo descartaba.
+  final Map<SttEngine, Future<void>> _sttStopsInFlight =
+      Map<SttEngine, Future<void>>.identity();
+
+  /// Libera [engine] cuando haya entregado la transcripción que está en curso.
+  /// Devuelve `null` si no había ninguna: el llamador libera como siempre.
+  Future<void>? _disposeSttEngineAfterPendingStop(
+    SttEngine? engine, {
+    required String reason,
+  }) {
+    final pending = engine == null ? null : _sttStopsInFlight[engine];
+    if (pending == null) return null;
+    debugPrint('[voice-stab] disposeStt deferred reason=$reason');
+    return pending.then(
+      (_) => _disposeSttEngine(engine, reason: reason),
+      onError: (Object _) => _disposeSttEngine(engine, reason: reason),
+    );
+  }
+
   // Tipo del motor STT cacheado en [_stt]. Permite reportar el motor REAL ya
   // resuelto (incluido el fallback sistema→Whisper) al reutilizarlo entre turnos
   // sin reconstruirlo. Ver [checkStt] (FIX-1, TASK-022).
@@ -527,6 +549,13 @@ class VoiceService {
   bool _nativeSpeechStreamingDisabled = false;
   bool _sttNativeVoice = false;
   VoidCallback? _nativeVoiceOnDispose;
+  HermesTtsLeaseRequest? _nativeTtsLease;
+  Future<void> _ttsLeaseQueue = Future<void>.value();
+  final Set<Future<void>> _pendingTtsLeaseReleases = {};
+  static const Duration _ttsLeaseOrderWait = Duration(seconds: 2);
+  static const Duration _ttsLeaseReleaseWait = Duration(seconds: 5);
+  String? _ttsLeaseName;
+  static const String _ttsLeaseIdKey = 'voice_tts_lease_id_v1';
   NativeVoicePreparation? _nativeVoicePreparation;
   int _nativeVoicePreparationGeneration = 0;
 
@@ -667,7 +696,10 @@ class VoiceService {
     _sttKind = null;
     _sttNativeVoice = false;
     if (previous == null) return null;
-    return _disposeSttEngine(previous, reason: reason);
+    // Un clip ya subido sigue transcribiéndose: su final y el cliente del
+    // Dashboard que lo transporta se conservan hasta que llegue.
+    return _disposeSttEngineAfterPendingStop(previous, reason: reason) ??
+        _disposeSttEngine(previous, reason: reason);
   }
 
   void _releaseHermesDictationResource(
@@ -755,6 +787,7 @@ class VoiceService {
     required HermesSpeakRequest speak,
     required HermesTranscribeRequest transcribe,
     HermesSpeechStreamSessionFactory? speechStream,
+    HermesTtsLeaseRequest? ttsLease,
     VoidCallback? onDispose,
   }) {
     if (_disposed) return false;
@@ -763,6 +796,7 @@ class VoiceService {
       speak: speak,
       transcribe: transcribe,
       speechStream: speechStream,
+      ttsLease: ttsLease,
       onDispose: onDispose,
     );
   }
@@ -773,6 +807,7 @@ class VoiceService {
     required HermesSpeakRequest speak,
     required HermesTranscribeRequest transcribe,
     HermesSpeechStreamSessionFactory? speechStream,
+    HermesTtsLeaseRequest? ttsLease,
     VoidCallback? onDispose,
   }) {
     if (_disposed ||
@@ -786,6 +821,7 @@ class VoiceService {
       speak: speak,
       transcribe: transcribe,
       speechStream: speechStream,
+      ttsLease: ttsLease,
       onDispose: onDispose,
     );
   }
@@ -794,6 +830,7 @@ class VoiceService {
     required HermesSpeakRequest speak,
     required HermesTranscribeRequest transcribe,
     HermesSpeechStreamSessionFactory? speechStream,
+    HermesTtsLeaseRequest? ttsLease,
     VoidCallback? onDispose,
   }) {
     final frozen = _voiceRouteSnapshot;
@@ -805,6 +842,7 @@ class VoiceService {
       return false;
     }
     final previousDispose = _nativeVoiceOnDispose;
+    final previousLease = _nativeTtsLease;
     _onDeviceConversationRoute = false;
     _nativeSpeechStreamEpoch += 1;
     unawaited(_cancelNativeSpeechStream());
@@ -814,9 +852,81 @@ class VoiceService {
     _nativeSpeechStreamFactory = speechStream;
     _nativeSpeechStreamingDisabled = false;
     _nativeVoiceOnDispose = onDispose;
+    _nativeTtsLease = ttsLease;
     _invalidateEnginesForNativeSwitch(reason: 'native_voice_on');
-    _releaseNativeVoiceResource(previousDispose);
+    if (ttsLease != null) {
+      // Mismo nombre de lease: re-adquirir por el cliente nuevo mantiene el
+      // motor caliente sin la ventana de descarga de un release intermedio.
+      unawaited(_queueTtsLease(ttsLease, active: true));
+      _releaseNativeVoiceResource(previousDispose);
+    } else {
+      _releaseNativeVoiceLease(previousLease, previousDispose);
+    }
     return true;
+  }
+
+  /// Nombre estable del lease TTS de esta instalación. Distinto por
+  /// instalación para que otro móvil o Desktop no suelten el motor que esta
+  /// app sigue usando.
+  String get _ttsLeaseId {
+    final cached = _ttsLeaseName;
+    if (cached != null) return cached;
+    var id = _prefs.getString(_ttsLeaseIdKey);
+    if (id == null || id.isEmpty) {
+      id = const Uuid().v4();
+      unawaited(
+        _prefs
+            .setString(_ttsLeaseIdKey, id)
+            .then<void>((_) {}, onError: (_) {}),
+      );
+    }
+    return _ttsLeaseName = 'console:voice:$id';
+  }
+
+  /// Serializa acquire/release para que un on→off→on rápido no llegue
+  /// desordenado. El precalentamiento es una optimización: cualquier fallo
+  /// (servidor antiguo sin la ruta, red, auth) se ignora sin bloquear la voz.
+  Future<void> _queueTtsLease(
+    HermesTtsLeaseRequest request, {
+    required bool active,
+  }) {
+    final lease = _ttsLeaseId;
+    // Una precarga lenta no puede retener indefinidamente la señal siguiente.
+    final previous = _ttsLeaseQueue.timeout(
+      _ttsLeaseOrderWait,
+      onTimeout: () {},
+    );
+    final next = previous.then((_) async {
+      try {
+        await request(lease, active);
+      } catch (error) {
+        debugPrint(
+          '[voice-lease] ${active ? 'acquire' : 'release'} omitido '
+          '(${error.runtimeType})',
+        );
+      }
+    });
+    _ttsLeaseQueue = next;
+    return next;
+  }
+
+  /// Suelta el lease por el mismo cliente antes de cerrarlo.
+  void _releaseNativeVoiceLease(
+    HermesTtsLeaseRequest? lease,
+    VoidCallback? release,
+  ) {
+    if (lease == null) {
+      _releaseNativeVoiceResource(release);
+      return;
+    }
+    late final Future<void> done;
+    done = _queueTtsLease(lease, active: false)
+        .timeout(_ttsLeaseReleaseWait, onTimeout: () {})
+        .whenComplete(() {
+          _releaseNativeVoiceResource(release);
+          _pendingTtsLeaseReleases.remove(done);
+        });
+    _pendingTtsLeaseReleases.add(done);
   }
 
   /// Activa para la próxima conversación una ruta estrictamente on-device sin
@@ -853,13 +963,16 @@ class VoiceService {
     if (_nativeVoiceSession == null &&
         _nativeSpeak == null &&
         _nativeTranscribe == null &&
-        _nativeVoiceOnDispose == null) {
+        _nativeVoiceOnDispose == null &&
+        _nativeTtsLease == null) {
       if (hadOnDeviceRoute) {
         _invalidateEnginesForNativeSwitch(reason: 'on_device_voice_off');
       }
       return hadOnDeviceRoute;
     }
     final release = _nativeVoiceOnDispose;
+    final lease = _nativeTtsLease;
+    _nativeTtsLease = null;
     _nativeVoiceSession = null;
     _nativeSpeak = null;
     _nativeTranscribe = null;
@@ -869,7 +982,7 @@ class VoiceService {
     _nativeSpeechStreamEpoch += 1;
     unawaited(_cancelNativeSpeechStream());
     _invalidateEnginesForNativeSwitch(reason: 'native_voice_off');
-    _releaseNativeVoiceResource(release);
+    _releaseNativeVoiceLease(lease, release);
     return true;
   }
 
@@ -2515,7 +2628,18 @@ class VoiceService {
       final oldStt = _stt;
       _stt = null;
       _sttKind = null;
-      await _disposeSttEngine(oldStt, reason: 'server_recheck');
+      // Volver a dictar mientras el servidor aún transcribe el clip anterior
+      // no puede descartarlo: el motor viejo se libera tras entregar su final
+      // y el nuevo arranca sin esperarlo.
+      final deferred = _disposeSttEngineAfterPendingStop(
+        oldStt,
+        reason: 'server_recheck',
+      );
+      if (deferred == null) {
+        await _disposeSttEngine(oldStt, reason: 'server_recheck');
+      } else {
+        unawaited(deferred);
+      }
     }
     debugPrint('[voice-stab] checkStt create engine=${effectiveEngine.name}');
 
@@ -2731,9 +2855,18 @@ class VoiceService {
   /// del modo voz, usa [disposeSttForVoiceExit].
   Future<void> stopDictation() async {
     try {
-      if (_stt == null) return;
+      final engine = _stt;
+      if (engine == null) return;
       debugPrint('[voice-stab] stopDictation');
-      await _stt!.stop();
+      final stop = engine.stop();
+      _sttStopsInFlight[engine] = stop;
+      try {
+        await stop;
+      } finally {
+        if (identical(_sttStopsInFlight[engine], stop)) {
+          _sttStopsInFlight.remove(engine);
+        }
+      }
       micLevel.value = 0;
     } finally {
       _setDictationActive(false);
@@ -2949,6 +3082,8 @@ class VoiceService {
     disableHermesServerDictation(force: true);
     disableNativeVoice(force: true);
     _disposed = true;
+    // Los clientes propios se cierran tras enviar el release del lease TTS.
+    await Future.wait(_pendingTtsLeaseReleases.toList());
     _activeConversationSpeechLease = null;
     _cancelHeavyModelIdleRelease();
     _memoryPressureEvictionPending = false;

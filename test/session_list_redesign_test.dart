@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/widgets/session_status_tone.dart';
@@ -121,6 +122,9 @@ class _HomeActivityClient extends ApiClient {
 
   @override
   Future<bool> healthCheck() async => true;
+
+  @override
+  Future<bool> healthReachable() => healthCheck();
 
   @override
   Future<List<Session>> getSessions({
@@ -379,6 +383,50 @@ void main() {
     );
     expect(pinnedHeader.dy, lessThan(todayHeader.dy));
   });
+
+  testWidgets(
+    'rebuilds without a list change reuse the filtered view, and pin/unpin '
+    'still regroup it',
+    (tester) async {
+      tester.view.physicalSize = const Size(1170, 2532);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final today = nowSeconds();
+      await pump(tester, [
+        _row('hoy-1', title: 'Firma del keystore en CI', lastActive: today),
+        _row('pin-1', title: 'Migrar tests de pagos', lastActive: today - 600),
+      ]);
+      await _pumpUntil(tester, find.text('Migrar tests de pagos'));
+      await tester.pumpAndSettle();
+      final strings = Strings.of(
+        tester.element(find.byType(SessionListScreen)),
+      );
+
+      final passes = SessionListScreen.debugFilterPasses;
+      for (var i = 0; i < 3; i++) {
+        tester.element(find.byType(SessionListScreen)).markNeedsBuild();
+        await tester.pump();
+      }
+      expect(SessionListScreen.debugFilterPasses, passes);
+
+      await tester.drag(
+        find.text('Migrar tests de pagos'),
+        const Offset(400, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(strings.sesPinned.toUpperCase()), findsOneWidget);
+      expect(SessionListScreen.debugFilterPasses, greaterThan(passes));
+
+      await tester.drag(
+        find.text('Migrar tests de pagos'),
+        const Offset(400, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(strings.sesPinned.toUpperCase()), findsNothing);
+    },
+  );
 
   testWidgets(
     'el borrador se hila en la vista previa en vez de una píldora de color',
@@ -647,7 +695,7 @@ void main() {
         find.byKey(const ValueKey('session-running-compacting-1')),
         findsOneWidget,
       );
-      expect(find.text(strings.slActivityCompacting), findsOneWidget);
+      expect(find.text(strings.liveCompacting), findsOneWidget);
       // The status line has its own semantic colour, smaller and lighter
       // than the title (it used to be the same white as the title).
       final colors = Theme.of(
@@ -1040,7 +1088,9 @@ void main() {
 
       expect(find.text(strings.slActivityBackground), findsNothing);
       expect(find.text(strings.chaBackgroundActivityCount(1)), findsNothing);
-      expect(find.text(strings.chaPipelineThinking), findsOneWidget);
+      // The roster still proves the turn busy: Home says so with the shared
+      // wording, never «trabajo en segundo plano».
+      expect(find.text(strings.ss1215StatusWorking), findsOneWidget);
       expect(
         find.byKey(const ValueKey('home-activity-background-1')),
         findsOneWidget,
@@ -1077,6 +1127,90 @@ void main() {
     },
   );
 
+  testWidgets(
+    'el anillo del punto en vivo repinta solo el punto, no la fila entera',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final prefs = await SharedPreferences.getInstance();
+      final manager = await ConnectionManager.create(prefs);
+      final aggregate = GlobalActivityAggregate.inMemory();
+      addTearDown(aggregate.dispose);
+      final dashboard = DashboardClient(
+        host: '127.0.0.1',
+        port: 9119,
+        manualToken: 'dashboard-token',
+        httpClientOverride: MockClient((request) async {
+          if (request.method == 'GET' && request.url.path == '/api/sessions') {
+            return _page([
+              _row('live-1', title: 'Migrar tests de pagos', lastActive: 2),
+            ]);
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      final gateway = _gateway();
+      final repository = SessionRepository(dashboard, gateway);
+      addTearDown(() {
+        repository.close();
+        dashboard.close();
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('es'),
+          theme: AppTheme.fromId('dark'),
+          localizationsDelegates: Strings.localizationsDelegates,
+          supportedLocales: Strings.supportedLocales,
+          home: SessionListScreen(
+            connection: _connection(),
+            connManager: manager,
+            clientOverride: gateway,
+            repositoryOverride: repository,
+            globalActivityOverride: aggregate,
+            activeSessionListLoader: () async => const DesktopActiveSessionList(
+              sessions: [
+                DesktopActiveSession(
+                  runtimeSessionId: 'runtime-live-1',
+                  storedSessionId: 'live-1',
+                  status: 'working',
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await _pumpUntil(
+        tester,
+        find.byKey(const ValueKey('session-running-live-1')),
+      );
+      await tester.pump(const Duration(seconds: 1));
+
+      // The 1.8 s ring ticks every frame while the row is live. Each tick
+      // must repaint the dot's own layer, never the title, preview or card.
+      final painted = <RenderObject>{};
+      debugOnProfilePaint = painted.add;
+      addTearDown(() => debugOnProfilePaint = null);
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      debugOnProfilePaint = null;
+      final paragraphs = painted.whereType<RenderParagraph>().length;
+      expect(
+        paragraphs,
+        0,
+        reason: 'the row text must not be repainted by the ring animation',
+      );
+      expect(painted, isNotEmpty, reason: 'the ring itself keeps animating');
+      // Leaving the screen (opaque route on top) stops the ticker.
+      Navigator.of(tester.element(find.byType(SessionListScreen)))
+          .push(MaterialPageRoute<void>(builder: (_) => const SizedBox()));
+      await tester.pumpAndSettle();
+    },
+  );
   testWidgets(
     'el punto en vivo no deja una animación colgada con movimiento reducido',
     (tester) async {
@@ -1153,7 +1287,7 @@ void main() {
       await tester.pumpAndSettle();
       // La actividad ocupa la línea de vista previa (estructura del mockup) y
       // se anuncia como un único nodo accesible.
-      expect(find.bySemanticsLabel('trabajando'), findsOneWidget);
+      expect(find.bySemanticsLabel('Trabajando…'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('session-row-stop')),
         findsOneWidget,
@@ -1165,6 +1299,174 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  group('pantallas tapadas por otra ruta', () {
+    // Durante un run con subagentes ActiveChatService fuerza una notificación
+    // de `activeIds` por cada evento `subagentActivity`, aunque el conjunto no
+    // cambie. Inicio y Conversaciones siguen montados debajo del chat y se
+    // reconstruían enteros, robando tiempo a los frames del chat visible.
+    int builds(WidgetTester tester, Type type) =>
+        tester.widgetList(find.byType(type, skipOffstage: false)).length;
+
+    Future<int> countRebuilds(
+      WidgetTester tester,
+      Type rowType,
+      Future<void> Function() action,
+    ) async {
+      var count = 0;
+      final previous = debugOnRebuildDirtyWidget;
+      debugOnRebuildDirtyWidget = (element, builtOnce) {
+        if (element.widget.runtimeType == rowType) count++;
+      };
+      try {
+        await action();
+      } finally {
+        debugOnRebuildDirtyWidget = previous;
+      }
+      return count;
+    }
+
+    Future<void> pushCover(WidgetTester tester, Type screen) async {
+      Navigator.of(tester.element(find.byType(screen))).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('chat encima')),
+        ),
+      );
+      await tester.pumpAndSettle(const Duration(milliseconds: 50));
+      expect(find.text('chat encima'), findsOneWidget);
+    }
+
+    testWidgets(
+      'Conversaciones no reconstruye su lista mientras está tapada y se '
+      'pone al día al volver',
+      (tester) async {
+        tester.view.physicalSize = const Size(1170, 2532);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final activeChats = ActiveChatService(
+          compressionRestoreStore: testCompressionRestoreStore(),
+        );
+        addTearDown(activeChats.dispose);
+        await pump(tester, [
+          _row('cubierta-1', title: 'Fila tapada', lastActive: nowSeconds()),
+        ], activeChats: activeChats);
+        await _pumpUntil(tester, find.text('Fila tapada'));
+        expect(builds(tester, ListView), greaterThan(0));
+
+        // Visible: una notificación sí repinta la lista (comportamiento
+        // existente que no debe perderse).
+        final visibleRebuilds = await countRebuilds(tester, ListView, () async {
+          activeChats.activeIds.value = <String>{};
+          await tester.pump();
+        });
+        expect(visibleRebuilds, greaterThan(0));
+
+        await pushCover(tester, SessionListScreen);
+        final hiddenRebuilds = await countRebuilds(tester, ListView, () async {
+          for (var i = 0; i < 20; i++) {
+            activeChats.activeIds.value = <String>{};
+            // The streaming chat on top produces a frame every vsync.
+            tester.binding.scheduleFrame();
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+        });
+        expect(hiddenRebuilds, 0);
+
+        // Al volver se entrega UNA puesta al día.
+        final returnRebuilds = await countRebuilds(tester, ListView, () async {
+          Navigator.of(tester.element(find.text('chat encima'))).pop();
+          await tester.pumpAndSettle(const Duration(milliseconds: 50));
+        });
+        expect(returnRebuilds, greaterThan(0));
+        expect(find.text('Fila tapada'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'Inicio no se reconstruye mientras está tapado y se pone al día al '
+      'volver',
+      (tester) async {
+        tester.view.physicalSize = const Size(1170, 2532);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final prefs = await SharedPreferences.getInstance();
+        final manager = await ConnectionManager.create(prefs);
+        await manager.saveConnection(
+          'Redesign QA',
+          '127.0.0.1',
+          8642,
+          'gateway-key',
+          kind: InstanceKind.vps,
+        );
+        await manager.setActiveConnection(manager.getConnections().single.id);
+        final aggregate = GlobalActivityAggregate.inMemory();
+        final activeChats = ActiveChatService(
+          globalActivity: aggregate,
+          compressionRestoreStore: testCompressionRestoreStore(),
+        );
+        addTearDown(activeChats.dispose);
+        final client = _HomeActivityClient();
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('es'),
+            theme: AppTheme.fromId('dark'),
+            localizationsDelegates: Strings.localizationsDelegates,
+            supportedLocales: Strings.supportedLocales,
+            home: HomeDashboardScreen(
+              connManager: manager,
+              clientFactory: (_) => client,
+              activeChatsOverride: activeChats,
+              activeSessionListLoader: () async =>
+                  const DesktopActiveSessionList(),
+              eventStreamOverride: const Stream<TuiGatewayEvent>.empty(),
+            ),
+          ),
+        );
+        await _pumpUntil(tester, find.text('Informe prolongado'));
+
+        final visibleRebuilds = await countRebuilds(
+          tester,
+          HomeDashboardScreen,
+          () async {
+            activeChats.activeIds.value = <String>{};
+            await tester.pump();
+            await tester.pump();
+          },
+        );
+        expect(visibleRebuilds, greaterThan(0));
+
+        await pushCover(tester, HomeDashboardScreen);
+        final hiddenRebuilds = await countRebuilds(
+          tester,
+          HomeDashboardScreen,
+          () async {
+            for (var i = 0; i < 20; i++) {
+              activeChats.activeIds.value = <String>{};
+              // The streaming chat on top produces a frame every vsync.
+              tester.binding.scheduleFrame();
+              await tester.pump(const Duration(milliseconds: 16));
+            }
+          },
+        );
+        expect(hiddenRebuilds, 0);
+
+        final returnRebuilds = await countRebuilds(
+          tester,
+          HomeDashboardScreen,
+          () async {
+            Navigator.of(tester.element(find.text('chat encima'))).pop();
+            await tester.pumpAndSettle(const Duration(milliseconds: 50));
+          },
+        );
+        expect(returnRebuilds, greaterThan(0));
+        expect(find.text('Informe prolongado'), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(seconds: 10));
+      },
+    );
+  });
 }
 
 final class _RunningCompressionGateway extends _ProcessActivityGateway

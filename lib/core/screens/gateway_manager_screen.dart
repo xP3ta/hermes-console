@@ -174,10 +174,15 @@ class _GatewayManagerScreenState extends State<GatewayManagerScreen> {
   }
 
   Future<void> _setActive(SavedConnection conn) async {
+    final changed = conn.id != _activeId;
     await widget.connManager.setActiveConnection(conn.id);
     if (!mounted) return;
     setState(() => _activeId = conn.id);
-    HermesNotice.of(context).showSnackBar(
+    final notice = HermesNotice.of(context);
+    // Screens below this one (Tools hub, dock) were built for the previous
+    // instance; return to the root like the drawer selector does.
+    if (changed) Navigator.of(context).popUntil((route) => route.isFirst);
+    notice.showSnackBar(
       SnackBar(
         content: Text(
           Strings.of(context).gwActiveInstance(conn.label),

@@ -34,6 +34,9 @@ enum SessionState {
   };
 }
 
+/// Generic title used when a session has no readable title of its own.
+enum SessionGenericTitle { kanbanTask, scheduledTask, conversation }
+
 /// Session model matching the Gateway API Server response format
 /// (`_session_response` en api_server.py del upstream — campos client-safe).
 class Session implements SessionSortKey {
@@ -181,10 +184,23 @@ class Session implements SessionSortKey {
   /// de las primeras palabras del primer mensaje ([preview]) cuando el servidor
   /// devuelve un placeholder ("Untitled"/"New Chat"/vacío). Los overrides
   /// locales (renombrado manual) los aplica `SessionArchive.titleFor` por encima.
-  String get displayTitle {
+  ///
+  /// Generic fallbacks are in Spanish here (the source language) for callers
+  /// without a locale; UI surfaces use `localizedSessionTitle`.
+  String get displayTitle => titleWith(
+    (kind) => switch (kind) {
+      SessionGenericTitle.kanbanTask => 'Tarea del Kanban',
+      SessionGenericTitle.scheduledTask => 'Tarea programada',
+      SessionGenericTitle.conversation => 'Conversación',
+    },
+  );
+
+  /// [displayTitle] with the generic fallback titles supplied by [generic],
+  /// so the UI can localize them.
+  String titleWith(String Function(SessionGenericTitle kind) generic) {
     // Worker del Kanban: el dispatcher la nombra/arranca con "work kanban
     // task t_<id>" (id crudo, no dice de qué tarea vino). Título humano.
-    if (isKanbanJob) return 'Tarea del Kanban';
+    if (isKanbanJob) return generic(SessionGenericTitle.kanbanTask);
     // Bot routines store their owner as a technical `[bot:<name>]` prefix.
     final humanizedTitle = _humanizeTitle(
       stripBotMentionNote(title),
@@ -206,9 +222,9 @@ class Session implements SessionSortKey {
     if (generated.isNotEmpty) return generated;
     // Job/skill sin contenido legible (preview = solo preámbulo, a veces
     // truncado por el servidor): título genérico, no el preámbulo crudo.
-    if (isJob) return 'Tarea programada';
+    if (isJob) return generic(SessionGenericTitle.scheduledTask);
     if (_looksInternalTitle(humanizedTitle) || syntheticTodoTitle) {
-      return 'Conversación';
+      return generic(SessionGenericTitle.conversation);
     }
     return title;
   }

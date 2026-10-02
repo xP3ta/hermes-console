@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
@@ -59,6 +60,64 @@ void main() {
         await tester.pumpWidget(const SizedBox());
       }
     }
+  });
+
+  testWidgets('a seen room stops asking for the user in the Bots list', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final mention = HostedGroupLogPage.fromJson(
+      {
+        'events': [
+          {
+            'room_id': 'room-private',
+            'seq': 1,
+            'event_id': 'mention-1',
+            'kind': 'message.member',
+            'actor': {
+              'kind': 'member',
+              'id': 'member-private',
+              'profile': 'builder',
+            },
+            'authority_epoch': 1,
+            'payload': {
+              'discussion_event_id': 'user:d1',
+              'member_id': 'member-private',
+              'member_index': 0,
+              'round_index': 0,
+              'task_id': 'task-1',
+              'thread_id': 'thread-1',
+              'turn_id': 'turn-1',
+              'text': 'Done. @user FYI the build is green.',
+            },
+            'created_at': 2,
+            'idempotent': false,
+          },
+        ],
+        'cursor': 1,
+        'latest_seq': 1,
+        'has_more': false,
+        'authority': {'gateway_id': 'gateway-private', 'epoch': 1},
+      },
+      expectedRoomId: 'room-private',
+      sinceSeq: 0,
+    );
+    await _pumpHostedScreen(tester, manager, _workspaceSource(log: mention));
+    final needs = find.byKey(const ValueKey('roster-section-needs-you'));
+    expect(needs, findsOneWidget);
+
+    // Leaving the room writes the seen marker, exactly as RoomScreen does.
+    await tester.runAsync(
+      () => SharedPreferencesRoomPrefs(
+        manager.prefs,
+      ).setLastSeenSeq('gateway-private:room-private', 1),
+    );
+    await tester.pumpAndSettle();
+    expect(needs, findsNothing);
   });
 
   for (final missingMethod in [false, true]) {
@@ -867,6 +926,70 @@ void main() {
       findsNothing,
     );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a room action keeps every room\'s driver status', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final source = _workspaceSource();
+    final base = source.snapshot;
+    source.snapshot = MissionBackendSnapshot(
+      profiles: base.profiles,
+      board: base.board,
+      profilesCapability: base.profilesCapability,
+      sessionsCapability: base.sessionsCapability,
+      kanbanCapability: base.kanbanCapability,
+      hostedGroupsCapability: base.hostedGroupsCapability,
+      hostedGroups: HostedGroupsSnapshot(
+        capabilities: base.hostedGroups.capabilities,
+        rooms: base.hostedGroups.rooms,
+        logs: base.hostedGroups.logs,
+        driverStatuses: {
+          'room-private': RoomDriverStatus.tryParse({
+            'running': true,
+            'working': false,
+            'blocked': false,
+            'pending_actions': [
+              {
+                'kind': 'approval',
+                'task_id': 't-approve',
+                'member_id': 'member-private',
+                'execution_generation': 1,
+                'request_id': 'r-approve',
+              },
+            ],
+          })!,
+        },
+      ),
+      loadedAt: base.loadedAt,
+    );
+    await _pumpHostedScreen(tester, manager, source);
+    expect(
+      find.byKey(const ValueKey('roster-section-needs-you')),
+      findsOneWidget,
+    );
+
+    await _openRoomActions(tester);
+    await tester.tap(find.byKey(const ValueKey('roster-room-action-rename')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('roster-room-rename-field')),
+      'Renamed room',
+    );
+    await tester.tap(find.byKey(const ValueKey('roster-room-rename-save')));
+    await tester.pumpAndSettle();
+    expect(source.calls, contains('rename:3:Renamed room'));
+
+    // The pending approval did not go anywhere: the room still needs you.
+    expect(
+      find.byKey(const ValueKey('roster-section-needs-you')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('room actions from the roster rename and stop the room', (

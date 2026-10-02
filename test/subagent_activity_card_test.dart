@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -590,6 +592,85 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(calls, paused + 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('live tail follows child events instead of waiting a poll', (
+      tester,
+    ) async {
+      final scheduled = <(Duration, VoidCallback)>[];
+      var calls = 0;
+      var content = 'línea 1';
+      Completer<SubagentTailView>? gate;
+      final roster = await pumpDetail(
+        tester,
+        _nativeActivity(),
+        scheduler: (delay, cb) {
+          final entry = (delay, cb);
+          scheduled.add(entry);
+          return () => scheduled.remove(entry);
+        },
+        onTail: (_) {
+          calls++;
+          final pending = gate;
+          if (pending != null) return pending.future;
+          return Future.value(
+            SubagentTailView(
+              available: true,
+              content: content,
+              truncated: false,
+            ),
+          );
+        },
+      );
+      await tester.pump();
+      expect(calls, 1);
+      // Back off to the slow cadence while nothing changes.
+      for (var i = 0; i < 4; i++) {
+        scheduled.removeLast().$2();
+        await tester.pump();
+      }
+      expect(calls, 5);
+      expect(scheduled.single.$1, SubagentDetailScreen.tailSlow);
+
+      // A child event lands: the tail is read on that frame, not 5 s later.
+      content = 'línea 1\nlínea 2';
+      roster.value = [_nativeActivity(activeToolName: 'terminal')];
+      await tester.pump();
+      expect(calls, 6);
+      expect(find.text('línea 1\nlínea 2'), findsOneWidget);
+      expect(scheduled.single.$1, SubagentDetailScreen.tailFast);
+
+      // A burst while a read is in flight coalesces into one follow-up read.
+      gate = Completer<SubagentTailView>();
+      roster.value = [_nativeActivity(activeToolName: 'read_file')];
+      await tester.pump();
+      expect(calls, 7);
+      roster.value = [_nativeActivity(activeToolName: 'search_files')];
+      await tester.pump();
+      roster.value = [_nativeActivity(activeToolName: 'write_file')];
+      await tester.pump();
+      expect(calls, 7);
+      final inFlight = gate;
+      gate = null;
+      content = 'línea 1\nlínea 2\nlínea 3';
+      inFlight.complete(
+        const SubagentTailView(
+          available: true,
+          content: 'línea 1\nlínea 2',
+          truncated: false,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(calls, 8);
+      expect(find.text('línea 1\nlínea 2\nlínea 3'), findsOneWidget);
+      expect(scheduled, hasLength(1));
+
+      // A roster notification without a change to this child reads nothing.
+      roster.value = List.of(roster.value);
+      await tester.pump();
+      expect(calls, 8);
       await tester.pumpWidget(const SizedBox.shrink());
     });
 

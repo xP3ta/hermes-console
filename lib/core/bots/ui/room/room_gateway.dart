@@ -56,6 +56,10 @@ final class RoomCapabilities {
   final bool canApprove;
   final bool canRetry;
 
+  /// Answer member prompts (`request.answer`, `clarify.lock`,
+  /// `approval.respond`) and cancel a member wait (`session.interrupt`).
+  final bool canAnswerPrompts;
+
   /// `groups.*` exposes no member add/remove RPC (only the
   /// `room.members_changed` event), so membership is read-only.
   final bool canEditMembers;
@@ -67,6 +71,7 @@ final class RoomCapabilities {
     this.canDisband = false,
     this.canApprove = false,
     this.canRetry = false,
+    this.canAnswerPrompts = false,
     this.canEditMembers = false,
   });
 

@@ -7,6 +7,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/session_archive.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_drawer.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
@@ -148,5 +149,26 @@ void main() {
     expect(find.text('Ajustes de voz'), findsOneWidget);
     expect(find.text('No debe aparecer'), findsNothing);
     expect(find.text('Subagente oculto'), findsNothing);
+  });
+
+  testWidgets('drawer recents exclude sessions archived on this device', (
+    tester,
+  ) async {
+    final connManager = await manager();
+    final archive = await SessionArchive.load(
+      connManager.prefs,
+      'drawer-premium-qa',
+    );
+    await archive.archive('newest');
+    await pumpDrawer(tester, connManager: connManager);
+
+    await tester.drag(
+      find.byKey(const ValueKey('drawer-scroll')),
+      const Offset(0, -520),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Diseño anterior'), findsOneWidget);
+    expect(find.text('Rediseño premium'), findsNothing);
   });
 }

@@ -325,6 +325,27 @@ void main() {
   );
 
   test(
+    'an unreadable encrypted journal restores nothing instead of failing startup',
+    () async {
+      final aggregate = GlobalActivityAggregate(
+        journal: GlobalActivityJournal(
+          read: () async => throw StateError('keystore unavailable'),
+          write: (_) async {},
+          now: () => DateTime.utc(2026, 1, 1, 13),
+        ),
+        now: () => DateTime.utc(2026, 1, 1, 13),
+      );
+
+      await aggregate.initialize(
+        connectionId: 'connection-a',
+        profile: 'default',
+      );
+
+      expect(aggregate.activities, isEmpty);
+    },
+  );
+
+  test(
     'recovery retains live state then invalidates watermark on epoch rotation',
     () {
       final aggregate = GlobalActivityAggregate.inMemory(

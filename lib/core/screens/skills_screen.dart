@@ -201,7 +201,7 @@ class _SkillsScreenState extends State<SkillsScreen>
   Future<void> _loadPopular() async {
     _popularLoaded = true;
     final client = await _bridgeMgr.clientFor(widget.connection.id);
-    if (client == null) return;
+    if (client == null || !mounted) return;
     setState(() => _searching = true);
     try {
       final raw = await client.findSkills('agent'); // alto nº de instalaciones
@@ -309,7 +309,7 @@ class _SkillsScreenState extends State<SkillsScreen>
     if (name.isEmpty || !_bridgeSkills) return;
     final str = Strings.of(context);
     final client = await _bridgeMgr.clientFor(widget.connection.id);
-    if (client == null) return;
+    if (client == null || !mounted) return;
     setState(() => _busySkill = name);
     // Importante: NO refetcheamos /api/skills tras el toggle. El bridge edita
     // skills.disabled en config.yaml, pero el agente en marcha sigue con la
@@ -393,6 +393,7 @@ class _SkillsScreenState extends State<SkillsScreen>
       return;
     }
     final client = await _bridgeMgr.clientFor(widget.connection.id);
+    if (!mounted) return;
     if (client == null) {
       _snack(str.sklNoBridgeConnection);
       return;
@@ -465,7 +466,7 @@ class _SkillsScreenState extends State<SkillsScreen>
     }
     final str = Strings.of(context);
     final client = await _bridgeMgr.clientFor(widget.connection.id);
-    if (client == null) return;
+    if (client == null || !mounted) return;
     setState(() => _busySkill = source);
     try {
       if (gate == ActionGate.ask) {

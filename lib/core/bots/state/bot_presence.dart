@@ -61,7 +61,14 @@ enum BotPresence {
 
   static bool workerIsFresh(AgentProfileWorkerSession? worker, DateTime now) {
     if (worker == null) return false;
-    final age = now.millisecondsSinceEpoch / 1000 - worker.lastActive;
+    return isFreshActivity(worker.lastActive, now);
+  }
+
+  /// Whether server activity at [lastActiveSeconds] (epoch seconds) still
+  /// counts as ongoing work at [now]: within [workerFreshness], tolerating
+  /// [futureSkew] of clock drift.
+  static bool isFreshActivity(num lastActiveSeconds, DateTime now) {
+    final age = now.millisecondsSinceEpoch / 1000 - lastActiveSeconds;
     return age >= -futureSkew.inSeconds && age <= workerFreshness.inSeconds;
   }
 

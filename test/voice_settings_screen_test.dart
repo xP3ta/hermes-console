@@ -1,13 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/voice_settings_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/voice/hermes_speech_stream.dart';
+import 'package:hermes_android/core/services/voice/read_aloud_session.dart';
 import 'package:hermes_android/core/services/voice/server_voice_config.dart';
 import 'package:hermes_android/core/services/voice/stt_sherpa.dart';
 import 'package:hermes_android/core/services/voice/tts_engine.dart';
@@ -86,6 +89,30 @@ class _TrackingHttpClient extends http.BaseClient {
   void close() {
     closed = true;
     _delegate.close();
+  }
+}
+
+/// Plays nothing and reports completion at once: enough for read-aloud tests.
+class _InstantPlayback implements TtsAudioPlayback {
+  final _completed = StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get onComplete => _completed.stream;
+
+  @override
+  Future<void> playBytes(Uint8List bytes, {required String mimeType}) async {
+    scheduleMicrotask(() => _completed.add(null));
+  }
+
+  @override
+  Future<void> playFile(String path) async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> dispose() async {
+    await _completed.close();
   }
 }
 
@@ -616,6 +643,125 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'a failed server test replaces the ready status with the reason',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'native_voice_consent::http://hermes-demo.local:9119': 'accepted',
+        'native_voice_mode_v1::http://hermes-demo.local:9119': 'server',
+      });
+      FlutterSecureStorage.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      final voice = VoiceService(prefs, SecureStorage());
+      addTearDown(voice.dispose);
+      const detail =
+          'TTS configuration error (openai): tts is configured to use nous '
+          'but it is not available';
+      var speakFails = true;
+      final dashboard = DashboardClient(
+        host: 'hermes-demo.local',
+        manualToken: 'test-token',
+        httpClientOverride: MockClient((request) async {
+          if (request.method == 'GET' && request.url.path == '/api/config') {
+            return http.Response(
+              jsonEncode({
+                'tts': {
+                  'provider': 'openai',
+                  'openai': {'voice': 'alloy'},
+                },
+              }),
+              200,
+            );
+          }
+          if (request.url.path == '/api/config/schema') {
+            return http.Response('{}', 200);
+          }
+          if (request.method == 'POST' &&
+              request.url.path == '/api/audio/speak') {
+            if (request.body.isEmpty || request.body == '{}') {
+              return http.Response('{}', 422);
+            }
+            return speakFails
+                ? http.Response(jsonEncode({'detail': detail}), 400)
+                : http.Response(jsonEncode({'ok': true}), 200);
+          }
+          if (request.method == 'POST' &&
+              request.url.path.startsWith('/api/audio/')) {
+            return http.Response('{}', 422);
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      addTearDown(dashboard.close);
+      final connection = SavedConnection(
+        id: 'demo-node',
+        label: 'Server',
+        host: 'hermes-demo.local',
+        port: 8642,
+        apiKey: 'test-key',
+        dashboardUrl: 'http://hermes-demo.local:9119',
+      );
+      final strings = lookupStrings(const Locale('es'));
+
+      await tester.pumpWidget(
+        host(
+          voiceService: voice,
+          connection: connection,
+          preferences: prefs,
+          dashboardClientFactory: (_) => dashboard,
+          serverPreviewEngineFactory: _ServerPreviewEngine.new,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final card = find.byKey(const ValueKey('voice_server_summary_card'));
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.text(strings.voiceStatusServerReady),
+        ),
+        findsOneWidget,
+      );
+
+      final testServerVoice = find.byKey(
+        const ValueKey('voice_test_server_voice'),
+      );
+      await tester.ensureVisible(testServerVoice);
+      await tester.pump();
+      await tester.tap(testServerVoice);
+      await tester.pumpAndSettle();
+
+      final failure = strings.v1215VoiceServerTestFailed(
+        strings.v1215VoiceServerError(detail),
+      );
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.text(strings.voiceStatusServerReady),
+        ),
+        findsNothing,
+      );
+      expect(find.descendant(of: card, matching: find.text(failure)), findsOne);
+      // The user can retry from the same card once the provider is fixed.
+      speakFails = false;
+      await tester.ensureVisible(testServerVoice);
+      await tester.pump();
+      await tester.tap(testServerVoice);
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: card, matching: find.text(failure)),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: card,
+          matching: find.text(strings.voiceStatusServerReady),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('solo lectura permite inspeccionar el gestor sin mutar', (
     tester,
   ) async {
@@ -956,6 +1102,148 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  // Auditoría de voz 29/09: elegir «Servidor Hermes» instalaba la voz sobre
+  // el cliente del Dashboard de esta pantalla, que se cierra al salir. Desde
+  // ese momento «Leer en voz alta» fallaba en silencio hasta reiniciar.
+  testWidgets('leer en voz alta sigue funcionando tras salir de Ajustes', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    // Ajustes consulta modelos locales al montar; sin disco en tests.
+    final support = Directory.systemTemp.createTempSync('voice-settings-');
+    addTearDown(() => support.deleteSync(recursive: true));
+    final messenger = TestWidgetsFlutterBinding.instance.defaultBinaryMessenger;
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    messenger.setMockMethodCallHandler(
+      pathProvider,
+      (call) async => support.path,
+    );
+    addTearDown(() => messenger.setMockMethodCallHandler(pathProvider, null));
+    final voice = VoiceService(prefs, SecureStorage())
+      ..debugNativePlaybackFactory = _InstantPlayback.new;
+    addTearDown(voice.dispose);
+    var speakRequests = 0;
+    final clients = <DashboardClient>[];
+    final transports = <_TrackingHttpClient>[];
+    final leaseStates = <bool>[];
+    DashboardClient makeDashboard(SavedConnection _) {
+      final transport = _TrackingHttpClient(
+        MockClient((request) async {
+          if (request.url.path == '/api/audio/tts-lease') {
+            leaseStates.add(jsonDecode(request.body)['active'] as bool);
+            return http.Response(jsonEncode({'ok': true}), 200);
+          }
+          if (request.method == 'GET' && request.url.path == '/api/config') {
+            return http.Response(
+              jsonEncode({
+                'stt': {'provider': 'local'},
+                'tts': {'provider': 'edge'},
+              }),
+              200,
+            );
+          }
+          if (request.method == 'GET' &&
+              request.url.path == '/api/config/schema') {
+            return http.Response(jsonEncode({'properties': {}}), 200);
+          }
+          if (request.method == 'POST' &&
+              request.url.path == '/api/audio/speak') {
+            if (request.body.trim() == '{}' || request.body.isEmpty) {
+              return http.Response('{}', 400);
+            }
+            speakRequests++;
+            return http.Response(
+              jsonEncode({
+                'ok': true,
+                'data_url': 'data:audio/mpeg;base64,AAAA',
+              }),
+              200,
+            );
+          }
+          if (request.method == 'POST' &&
+              request.url.path == '/api/audio/transcribe') {
+            return http.Response('{}', 400);
+          }
+          return http.Response('{}', 404);
+        }),
+      );
+      transports.add(transport);
+      final client = DashboardClient(
+        host: 'hermes-demo.local',
+        manualToken: 'test-token',
+        httpClientOverride: transport,
+      );
+      clients.add(client);
+      return client;
+    }
+
+    addTearDown(() {
+      for (final client in clients) {
+        client.close();
+      }
+    });
+    final connection = SavedConnection(
+      id: 'demo-node',
+      label: 'Server',
+      host: 'hermes-demo.local',
+      port: 8642,
+      apiKey: 'test-key',
+      dashboardUrl: 'http://hermes-demo.local:9119',
+    );
+    final screenKey = GlobalKey();
+    await tester.pumpWidget(
+      host(
+        voiceService: voice,
+        connection: connection,
+        dashboardClientFactory: makeDashboard,
+        preferences: prefs,
+        screenKey: screenKey,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('voice_mode_server_option')));
+    await tester.pumpAndSettle();
+    expect(voice.nativeVoiceActive, isTrue);
+
+    // Salir de Ajustes desmonta la pantalla y cierra su propio cliente (el
+    // primero que creó); la fábrica inyectada no es de su propiedad, así que
+    // el test reproduce ese cierre explícitamente.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    clients.first.close();
+
+    await voice.toggleReadAloud(
+      messageKey: 'chat:msg-1',
+      revision: 'r1',
+      markdown: 'Hola mundo.',
+    );
+    for (var i = 0; i < 50 && voice.readAloud.value.isActive; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+    }
+    expect(voice.readAloud.value.phase, isNot(ReadAloudPhase.failed));
+    expect(speakRequests, greaterThanOrEqualTo(1));
+
+    // La voz es dueña de su cliente: al desactivarla lo cierra ella.
+    expect(transports, hasLength(2));
+    expect(transports.last.closed, isFalse);
+    voice.disableNativeVoice();
+    // El cierre espera al release del lease TTS enviado por ese cliente.
+    await tester.runAsync(pumpEventQueue);
+    expect(transports.last.closed, isTrue);
+    expect(leaseStates, [
+      true,
+      false,
+    ], reason: 'the voice client warms TTS and releases it before closing');
+    // Deja vencer el temporizador de descarga de modelos que arma el fin de
+    // la lectura; el tearDown libera el servicio.
+    await tester.pump(const Duration(minutes: 10));
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('alterna servidor y móvil sin mezclar sus configuraciones', (
     tester,

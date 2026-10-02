@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../models/desktop_session_snapshot.dart';
 import '../models/session_artifact.dart';
+import 'generated_media_service.dart';
 
 final class ArtifactIndexScope {
   final String connectionId;
@@ -278,7 +279,12 @@ DesktopSessionMessage _artifactMessageProjection(
   DesktopSessionMessage message,
 ) {
   final isTool = message.role == DesktopSessionMessageRole.tool;
-  final content = _sanitizeArtifactValue(message.content, isTool: isTool);
+  final rawContent = message.content;
+  // A text tool result keeps only its canonical `MEDIA:` lines; prose, paths
+  // in prose and serialized JSON are never retained or scanned.
+  final content = isTool && rawContent is String
+      ? _toolMediaText(rawContent)
+      : _sanitizeArtifactValue(rawContent, isTool: isTool);
   final context = isTool
       ? _sanitizeArtifactValue(message.context, isTool: true)
       : null;
@@ -302,6 +308,42 @@ DesktopSessionMessage _artifactMessageProjection(
     content: content,
     context: context,
   );
+}
+
+String? _toolMediaText(String content) {
+  final references = GeneratedMediaService.referencesFromToolText(content);
+  if (references.isEmpty) return null;
+  return references.map((reference) => 'MEDIA:${reference.source}').join('\n');
+}
+
+/// Files a text tool result announced with `MEDIA:`. The server path was
+/// validated by [GeneratedMediaService] (absolute, no traversal, no sensitive
+/// names) — the same contract the chat uses to download it.
+List<_ArtifactSeed> _toolMediaSeeds(DesktopSessionMessage message) {
+  final content = message.content;
+  if (message.role != DesktopSessionMessageRole.tool || content is! String) {
+    return const [];
+  }
+  return [
+    for (final reference in GeneratedMediaService.referencesFromToolText(
+      content,
+    ))
+      if (reference.sourceKind == GeneratedMediaSourceKind.serverPath)
+        _ArtifactSeed(
+          serverId: null,
+          kind: reference.kind == GeneratedMediaKind.image
+              ? SessionArtifactKind.image
+              : SessionArtifactKind.generated,
+          displayName: reference.displayName,
+          hasExplicitDisplayName: true,
+          mimeType: _mimeType(reference.mimeType),
+          sizeBytes: null,
+          managedReference: reference.source,
+          remote: true,
+          availability: SessionArtifactAvailability.unknown,
+          createdAt: null,
+        ),
+  ];
 }
 
 Object? _sanitizeArtifactValue(
@@ -679,6 +721,7 @@ List<_ArtifactSeed> _extractMessage(
   }
 
   collectStructuredRoot(message.content);
+  seeds.addAll(_toolMediaSeeds(message));
   if (message.role == DesktopSessionMessageRole.tool) {
     collectStructuredRoot(message.context);
   }

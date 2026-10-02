@@ -25,7 +25,10 @@ import 'core/screens/session_list_screen.dart';
 import 'core/screens/runs_screen.dart';
 
 import 'core/screens/tasks_screen.dart';
+import 'core/screens/cron_screen.dart';
+import 'core/services/app_error_log.dart';
 import 'core/services/startup_destination.dart';
+import 'core/services/startup_guard.dart';
 import 'core/services/run_registry.dart';
 import 'core/screens/lock_screen.dart';
 import 'core/screens/instance_edit_screen.dart';
@@ -69,6 +72,7 @@ import 'core/theme/component_profile.dart';
 import 'core/theme/scroll_behavior.dart';
 import 'core/theme/theme_profile_store.dart';
 import 'core/widgets/attachment_source_sheet.dart';
+import 'core/widgets/frosted_backdrop.dart';
 import 'core/widgets/hermes_notice.dart';
 import 'core/widgets/hermes_premium_ui.dart';
 import 'core/services/notifications/ui_notification_actions.dart';
@@ -222,17 +226,34 @@ Future<T?> pushNotificationOwnerRoute<T>(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  AppErrorLog.install();
   PerformanceTrace.qa.start();
   if (kVoiceRuntimeEnabled) {
     FlutterForegroundTask.initCommunicationPort();
   }
+  // Any throw while preparing the app (corrupt or unreadable secure storage,
+  // Keystore unavailable before first unlock) shows a recoverable screen
+  // instead of leaving the native splash up forever. Nothing is wiped.
+  await runGuardedStartup(bootstrap: bootstrapHermesApp, run: runApp);
+}
+
+/// Everything awaited before the first frame. Independent storage reads run
+/// concurrently; the resulting state is the same as reading them in order.
+@visibleForTesting
+Future<Widget> bootstrapHermesApp() async {
   final prefs = await SharedPreferences.getInstance();
   final themeProfileStore = ThemeProfileStore(prefs);
-  final initialThemeProfiles = await themeProfileStore.load();
   final cancelledTurnStore = CancelledTurnTombstoneStore.secure();
-  await cancelledTurnStore.initialize();
   final compressionRestoreStore = CompressionRestoreStore();
-  final connManager = await ConnectionManager.create(
+  // The tombstone store and the connection list touch disjoint keys; the
+  // store is only consulted by ConnectionManager when a connection is
+  // deleted, which cannot happen during create().
+  final themeLoad = themeProfileStore.load();
+  // Stop tombstones are optional at startup: an unreadable or corrupt blob is
+  // left untouched (the store never rewrites what it could not parse) and
+  // chats simply run without restored tombstones this session.
+  final tombstonesLoad = tryStartupStep(cancelledTurnStore.initialize);
+  final connManagerLoad = ConnectionManager.create(
     prefs,
     clearCancelledTurns: (connectionId) async {
       var removed = 0;
@@ -251,42 +272,47 @@ void main() async {
       return removed;
     },
   );
-  // Arranque en frío: si el usuario fijó una instancia predeterminada, la app
-  // abre con ella (sembrándola como activa). El cambio de instancia en caliente
-  // se sigue respetando durante la sesión.
-  await connManager.applyDefaultOnLaunch();
+  await Future.wait<void>([themeLoad, tombstonesLoad, connManagerLoad]);
+  final initialThemeProfiles = await themeLoad;
+  final tombstonesReady = await tombstonesLoad;
+  final connManager = await connManagerLoad;
+  await Future.wait<void>([
+    // Arranque en frío: si el usuario fijó una instancia predeterminada, la
+    // app abre con ella (sembrándola como activa). El cambio de instancia en
+    // caliente se sigue respetando durante la sesión.
+    connManager.applyDefaultOnLaunch(),
+    // FLAG_SECURE must be in place before any content is visible.
+    ScreenSecurityService(prefs).apply(),
+  ]);
   final appLock = AppLockService(prefs);
   final approvalPolicy = ApprovalPolicyService(prefs);
   final fontSize = FontSizeService(prefs);
   final bridgeManager = BridgeManager(SecureStorage(), connManager);
   final sshManager = SshManager(SecureStorage(), connManager);
   final notifications = NotificationService(prefs);
-  await ScreenSecurityService(prefs).apply();
   final sftpTransfers = SftpTransferService(sshManager, notifications);
   final sshSessions = SshSessionService(sshManager);
   final activeChats = ActiveChatService(
     notifications: notifications,
     policy: approvalPolicy,
     prefs: prefs,
-    cancelledTurnStore: cancelledTurnStore,
+    cancelledTurnStore: tombstonesReady ? cancelledTurnStore : null,
     compressionRestoreStore: compressionRestoreStore,
   );
   await activeChats.globalActivity.initialize();
-  runApp(
-    HermesApp(
-      connManager: connManager,
-      appLock: appLock,
-      approvalPolicy: approvalPolicy,
-      fontSize: fontSize,
-      bridgeManager: bridgeManager,
-      sshManager: sshManager,
-      sftpTransfers: sftpTransfers,
-      sshSessions: sshSessions,
-      notifications: notifications,
-      activeChats: activeChats,
-      themeProfileStore: themeProfileStore,
-      initialThemeProfiles: initialThemeProfiles,
-    ),
+  return HermesApp(
+    connManager: connManager,
+    appLock: appLock,
+    approvalPolicy: approvalPolicy,
+    fontSize: fontSize,
+    bridgeManager: bridgeManager,
+    sshManager: sshManager,
+    sftpTransfers: sftpTransfers,
+    sshSessions: sshSessions,
+    notifications: notifications,
+    activeChats: activeChats,
+    themeProfileStore: themeProfileStore,
+    initialThemeProfiles: initialThemeProfiles,
   );
 }
 
@@ -1164,6 +1190,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       _onHomeWidgetConnectionChanged,
     );
     unawaited(_publishHomeWidgetBase());
+    unawaited(FrostedBackdropPolicy.refresh());
     if (!_showOnboarding) {
       _scheduleHomeInitialLoad();
     }
@@ -1308,6 +1335,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appLifecycle = state;
+    // Battery saver can change while the app is in the background.
+    if (state == AppLifecycleState.resumed) {
+      unawaited(FrostedBackdropPolicy.refresh());
+    }
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
@@ -1599,7 +1630,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     // Si la notificación es de una ejecución (runId presente), navegar a
     // RunDetailScreen; si el run ya expiró, fallback a TaskCenterScreen.
     final runId = open.runId;
-    if (runId != null && runId.isNotEmpty) {
+    if (runId != null &&
+        runId.isNotEmpty &&
+        !await _isChatOwnedRun(connection, open, runId)) {
       final profile = open.profile?.trim().toLowerCase();
       if (profile == null || profile.isEmpty) {
         return NavigationDeliveryOutcome.deferred;
@@ -1671,6 +1704,24 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       return _openMissionControlFromNotification(nav, connection, ownedTarget);
     }
 
+    // A cron completion with no session yet carries only its job: open that
+    // job's detail. CronScreen falls back to its list if the job is gone.
+    final jobId = open.jobId?.trim();
+    if (open.sessionId.isEmpty && jobId != null && jobId.isNotEmpty) {
+      nav.push(
+        MaterialPageRoute(
+          builder: (_) => CronScreen(
+            connection: connection,
+            connManager: widget.connManager,
+            initialJobId: jobId,
+            profileOverride: open.profile?.trim(),
+          ),
+        ),
+      );
+      await WidgetsBinding.instance.endOfFrame;
+      return NavigationDeliveryOutcome.delivered;
+    }
+
     // Sin runId: comportamiento anterior — abrir la sesión de chat.
     if (open.sessionId.isEmpty) return NavigationDeliveryOutcome.deferred;
     final liveOwner = activeChats
@@ -1703,6 +1754,32 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     return NavigationDeliveryOutcome.delivered;
   }
 
+  /// A run whose owner is a conversation (chat runtime or Desktop runtime
+  /// session) is never registered in Task Center, so waiting for its run
+  /// record would retain the tap forever. Its conversation is the content:
+  /// the approval card and the result live there.
+  Future<bool> _isChatOwnedRun(
+    SavedConnection connection,
+    NotificationOpen open,
+    String runId,
+  ) async {
+    if (open.sessionId.isEmpty) return false;
+    final profile = open.profile?.trim().toLowerCase();
+    try {
+      final registry = await RunRegistry.load(
+        widget.connManager.prefs,
+        connection.id,
+      );
+      return !registry.records.any(
+        (r) =>
+            r.runId == runId &&
+            (profile == null || profile.isEmpty || r.profile == profile),
+      );
+    } catch (_) {
+      return true;
+    }
+  }
+
   Future<NavigationDeliveryOutcome> _openMissionControlFromNotification(
     NavigatorState nav,
     SavedConnection connection,
@@ -1718,10 +1795,18 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (!_appNavigationFence.canCommit(request, nav, intent: intent)) {
       return NavigationDeliveryOutcome.deferred;
     }
+    // Reuse a live Mission Control (and do nothing when the target is already
+    // on screen) instead of stacking a second copy of it or of the room.
+    if (MissionControlScreen.openInExisting(nav, connection.id, target)) {
+      await WidgetsBinding.instance.endOfFrame;
+      return NavigationDeliveryOutcome.delivered;
+    }
+    // Mission Control appears without its own slide: the room/Bot Chat it
+    // opens on its first frame is the single visible transition.
     unawaited(
       pushNotificationOwnerRoute<void>(
         nav,
-        MaterialPageRoute<void>(
+        MissionControlOwnerRoute<void>(
           builder: (_) => MissionControlScreen(
             connection: connection,
             connManager: widget.connManager,

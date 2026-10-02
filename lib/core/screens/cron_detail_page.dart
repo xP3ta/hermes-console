@@ -9,6 +9,7 @@ import '../../l10n/app_localizations.dart';
 import '../design/hermes_design.dart';
 import '../models/cron_job.dart';
 import '../models/session.dart';
+import '../utils/session_title.dart';
 import '../services/cron_repository.dart';
 import '../services/notifications/notification_mute_store.dart';
 import '../services/notifications/notification_service.dart';
@@ -224,7 +225,8 @@ class CronJobDetailPage extends StatefulWidget {
   State<CronJobDetailPage> createState() => _CronJobDetailPageState();
 }
 
-class _CronJobDetailPageState extends State<CronJobDetailPage> {
+class _CronJobDetailPageState extends State<CronJobDetailPage>
+    with WidgetsBindingObserver {
   late CronJob _job = widget.initialJob;
   CronRuns? _runs;
   Timer? _timer;
@@ -238,15 +240,41 @@ class _CronJobDetailPageState extends State<CronJobDetailPage> {
   bool get _refreshAllowed =>
       mounted &&
       WidgetsBinding.instance.lifecycleState != AppLifecycleState.paused &&
+      WidgetsBinding.instance.lifecycleState != AppLifecycleState.hidden &&
       ModalRoute.of(context)?.isCurrent != false;
+
+  /// Backstop refresh while visible. It sleeps while the app is hidden or
+  /// paused and restarts on resume after an immediate refresh.
+  void _armRefreshTimer() {
+    _timer?.cancel();
+    _timer = Timer.periodic(cronDetailRefreshInterval, (_) {
+      if (_refreshAllowed) unawaited(_refresh());
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        if (_timer != null) return;
+        _armRefreshTimer();
+        if (_refreshAllowed) unawaited(_refresh());
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        _timer?.cancel();
+        _timer = null;
+      case AppLifecycleState.inactive:
+        break;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_refresh());
-    _timer = Timer.periodic(cronDetailRefreshInterval, (_) {
-      if (_refreshAllowed) unawaited(_refresh());
-    });
+    _armRefreshTimer();
     _events = widget.eventStream?.listen((event) {
       if (!_refreshAllowed || !_isCronRefreshEvent(event)) return;
       _debounce?.cancel();
@@ -258,6 +286,7 @@ class _CronJobDetailPageState extends State<CronJobDetailPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _debounce?.cancel();
     unawaited(_events?.cancel());
@@ -675,7 +704,7 @@ class _RunRow extends StatelessWidget {
       duration = secs < 90 ? '$secs s' : '${(secs / 60).round()} min';
     }
     final when = started == null
-        ? session.displayTitle
+        ? localizedSessionTitle(s, session)
         : hermesFormatNextRun(s, started);
     return Semantics(
       button: true,

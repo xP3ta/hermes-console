@@ -385,16 +385,16 @@ void main() {
       ];
     }
 
-    testWidgets('#5 opening never leaves a run header under the status line', (
+    testWidgets('#5 opening never leaves a run header under the status strip', (
       tester,
     ) async {
       final events = longRun();
       await _pumpRoom(tester, events: events);
       final transcript = find.byKey(const ValueKey('room-transcript'));
       final top = tester.getTopLeft(transcript).dy;
-      final status = find.byKey(const ValueKey('room-status-line'));
+      final status = find.byKey(const ValueKey('room-status-strip'));
       expect(status, findsOneWidget);
-      // Transcript starts below the status line (column layout, no overlap).
+      // Transcript starts below the status strip (column layout, no overlap).
       expect(top, greaterThanOrEqualTo(tester.getBottomLeft(status).dy));
       // The newest speaker run's header (face, name, time) is fully visible
       // below the status line, not cut at (or hidden above) the list edge.
@@ -550,31 +550,60 @@ And whether `fix/tap-targets` is still open.''';
           events: [u, started, reply, settled],
           locale: locale,
         );
-        // No panel stacked over a last-activity bar: one line that opens
-        // Activity.
+        // No panel stacked over a last-activity bar: one line in the
+        // fixed status strip.
         expect(find.byKey(const ValueKey('room-round-panel')), findsNothing);
         final line = tester.widget<Text>(
-          find.byKey(const ValueKey('room-status-text')),
+          find.byKey(const ValueKey('room-strip-summary')),
         );
         expect(line.data, startsWith(expected));
         expect(line.maxLines, 1);
       });
     }
 
-    testWidgets('#8b a working round keeps the full round panel', (
+    testWidgets('#8b a working round says who works, same strip height', (
       tester,
     ) async {
       final seq = EventSeq();
       final u = seq.user('@builder go');
       final disc = u['event_id'] as String;
+      // A current turn: without driver status the room applies the roster
+      // worker freshness, so the turn must be recent at the screen clock.
+      seq.at = 1790000400 - 40;
       final started = seq.started('m-builder', disc);
       await _pumpRoom(tester, events: [u, started], locale: const Locale('en'));
-      expect(find.byKey(const ValueKey('room-round-panel')), findsOneWidget);
+      final strip = find.byKey(const ValueKey('room-status-strip'));
+      expect(tester.getSize(strip).height, RoomStatusStrip.height);
+      // Who replies and for how long (the clock of the working turn).
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('room-round-summary')))
+            .widget<Text>(find.byKey(const ValueKey('room-strip-summary')))
             .data,
-        startsWith('Round 1'),
+        startsWith('console-builder is replying · '),
+      );
+      expect(
+        find.byKey(const ValueKey('room-strip-dot-m-builder-working')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('#8d a stale started turn without driver status is not '
+        'shown as replying', (tester) async {
+      final seq = EventSeq();
+      final u = seq.user('@builder go');
+      final disc = u['event_id'] as String;
+      // Started ~280 s before the screen clock: past the worker freshness.
+      final started = seq.started('m-builder', disc);
+      await _pumpRoom(tester, events: [u, started], locale: const Locale('en'));
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('room-strip-summary')))
+            .data,
+        isNot(contains('is replying')),
+      );
+      expect(
+        find.byKey(const ValueKey('room-strip-dot-m-builder-working')),
+        findsNothing,
       );
     });
 

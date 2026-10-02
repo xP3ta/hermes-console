@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../config/flavor.dart';
+import '../services/app_error_log.dart';
 import '../services/connection_manager.dart';
 import '../services/diagnostic_bundle_service.dart';
 import '../services/turn_outbox_store.dart';
@@ -103,6 +104,11 @@ class DiagnosticBundleController {
         ],
         turns: turns,
         caches: caches,
+        // Local only: it leaves the device solely through this export.
+        recentErrors: [
+          for (final record in AppErrorLog.recent)
+            DiagnosticErrorEvent.fromAppError(record),
+        ],
       ),
     );
   }

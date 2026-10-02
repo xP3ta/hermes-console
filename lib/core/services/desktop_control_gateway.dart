@@ -1,5 +1,8 @@
+import 'dart:typed_data';
+
 import '../models/desktop_control_center.dart';
 import '../models/admin_integrations.dart';
+import '../models/project_files.dart';
 
 export '../models/desktop_control_center.dart'
     show SessionGoalSnapshot, SessionGoalGate, SessionGoalWaitBarrier;
@@ -85,6 +88,110 @@ abstract class HermesDesktopControlGateway {
   /// `goal.unwait` or `goal.clear`). `goal.gate*` and subgoal editing are
   /// intentionally not exposed here — use the `/goal` text command for those.
   Future<void> sendGoalAction(String runtimeSessionId, String action);
+}
+
+/// Project writes and git worktree helpers, exactly as Hermes Desktop issues
+/// them: `projects.update` / `projects.create` / `projects.delete` /
+/// `projects.set_active` over JSON-RPC and the Dashboard `/api/git/*` mirror
+/// Desktop uses on a remote gateway. Kept separate from
+/// [HermesDesktopControlGateway] so legacy fakes and servers keep compiling;
+/// a screen treats a gateway without it as read-only.
+abstract class HermesProjectManagementGateway {
+  /// True when this connection may write (not a read-only instance).
+  bool get projectWritesAllowed;
+
+  /// `projects.update {id, name?, color?, icon?}`. An empty string clears
+  /// color/icon on the server, like Desktop's "No color".
+  Future<void> updateProject(
+    String id, {
+    String? name,
+    String? color,
+    String? icon,
+  });
+
+  /// `projects.create`, used (like Desktop) to adopt an auto-discovered repo
+  /// the first time its appearance changes.
+  Future<void> createProject({
+    required String name,
+    required String primaryPath,
+    String? color,
+    String? icon,
+  });
+
+  /// `projects.delete {id}` — drops the saved project only; files, repos and
+  /// worktrees stay on disk.
+  Future<void> deleteProject(String id);
+
+  /// `projects.set_active {id}`.
+  Future<void> setActiveProject(String id);
+
+  /// `GET /api/git/base-branches?path=` (new-worktree base picker).
+  Future<List<ProjectGitBaseBranch>> listBaseBranches(String repoPath);
+
+  /// `GET /api/git/branches?path=` ("convert an existing branch").
+  Future<List<ProjectGitBranch>> listBranches(String repoPath);
+
+  /// `POST /api/git/worktree/add {path, name?, branch?, base?, existingBranch?}`.
+  Future<ProjectWorktreeResult> addWorktree(
+    String repoPath, {
+    String? branch,
+    String? base,
+    String? existingBranch,
+  });
+
+  /// `POST /api/git/branch/switch {path, branch}`.
+  Future<void> switchBranch(String repoPath, String branch);
+}
+
+/// Read-only browsing of a project folder through the Dashboard file routes
+/// Hermes Desktop's remote file tree uses (`apps/desktop/src/lib/
+/// desktop-fs.ts`): `GET /api/fs/list?path=`, `GET /api/fs/read-text?path=`
+/// and `GET /api/fs/read-data-url?path=`. No write route is exposed here.
+abstract class HermesProjectFilesGateway {
+  /// True once `/api/fs/list` answered 404/405 on this connection (an older
+  /// Hermes); cleared on reconnect or when the capability TTL expires.
+  bool get projectFilesKnownUnsupported;
+
+  Future<ProjectDirectoryListing> listProjectDirectory(String path);
+
+  Future<ProjectFilePreview> readProjectFileText(String path);
+
+  /// Raw bytes for previews the text route cannot carry (images).
+  Future<Uint8List> readProjectFileBytes(String path);
+}
+
+/// One write route of the project file browser, gated on its own: an older
+/// Hermes may serve some of them and not others.
+enum ProjectFileWriteAction { createFolder, writeText, upload, delete }
+
+/// Optional writes for the project file browser, kept apart from
+/// [HermesProjectFilesGateway] so read-only fakes and servers stay read-only.
+/// Exactly the Dashboard routes Hermes Desktop/Web use:
+/// `POST /api/files/mkdir {path}`, `POST /api/fs/write-text {path, content}`,
+/// `POST /api/files/upload-stream` (multipart `file`, `path`, `overwrite`)
+/// and `DELETE /api/files {path, recursive}`.
+abstract class HermesProjectFileWritesGateway {
+  /// False on a read-only connection: no write is ever sent.
+  bool get projectFileWritesAllowed;
+
+  /// True once [action]'s route answered 404/405 (405 only for delete).
+  bool projectFileWriteKnownUnsupported(ProjectFileWriteAction action);
+
+  /// Creates [path] and returns the folder the server reports.
+  Future<String> createProjectFolder(String path);
+
+  /// Creates or overwrites the UTF-8 text file at [path].
+  Future<void> writeProjectFileText(String path, String content);
+
+  /// Uploads the local file at [localPath] to [path]; never overwrites.
+  Future<String> uploadProjectFile(
+    String path, {
+    required String localPath,
+    required String filename,
+  });
+
+  /// Deletes a file or an empty folder (never recursive).
+  Future<void> deleteProjectEntry(String path);
 }
 
 abstract class HermesDesktopSessionControlGateway {

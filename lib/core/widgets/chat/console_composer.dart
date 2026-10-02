@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../../../l10n/app_localizations.dart';
@@ -597,84 +598,85 @@ class ConsoleAttachmentPreviewStrip extends StatelessWidget {
     // column centres its children: one or two thumbs ended up floating in the
     // middle of the input. Take the full width and pin the row to the start
     // edge (RTL-aware) so attachments stack from the leading side.
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Align(
-        alignment: AlignmentDirectional.centerStart,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (var index = 0; index < attachments.length; index++) ...[
-                if (index > 0) const SizedBox(width: 10),
-                Builder(
-                  builder: (context) {
-                    final attachment = attachments[index];
-                    final hasLocalImage =
-                        attachment.isImage &&
-                        attachment.localPath.isNotEmpty &&
-                        File(attachment.localPath).existsSync();
-                    final previewable =
-                        hasLocalImage &&
-                        (attachment.uploadState ==
-                                AttachmentUploadState.pending ||
-                            attachment.uploadState ==
-                                AttachmentUploadState.error);
-                    final changing =
-                        attachment.uploadState ==
-                        AttachmentUploadState.uploading;
-                    final openPreview = previewable
-                        ? () => showImageViewer(
+    //
+    // The scroll view clips to its own box and sits flush with the rounded
+    // (radius 28) input surface. Its padding keeps the thumbs off the
+    // surface's corner arc and leaves room for the remove/retry targets that
+    // overhang each card by 12 dp, so neither is cut at the edges.
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsetsDirectional.fromSTEB(12, 12, 12, 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var index = 0; index < attachments.length; index++) ...[
+              if (index > 0) const SizedBox(width: 12),
+              Builder(
+                builder: (context) {
+                  final attachment = attachments[index];
+                  final hasLocalImage =
+                      attachment.isImage &&
+                      attachment.localPath.isNotEmpty &&
+                      File(attachment.localPath).existsSync();
+                  final previewable =
+                      hasLocalImage &&
+                      (attachment.uploadState ==
+                              AttachmentUploadState.pending ||
+                          attachment.uploadState ==
+                              AttachmentUploadState.error);
+                  final changing =
+                      attachment.uploadState == AttachmentUploadState.uploading;
+                  final openPreview = previewable
+                      ? () =>
+                            showImageViewer(context, File(attachment.localPath))
+                      : null;
+                  return Semantics(
+                    container: changing || previewable,
+                    explicitChildNodes: changing || previewable,
+                    liveRegion:
+                        changing ||
+                        attachment.uploadState == AttachmentUploadState.error,
+                    label: changing
+                        ? Strings.of(
                             context,
-                            File(attachment.localPath),
-                          )
-                        : null;
-                    return Semantics(
-                      container: changing || previewable,
-                      explicitChildNodes: changing || previewable,
-                      liveRegion:
-                          changing ||
-                          attachment.uploadState == AttachmentUploadState.error,
-                      label: changing
-                          ? Strings.of(
-                              context,
-                            ).chaAttachmentUploadInProgress(attachment.name)
-                          : previewable
-                          ? Strings.of(
-                              context,
-                            ).chaPreviewAttachment(attachment.name)
+                          ).chaAttachmentUploadInProgress(attachment.name)
+                        : previewable
+                        ? Strings.of(
+                            context,
+                          ).chaPreviewAttachment(attachment.name)
+                        : null,
+                    button: previewable,
+                    onTap: openPreview,
+                    child: AttachmentCard(
+                      key: ValueKey('attachment-card-${attachment.localId}'),
+                      compact: true,
+                      name: attachment.name,
+                      mimeType: attachment.mimeType,
+                      sizeLabel: attachment.formattedSize,
+                      thumbnailFile: hasLocalImage
+                          ? File(attachment.localPath)
                           : null,
-                      button: previewable,
+                      showUploadState: true,
+                      uploadState: attachment.uploadState,
                       onTap: openPreview,
-                      child: AttachmentCard(
-                        key: ValueKey('attachment-card-${attachment.localId}'),
-                        name: attachment.name,
-                        mimeType: attachment.mimeType,
-                        sizeLabel: attachment.formattedSize,
-                        thumbnailFile: hasLocalImage
-                            ? File(attachment.localPath)
-                            : null,
-                        showUploadState: true,
-                        uploadState: attachment.uploadState,
-                        onTap: openPreview,
-                        onRetry:
-                            attachment.uploadState ==
-                                    AttachmentUploadState.error &&
-                                attachment.localId.isNotEmpty &&
-                                onRetry != null
-                            ? () => onRetry!(attachment.localId)
-                            : null,
-                        onRemove: attachment.localId.isEmpty || onRemove == null
-                            ? null
-                            : () => onRemove!(attachment.localId),
-                      ),
-                    );
-                  },
-                ),
-              ],
+                      onRetry:
+                          attachment.uploadState ==
+                                  AttachmentUploadState.error &&
+                              attachment.localId.isNotEmpty &&
+                              onRetry != null
+                          ? () => onRetry!(attachment.localId)
+                          : null,
+                      onRemove: attachment.localId.isEmpty || onRemove == null
+                          ? null
+                          : () => onRemove!(attachment.localId),
+                    ),
+                  );
+                },
+              ),
             ],
-          ),
+          ],
         ),
       ),
     );
@@ -809,15 +811,35 @@ class ConsoleDictationVisualizer extends StatefulWidget {
 }
 
 class _ConsoleDictationVisualizerState extends State<ConsoleDictationVisualizer>
-    with WidgetsBindingObserver {
-  static const _barCount = 48;
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  static const _barCount = 36;
   static const _frameInterval = Duration(microseconds: 33334);
+
+  /// About 1.5 s of history: the quietest recent level is the noise floor.
+  static const _floorWindow = 45;
+
+  /// Margin above the noise floor that still reads as silence.
+  static const _noiseGate = 0.015;
+
+  /// Level rise above the noise floor that fills the whole bar. It suits both
+  /// the linear `RMS * 4` engines (sherpa, server) and the dB-normalised
+  /// Whisper/clip engines, where the ambient already sits around 0.4-0.6.
+  static const _fullScaleRise = 0.3;
+  static const _attack = Duration(milliseconds: 45);
+  static const _release = Duration(milliseconds: 110);
+
   final ValueNotifier<List<double>> _samples = ValueNotifier(
     List<double>.filled(_barCount, 0),
   );
+  final _ConsoleDictationWaveMotion _motion = _ConsoleDictationWaveMotion();
+  late final Ticker _ticker = createTicker(_onTick);
+  final List<double> _floorHistory = <double>[];
+  Duration _lastTick = Duration.zero;
+  Duration _sincePush = Duration.zero;
   Timer? _sampleTimer;
   bool _tickerModeEnabled = true;
   bool _appActive = true;
+  bool _reduceMotion = false;
 
   bool get _shouldSampleLevel =>
       !widget.transcribing && _tickerModeEnabled && _appActive;
@@ -825,16 +847,21 @@ class _ConsoleDictationVisualizerState extends State<ConsoleDictationVisualizer>
   @visibleForTesting
   bool get debugClockActive => _sampleTimer?.isActive ?? false;
 
+  @visibleForTesting
+  bool get debugAnimating => _ticker.isActive;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _floorHistory.add(widget.level.value.clamp(0.0, 1.0).toDouble());
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _tickerModeEnabled = TickerMode.valuesOf(context).enabled;
+    _reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     _syncSampleClock();
   }
 
@@ -846,22 +873,62 @@ class _ConsoleDictationVisualizerState extends State<ConsoleDictationVisualizer>
     }
   }
 
+  double get _rawLevel => widget.level.value.clamp(0.0, 1.0).toDouble();
+
+  /// Maps the engine level to a bar height (0..1). Only the visual is
+  /// amplified: the PCM and what the STT engine receives stay untouched.
+  double _displayLevel(double raw) {
+    final floor = _floorHistory.reduce(math.min);
+    final rise = ((raw - floor - _noiseGate) / _fullScaleRise).clamp(0.0, 1.0);
+    // A perceptual curve so normal speech, not only shouting, moves the bars.
+    return math.pow(rise, 0.6).toDouble();
+  }
+
   void _syncSampleClock() {
     _sampleTimer?.cancel();
     _sampleTimer = null;
+    final animate = _shouldSampleLevel && !_reduceMotion;
+    if (!animate && _ticker.isActive) _ticker.stop();
     if (!_shouldSampleLevel) return;
+    if (animate && !_ticker.isActive) {
+      _lastTick = Duration.zero;
+      _ticker.start();
+    }
+    if (!animate) _motion.update(live: 0, phase: 0, visible: false);
     _sampleTimer = Timer.periodic(_frameInterval, (_) {
       if (!_shouldSampleLevel) {
         _syncSampleClock();
         return;
       }
-      final raw = widget.level.value.clamp(0.0, 1.0).toDouble();
-      // Solo amplifica la representación visual: no modifica el PCM ni lo que
-      // recibe el motor STT. El pequeño noise gate mantiene el silencio plano.
-      final sample = ((raw - 0.018) / 0.42).clamp(0.0, 1.0).toDouble();
+      final raw = _rawLevel;
+      _floorHistory.add(raw);
+      if (_floorHistory.length > _floorWindow) _floorHistory.removeAt(0);
+      // Animated: the eased live bar becomes the newest history bar, so the
+      // hand-off is seamless. Reduced motion: the level is shown as is.
+      final sample = _reduceMotion ? _displayLevel(raw) : _motion.live;
       final history = _samples.value;
+      _sincePush = Duration.zero;
       _samples.value = <double>[...history.skip(1), sample];
     });
+  }
+
+  void _onTick(Duration elapsed) {
+    final dt = elapsed - _lastTick;
+    _lastTick = elapsed;
+    _sincePush += dt;
+    final target = _displayLevel(_rawLevel);
+    final live = _motion.live;
+    final tau = target > live ? _attack : _release;
+    final blend =
+        1 - math.exp(-dt.inMicroseconds / tau.inMicroseconds.toDouble());
+    _motion.update(
+      live: live + (target - live) * blend,
+      phase: (_sincePush.inMicroseconds / _frameInterval.inMicroseconds).clamp(
+        0.0,
+        1.0,
+      ),
+      visible: true,
+    );
   }
 
   @override
@@ -876,7 +943,9 @@ class _ConsoleDictationVisualizerState extends State<ConsoleDictationVisualizer>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _sampleTimer?.cancel();
+    _ticker.dispose();
     _samples.dispose();
+    _motion.dispose();
     super.dispose();
   }
 
@@ -903,6 +972,7 @@ class _ConsoleDictationVisualizerState extends State<ConsoleDictationVisualizer>
                 key: const ValueKey('dictation-bars-paint'),
                 painter: _ConsoleDictationBarsPainter(
                   samples: _samples,
+                  motion: _motion,
                   color: widget.color,
                   mutedColor: widget.mutedColor,
                   transcribing: widget.transcribing,
@@ -916,50 +986,91 @@ class _ConsoleDictationVisualizerState extends State<ConsoleDictationVisualizer>
   }
 }
 
+/// Per-frame state of the animated wave: the eased live bar and how far the
+/// history has glided (0..1 of a slot) since the last history step.
+class _ConsoleDictationWaveMotion extends ChangeNotifier {
+  double live = 0;
+  double phase = 0;
+  bool visible = false;
+
+  void update({
+    required double live,
+    required double phase,
+    required bool visible,
+  }) {
+    if (this.live == live && this.phase == phase && this.visible == visible) {
+      return;
+    }
+    this.live = live;
+    this.phase = phase;
+    this.visible = visible;
+    notifyListeners();
+  }
+}
+
 class _ConsoleDictationBarsPainter extends CustomPainter {
-  const _ConsoleDictationBarsPainter({
+  _ConsoleDictationBarsPainter({
     required this.samples,
+    required this.motion,
     required this.color,
     required this.mutedColor,
     required this.transcribing,
-  }) : super(repaint: samples);
+  }) : super(repaint: Listenable.merge([samples, motion]));
 
   final ValueListenable<List<double>> samples;
+  final _ConsoleDictationWaveMotion motion;
   final Color color;
   final Color mutedColor;
   final bool transcribing;
+
+  static const double _minBarHeight = 3.2;
 
   @override
   void paint(Canvas canvas, Size size) {
     final history = samples.value;
     if (history.isEmpty || size.isEmpty) return;
-    final barCount = history.length;
-    final slotWidth = size.width / barCount;
-    final barWidth = math.min(3.2, math.max(1.7, slotWidth * 0.52));
+    final animated = motion.visible;
+    // The animated wave keeps one extra slot on the right for the live bar.
+    final slots = history.length + (animated ? 1 : 0);
+    final slotWidth = size.width / slots;
+    final barWidth = math.min(4.5, math.max(2.0, slotWidth * 0.58));
+    final glide = animated ? motion.phase * slotWidth : 0.0;
     final paint = Paint();
-    for (var index = 0; index < barCount; index++) {
-      final sample = history[index].clamp(0.0, 1.0).toDouble();
-      final barHeight = 3.2 + sample * (kConsoleDictationWaveHeight - 3.2);
-      final recency = index / math.max(1, barCount - 1);
+
+    void drawBar(int slot, double level, double recency) {
+      final value = level.clamp(0.0, 1.0).toDouble();
+      final barHeight =
+          _minBarHeight + value * (kConsoleDictationWaveHeight - _minBarHeight);
+      final centerX = slotWidth * (slot + 0.5) - glide;
+      // The oldest bar fades out as it glides past the left edge.
+      final edgeFade = (centerX / slotWidth).clamp(0.0, 1.0).toDouble();
+      if (edgeFade <= 0) return;
       paint.color = transcribing
-          ? mutedColor.withValues(alpha: 0.32)
-          : color.withValues(alpha: 0.5 + recency * 0.4);
+          ? mutedColor.withValues(alpha: 0.32 * edgeFade)
+          : color.withValues(alpha: (0.45 + recency * 0.5) * edgeFade);
       final rect = Rect.fromLTWH(
-        slotWidth * (index + 0.5) - barWidth / 2,
+        centerX - barWidth / 2,
         (kConsoleDictationWaveHeight - barHeight) / 2,
         barWidth,
         barHeight,
       );
       canvas.drawRRect(
-        RRect.fromRectAndRadius(rect, const Radius.circular(8)),
+        RRect.fromRectAndRadius(rect, Radius.circular(barWidth / 2)),
         paint,
       );
     }
+
+    final lastSlot = math.max(1, slots - 1);
+    for (var index = 0; index < history.length; index++) {
+      drawBar(index, history[index], index / lastSlot);
+    }
+    if (animated) drawBar(history.length, motion.live, 1);
   }
 
   @override
   bool shouldRepaint(covariant _ConsoleDictationBarsPainter oldDelegate) =>
       !identical(oldDelegate.samples, samples) ||
+      !identical(oldDelegate.motion, motion) ||
       oldDelegate.color != color ||
       oldDelegate.mutedColor != mutedColor ||
       oldDelegate.transcribing != transcribing;

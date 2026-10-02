@@ -19,14 +19,35 @@ import '../widgets/read_only.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/bridge_update_banner.dart';
 import '../widgets/hermes_premium_ui.dart';
+import '../models/desktop_model_catalog.dart';
+import '../models/model_identity.dart';
+import 'chat_screen.dart' show friendlyModelName;
+import '../services/local_models_client.dart';
 import 'external_provider_screen.dart';
+import 'local_models_screen.dart';
 import 'moa_recipe_screen.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
 class ModelsScreen extends StatefulWidget {
   final SavedConnection connection;
-  const ModelsScreen({required this.connection, super.key});
+
+  /// Test seams: a fake Dashboard HTTP client, a Bridge stub and the gateway
+  /// catalog the chat cached. Production resolves all three from the app.
+  @visibleForTesting
+  final DashboardClient? dashboardClientForTesting;
+  @visibleForTesting
+  final BridgeManagerContract? bridgeManagerForTesting;
+  @visibleForTesting
+  final DesktopModelCatalog? Function()? gatewayCatalogForTesting;
+
+  const ModelsScreen({
+    required this.connection,
+    this.dashboardClientForTesting,
+    this.bridgeManagerForTesting,
+    this.gatewayCatalogForTesting,
+    super.key,
+  });
 
   @override
   State<ModelsScreen> createState() => _ModelsScreenState();
@@ -109,7 +130,12 @@ class _ModelsScreenState extends State<ModelsScreen> {
   String _profile = '';
 
   // Bridge (para fallback: no hay API nativa de model/set para fallback).
-  BridgeManager? _mgr;
+  BridgeManagerContract? _mgr;
+
+  /// Capability of the Hermes-managed llama.cpp runtime
+  /// (`GET /api/local-models/status`): null = checking, otherwise the probe
+  /// outcome. 404 ⇒ the server has no local-models routes.
+  _LocalModelsProbe? _localProbe;
   BridgeState _bridge = BridgeState.unknown;
   bool _bridgeProbed = false;
   List<Map<String, String>> _fallback = [];
@@ -119,8 +145,9 @@ class _ModelsScreenState extends State<ModelsScreen> {
   // van por el bridge; false = vía Dashboard (puede exigir login).
   bool _viaBridge = false;
 
-  BridgeManager get _bridgeMgr =>
-      _mgr ??= context.findAncestorStateOfType<HermesAppState>()!.bridgeManager;
+  BridgeManagerContract get _bridgeMgr => _mgr ??=
+      widget.bridgeManagerForTesting ??
+      context.findAncestorStateOfType<HermesAppState>()!.bridgeManager;
 
   bool get _fallbackAvailable =>
       _bridge.connected && _bridge.caps.writableTargets.isNotEmpty;
@@ -128,7 +155,9 @@ class _ModelsScreenState extends State<ModelsScreen> {
   @override
   void initState() {
     super.initState();
-    _client = DashboardClient.lazy(widget.connection);
+    _client =
+        widget.dashboardClientForTesting ??
+        DashboardClient.lazy(widget.connection);
     _loadHidden();
     // La carga la dispara didChangeDependencies tras sondear el bridge, para ir
     // bridge-first y evitar el muro de login del Dashboard si el bridge existe.
@@ -209,8 +238,74 @@ class _ModelsScreenState extends State<ModelsScreen> {
   /// Sondea el bridge (best-effort) y luego carga. Si el bridge responde, la
   /// carga será bridge-first; si no, cae al Dashboard.
   Future<void> _bootstrap() async {
+    unawaited(_probeLocalModels());
     await _probeBridge();
     await _load();
+  }
+
+  LocalModelsClient get _localModels =>
+      LocalModelsClient(_client, profile: _profile);
+
+  Future<void> _probeLocalModels() async {
+    _LocalModelsProbe probe;
+    try {
+      final status = await _localModels.status();
+      probe = _LocalModelsProbe.available(status.models.length);
+    } on LocalModelsUnavailable {
+      probe = const _LocalModelsProbe.unavailable();
+    } catch (_) {
+      probe = const _LocalModelsProbe.failed();
+    }
+    if (mounted) setState(() => _localProbe = probe);
+  }
+
+  Future<void> _openLocalModels() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => LocalModelsScreen(
+          connection: widget.connection,
+          profile: _profile,
+          client: _localModels,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    // Activation changes the default model; re-read it and the entry.
+    unawaited(_probeLocalModels());
+    unawaited(_load());
+  }
+
+  Widget _buildLocalModelsTile(HermesThemeColors colors) {
+    final s = Strings.of(context);
+    final probe = _localProbe;
+    final unavailable = probe?.kind == _LocalModelsProbeKind.unavailable;
+    final subtitle = switch (probe?.kind) {
+      null => s.lm1215EntryChecking,
+      _LocalModelsProbeKind.unavailable => s.lm1215Unavailable,
+      _LocalModelsProbeKind.failed => s.lm1215EntryError,
+      _LocalModelsProbeKind.available =>
+        probe!.count > 0
+            ? s.lm1215EntrySummary(probe.count)
+            : s.lm1215EntryEmpty,
+    };
+    return _ModelTonalGroup(
+      margin: const EdgeInsets.only(top: 8, bottom: 8),
+      child: HermesListRow(
+        key: const ValueKey('lm1215-entry'),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        icon: Icons.developer_board_rounded,
+        iconColor: unavailable ? null : colors.accentHover,
+        title: s.lm1215EntryTitle,
+        subtitle: subtitle,
+        enabled: probe != null && !unavailable,
+        trailing: Icon(
+          Icons.chevron_right,
+          size: 18,
+          color: colors.textDisabled,
+        ),
+        onTap: probe == null || unavailable ? null : _openLocalModels,
+      ),
+    );
   }
 
   @override
@@ -279,6 +374,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
     'warning': p.warning,
     'models': p.models,
     'base_url': p.baseUrl,
+    'aliases': p.aliases.toList(),
   };
 
   /// Actualiza el caché fusionando con lo ya guardado: catálogo y flows llegan
@@ -710,7 +806,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
     // no-default activo, avisamos de que también cambia el modelo del agente.
     if (scope == 'main' && _profile.isNotEmpty) {
       final ok = await _confirmMainModelChange(modelId);
-      if (ok != true) return;
+      if (ok != true || !mounted) return;
     }
     setState(() => _setting = true);
     // Proveedores CUSTOM (base_url propio, p.ej. un backend llama.cpp propio
@@ -1248,7 +1344,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
 
   Future<void> _setFallback(List<Map<String, String>> providers) async {
     final client = await _bridgeMgr.clientFor(widget.connection.id);
-    if (client == null) return;
+    if (client == null || !mounted) return;
     setState(() => _setting = true);
     try {
       await client.setFallback(providers);
@@ -1540,6 +1636,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
           ],
           if (unauthProviders.isNotEmpty)
             _buildUnauthSection(colors, unauthProviders),
+          _buildLocalModelsTile(colors),
           _buildExternalProviderTile(colors),
         ],
       ),
@@ -1710,9 +1807,29 @@ class _ModelsScreenState extends State<ModelsScreen> {
   /// para no dar la impresión de que hay un modelo cloud funcionando.
   bool _shouldShowActiveCard(ModelActiveInfo info) {
     if (widget.connection.kind != InstanceKind.localhost) return true;
-    final p = info.provider.toLowerCase();
-    return p == 'custom' || p == 'ollama';
+    return isLocalModelProviderId(info.provider);
   }
+
+  /// Gateway catalog the chat already cached for this connection/profile
+  /// (`model.options` with `aliases`). Read-only; never triggers I/O.
+  DesktopModelCatalog? _gatewayCatalog() {
+    final testing = widget.gatewayCatalogForTesting;
+    if (testing != null) return testing();
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    return app?.activeChats.modelCatalogCache.read(
+      widget.connection.id,
+      _profile,
+    );
+  }
+
+  /// Catalog row of the configured default, matched like Desktop
+  /// (slug → name → alias, then the cached gateway catalog).
+  ModelProvider? _activeProvider(ModelActiveInfo info) =>
+      findActiveModelProvider(
+        _providers,
+        info.provider,
+        catalog: _gatewayCatalog(),
+      );
 
   /// (spec 028 punto 2) ¿El modelo activo declarado por el servidor es de verdad
   /// usable? En un servidor virgen sin API keys, /api/model/info devuelve el
@@ -1730,7 +1847,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
     for (final p in _providers) {
       if (!p.authenticated) continue;
       if (prov.isNotEmpty &&
-          (p.slug.toLowerCase() == prov || p.name.toLowerCase() == prov)) {
+          (p.slug.toLowerCase() == prov || modelProviderMatches(p, prov))) {
         return true;
       }
       if (model.isNotEmpty && p.models.any((m) => m.toLowerCase() == model)) {
@@ -1795,6 +1912,11 @@ class _ModelsScreenState extends State<ModelsScreen> {
 
   Widget _buildActiveCard(HermesThemeColors colors, ModelActiveInfo info) {
     final s = Strings.of(context);
+    final friendly = friendlyModelName(info.model);
+    final row = _activeProvider(info);
+    final providerLabel = row != null && row.name.isNotEmpty
+        ? row.name
+        : info.provider;
     final ctx = info.effectiveContextLength;
     final ctxLabel = ctx > 1000
         ? s.mdlCtxKTokens((ctx / 1024).round().toString())
@@ -1847,27 +1969,60 @@ class _ModelsScreenState extends State<ModelsScreen> {
             ),
             const SizedBox(height: 10),
             Text(
-              info.model,
+              friendly,
+              key: const ValueKey('lm1215-active-model'),
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 fontWeight: FontWeight.w700,
                 color: colors.accentHover,
               ),
             ),
-            if (info.provider.isNotEmpty) ...[
+            if (friendly != info.model) ...[
+              const SizedBox(height: 2),
+              Text(
+                info.model,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: colors.textDisabled,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+            if (providerLabel.isNotEmpty) ...[
               const SizedBox(height: 4),
               Text(
-                info.provider,
+                providerLabel,
+                key: const ValueKey('lm1215-active-provider'),
                 style: Theme.of(
                   context,
                 ).textTheme.bodySmall?.copyWith(color: colors.textSecondary),
               ),
             ],
             const SizedBox(height: 8),
-            Text(
-              ctxLabel,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: colors.textDisabled),
+            if (ctx > 0)
+              Text(
+                ctxLabel,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: colors.textDisabled),
+              ),
+            // `/api/model/info` reads the profile default (config.yaml), not
+            // a chat's own pick: say so, as the chat may run another model.
+            Row(
+              children: [
+                Icon(
+                  Icons.chat_bubble_outline_rounded,
+                  size: 13,
+                  color: colors.textDisabled,
+                ),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    s.lm1215DefaultForNewChats,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -2162,9 +2317,11 @@ class _ModelsScreenState extends State<ModelsScreen> {
                 ),
               ),
             ...displayModels.map((modelId) {
+              final active = _activeInfo;
               final isActive =
-                  _activeInfo?.model == modelId &&
-                  _activeInfo?.provider == provider.slug;
+                  active != null &&
+                  active.model == modelId &&
+                  _activeProvider(active)?.slug == provider.slug;
               // Solo puede llegar aquí oculto con "ver ocultos" activo: se
               // muestra atenuado y con "Restaurar" a un toque (spec 028 U-05).
               final hiddenModel = _isModelHidden(provider.slug, modelId);
@@ -2462,6 +2619,22 @@ class _ModelsScreenState extends State<ModelsScreen> {
 /// auto-copia el código, auto-abre el navegador y sondea hasta completar.
 /// El token NUNCA pasa por la app: el agente lo obtiene y guarda en el servidor;
 /// la app solo muestra el código y consulta el estado.
+enum _LocalModelsProbeKind { available, unavailable, failed }
+
+class _LocalModelsProbe {
+  const _LocalModelsProbe.available(this.count)
+    : kind = _LocalModelsProbeKind.available;
+  const _LocalModelsProbe.unavailable()
+    : kind = _LocalModelsProbeKind.unavailable,
+      count = 0;
+  const _LocalModelsProbe.failed()
+    : kind = _LocalModelsProbeKind.failed,
+      count = 0;
+
+  final _LocalModelsProbeKind kind;
+  final int count;
+}
+
 class _ModelTonalGroup extends StatelessWidget {
   final EdgeInsetsGeometry margin;
   final ShapeBorder? shape;

@@ -1,5 +1,95 @@
 {
   "@@locale": "es",
+  "i18n1215PlatformConnected": "conectada",
+  "i18n1215PlatformDisconnected": "desconectada",
+  "i18n1215PlatformConnecting": "conectando",
+  "i18n1215PlatformError": "con error",
+  "i18n1215PlatformStarting": "arrancando",
+  "i18n1215PlatformStopped": "detenida",
+  "i18n1215StatusOnline": "en línea",
+  "i18n1215StatusSyncing": "sincronizando",
+  "i18n1215StatusError": "error",
+  "i18n1215SshNotConfigured": "No hay credenciales SSH configuradas.",
+  "i18n1215SshMissingHost": "Falta el host del servidor.",
+  "i18n1215SshMissingUser": "Falta el nombre de usuario.",
+  "i18n1215SshNoKeyFound": "No se ha encontrado ninguna clave en el texto.",
+  "i18n1215SshWrongPassphrase": "Passphrase incorrecta para esta clave.",
+  "i18n1215SshUnrecognizedKey": "Formato de clave no reconocido (usa PEM OpenSSH o RSA).",
+  "i18n1215SshInvalidKey": "Clave privada no válida.",
+  "i18n1215SshAuthRejected": "Autenticación rechazada: revisa el usuario, la clave o la contraseña.",
+  "i18n1215SshHandshakeFailed": "Falló la negociación SSH (¿es un servidor SSH?).",
+  "i18n1215SshRefused": "Conexión rechazada (¿está SSH activo?).",
+  "i18n1215SshTimeout": "Tiempo de espera agotado (host/puerto inalcanzable).",
+  "i18n1215SshHostLookup": "No se pudo resolver el host.",
+  "i18n1215SshSessionClosedBanner": "[sesión cerrada]",
+  "i18n1215KanbanTask": "Tarea del Kanban",
+  "i18n1215ScheduledTask": "Tarea programada",
+  "i18n1215Conversation": "Conversación",
+  "i18n1215PreviousContext": "Contexto previo",
+  "m1215HomeDashboardWrongPassword": "contraseña de Dashboard incorrecta · {label}",
+  "m1215HomeDashboardLoginRequired": "falta iniciar sesión en Dashboard · {label}",
+  "m1215SkillChip": "Skill · {name}",
+  "@m1215SkillChip": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferDone": "listo",
+  "m1215TransferError": "error",
+  "m1215TransferCancelled": "Cancelado por el usuario",
+  "m1215TransferDownloading": "Descargando {name}",
+  "@m1215TransferDownloading": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferUploading": "Subiendo {name}",
+  "@m1215TransferUploading": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferInProgress": "En curso…",
+  "m1215TransferDownloaded": "Descargado · {name}",
+  "@m1215TransferDownloaded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferUploaded": "Subido · {name}",
+  "@m1215TransferUploaded": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferDownloadFailed": "Falló la descarga · {name}",
+  "@m1215TransferDownloadFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferUploadFailed": "Falló la subida · {name}",
+  "@m1215TransferUploadFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "m1215TransferCompleted": "Completado",
+  "m1215TransferFailedBody": "Error",
   "languageSettingTitle": "Idioma",
   "@languageSettingTitle": {
     "description": "Título de la opción de idioma en Ajustes"
@@ -223,6 +313,9 @@
   "statusNotifications": "Notificaciones",
   "statusConnected": "conectado",
   "statusOffline": "sin conexión",
+  "statusWrongPassword": "contraseña incorrecta",
+  "statusLoginRequired": "falta iniciar sesión",
+  "statusKeyRejected": "API key rechazada",
   "statusNotEnabled": "no habilitado",
   "statusNeedsToken": "falta token",
   "statusRunning": "corriendo",
@@ -5391,7 +5484,7 @@
   "diagProbingBoth": "Gateway y Dashboard",
   "chaRestartGateway": "Reiniciar gateway",
   "chaRestartGatewayConfirm": "El agente parece colgado. ¿Reiniciar el gateway del servidor? El chat se cortará unos segundos.",
-  "chaRestartGatewayDone": "Gateway reiniciado. Reintenta el mensaje.",
+  "chaRestartGatewayDone": "Reinicio del gateway pedido. Reintenta el mensaje en un momento.",
   "chaRestartGatewayFail": "No se pudo reiniciar el gateway: {error}",
   "@chaRestartGatewayFail": {
     "placeholders": {
@@ -5459,6 +5552,8 @@
   "chaQueueSendNext": "Enviar siguiente",
   "chaQueueDelete": "Borrar",
   "chaQueueEditFailed": "No se pudo actualizar el mensaje en cola.",
+  "chaQueueDeleteFailed": "No se pudo borrar el mensaje en cola.",
+  "chaQueueSendNowFailed": "No se pudo enviar ahora el mensaje en cola. Sigue en la cola.",
   "chaQueueSteerRejected": "Hermes no aceptó la redirección. El mensaje sigue en cola y se enviará después.",
   "chaQueueSteerUnconfirmed": "Hermes no confirmó la redirección. El mensaje sigue en cola; revísalo antes de reintentar para evitar duplicados.",
   "chaQueueSteerCleanupFailed": "Hermes aceptó la redirección, pero no se pudo quitar la copia en cola. Bórrala para evitar un duplicado.",
@@ -5664,6 +5759,7 @@
     }
   },
   "setGatewayRestarted": "Gateway reiniciado.",
+  "setGatewayNotBack": "El gateway aún no ha vuelto. Revisa su estado en el servidor.",
   "setWarningsCount": "{count, plural, one{1 aviso} other{{count} avisos}}",
   "@setWarningsCount": {
     "description": "Contador de avisos del panel de diagnóstico de Ajustes.",
@@ -7562,6 +7658,11 @@
     }
   },
   "chatQueueBlockedRetry": "Envío pendiente. Reintenta.",
+  "chatQueueDeliveryUnknown": "No se sabe si llegó. Puede que Hermes ya lo tenga.",
+  "chatQueueAbandon": "Dejar de esperar",
+  "chatQueueAbandonTitle": "¿Dejar de esperar este mensaje?",
+  "chatQueueAbandonBody": "Se perdió la conexión mientras se enviaba y no se pudo confirmar si llegó. Si lo quitas no se reenviará; si Hermes ya lo recibió, responderá igualmente. El resto de la cola seguirá.",
+  "chatQueueAbandonConfirm": "Quitar",
   "splashLoadingProgress": "Progreso de carga",
   "memoryBackupSaved": "Backup guardado: {path}",
   "@memoryBackupSaved": {
@@ -7902,6 +8003,7 @@
   "roomStatusWorking": "La sala está trabajando…",
   "roomStatusNeedsApproval": "Necesita tu aprobación",
   "roomStatusBlocked": "Bloqueada — reintentar",
+  "roomStatusFailed": "Falló una respuesta",
   "roomStatusRoundFinished": "Ronda {round} terminada · {ago}",
   "@roomStatusRoundFinished": {
     "placeholders": {
@@ -8006,6 +8108,68 @@
     }
   },
   "roomRetryAction": "Reintentar",
+  "roomRetryDismiss": "Descartar",
+  "roomRetryUnavailable": "No se puede reintentar desde aquí",
+  "roomStripNeedsYou": "{name} te necesita",
+  "@roomStripNeedsYou": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStripReplying": "{name} está respondiendo",
+  "@roomStripReplying": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStripReplyingTwo": "{first} y {second} están respondiendo",
+  "@roomStripReplyingTwo": {
+    "placeholders": {
+      "first": {
+        "type": "String"
+      },
+      "second": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStripReplyingMany": "{count} bots están respondiendo",
+  "@roomStripReplyingMany": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "roomStripNext": "Después: {names}",
+  "@roomStripNext": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "roomTypingLabel": "{name} está respondiendo…",
+  "@roomTypingLabel": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "roomNewPill": "{count, plural, =1{1 nuevo} other{{count} nuevos}}",
+  "@roomNewPill": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "roomStripDetail": "Ver qué hace cada bot",
   "roomActionFailed": "Hermes rechazó la acción. Inténtalo de nuevo.",
   "roomActivityTitle": "Actividad",
   "roomActivityEmpty": "Aún no hay pases, fallos ni reintentos.",
@@ -8435,6 +8599,7 @@
   "schCustomHint": "Este horario no encaja en los modos de arriba. Puedes editarlo aquí o elegir un modo.",
   "crnScopeThisProfile": "Este perfil",
   "crnScopeAll": "Todos",
+  "crnAllScopeReadOnly": "La vista de todos los perfiles es solo de lectura. Cambia a «Este perfil» para crear o editar tareas.",
   "crnProfileLabel": "Perfil",
   "crnDeliveryBotChat": "Chat de {bot}",
   "@crnDeliveryBotChat": {
@@ -8864,5 +9029,527 @@
   },
   "cphFilterClear": "Quitar",
   "cphStatusUpdateShort": "Actualizable",
-  "cphRowAuth": "Autenticación"
+  "cphRowAuth": "Autenticación",
+  "v1215VoiceServerError": "El servidor de Hermes respondió: {detail}",
+  "@v1215VoiceServerError": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "v1215VoiceServerTestFailed": "La última prueba falló · {reason}",
+  "@v1215VoiceServerTestFailed": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "cm1215AttachmentLoading": "Cargando…",
+  "cm1215AttachmentUnavailable": "No disponible",
+  "cm1215AttachmentServerOnly": "Solo en el servidor",
+  "sc1215NewSinceYouLeft": "Nuevo desde que saliste",
+  "sc1215NewMessages": "{count, plural, =1{1 nuevo} other{{count} nuevos}}",
+  "@sc1215NewMessages": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cs1215FindAction": "Buscar en el chat",
+  "cs1215FindHint": "Buscar en este chat",
+  "cs1215FindClear": "Borrar búsqueda",
+  "cs1215MatchCounter": "{current} de {total}",
+  "@cs1215MatchCounter": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "cs1215NoMatches": "Sin resultados",
+  "cs1215NoMatchesAnywhere": "Sin resultados en este chat",
+  "cs1215OlderMatch": "Resultado anterior (más antiguo)",
+  "cs1215NewerMatch": "Resultado siguiente (más reciente)",
+  "cs1215CloseFind": "Cerrar búsqueda",
+  "cs1215SearchOlder": "Buscar en mensajes anteriores",
+  "cs1215SearchingOlder": "Buscando en mensajes anteriores…",
+  "cs1215CurrentMatchLabel": "Resultado de búsqueda actual",
+  "cs1215SlashArg": "[texto]",
+  "cs1215SlashDesc": "Busca texto en este chat",
+  "rs1215Sending": "Enviando…",
+  "rs1215NotSent": "No enviado",
+  "rs1215Retry": "Reintentar",
+  "q1215QueueAcceptedStale": "Hermes lo aceptó, pero no llegó a confirmar que terminara.",
+  "q1215QueueAbandonAcceptedBody": "Hermes ya lo había aceptado, pero no se pudo confirmar que terminara. Si lo quitas no se reenviará; si sigue en marcha, Hermes responderá igualmente. El resto de la cola seguirá.",
+  "q1215QueueAbandonFailed": "No se pudo quitar el mensaje. Sigue en la cola; vuelve a intentarlo en un momento.",
+  "q1215QueueResumeFailed": "No se pudo reanudar la cola todavía. Espera a que termine de detenerse y vuelve a intentarlo.",
+  "q1215QueueMissingAttachment": "Falta un adjunto en este móvil y no se puede enviar. Bórralo y vuelve a adjuntarlo.",
+  "q1215QueueHeadStuckNote": "no se enviarán solos: revisa el primero",
+  "cq1215QueuedUntilCompacted": "Mensaje en cola: se enviará cuando termine la compactación.",
+  "cq1215CommandWaitsForCompaction": "Los comandos esperan a que termine la compactación. Los mensajes normales se ponen en cola.",
+  "cq1215QueueParkedAfterCompaction": "en pausa: la compactación no terminó",
+  "qp1215QueueNotStored": "No se ha podido guardar de forma segura en este móvil y no se ha enviado. Sigue en la cola: pulsa Enviar siguiente para reintentarlo.",
+"tp1216PillCompacting": "Compactando…",
+  "@tp1216PillCompacting": {
+    "description": "Short label in the context pill under the composer while the conversation is being compacted."
+  },
+  "tp1216PillCompacted": "Compactada",
+  "@tp1216PillCompacted": {
+    "description": "Short label in the context pill for a few seconds after compaction finished (the conversation was compacted)."
+  },
+  "tp1216PillNothingToCompact": "Sin cambios",
+  "@tp1216PillNothingToCompact": {
+    "description": "Short label in the context pill when a compaction finished without changing anything."
+  },
+  "tp1216SkillName": "skill {name}",
+  "@tp1216SkillName": {
+    "description": "Screen-reader name of a skill in the tool-run summary.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "tp1216ToolCount": "{name}, {count, plural, =1{una vez} other{{count} veces}}",
+  "@tp1216ToolCount": {
+    "description": "Screen-reader text for a tool used several times in the tool-run summary.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "tp1216MoreTools": "+{count} más",
+  "@tp1216MoreTools": {
+    "description": "Tool-run summary overflow: how many more tools/skills are not shown.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+"lo1216QueueParkedFromPreviousSession": "Cola en pausa desde la última sesión",
+"s1216StartupFailedTitle": "No se pudo iniciar Hermes Console",
+  "s1216StartupFailedBody": "Hermes Console no pudo leer sus datos guardados en este teléfono. No se ha borrado nada. Si acabas de reiniciarlo, desbloquéalo y vuelve a intentarlo.",
+  "s1216StartupRetry": "Reintentar",
+  "vw1215OpenOutside": "Abrir fuera",
+  "vw1215Search": "Buscar en el documento",
+  "vw1215SearchCount": "{current} de {total}",
+  "@vw1215SearchCount": {"placeholders": {"current": {"type": "int"}, "total": {"type": "int"}}},
+  "vw1215NoMatches": "Sin resultados",
+  "vw1215PreviousMatch": "Coincidencia anterior",
+  "vw1215NextMatch": "Coincidencia siguiente",
+  "vw1215CloseSearch": "Cerrar búsqueda",
+  "vw1215Truncated": "Se muestra solo una parte ({shown} de {size}) para que la app siga fluida.",
+  "@vw1215Truncated": {"placeholders": {"shown": {"type": "String"}, "size": {"type": "String"}}},
+  "vw1215ShowAll": "Mostrar todo",
+  "vw1215Unsupported": "Este tipo de archivo no se puede ver dentro de la app. Puedes abrirlo con otra app o compartirlo.",
+  "vw1215LoadFailed": "No se ha podido leer el archivo.",
+  "vw1215Preview": "Vista previa",
+  "vw1215ViewSource": "Ver código fuente",
+  "vw1215ViewRendered": "Ver documento",
+  "vw1215LinkOpenFailed": "No se ha podido abrir el enlace.",
+"mp1215SavedToMemory": "Guardado en memoria",
+  "mp1215SavedToProfile": "Guardado en tu perfil",
+  "mp1215MemoryUpdated": "Memoria actualizada",
+  "mp1215ProfileUpdated": "Perfil actualizado",
+  "mp1215RemovedFromMemory": "Quitado de memoria",
+  "mp1215RemovedFromProfile": "Quitado de tu perfil",
+  "mp1215MemoryChip": "memoria",
+  "mp1215ShowMore": "Ver más",
+  "mp1215ShowLess": "Ver menos",
+"pj1215ActionRejected": "Hermes rechazó la acción. Revisa el nombre o la rama e inténtalo de nuevo.",
+  "pj1215ActiveNotice": "«{name}» es ahora el proyecto activo",
+  "@pj1215ActiveNotice": {"placeholders": {"name": {"type": "String"}}},
+  "pj1215ActiveTag": "Activo",
+  "pj1215AgoNow": "ahora mismo",
+  "pj1215AgoMinutes": "hace {count} min",
+  "@pj1215AgoMinutes": {"placeholders": {"count": {"type": "int"}}},
+  "pj1215AgoHours": "hace {count} h",
+  "@pj1215AgoHours": {"placeholders": {"count": {"type": "int"}}},
+  "pj1215AgoDays": "{count, plural, one{hace 1 día} other{hace {count} días}}",
+  "@pj1215AgoDays": {"placeholders": {"count": {"type": "int"}}},
+  "pj1215AgoDate": "el {date}",
+  "@pj1215AgoDate": {"placeholders": {"date": {"type": "String"}}},
+  "pj1215AppearanceTitle": "Apariencia",
+  "pj1215AppearanceAdoptNote": "Este proyecto lo detectó Hermes solo. Al darle un color o un icono se guarda como proyecto propio, igual que en Desktop.",
+  "pj1215AppearanceColor": "Color",
+  "pj1215AppearanceColorN": "Color {index}",
+  "@pj1215AppearanceColorN": {"placeholders": {"index": {"type": "int"}}},
+  "pj1215AppearanceNoColor": "Sin color",
+  "pj1215AppearanceIcon": "Icono (toca otra vez para quitarlo)",
+  "pj1215AutoTag": "Detectado",
+  "pj1215BranchesLoading": "Cargando ramas…",
+  "pj1215BranchesEmpty": "No hay ramas que mostrar en este repositorio.",
+  "pj1215BranchOpen": "abrir",
+  "pj1215BranchSwitchHome": "cambiar la principal",
+  "pj1215BranchNewWorktree": "nuevo worktree",
+  "pj1215BranchTrackRemote": "traer del remoto",
+  "pj1215ChatWorkspace": "Trabajará en {path}",
+  "@pj1215ChatWorkspace": {"placeholders": {"path": {"type": "String"}}},
+  "pj1215CreateProject": "Crear proyecto nuevo",
+  "pj1215CreateProjectDesktopOnly": "Solo desde Desktop: hay que elegir una carpeta del servidor. Mientras tanto, cualquier repositorio en el que Hermes trabaje aparece aquí solo.",
+  "pj1215DeleteTitle": "¿Quitar «{name}»?",
+  "@pj1215DeleteTitle": {"placeholders": {"name": {"type": "String"}}},
+  "pj1215DeleteBody": "Se quita el proyecto guardado de Hermes. Los ficheros, los repositorios Git y los worktrees no se tocan, y las conversaciones siguen existiendo.",
+  "pj1215DeleteConfirm": "Quitar proyecto",
+  "pj1215Deleted": "Se ha quitado «{name}»",
+  "@pj1215Deleted": {"placeholders": {"name": {"type": "String"}}},
+  "pj1215DesktopOnly": "Solo desde Desktop: necesita el explorador de archivos del ordenador.",
+  "pj1215ExplainTitle": "¿Qué es un proyecto?",
+  "pj1215ExplainFolderTitle": "Una carpeta del servidor",
+  "pj1215ExplainFolderBody": "Cada conversación trabaja dentro de una carpeta de la máquina donde corre Hermes. Un proyecto junta todas las conversaciones de esa carpeta (normalmente un repositorio Git).",
+  "pj1215ExplainAutoTitle": "Se crean solos",
+  "pj1215ExplainAutoBody": "Si Hermes trabaja en un repositorio, aparece aquí como «Detectado». Los que creas o personalizas en Desktop tienen nombre, color e icono propios.",
+  "pj1215ExplainWorktreeTitle": "Ramas y worktrees",
+  "pj1215ExplainWorktreeBody": "Dentro, las conversaciones se agrupan por rama. Un worktree es otra copia del repositorio en otra rama, para que Hermes pruebe algo sin tocar la principal.",
+  "pj1215ExplainNewChatTitle": "Chats que ya saben dónde trabajar",
+  "pj1215ExplainNewChatBody": "Un chat nuevo creado desde un proyecto (o desde una rama) empieza en esa carpeta, igual que en Desktop.",
+  "pj1215ExplainSafeTitle": "No borra nada",
+  "pj1215ExplainSafeBody": "Quitar u ocultar un proyecto solo lo saca de la lista. Tus ficheros y conversaciones siguen ahí.",
+  "pj1215HiddenNotice": "«{name}» oculto en este móvil",
+  "@pj1215HiddenNotice": {"placeholders": {"name": {"type": "String"}}},
+  "pj1215ShowHidden": "{count, plural, one{Mostrar 1 oculto} other{Mostrar {count} ocultos}}",
+  "@pj1215ShowHidden": {"placeholders": {"count": {"type": "int"}}},
+  "pj1215HideHidden": "Esconder los ocultos",
+  "pj1215HomeBucket": "Sin proyecto",
+  "pj1215HomeBucketBody": "Conversaciones sin carpeta de trabajo.",
+  "pj1215Intro": "Tus conversaciones agrupadas por la carpeta del servidor en la que trabajan, igual que en Desktop.",
+  "pj1215KanbanTag": "Kanban",
+  "pj1215MenuTooltip": "Acciones del proyecto",
+  "pj1215MenuNewChat": "Nuevo chat en este proyecto",
+  "pj1215MenuRename": "Renombrar",
+  "pj1215MenuAppearance": "Color e icono",
+  "pj1215MenuSetActive": "Marcar como activo",
+  "pj1215MenuIsActive": "Es el proyecto activo",
+  "pj1215MenuNewWorktree": "Nuevo worktree…",
+  "pj1215MenuOpenBranch": "Abrir una rama existente…",
+  "pj1215MenuCopyPath": "Copiar ruta",
+  "pj1215MenuAddFolder": "Añadir carpeta",
+  "pj1215MenuReveal": "Mostrar en la carpeta",
+  "pj1215MenuDelete": "Quitar proyecto…",
+  "pj1215MenuHide": "Ocultar en este móvil",
+  "pj1215NeedsNewerHermes": "Tu Hermes no tiene esta función todavía. Actualízalo para usarla desde el móvil.",
+  "pj1215ReadOnlyConnection": "Esta conexión es de solo lectura.",
+  "pj1215NoFolder": "Este proyecto no tiene carpeta.",
+  "pj1215NewChatHere": "Nuevo chat aquí",
+  "pj1215NewChatHereHint": "Hermes trabajará en {path}.",
+  "@pj1215NewChatHereHint": {"placeholders": {"path": {"type": "String"}}},
+  "pj1215NewChatNoFolder": "Nuevo chat",
+  "pj1215NewChatNoFolderHint": "Sin carpeta de trabajo.",
+  "pj1215NewChatInLane": "Nuevo chat en {branch}",
+  "@pj1215NewChatInLane": {"placeholders": {"branch": {"type": "String"}}},
+  "pj1215NoSessionsBody": "Todavía no hay conversaciones aquí. Empieza una con «Nuevo chat aquí».",
+  "pj1215OpenBranchTitle": "Abrir una rama existente",
+  "pj1215OpenBranchBody": "Si la rama ya tiene carpeta, se abre un chat allí. Si no, Hermes le crea un worktree.",
+  "pj1215PathCopied": "Ruta copiada",
+  "pj1215RenameTitle": "Renombrar proyecto",
+  "pj1215RenameHint": "Nombre del proyecto",
+  "pj1215Renamed": "Ahora se llama «{name}»",
+  "@pj1215Renamed": {"placeholders": {"name": {"type": "String"}}},
+  "pj1215ShowMore": "{count, plural, one{Ver 1 más} other{Ver {count} más}}",
+  "@pj1215ShowMore": {"placeholders": {"count": {"type": "int"}}},
+  "pj1215WhatIsThis": "¿Qué es esto?",
+  "pj1215WorktreeTitle": "Nuevo worktree",
+  "pj1215WorktreeBody": "Crea una rama nueva en su propia carpeta y abre un chat allí. La rama principal no se toca.",
+  "pj1215WorktreeRepo": "Repositorio",
+  "pj1215WorktreeBranch": "Nombre de la rama",
+  "pj1215WorktreeBranchHint": "p. ej. arreglar-login",
+  "pj1215WorktreeBase": "A partir de",
+  "pj1215WorktreeBaseDefault": "{name} (principal)",
+  "@pj1215WorktreeBaseDefault": {"placeholders": {"name": {"type": "String"}}},
+  "pj1215WorktreeNoBases": "No se pudieron listar las ramas; se usará la rama actual del repositorio.",
+  "pj1215WorktreeCreate": "Crear y abrir chat",
+  "pj1215WorktreeConvertInstead": "Mejor abrir una rama existente",
+  "pj1215WorktreeNewInstead": "Mejor crear una rama nueva",
+  "pj1215WorktreeStaleBackend": "Tu Hermes no permite crear worktrees desde el móvil todavía. Actualízalo o hazlo desde Desktop.",
+  "pj1215WorktreeTag": "Worktree",
+  "md1215ModelPending": "Cambio de modelo pendiente",
+  "md1215ModelNextMessage": "{model}: se aplica en el siguiente mensaje",
+  "@md1215ModelNextMessage": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "lm1215DefaultForNewChats": "Predeterminado para chats nuevos",
+  "lm1215EntryTitle": "Modelos locales del servidor",
+  "lm1215EntryChecking": "Comprobando si tu Hermes los admite…",
+  "lm1215Unavailable": "Tu Hermes no tiene modelos locales activados (modo local de Desktop)",
+  "lm1215EntryError": "No se pudo comprobar. Toca para abrir y reintentar",
+  "lm1215EntrySummary": "{count, plural, one{1 modelo descargado} other{{count} modelos descargados}}",
+  "@lm1215EntrySummary": {"placeholders": {"count": {"type": "int"}}},
+  "lm1215EntryEmpty": "llama.cpp gestionado por Hermes, como en Desktop",
+  "lm1215Title": "Modelos locales",
+  "lm1215Intro": "Modelos que Hermes ejecuta con llama.cpp en tu servidor, igual que el modo local de Desktop. Nada sale del servidor.",
+  "lm1215RuntimeTitle": "Motor local",
+  "lm1215RuntimeReady": "llama.cpp {tag} · {backend}",
+  "@lm1215RuntimeReady": {"placeholders": {"tag": {"type": "String"}, "backend": {"type": "String"}}},
+  "lm1215RuntimeMissing": "El motor llama.cpp no está instalado en el servidor",
+  "lm1215InstallRuntime": "Instalar motor",
+  "lm1215InstallTitle": "¿Instalar el motor local?",
+  "lm1215InstallBody": "Hermes descargará llama.cpp (unos cientos de MB) en el servidor.",
+  "lm1215Install": "Instalar",
+  "lm1215ServerOn": "Servidor encendido",
+  "lm1215ServerOff": "Servidor apagado",
+  "lm1215StartServer": "Encender",
+  "lm1215StopServer": "Apagar",
+  "lm1215StopTitle": "¿Apagar el servidor local?",
+  "lm1215StopBody": "Libera toda la memoria de la GPU. Los chats nuevos no podrán usar modelos locales hasta que lo vuelvas a encender.",
+  "lm1215ServerStarted": "Servidor local encendido",
+  "lm1215ServerStopped": "Servidor local apagado: memoria de la GPU liberada",
+  "lm1215InstalledTitle": "Descargados en el servidor",
+  "lm1215InstalledEmpty": "Aún no hay modelos descargados. Elige uno del catálogo o búscalo en Hugging Face.",
+  "lm1215StateDefault": "Predeterminado",
+  "lm1215StateLoaded": "En memoria",
+  "lm1215StateLoading": "Cargando {percent} %",
+  "@lm1215StateLoading": {"placeholders": {"percent": {"type": "int"}}},
+  "lm1215StateOnDisk": "En disco",
+  "lm1215MoreActions": "Más acciones",
+  "lm1215ActionUse": "Usar para chats nuevos",
+  "lm1215ActionEject": "Liberar memoria",
+  "lm1215ActionDelete": "Eliminar del servidor",
+  "lm1215DeleteTitle": "¿Eliminar {model}?",
+  "@lm1215DeleteTitle": {"placeholders": {"model": {"type": "String"}}},
+  "lm1215DeleteBody": "Se borrarán sus archivos del disco del servidor. Podrás volver a descargarlo.",
+  "lm1215DeleteActiveBody": "Es el modelo predeterminado para chats nuevos: elige otro después. Se borrarán sus archivos del disco del servidor.",
+  "lm1215Delete": "Eliminar",
+  "lm1215Cancel": "Cancelar",
+  "lm1215Deleted": "{model} eliminado",
+  "@lm1215Deleted": {"placeholders": {"model": {"type": "String"}}},
+  "lm1215Ejected": "Memoria de la GPU liberada; se vuelve a cargar con el siguiente mensaje",
+  "lm1215Activated": "Los chats nuevos usarán {model}",
+  "@lm1215Activated": {"placeholders": {"model": {"type": "String"}}},
+  "lm1215Activating": "Activando…",
+  "lm1215ActionFailed": "No se pudo completar: {detail}",
+  "@lm1215ActionFailed": {"placeholders": {"detail": {"type": "String"}}},
+  "lm1215JobsTitle": "En curso",
+  "lm1215Progress": "{done} de {total}",
+  "@lm1215Progress": {"placeholders": {"done": {"type": "String"}, "total": {"type": "String"}}},
+  "lm1215Pause": "Pausar",
+  "lm1215Resume": "Reanudar",
+  "lm1215Paused": "En pausa",
+  "lm1215JobDone": "{target}: listo",
+  "@lm1215JobDone": {"placeholders": {"target": {"type": "String"}}},
+  "lm1215JobFailed": "{target}: falló",
+  "@lm1215JobFailed": {"placeholders": {"target": {"type": "String"}}},
+  "lm1215CatalogTitle": "Catálogo",
+  "lm1215Recommended": "Recomendado",
+  "lm1215Downloaded": "Descargado",
+  "lm1215Download": "Descargar",
+  "lm1215DownloadSize": "Descargar · {size}",
+  "@lm1215DownloadSize": {"placeholders": {"size": {"type": "String"}}},
+  "lm1215TooBig": "No cabe en el servidor",
+  "lm1215NeedsEngine": "Requiere actualizar el motor",
+  "lm1215DownloadStarted": "Descargando {name}",
+  "@lm1215DownloadStarted": {"placeholders": {"name": {"type": "String"}}},
+  "lm1215AlreadyDownloaded": "Ya estaba descargado en el servidor",
+  "lm1215SearchTitle": "Buscar en Hugging Face",
+  "lm1215SearchSubtitle": "Cualquier modelo GGUF; se ajusta al servidor, pero no está probado",
+  "lm1215SearchHint": "Nombre o autor del modelo",
+  "lm1215SearchEmpty": "Sin resultados para esa búsqueda",
+  "lm1215SearchGated": "Requiere iniciar sesión en Hugging Face",
+  "lm1215SearchStats": "{downloads} descargas · {likes} me gusta",
+  "@lm1215SearchStats": {"placeholders": {"downloads": {"type": "String"}, "likes": {"type": "String"}}},
+  "lm1215FilesTitle": "Elige una versión",
+  "lm1215FilesEmpty": "No hay archivos de modelo compatibles en ese repositorio",
+  "lm1215FitGpu": "Cabe en la GPU",
+  "lm1215FitRam": "Usa RAM del sistema",
+  "lm1215FitTooBig": "Demasiado grande",
+  "lm1215FitUnknown": "Ajuste desconocido",
+  "lm1215LoadFailed": "No se pudieron leer los modelos locales",
+  "lm1215Retry": "Reintentar",
+  "lm1215Refresh": "Actualizar",
+  "rq1215ClarifyAsks": "{name} te pregunta",
+  "@rq1215ClarifyAsks": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rq1215ClarifyStep": "Pregunta {index} de {total}",
+  "@rq1215ClarifyStep": {
+    "placeholders": {
+      "index": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "rq1215ClarifyHint": "Escribe tu respuesta",
+  "rq1215ClarifySend": "Responder",
+  "rq1215AnswerFailed": "No se pudo enviar la respuesta. Inténtalo de nuevo.",
+  "rq1215RowWaitingAnswer": "Esperando tu respuesta",
+  "rq1215StatusNeedsAnswer": "Necesita tu respuesta",
+  "rq1215WaitingUnreachable": "{name} está esperando una respuesta que la sala no puede mostrar",
+  "@rq1215WaitingUnreachable": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rq1215WaitingUnreachableHint": "Ábrela en su chat para contestar.",
+  "rq1215OpenChat": "Abrir su chat",
+  "rq1215CancelWait": "Cancelar espera",
+  "rq1215CancelWaitTitle": "¿Cancelar la espera de {name}?",
+  "@rq1215CancelWaitTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rq1215CancelWaitBody": "Solo se interrumpe el turno de {name} en esta sala. Su sesión no se cierra y el resto de bots sigue trabajando.",
+  "@rq1215CancelWaitBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rq1215KeepWaiting": "Seguir esperando",
+  "rq1215CancelWaitFailed": "No se pudo cancelar la espera. Inténtalo de nuevo.",
+  "rr1215StallTitle": "{name} no puede retomar su turno",
+  "@rr1215StallTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rr1215StallHint": "Su sesión de esta sala no está abierta en el servidor y el turno sigue esperando.",
+  "rr1215StallReadOnlyHint": "Necesitas una conexión con permiso de escritura para reanudarlo.",
+  "rr1215Resume": "Reanudar",
+  "rr1215ResumeTitle": "¿Reanudar a {name}?",
+  "@rr1215ResumeTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rr1215ResumeBody": "Se vuelve a abrir en el servidor la sesión de {name} en esta sala para que retome su turno pendiente. No se envía ningún mensaje nuevo y el resto de bots no se toca.",
+  "@rr1215ResumeBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rr1215KeepAsIs": "Ahora no",
+  "rr1215Resumed": "{name} vuelve a tener su sesión abierta",
+  "@rr1215Resumed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rr1215ResumeFailed": "No se pudo reanudar a {name}. Inténtalo de nuevo.",
+  "@rr1215ResumeFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sa1215ContentAction": "Archivos y enlaces",
+  "sa1215ContentTitle": "Archivos y enlaces",
+  "sa1215SearchHint": "Buscar por nombre o enlace",
+  "sa1215SearchClear": "Borrar búsqueda",
+  "sa1215FilterAll": "Todo",
+  "sa1215FilterImages": "Imágenes",
+  "sa1215FilterFiles": "Archivos",
+  "sa1215FilterLinks": "Enlaces",
+  "sa1215KindImage": "Imagen",
+  "sa1215KindFile": "Archivo",
+  "sa1215EmptyTitle": "Aún no hay nada compartido",
+  "sa1215EmptyBody": "Los enlaces, imágenes y archivos de esta conversación aparecerán aquí.",
+  "sa1215NoMatchesTitle": "Sin resultados",
+  "sa1215NoMatchesBody": "Prueba con otro nombre o cambia el filtro.",
+  "sa1215OlderPending": "Hay mensajes más antiguos sin cargar en este chat.",
+  "sa1215LoadOlder": "Cargar más antiguos",
+  "sa1215LoadOlderFailed": "No se pudieron cargar los mensajes anteriores",
+  "sa1215OpenFailed": "No se pudo abrir {name}",
+  "@sa1215OpenFailed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sa1215NotReachable": "Este archivo no se puede abrir desde el móvil. Mantén pulsado para copiar su ruta.",
+  "sa1215CopyHint": "Mantén pulsado para copiar",
+"pf1215TabChats": "Chats",
+  "pf1215TabFiles": "Archivos",
+  "pf1215Worktrees": "Worktrees",
+  "pf1215WorktreesHint": "Crea un worktree o abre una rama existente",
+  "pf1215Breadcrumbs": "Ruta de la carpeta",
+  "pf1215FilesReadOnlyNote": "Solo lectura: para cambiar archivos, pídeselo a Hermes en un chat.",
+  "pf1215FilesUnsupported": "Tu Hermes no permite ver carpetas desde el móvil todavía. Actualízalo para explorar los archivos del proyecto.",
+  "pf1215FolderEmpty": "Esta carpeta está vacía.",
+  "pf1215FolderNoPermission": "Hermes no tiene permiso para leer esta carpeta.",
+  "pf1215FolderMissing": "Esta carpeta ya no existe en el servidor.",
+  "pf1215FolderReadFailed": "No se ha podido leer esta carpeta.",
+  "pf1215FileReadFailed": "No se ha podido abrir el archivo.",
+  "pf1215FileTooLarge": "El archivo es demasiado grande para verlo en el móvil.",
+  "pf1215FileNoPreview": "No se puede previsualizar",
+  "pf1215PreviewTruncated": "Vista parcial: el archivo es grande y solo se muestra el principio.",
+  "pw1215AddTooltip": "Añadir a esta carpeta",
+  "pw1215NewFolder": "Nueva carpeta",
+  "pw1215NewFile": "Nuevo archivo",
+  "pw1215Upload": "Subir archivo",
+  "pw1215FolderName": "Nombre de la carpeta",
+  "pw1215FileName": "Nombre del archivo",
+  "pw1215Create": "Crear",
+  "pw1215InvalidName": "Escribe un solo nombre, sin barras.",
+  "pw1215NameTaken": "Ya hay algo con ese nombre en esta carpeta.",
+  "pw1215FolderCreated": "Carpeta creada.",
+  "pw1215FileCreated": "Archivo creado.",
+  "pw1215Uploaded": "Archivo subido.",
+  "pw1215UploadTooLarge": "El archivo supera los 100 MB que admite Hermes.",
+  "pw1215UploadUnreadable": "No se ha podido leer el archivo del móvil.",
+  "pw1215Edit": "Editar",
+  "pw1215Saved": "Cambios guardados.",
+  "pw1215SaveTooLarge": "El texto supera los 8 MB que admite Hermes.",
+  "pw1215DiscardTitle": "¿Descartar los cambios?",
+  "pw1215DiscardBody": "Lo que has escrito desde la última vez que guardaste se perderá.",
+  "pw1215Discard": "Descartar",
+  "pw1215KeepEditing": "Seguir editando",
+  "pw1215ConflictTitle": "El archivo ha cambiado",
+  "pw1215ConflictBody": "Se ha modificado en el servidor mientras lo editabas. Si guardas, sustituirás esos cambios.",
+  "pw1215Overwrite": "Sobrescribir",
+  "pw1215EntryActions": "Acciones de {name}",
+  "@pw1215EntryActions": {"placeholders": {"name": {"type": "String"}}},
+  "pw1215DeleteTitle": "¿Borrar «{name}»?",
+  "@pw1215DeleteTitle": {"placeholders": {"name": {"type": "String"}}},
+  "pw1215DeleteFileBody": "Se borrará del servidor y no se puede deshacer.",
+  "pw1215DeleteFolderBody": "Solo se borra si la carpeta está vacía. No se puede deshacer.",
+  "pw1215Deleted": "Borrado.",
+  "pw1215FolderNotEmpty": "La carpeta no está vacía. Para borrarla con todo lo que contiene, pídeselo a Hermes en un chat.",
+  "pw1215NotAllowed": "No permitido en esta carpeta.",
+  "pw1215ActionUnsupported": "Tu Hermes no permite esta acción desde el móvil. Actualízalo para usarla.",
+  "pw1215WriteFailed": "No se ha podido completar la acción.",
+  "pw1215Gone": "Ya no existe en el servidor.",
+  "pw1215FilesWritableNote": "Los cambios se guardan directamente en el servidor de Hermes.",
+  "pw1215FilesReadOnlyConnection": "Conexión de solo lectura: puedes ver los archivos, pero no cambiarlos.",
+  "cr1215AwaitingUnseenInput": "Hermes espera tu respuesta a una pregunta que no se ha mostrado.",
+  "cr1215ShowQuestion": "Mostrar pregunta",
+"ss1215StatusWorking": "Trabajando…",
+"ss1215StatusWorking": "Trabajando…",
+  "ps1215NoDetailsYet": "Sin detalles todavía: se actualizará con el siguiente evento."
 }

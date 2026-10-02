@@ -1,6 +1,8 @@
 import 'dart:convert';
 
-import '../models/activity_snapshot.dart' show activityToolDetail;
+import '../models/activity_snapshot.dart'
+    show MemoryWrite, activityToolDetail, isMemoryTool, memoryWriteStepKey;
+import '../models/deferred_tool_call.dart';
 import '../models/desktop_session_snapshot.dart';
 import '../models/transcript_privacy_state.dart';
 import '../utils/assistant_content.dart';
@@ -69,6 +71,11 @@ Map<String, dynamic>? normalizeAssistantActivityStep(Object? raw) {
   };
   final rawDetail = raw['detail'];
   final detail = rawDetail is String ? rawDetail.trim() : '';
+  // mp1215: a `memory` call keeps its structural write (action, target,
+  // landed and a screened preview); any other tool never carries one.
+  final memory = isMemoryTool(label)
+      ? MemoryWrite.fromStep(raw[memoryWriteStepKey])?.toStep()
+      : null;
   return Map<String, dynamic>.unmodifiable({
     'kind': kind,
     'label': label,
@@ -80,8 +87,25 @@ Map<String, dynamic>? normalizeAssistantActivityStep(Object? raw) {
         detail.length <= 96 &&
         !detail.contains(_unsafeDisplayTextPattern))
       'detail': detail,
+    memoryWriteStepKey: ?memory,
   });
 }
+
+/// mp1215: the minimal, content-free shape of a `memory` tool result —
+/// whether it landed, its target and whether it replaced/removed an entry.
+/// Durable tool rows carry only this, never the result text.
+Map<String, dynamic>? memoryResultEvidence(Object? result) {
+  final write = MemoryWrite.settle(null, result);
+  if (write == null) return null;
+  return Map<String, dynamic>.unmodifiable({
+    'success': write.landed,
+    'target': write.userTarget ? 'user' : 'memory',
+    if (write.action.name == 'replace') 'replaced_entry': true,
+    if (write.action.name == 'remove') 'removed_entry': true,
+  });
+}
+
+const memoryResultEvidenceKey = '_memory_result';
 
 List<Map<String, dynamic>> normalizeAssistantActivityTrace(Object? raw) {
   if (raw is! List) return const [];
@@ -93,15 +117,6 @@ List<Map<String, dynamic>> normalizeAssistantActivityTrace(Object? raw) {
 /// Una invocación de herramienta tal como debe verse en el historial.
 typedef ActivityCallEntry = ({String label, String? id, Object? arguments});
 
-Object? _decodedArguments(Object? raw) {
-  if (raw is! String) return raw;
-  try {
-    return jsonDecode(raw);
-  } catch (_) {
-    return null;
-  }
-}
-
 /// Entradas visibles de una llamada. Hermes puede exponer solo tres
 /// herramientas puente (`tool_search`, `tool_describe`, `tool_call`) y llamar a
 /// la real dentro de `tool_call({calls:[{name, arguments}]})`: se desenvuelve
@@ -112,31 +127,20 @@ List<ActivityCallEntry> activityCallEntries(
   String? id,
   Object? rawArguments,
 ) {
-  final arguments = _decodedArguments(rawArguments);
-  if (label.trim().toLowerCase() != 'tool_call' || arguments is! Map) {
-    return [(label: label, id: id, arguments: arguments)];
+  final wrapped = unwrapDeferredToolCall(label, rawArguments);
+  if (wrapped == null) {
+    return [
+      (label: label, id: id, arguments: decodeToolArguments(rawArguments)),
+    ];
   }
-  final calls = arguments['calls'];
-  final candidates = calls is List ? calls : [arguments];
-  final entries = <ActivityCallEntry>[];
-  for (var i = 0; i < candidates.length && i < 32; i++) {
-    final candidate = candidates[i];
-    if (candidate is! Map) continue;
-    final name = candidate['name']?.toString().trim() ?? '';
-    if (name.isEmpty ||
-        name.length > 180 ||
-        name.contains(_unsafeDisplayTextPattern)) {
-      continue;
-    }
-    entries.add((
-      label: name,
-      id: id == null ? null : '$id:$i',
-      arguments: _decodedArguments(candidate['arguments']),
-    ));
-  }
-  return entries.isEmpty
-      ? [(label: label, id: id, arguments: arguments)]
-      : entries;
+  return [
+    for (var i = 0; i < wrapped.length; i++)
+      (
+        label: wrapped[i].name,
+        id: id == null ? null : '$id:$i',
+        arguments: wrapped[i].arguments,
+      ),
+  ];
 }
 
 List<Map<String, dynamic>> assistantActivityFromToolCalls(
@@ -179,6 +183,10 @@ List<Map<String, dynamic>> assistantActivityFromToolCalls(
         'id': ?entry.id,
         'timestamp': ?timestamp,
         'detail': ?activityToolDetail(entry.label, entry.arguments),
+        memoryWriteStepKey: ?MemoryWrite.fromArgs(
+          entry.label,
+          entry.arguments,
+        )?.toStep(),
       });
       if (step != null) steps.add(step);
     }
@@ -271,9 +279,31 @@ List<Map<String, dynamic>> coalesceAssistantTurnsNewestFirst(
         'id': ?entry.id,
         'timestamp': ?timestampOf(message),
         'detail': ?detail,
+        memoryWriteStepKey: ?MemoryWrite.fromArgs(
+          entry.label,
+          entry.arguments,
+        )?.toStep(),
       });
     }
     appendToolCallEvidence(raw);
+  }
+
+  // mp1215: settle a `memory` step with what its result says (content-free
+  // evidence on durable rows, or the raw result kept for media evidence).
+  Map<String, dynamic> settleMemory(
+    Map<String, dynamic> step,
+    Map<String, dynamic> message,
+  ) {
+    final label = step['label']?.toString() ?? '';
+    if (!isMemoryTool(label)) return step;
+    final evidence = message[memoryResultEvidenceKey] ?? message['content'];
+    final settled = MemoryWrite.settle(
+      MemoryWrite.fromStep(step[memoryWriteStepKey]),
+      evidence,
+    );
+    return settled == null
+        ? step
+        : {...step, memoryWriteStepKey: settled.toStep()};
   }
 
   void completeTool(Map<String, dynamic> message) {
@@ -293,12 +323,12 @@ List<Map<String, dynamic>> coalesceAssistantTurnsNewestFirst(
           continue;
         }
         matched = true;
-        activity[i] = {
+        activity[i] = settleMemory({
           ...step,
           'status': 'completed',
           if (endedAt != null && step['completed_at'] == null)
             'completed_at': endedAt,
-        };
+        }, message);
       }
       if (matched) return;
     }
@@ -320,13 +350,15 @@ List<Map<String, dynamic>> coalesceAssistantTurnsNewestFirst(
           label.contains(_unsafeDisplayTextPattern)) {
         return;
       }
-      activity.add({
-        'kind': 'tool',
-        'label': label,
-        'status': 'completed',
-        if (id != null && id.isNotEmpty && id.length <= 180) 'id': id,
-        'timestamp': ?timestampOf(message),
-      });
+      activity.add(
+        settleMemory({
+          'kind': 'tool',
+          'label': label,
+          'status': 'completed',
+          if (id != null && id.isNotEmpty && id.length <= 180) 'id': id,
+          'timestamp': ?timestampOf(message),
+        }, message),
+      );
       return;
     }
     activity[index] = {...activity[index], 'status': 'completed'};
@@ -603,6 +635,51 @@ class DesktopSessionReconciler {
       isRealUserTurn(message) ||
       (message['role'] == 'user' && message['_steer'] == true) ||
       _isStructuredUserEvent(message);
+
+  /// Removes the single optimistic prompt of the open turn (after the last
+  /// durable terminal assistant) when the runtime reports the same prompt
+  /// with different whitespace (Hermes trims/sanitizes what it stores). An
+  /// identical text is already collapsed downstream and keeps the local row;
+  /// a genuinely different text is a different prompt and is never bridged.
+  /// Nothing is removed when the open turn holds several optimistic prompts.
+  static void _dropOwnedOptimisticOpenTurnUser(
+    List<Map<String, dynamic>> chronological,
+    String inflightUser,
+  ) {
+    var terminalBoundary = -1;
+    for (var index = 0; index < chronological.length; index++) {
+      if (_isDurableTerminalAssistant(chronological[index])) {
+        terminalBoundary = index;
+      }
+    }
+    int? optimisticIndex;
+    for (
+      var index = terminalBoundary + 1;
+      index < chronological.length;
+      index++
+    ) {
+      final message = chronological[index];
+      if (message['role'] != 'user' ||
+          message['_optimistic'] != true ||
+          message['_steer'] == true ||
+          canonicalTranscriptIdentity(message) != null) {
+        continue;
+      }
+      if (optimisticIndex != null) return;
+      optimisticIndex = index;
+    }
+    if (optimisticIndex == null) return;
+    final local = chronological[optimisticIndex]['content']?.toString() ?? '';
+    if (local == inflightUser ||
+        _whitespaceNormalizedPrompt(local) !=
+            _whitespaceNormalizedPrompt(inflightUser)) {
+      return;
+    }
+    chronological.removeAt(optimisticIndex);
+  }
+
+  static String _whitespaceNormalizedPrompt(String text) =>
+      text.trim().replaceAll(RegExp(r'\s+'), ' ');
 
   static bool _matchesDurableStructuredInput(
     Map<String, dynamic> message,
@@ -987,6 +1064,18 @@ class DesktopSessionReconciler {
       snapshot.resolvedTurnStartedAt,
     );
     final hasInflightUser = inflightUser?.trim().isNotEmpty == true;
+    // Recovery of a turn this client submitted: the open turn's optimistic
+    // row IS the prompt the runtime now reports as `inflight.user`. The
+    // Gateway sanitizes the text it stores (whitespace, paste artifacts,
+    // appended attachment references), so text equality cannot bridge them.
+    // Keep exactly one row for the turn — the runtime's — instead of stacking
+    // two identical-looking bubbles that also double the expected user count.
+    if (bridgeOwnedLiveUser &&
+        !snapshot.messagesProvided &&
+        hasInflightUser &&
+        liveUserPlan.emits(0)) {
+      _dropOwnedOptimisticOpenTurnUser(chronological, inflightUser!);
+    }
     final durableStructuredInflight =
         inflightUser != null &&
         chronological.any(
@@ -1291,6 +1380,10 @@ class DesktopSessionReconciler {
             'tool_name': toolResultBlocks[index]['name'].toString(),
           if (toolResultBlocks[index]['tool_use_id'] != null)
             'tool_call_id': toolResultBlocks[index]['tool_use_id'].toString(),
+          if (isMemoryTool(toolResultBlocks[index]['name']?.toString() ?? ''))
+            memoryResultEvidenceKey: ?memoryResultEvidence(
+              desktopSessionDisplayText(toolResultBlocks[index]['content']),
+            ),
           '_desktopSnapshotKey':
               'message-$runtimeSessionId-$ordinal-toolresult-$index',
           '_desktopSnapshotKind': 'persisted',
@@ -1323,6 +1416,14 @@ class DesktopSessionReconciler {
       if (retainMediaEvidence && message.toolName != null)
         'tool_name': message.toolName,
       if (retainMediaEvidence && message.toolCallId != null)
+        'tool_call_id': message.toolCallId,
+      if (role == 'tool' && isMemoryTool(message.toolName ?? ''))
+        memoryResultEvidenceKey: ?memoryResultEvidence(content),
+      // Pairs the content-free memory evidence with its call (id only).
+      if (role == 'tool' &&
+          !retainMediaEvidence &&
+          isMemoryTool(message.toolName ?? '') &&
+          message.toolCallId != null)
         'tool_call_id': message.toolCallId,
       if (retainMediaEvidence && message.toolCalls != null)
         'tool_calls': message.toolCalls

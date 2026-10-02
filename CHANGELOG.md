@@ -3,6 +3,58 @@
 All notable public changes are documented here. Internal QA/profile artifacts
 are not releases.
 
+## 1.2.15 (9470) — 2026-09-30
+
+A release about feeling faster and more dependable: Bot Mode opens instantly and tells you who is replying, chats open right away and can now be searched, and dictation no longer loses what you said.
+
+### Bot Mode
+- Opens instantly with what you last saw and refreshes in the background; rooms load in parallel and only fetch what is new.
+- Each room's status strip shows who is replying (with a timer) and who is next. In the conversation, the bot's face appears with "is replying…" right where the answer will land.
+- "Needs you" only shows while something actually still needs you: opening a room clears mentions and failures you have already seen. Approvals keep asking until you answer them.
+- Failure cards can always be dismissed, and Retry only appears when it can really be done.
+- Reading older messages no longer moves the conversation; an "N new" button takes you back to the bottom.
+- Sending in a long room is much faster, and an action in one room no longer wipes the state of the others.
+- Each bot's notifications wear its own colour, the live card shows the state as clear text, and muting a room withdraws its live card.
+- Approval buttons work again after answering, and read-only connections can change a room's notification level.
+
+### Chats
+- *Faster opening:* a recent chat shows its conversation immediately while it refreshes. Bot chats for profiles without their own key no longer sit on a loader for seconds.
+- *Attachments and generated files:* images and files you sent show up again when you reopen a chat (they used to appear as text). Files created by tools (audio, images, documents) appear in the reply and in Artifacts.
+- *Search:* a new in-conversation search (magnifier icon, or `/find` and `/buscar`) that ignores case and accents, steps through matches and can look through older messages.
+- *Scrolling:* the jump-to-bottom button shows how many new messages there are; when you come back to a chat, a "New since you left" line marks where you stopped. New content no longer drags you to the end while you read further up, and the edge bounce is smooth.
+- Sending a message and leaving right away no longer leaves a duplicate draft behind.
+- A queued message that was never confirmed can be retired with "Stop waiting", without resending it and without blocking the rest of the queue. Already-accepted messages no longer offer actions that do nothing, and Send now and Delete tell you when they fail.
+- `/skills` opens the Capabilities hub and `/model <name>` now always responds.
+
+### Voice
+- *More reliable dictation:* text is no longer dropped with engines that record first and transcribe after; backgrounding the app or leaving the chat keeps what you dictated; a double tap on the mic no longer starts two recordings. The dictation bars now follow your voice.
+- *Automatic language (issue #65):* choosing "Automatic" for server dictation no longer causes errors with some providers, and settings saved by the previous version are repaired when you open dictation settings and save. Thanks to the user who reported it.
+- *Read aloud:* keeps working after choosing the Hermes server voice, with no need to restart the app.
+- *Real server errors:* when the server rejects a voice request you now see its reason instead of a generic message, and the voice card no longer says "ready" after a failed test.
+- *Warm-up:* with server voice on, Console lets Hermes get the voice ready in advance so the first spoken reply starts without dead air.
+
+### Connection and stability
+- A turn recovered after a dropout no longer stays on "reconnecting" and "working" forever: it settles on its own, without duplicate bubbles, and the chat reconnects.
+- Status no longer says "connected" or "agent online" when the Dashboard password or API key is rejected; it now says so in amber.
+- The chat side menu reflects whether you are really connected.
+- Restarting the gateway only confirms the restart once it is actually back.
+- Switching instance takes you back to the start, so every tool points at the new one.
+- Removing SSH access also closes any open terminal session.
+- Tapping a notification while the app is open takes you to its content: chat approvals and results open their conversation, and room or bot notifications open once, without stacking a second copy of the screen.
+
+### Fixes
+- Many texts that were stuck in Spanish or English now follow the app language: session titles, instance states, SSH and SFTP errors, gateway diagnostics, activity logs and voice notices.
+- Screens under the floating dock no longer hide their last rows; the dock gains a sliding indicator and press feedback.
+- Chats archived or hidden on the device also disappear from Home and the side menu.
+- Cron explains the "All profiles" view instead of calling the instance read-only.
+- The SOUL screen no longer claims it cannot be edited when it can.
+- The status panel hides the repair button after a successful repair.
+- In rooms, @mentions are only links when they lead somewhere, and bot names are consistent across the room.
+
+### Known limits
+- Attachments whose files no longer exist on the server show as "Not available"; files attached by a relative path are listed but not downloaded.
+- Search inside a chat covers the loaded conversation and can page older messages; it does not search other chats.
+
 ## 1.2.14 (9420) — 2026-09-27
 
 Reconnection and reliability fixes, a redesigned Bot Mode, one shared design

@@ -19,6 +19,46 @@ import 'hermes_premium_ui.dart';
 
 typedef StatusReachabilityProbe = Future<bool> Function(String url);
 
+/// Outcome of logging in to the Dashboard with the saved credentials.
+enum DashboardAuthCheck { ok, loginRequired, invalidCredentials, unknown }
+
+typedef DashboardAuthProbe =
+    Future<DashboardAuthCheck> Function(SavedConnection connection);
+
+/// Logs in to the Dashboard of [conn] with its saved credentials.
+Future<DashboardAuthCheck> checkSavedDashboardLogin(
+  ConnectionManager manager,
+  SavedConnection conn,
+) async {
+  DashboardClient? client;
+  try {
+    final secrets = await manager.getDashboardSecrets(conn.id);
+    client = DashboardClient.forConnection(conn, secrets: secrets);
+    await client.authHeadersForDiagnostics().timeout(
+      const Duration(seconds: 6),
+    );
+    return DashboardAuthCheck.ok;
+  } on DashboardAuthException catch (error) {
+    return switch (error.code) {
+      DashboardAuthFailureCode.invalidCredentials =>
+        DashboardAuthCheck.invalidCredentials,
+      DashboardAuthFailureCode.loginRequired =>
+        DashboardAuthCheck.loginRequired,
+      _ => DashboardAuthCheck.unknown,
+    };
+  } catch (_) {
+    return DashboardAuthCheck.unknown;
+  } finally {
+    client?.close();
+  }
+}
+
+/// Outcome of calling the Gateway API with the saved key.
+enum GatewayKeyCheck { ok, rejected, unknown }
+
+typedef GatewayKeyProbe =
+    Future<GatewayKeyCheck> Function(SavedConnection connection);
+
 Future<void> showInstanceStatusSheet(
   BuildContext context,
   SavedConnection connection,
@@ -47,6 +87,9 @@ enum _DetailKind {
   offline,
   notEnabled,
   needsToken,
+  wrongPassword,
+  loginRequired,
+  keyRejected,
   running,
   stopped,
   enabled,
@@ -67,6 +110,8 @@ class InstanceStatusPanel extends StatefulWidget {
   final ConnectionManager? connManager;
   final BridgeRepairUpdater? updater;
   final StatusReachabilityProbe? reachable;
+  final DashboardAuthProbe? dashboardAuth;
+  final GatewayKeyProbe? gatewayKey;
 
   const InstanceStatusPanel({
     super.key,
@@ -76,6 +121,8 @@ class InstanceStatusPanel extends StatefulWidget {
     this.connManager,
     this.updater,
     this.reachable,
+    this.dashboardAuth,
+    this.gatewayKey,
   });
 
   @override
@@ -129,29 +176,66 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     final notificationFuture = widget.notifications?.permissionGranted();
 
     final first = await firstFuture;
+    // /health answers without the key; the chat API needs it, so a reachable
+    // remote Gateway is only "connected" once the saved key is accepted.
+    final key = first && !isLocal
+        ? await _gatewayKey(conn)
+        : GatewayKeyCheck.unknown;
     final dashboard = await dashboardFuture;
+    // A public /api/status only proves the Dashboard is up; chat and Bot Mode
+    // need the saved login too, so check it before calling the row healthy.
+    final auth = dashboard == true
+        ? await _dashboardAuth(conn)
+        : DashboardAuthCheck.unknown;
     final bridge = await bridgeFuture;
     final notifications = await notificationFuture;
     if (!_current(generation)) return;
 
     final rows = <_RawRow>[];
     rows.add(
-      _RawRow(
-        isLocal ? _LabelKind.localAgent : _LabelKind.gateway,
-        first ? _Health.ok : _Health.bad,
-        isLocal
-            ? (first ? _DetailKind.running : _DetailKind.stopped)
-            : (first ? _DetailKind.connected : _DetailKind.offline),
-      ),
+      isLocal
+          ? _RawRow(
+              _LabelKind.localAgent,
+              first ? _Health.ok : _Health.bad,
+              first ? _DetailKind.running : _DetailKind.stopped,
+            )
+          : !first
+          ? const _RawRow(_LabelKind.gateway, _Health.bad, _DetailKind.offline)
+          : key == GatewayKeyCheck.rejected
+          ? const _RawRow(
+              _LabelKind.gateway,
+              _Health.warn,
+              _DetailKind.keyRejected,
+            )
+          : const _RawRow(
+              _LabelKind.gateway,
+              _Health.ok,
+              _DetailKind.connected,
+            ),
     );
     if (!isLocal) {
-      rows.add(
-        _RawRow(
+      rows.add(switch ((dashboard == true, auth)) {
+        (false, _) => const _RawRow(
           _LabelKind.dashboard,
-          dashboard == true ? _Health.ok : _Health.bad,
-          dashboard == true ? _DetailKind.connected : _DetailKind.offline,
+          _Health.bad,
+          _DetailKind.offline,
         ),
-      );
+        (true, DashboardAuthCheck.invalidCredentials) => const _RawRow(
+          _LabelKind.dashboard,
+          _Health.warn,
+          _DetailKind.wrongPassword,
+        ),
+        (true, DashboardAuthCheck.loginRequired) => const _RawRow(
+          _LabelKind.dashboard,
+          _Health.warn,
+          _DetailKind.loginRequired,
+        ),
+        (true, _) => const _RawRow(
+          _LabelKind.dashboard,
+          _Health.ok,
+          _DetailKind.connected,
+        ),
+      });
     }
     if (bridge != null) {
       _bridgeState = bridge;
@@ -238,6 +322,39 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     verificationRetryDelay: const Duration(seconds: 2),
   );
 
+  Future<DashboardAuthCheck> _dashboardAuth(SavedConnection conn) async {
+    final injected = widget.dashboardAuth;
+    if (injected != null) return injected(conn);
+    final manager = widget.connManager;
+    if (manager == null) return DashboardAuthCheck.unknown;
+    return checkSavedDashboardLogin(manager, conn);
+  }
+
+  Future<GatewayKeyCheck> _gatewayKey(SavedConnection conn) async {
+    final injected = widget.gatewayKey;
+    if (injected != null) return injected(conn);
+    final client = http.Client();
+    try {
+      final base = TransportPrivacy.requireAllowed(conn.gatewayUrl);
+      final res = await client
+          .get(
+            Uri.parse('$base/api/sessions'),
+            headers: {'Authorization': 'Bearer ${conn.apiKey}'},
+          )
+          .timeout(const Duration(seconds: 6));
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        return GatewayKeyCheck.rejected;
+      }
+      return res.statusCode == 200
+          ? GatewayKeyCheck.ok
+          : GatewayKeyCheck.unknown;
+    } catch (_) {
+      return GatewayKeyCheck.unknown;
+    } finally {
+      client.close();
+    }
+  }
+
   Future<bool> _reachable(String url) async {
     final injected = widget.reachable;
     if (injected != null) return injected(url);
@@ -291,6 +408,9 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
   String _detail(_DetailKind kind, Strings s) => switch (kind) {
     _DetailKind.connected => s.statusConnected,
     _DetailKind.offline => s.statusOffline,
+    _DetailKind.wrongPassword => s.statusWrongPassword,
+    _DetailKind.loginRequired => s.statusLoginRequired,
+    _DetailKind.keyRejected => s.statusKeyRejected,
     _DetailKind.notEnabled => s.statusNotEnabled,
     _DetailKind.needsToken => s.statusNeedsToken,
     _DetailKind.running => s.statusRunning,
@@ -401,6 +521,7 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
     final result = bridge ? _repairResult : null;
 
     return Padding(
+      key: ValueKey('instance-status-row-${row.label.name}'),
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -453,55 +574,58 @@ class _InstanceStatusPanelState extends State<InstanceStatusPanel> {
                   style: TextStyle(color: colors.error),
                 ),
               ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (!_repairing && !local)
-                  Semantics(
-                    button: true,
-                    label: result == null
-                        ? s.statusBridgeRepair
-                        : s.statusBridgeRetry,
-                    child: FilledButton.tonal(
-                      onPressed: widget.connection.readOnly ? null : _repair,
+            // A verified repair leaves nothing to repair or retry.
+            if (result?.success != true) ...[
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  if (!_repairing && !local)
+                    Semantics(
+                      button: true,
+                      label: result == null
+                          ? s.statusBridgeRepair
+                          : s.statusBridgeRetry,
+                      child: FilledButton.tonal(
+                        onPressed: widget.connection.readOnly ? null : _repair,
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(48, 48),
+                        ),
+                        child: Text(
+                          result == null
+                              ? s.statusBridgeRepair
+                              : s.statusBridgeRetry,
+                        ),
+                      ),
+                    ),
+                  if (!_repairing && local)
+                    FilledButton.tonal(
+                      onPressed: _bridgeState?.running == true
+                          ? _repair
+                          : _openLocalControl,
                       style: FilledButton.styleFrom(
                         minimumSize: const Size(48, 48),
                       ),
                       child: Text(
-                        result == null
+                        _bridgeState?.running == true
                             ? s.statusBridgeRepair
-                            : s.statusBridgeRetry,
+                            : s.statusBridgeLocalControl,
                       ),
                     ),
-                  ),
-                if (!_repairing && local)
-                  FilledButton.tonal(
-                    onPressed: _bridgeState?.running == true
-                        ? _repair
-                        : _openLocalControl,
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(48, 48),
+                  if (!_repairing && result?.manualAction == true)
+                    OutlinedButton(
+                      onPressed: widget.connManager == null
+                          ? null
+                          : _openManualSetup,
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(48, 48),
+                      ),
+                      child: Text(s.statusBridgeManualSetup),
                     ),
-                    child: Text(
-                      _bridgeState?.running == true
-                          ? s.statusBridgeRepair
-                          : s.statusBridgeLocalControl,
-                    ),
-                  ),
-                if (!_repairing && result?.manualAction == true)
-                  OutlinedButton(
-                    onPressed: widget.connManager == null
-                        ? null
-                        : _openManualSetup,
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(48, 48),
-                    ),
-                    child: Text(s.statusBridgeManualSetup),
-                  ),
-              ],
-            ),
+                ],
+              ),
+            ],
           ],
         ],
       ),

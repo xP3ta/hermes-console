@@ -465,6 +465,98 @@ Uri backgroundRunStatusUri(String safeBase, WatchedRun run) => Uri.parse(
   '$safeBase/${ApiClient.profileEndpoint('v1/runs/${Uri.encodeComponent(run.runId)}', profile: run.profile)}',
 );
 
+/// Per-run retry gate for the background `/v1/runs/{id}` poller.
+///
+/// A non-200 answer never proves the run ended, so the run is always kept.
+/// What changes is how often it is asked again: 401/403/404 are stable
+/// answers (revoked key, expired ledger) and back off from [stableBase] up to
+/// [maxDelay]. Timeouts, transport errors and 5xx keep the normal cadence so
+/// a completion is still noticed on the next tick once the link recovers.
+/// Any other answer clears the state. State is in memory only.
+class BackgroundRunPollBackoff {
+  BackgroundRunPollBackoff({
+    DateTime Function()? now,
+    this.stableBase = const Duration(minutes: 2),
+    this.maxDelay = const Duration(minutes: 15),
+  }) : _now = now ?? DateTime.now;
+
+  final DateTime Function() _now;
+  final Duration stableBase;
+  final Duration maxDelay;
+  final Map<
+    ({String connId, String profile, String runId}),
+    ({int failures, DateTime retryAt})
+  >
+  _states = {};
+
+  static bool isStableRejection(int statusCode) =>
+      statusCode == 401 || statusCode == 403 || statusCode == 404;
+
+  bool allows(WatchedRun run) {
+    final state = _states[_watchedRunOwner(run)];
+    return state == null || !_now().isBefore(state.retryAt);
+  }
+
+  /// [statusCode] null means the request did not produce an HTTP answer.
+  void record(WatchedRun run, int? statusCode) {
+    final owner = _watchedRunOwner(run);
+    if (statusCode == null || !isStableRejection(statusCode)) {
+      _states.remove(owner);
+      return;
+    }
+    final failures = (_states[owner]?.failures ?? 0) + 1;
+    var delayMs = stableBase.inMilliseconds;
+    for (var i = 1; i < failures && delayMs < maxDelay.inMilliseconds; i++) {
+      delayMs *= 2;
+    }
+    if (delayMs > maxDelay.inMilliseconds) delayMs = maxDelay.inMilliseconds;
+    _states[owner] = (
+      failures: failures,
+      retryAt: _now().add(Duration(milliseconds: delayMs)),
+    );
+  }
+
+  /// Drops state for runs no longer watched.
+  void retain(Iterable<WatchedRun> runs) {
+    final live = runs.map(_watchedRunOwner).toSet();
+    _states.removeWhere((owner, _) => !live.contains(owner));
+  }
+}
+
+/// Reads one watched run's status through [backoff]. Returns null without
+/// touching the network while the run is backing off; otherwise the HTTP
+/// response (any status). Transport failures are recorded and rethrown.
+@visibleForTesting
+Future<http.Response?> fetchWatchedRunStatus({
+  required http.Client client,
+  required BackgroundRunPollBackoff backoff,
+  required WatchedRun run,
+  required String safeBase,
+  required Future<String?> Function() readToken,
+  Duration timeout = const Duration(seconds: 12),
+}) async {
+  if (!backoff.allows(run)) return null;
+  final http.Response res;
+  try {
+    final token = await readToken();
+    res = await client
+        .get(
+          backgroundRunStatusUri(safeBase, run),
+          headers: {
+            if (token != null && token.isNotEmpty)
+              'Authorization': 'Bearer $token',
+            'Accept': 'application/json',
+          },
+        )
+        .timeout(timeout);
+  } catch (_) {
+    backoff.record(run, null);
+    rethrow;
+  }
+  backoff.record(run, res.statusCode);
+  return res;
+}
+
 /// QA-only delivery trace (`--dart-define=HERMES_NOTIF_TRACE=true`). Off by
 /// default and compiled out of normal builds. Prints only opaque ids, states
 /// and decisions: never titles, previews, hosts or credentials.
@@ -1232,16 +1324,23 @@ class BackgroundKanbanWatch {
 /// while a watched room works or waits for an approval, 60 s while Cron or
 /// Kanban are watched, otherwise the 180 s base. Configured connections
 /// alone never force a faster cadence.
+///
+/// [quietTicks] counts consecutive ticks in which discovery saw nothing in
+/// flight and nothing changed. Watched automation then backs off 60 → 120 →
+/// 180 s; any activity, a kick or a watched run resets the streak to 0.
 @visibleForTesting
 int listenerIdleIntervalMs({
   required bool roomsActive,
   required bool watchesCron,
   required bool watchesKanban,
-}) => roomsActive
-    ? 30000
-    : watchesCron || watchesKanban
-    ? 60000
-    : 180000;
+  int quietTicks = 0,
+}) {
+  if (roomsActive) return 30000;
+  if (!(watchesCron || watchesKanban)) return 180000;
+  if (quietTicks >= 6) return 180000;
+  if (quietTicks >= 3) return 120000;
+  return 60000;
+}
 
 /// Punto de entrada del isolate del servicio. Debe ser top-level y anotado.
 @pragma('vm:entry-point')
@@ -1472,12 +1571,17 @@ class _HermesTaskHandler extends TaskHandler {
 
   int _emptyPolls = 0;
 
+  /// Consecutive ticks in which watched Cron/Kanban showed nothing in flight
+  /// and nothing changed; drives the idle backoff of the listener cadence.
+  int _quietTicks = 0;
+
   /// Cliente HTTP REUTILIZADO entre ticks: sin él, cada sondeo abría una
   /// conexión TCP nueva por run vigilada cada 30 s (handshake con la radio
   /// despierta). Se cierra en [onDestroy].
   final http.Client _http = http.Client();
   final BackgroundDashboardClientCache _dashboardClients =
       BackgroundDashboardClientCache();
+  final BackgroundRunPollBackoff _runPollBackoff = BackgroundRunPollBackoff();
   final BackgroundDiscoveryBackoff _discoveryBackoff =
       BackgroundDiscoveryBackoff();
   late final BackgroundAutomationDiscovery _discovery =
@@ -1588,6 +1692,7 @@ class _HermesTaskHandler extends TaskHandler {
   void onReceiveData(Object data) {
     if (!BackgroundListener.roomKickFromData(data)) return;
     _botMode.expectActivity();
+    _quietTicks = 0;
     _setPollInterval(_kActiveIntervalMs, persistentAutomation: true);
     if (_polling) {
       _kickPending = true;
@@ -1681,6 +1786,10 @@ class _HermesTaskHandler extends TaskHandler {
           debugPrint('[hermes-notif] rooms tick (${error.runtimeType})');
         }
       }
+      final discoveryActive = _discovery.takeObservedActivity();
+      _quietTicks = roomsWorking || discoveryActive || runs.isNotEmpty
+          ? 0
+          : _quietTicks + 1;
       if (runs.isEmpty) {
         if (!_stopFence.allowsUpdate) return;
         // Con opt-in de escucha permanente y NADA que vigilar, baja el ritmo
@@ -1693,6 +1802,7 @@ class _HermesTaskHandler extends TaskHandler {
               roomsActive: roomsWorking,
               watchesCron: watchesCron,
               watchesKanban: watchesKanban,
+              quietTicks: _quietTicks,
             ),
             persistentAutomation: true,
           );
@@ -1719,6 +1829,7 @@ class _HermesTaskHandler extends TaskHandler {
         snapshot: runs,
         keep: pollKeep,
       );
+      _runPollBackoff.retain(keep);
 
       // Texto vivo en la notificación persistente.
       if (kDebugMode) {
@@ -1902,18 +2013,15 @@ class _HermesTaskHandler extends TaskHandler {
       return null;
     }
     try {
-      final token = await _secure.readApiKey(r.connId);
-      final uri = backgroundRunStatusUri(safeBase, r);
-      final res = await _http
-          .get(
-            uri,
-            headers: {
-              if (token != null && token.isNotEmpty)
-                'Authorization': 'Bearer $token',
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 12));
+      final res = await fetchWatchedRunStatus(
+        client: _http,
+        backoff: _runPollBackoff,
+        run: r,
+        safeBase: safeBase,
+        readToken: () => _secure.readApiKey(r.connId),
+      );
+      // Backing off after a stable 401/403/404: keep the run, skip the call.
+      if (res == null) return r;
       if (kDebugMode) {
         debugPrint('[hermes-notif] run poll HTTP ${res.statusCode}');
       }
@@ -2030,6 +2138,26 @@ class BackgroundAutomationDiscovery {
   BackgroundDiscoveryBackoff get _discoveryBackoff => discoveryBackoff;
   final void Function(Object data) _sendToMain;
 
+  /// Last observed Cron/Kanban state per connection, used only to decide the
+  /// listener cadence (never delivery).
+  final Map<String, String> _activitySignatures = {};
+  bool _observedActivity = false;
+
+  /// True when, since the previous call, discovery saw a cron run in flight,
+  /// a running Kanban task or any change in the observed state. Resets.
+  bool takeObservedActivity() {
+    final observed = _observedActivity;
+    _observedActivity = false;
+    return observed;
+  }
+
+  void _noteActivity(String key, String signature, {required bool inFlight}) {
+    if (inFlight || _activitySignatures[key] != signature) {
+      _observedActivity = true;
+    }
+    _activitySignatures[key] = signature;
+  }
+
   /// The UI is in front: the system notification was withheld, so hand the
   /// completion to the main isolate for an in-app notice.
   void _forwardForegroundNotices(
@@ -2127,6 +2255,14 @@ class BackgroundAutomationDiscovery {
         executions = BackgroundCronWatch.mergeExecutionAuthority(
           jobExecutions: executions,
           sessions: sessions,
+        );
+        _noteActivity(
+          '${connection.id}/cron',
+          ([
+            for (final e in executions)
+              '${e.jobKey}:${e.executionId}:${e.status}',
+          ]..sort()).join('|'),
+          inFlight: executions.any((e) => !e.terminal),
         );
 
         final groups = BackgroundCronWatch.discoveryGroups(executions);
@@ -2388,6 +2524,13 @@ class BackgroundAutomationDiscovery {
         final entries = BackgroundKanbanWatch.discoveryEntriesForTest(
           connId: connection.id,
           tasks: tasks,
+        );
+        _noteActivity(
+          '${connection.id}/kanban',
+          ([
+            for (final e in entries) '${e.taskId}:${e.state}',
+          ]..sort()).join('|'),
+          inFlight: entries.any((e) => e.state == 'running'),
         );
         for (final entry in entries) {
           final status = entry.state;
@@ -2709,10 +2852,23 @@ class BackgroundListener {
       });
 
   static void _armUiHeartbeat() {
-    _uiHeartbeat ??= Timer.periodic(const Duration(minutes: 1), (_) async {
-      if (await FlutterForegroundTask.isRunningService) await _touchUiAlive();
-    });
+    _uiHeartbeat ??= Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _uiHeartbeatTick(),
+    );
   }
+
+  /// The stamp only feeds the listener auto-stop, which never runs while the
+  /// automation opt-in is on: skip the channel probe and the disk write then.
+  /// [_stopAutomationSerialized] stamps once when the opt-in goes off.
+  static Future<void> _uiHeartbeatTick() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_automationMessagingDemand(prefs)) return;
+    if (await FlutterForegroundTask.isRunningService) await _touchUiAlive();
+  }
+
+  @visibleForTesting
+  static Future<void> runUiHeartbeatTickForTest() => _uiHeartbeatTick();
 
   static bool _inited = false;
   static Future<void>? _initFuture;
@@ -2882,6 +3038,9 @@ class BackgroundListener {
   static Future<void> _stopAutomationSerialized() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(prefKey, false);
+    // The heartbeat was idle while the opt-in was on; refresh it before the
+    // listener may evaluate auto-stop without the opt-in.
+    await _touchUiAlive();
     NotificationService.setAutomationNotificationsOptedIn(false);
     await _clearLegacyFiniteSessionState(prefs);
     await BackgroundCronWatch.syncConnections(const <SavedConnection>[]);

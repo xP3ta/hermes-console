@@ -217,9 +217,15 @@ class GatewayNotificationActionOps implements NotificationActionOps {
     final connection = await _connection(p);
     final client =
         dashboardFactory?.call(connection) ?? DashboardClient.lazy(connection);
-    await CronRepository(
-      client,
-      profile: p.profile ?? '',
-    ).triggerById(p.taskId!);
+    // Each retry builds its own client; close it so a background isolate does
+    // not keep one http.Client (and its keep-alive socket) per tap.
+    try {
+      await CronRepository(
+        client,
+        profile: p.profile ?? '',
+      ).triggerById(p.taskId!);
+    } finally {
+      client.close();
+    }
   }
 }

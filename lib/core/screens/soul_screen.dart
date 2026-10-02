@@ -653,6 +653,10 @@ class _SoulScreenState extends State<SoulScreen>
                       // Sin bridge conectado: mantener el banner local original.
                       if (bridge.status == BridgeStatus.notConfigured ||
                           bridge.status == BridgeStatus.unreachable) {
+                        // With a connection, SOUL is read and applied over the
+                        // Dashboard API, so the "no HTTP, use the CLI" note
+                        // would contradict the Reload/Apply buttons below.
+                        if (_profileScoped) return const SizedBox.shrink();
                         return _ApiBanner(colors: colors);
                       }
                       final b = bridgeBanner(localFallback: '');

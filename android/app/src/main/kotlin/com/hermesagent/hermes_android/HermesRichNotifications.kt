@@ -870,9 +870,10 @@ internal object HermesRichNotifications {
     }
 
     /**
-     * Android 16 Live Update: ProgressStyle, ongoing, requested promotion, no
-     * custom views, not colorized, not a group summary. Older releases get an
-     * ongoing notification with a determinate/indeterminate progress bar.
+     * Android 16 Live Update: BigTextStyle (one line per member), ongoing,
+     * requested promotion, no custom views, not colorized, not a group
+     * summary. No progress bar on any release: room state is not a
+     * measurable progress ("2 of 4 replied" is not 50 %), so it is text.
      */
     fun postLiveUpdate(context: Context, args: Map<String, Any?>): Map<String, Any?> {
         ensureChannels(context)
@@ -883,8 +884,6 @@ internal object HermesRichNotifications {
         val text = args.str("text")?.takeIf { it.isNotBlank() }
             ?: context.getString(R.string.rich_thinking)
         val payload = args.str("actionPayload") ?: "{}"
-        val segments = args.list("segments").map { it.asMap() }
-        val done = segments.count { it.str("state") == "done" }
         val startedAt = args.long("startedAtMs")
         val builder =
             NotificationCompat.Builder(context, CH_LIVE)
@@ -950,9 +949,8 @@ internal object HermesRichNotifications {
                 )
             }
         }
-        // Expanded member rows. ProgressStyle (the promoted Live Update) has
-        // no room for rows: its 2-line expanded text already lists every
-        // member after the speaker. Non-promoted cards get one line each.
+        // Expanded member rows: one line per member ("builder · replied").
+        // BigTextStyle is a promotable Live Update style on Android 16.
         val rowsText = args.str("bigText") ?: text
         // The multi-room summary is an ordinary ongoing card: only real
         // rooms become Live Updates (max two, decided in Dart).
@@ -961,40 +959,14 @@ internal object HermesRichNotifications {
             builder.setStyle(NotificationCompat.BigTextStyle().bigText(text))
             // Neutral Hermes glyph (not the app portrait) for the summary.
             builder.setLargeIcon(glyphBitmap(context))
-        } else if (promotedRequested) {
-            val style = NotificationCompat.ProgressStyle().setStyledByProgress(true)
-            if (segments.isEmpty()) {
-                style.setProgressIndeterminate(true)
-            } else {
-                for (segment in segments.take(12)) {
-                    style.addProgressSegment(
-                        NotificationCompat.ProgressStyle.Segment(100)
-                            .setColor(segmentColor(segment.str("state"))),
-                    )
-                }
-                // The tracker (working face) sits in the middle of the working
-                // member's segment, not at 0 over an empty bar.
-                val working = segments.count { it.str("state") == "working" }
-                val progress = done * 100 + if (working > 0) 50 else 0
-                style.setProgress(progress.coerceAtMost(segments.size * 100))
-            }
-            iconFor(args.str("trackerIconPath"))?.let { style.setProgressTrackerIcon(it) }
-            builder.setStyle(style)
-            builder.setRequestPromotedOngoing(true)
-            // Room tile / working face instead of the app icon (glyph if
-            // neither rendered in time: never the launcher portrait).
-            (loadBitmap(args.str("largeIconPath")) ?: loadBitmap(args.str("trackerIconPath")) ?: glyphBitmap(context))
-                ?.let { builder.setLargeIcon(it) }
-            args.str("shortText")?.let { builder.setShortCriticalText(it.take(7)) }
         } else {
-            if (segments.isEmpty()) {
-                builder.setProgress(0, 0, true)
-            } else {
-                builder.setProgress(segments.size, done, false)
-            }
             builder.setStyle(NotificationCompat.BigTextStyle().bigText(rowsText))
             (loadBitmap(args.str("largeIconPath")) ?: loadBitmap(args.str("trackerIconPath")) ?: glyphBitmap(context))
                 ?.let { builder.setLargeIcon(it) }
+            if (promotedRequested) {
+                builder.setRequestPromotedOngoing(true)
+                args.str("shortText")?.let { builder.setShortCriticalText(it.take(7)) }
+            }
         }
         rememberTitle(
             context, tag, id, title, CH_LIVE, args.str("openPayload"),
@@ -1011,15 +983,6 @@ internal object HermesRichNotifications {
         }
         return mapOf("posted" to true, "promoted" to promotable)
     }
-
-    private fun segmentColor(state: String?): Int =
-        when (state) {
-            "done" -> DONE
-            "working" -> WORKING
-            "needs_you" -> NEEDS_YOU
-            "failed" -> FAILED
-            else -> Color.parseColor("#6E675C")
-        }
 
     /** Replaces a card in place with a short confirmation that dismisses itself. */
     fun confirm(context: Context, args: Map<String, Any?>) {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../models/session.dart';
+import '../utils/session_title.dart';
 import '../services/session_deletion.dart';
 import '../theme/app_theme.dart';
 
@@ -44,7 +45,11 @@ Future<LinkedCronDeletionMode?> showCronConversationDeleteDialog(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(strings.cronDeleteChoiceBody(session.displayTitle)),
+            Text(
+              strings.cronDeleteChoiceBody(
+                localizedSessionTitle(strings, session),
+              ),
+            ),
             const SizedBox(height: 16),
             _CronDeletionChoice(
               key: const ValueKey('cron_delete_conversation_only'),

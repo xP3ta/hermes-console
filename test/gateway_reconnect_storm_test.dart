@@ -133,10 +133,11 @@ void main() {
       async.flushMicrotasks();
       async.elapse(const Duration(seconds: 2));
 
-      // Before the fix every tick (12 in 60 s) opened a new socket.
+      // Before the fix every tick (12 in 60 s) opened a new socket. With the
+      // Desktop 15 s ceiling the ladder tops out sooner than with 30 s.
       expect(
         opens.length,
-        lessThanOrEqualTo(7),
+        lessThanOrEqualTo(8),
         reason: 'opens at ${opens.map((d) => d.inMilliseconds).toList()}',
       );
       for (var i = 1; i < opens.length; i++) {
@@ -242,5 +243,71 @@ void main() {
       unawaited(other.close());
       async.elapse(const Duration(seconds: 2));
     });
+  });
+
+  test('sockets that drop together (one per open chat) redial at distinct '
+      'jittered times inside a bounded window', () {
+    fakeAsync((async) {
+      // The owner's log: six sockets closed together and reopened. Each chat
+      // owns its own client and backoff; with no spread on the first attempt
+      // they all redialled at exactly +1 s (a thundering herd).
+      const sockets = 6;
+      final channels = <_DroppingChannel>[];
+      final clients = [
+        for (var i = 0; i < sockets; i++)
+          TuiGatewayClient(
+            _connection('herd-$i'),
+            dashboard: _Ticket(),
+            heartbeatInterval: Duration.zero,
+            now: () => DateTime(2026).add(async.elapsed),
+            channelFactory: (_, _) {
+              final channel = _DroppingChannel(dropAfter: 99);
+              channels.add(channel);
+              return channel;
+            },
+          ),
+      ];
+      for (final client in clients) {
+        client.connect().then((_) {}, onError: (Object _) {});
+      }
+      async.flushMicrotasks();
+      async.elapse(const Duration(milliseconds: 10));
+      expect(clients.every((c) => c.isConnected), isTrue);
+
+      for (final channel in channels) {
+        unawaited(channel._incoming.close());
+      }
+      async.flushMicrotasks();
+      final delays = [for (final c in clients) c.reconnectBackoffRemaining];
+      expect(clients.every((c) => c.isBackingOff), isTrue);
+      expect(
+        delays.toSet(),
+        hasLength(sockets),
+        reason: 'first-attempt delays $delays must not coincide',
+      );
+      for (final delay in delays) {
+        expect(delay, greaterThanOrEqualTo(GatewayReconnectBackoff.baseDelay));
+        expect(
+          delay,
+          lessThanOrEqualTo(GatewayReconnectBackoff.baseDelay * 1.5),
+        );
+      }
+      for (final client in clients) {
+        unawaited(client.close());
+      }
+      async.elapse(const Duration(seconds: 2));
+    });
+  });
+
+  test('the foreground reconnect ceiling matches Desktop (15 s)', () {
+    // apps/shared/src/reconnect-backoff.ts: DEFAULT_CAP_MS = 15_000. A longer
+    // ceiling kept "reconnecting" on screen well after the network returned.
+    final backoff = GatewayReconnectBackoff(random: () => 1);
+    var last = Duration.zero;
+    for (var i = 0; i < 12; i++) {
+      last = backoff.nextDelay();
+    }
+    expect(last, GatewayReconnectBackoff.foregroundCap);
+    expect(GatewayReconnectBackoff.foregroundCap, const Duration(seconds: 15));
   });
 }

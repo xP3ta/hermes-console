@@ -13,8 +13,11 @@ import '../../../models/hosted_groups.dart';
 import '../../../models/room_member_status.dart' show resolveRoomRecipients;
 import '../../../widgets/mission_profile_avatar.dart'
     show MissionProfileAvatarCache;
+import '../../data/room_member_prompts.dart';
+import '../../state/bot_presence.dart';
 import '../bot_identity.dart';
 
+export '../../data/room_member_prompts.dart';
 export '../bot_identity.dart' show botIdentityColor;
 
 // ─── Attachments (gap G1 interim) ───────────────────────────────────────────
@@ -399,6 +402,12 @@ List<RoomTranscriptEntry> buildRoomTranscript({
   var newSinceShown = false;
   final seen = lastSeenSeq ?? 0;
   final hasOlder = main.any((e) => e.sequence <= seen);
+  // What the user sent from this device is not news to them: the divider
+  // marks the first bot reply after the marker, never their own message.
+  final firstNewSeq = main
+      .where((e) => e.sequence > seen && e.kind != 'message.user')
+      .map((e) => e.sequence)
+      .fold<int?>(null, (a, b) => a == null || b < a ? b : a);
   final roundOf = <String, int>{};
   for (final e in main) {
     final at = roomEventTime(e);
@@ -406,7 +415,11 @@ List<RoomTranscriptEntry> buildRoomTranscript({
       out.add(RoomDaySeparator(DateTime(at.year, at.month, at.day)));
       breakRun = true;
     }
-    if (!newSinceShown && seen > 0 && hasOlder && e.sequence > seen) {
+    if (!newSinceShown &&
+        seen > 0 &&
+        hasOlder &&
+        firstNewSeq != null &&
+        e.sequence >= firstNewSeq) {
       out.add(const RoomNewSinceDivider());
       newSinceShown = true;
       breakRun = true;
@@ -484,6 +497,10 @@ final class RoomRoundRow {
   final String? taskId;
   final RoomApprovalAction? approval;
 
+  /// A human prompt open in the member's own session (clarify question,
+  /// approval the driver did not report, or an unreadable wait).
+  final RoomMemberPrompt? prompt;
+
   /// Retry is offered by the server for this task.
   final bool retryOffered;
   final String? reasonCode;
@@ -494,6 +511,7 @@ final class RoomRoundRow {
     this.since,
     this.taskId,
     this.approval,
+    this.prompt,
     this.retryOffered = false,
     this.reasonCode,
   });
@@ -534,10 +552,16 @@ const _turnKinds = {
 /// Current round of the latest discussion, per member, from `turn.*`
 /// events plus `driver_status` (approvals, retries, counts). Returns `null`
 /// when the room has no user discussion yet.
+///
+/// Without a driver status, an open `turn.started` counts as working only
+/// while the latest activity of that member's turn is fresh at [now]
+/// (same window as [BotPresence.workerFreshness]).
 RoomRoundModel? deriveRoomRound({
   required List<HostedGroupEvent> events,
   required List<HostedGroupMember> members,
   RoomDriverStatus? driverStatus,
+  DateTime? now,
+  List<RoomMemberPrompt> memberPrompts = const [],
 }) {
   HostedGroupEvent? discussion;
   for (final e in events.reversed) {
@@ -592,16 +616,40 @@ RoomRoundModel? deriveRoomRound({
     for (final a in driver?.approvals ?? const <RoomApprovalAction>[]) {
       if (a.memberId == member.memberId) approval = a;
     }
+    RoomMemberPrompt? prompt;
+    for (final p in memberPrompts) {
+      if (p.memberId == member.memberId) {
+        prompt = p;
+        break;
+      }
+    }
     final taskId = last?.activity.taskId;
     final retry = taskId != null && (driver?.offersRetry(taskId) ?? false);
     final since = last == null ? null : roomEventTime(last);
+    bool turnIsFresh() {
+      if (now == null) return true;
+      var latest = last!.createdAt;
+      for (final e in events) {
+        if (e.sequence <= last.sequence) continue;
+        final memberId =
+            e.activity.memberId ??
+            (e.kind == 'message.member' ? e.actor.id : null);
+        if (memberId == member.memberId && e.createdAt > latest) {
+          latest = e.createdAt;
+        }
+      }
+      final seconds = latest < 1e12 ? latest : latest / 1000;
+      return BotPresence.isFreshActivity(seconds, now);
+    }
+
     RoomTurnState state;
-    if (approval != null) {
+    // A member blocked on a human is waiting for you, never "working".
+    if (approval != null || prompt != null) {
       state = RoomTurnState.needsYou;
     } else {
       switch (last?.kind) {
         case 'turn.started':
-          state = roomWorking || driver == null
+          state = roomWorking || (driver == null && turnIsFresh())
               ? RoomTurnState.working
               : RoomTurnState.noReply;
         case 'turn.settled':
@@ -625,6 +673,7 @@ RoomRoundModel? deriveRoomRound({
         since: since,
         taskId: approval?.taskId ?? taskId,
         approval: approval,
+        prompt: prompt,
         retryOffered: retry,
         reasonCode: last?.activity.reasonCode,
       ),

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import '../../l10n/app_localizations.dart';
 import '../companion/state/companion_controller.dart';
 import '../models/activity_snapshot.dart';
 import '../models/agent_task_list.dart';
+import '../models/deferred_tool_call.dart';
 import '../services/approval_policy.dart';
 import '../services/command_risk.dart';
 import '../services/connection_manager.dart';
@@ -44,12 +46,77 @@ class ChatEventInfo {
   /// Texto a renderizar cuando [kind] == text (markdown normal).
   final String text;
 
+  /// tp1216: herramientas que nombra el propio mensaje (las
+  /// `tool_calls[].function.name` de una llamada, o el `tool_name` de un
+  /// resultado), con la skill que carga una `skill_view` si su argumento
+  /// `name` viene. Vacío cuando el servidor no las nombra.
+  final List<({String label, bool skill, String? detail})> tools;
+
+  /// mp1215: the `memory` writes this message describes — from a call's
+  /// args, or (for a result) only whether it landed and where.
+  final List<MemoryWrite> memory;
+
   const ChatEventInfo._({
     required this.kind,
     required this.text,
     this.status,
     this.approvalPending = false,
+    this.tools = const [],
+    this.memory = const [],
   });
+
+  /// lp1215: every logical tool of a `tool_calls` list, with the
+  /// deferred-tool bridge (`tool_call`) unwrapped into the tools it invokes.
+  static Iterable<({String name, Object? args})> _logicalCalls(
+    List calls,
+  ) sync* {
+    for (final call in calls.take(64)) {
+      if (call is! Map) continue;
+      final function = call['function'];
+      final name = (function is Map ? function['name'] : call['name'])
+          ?.toString()
+          .trim();
+      if (name == null || name.isEmpty) continue;
+      final args = function is Map ? function['arguments'] : null;
+      final wrapped = unwrapDeferredToolCall(name, args);
+      if (wrapped == null) {
+        yield (name: name, args: args);
+      } else {
+        for (final entry in wrapped) {
+          yield (name: entry.name, args: entry.arguments);
+        }
+      }
+    }
+  }
+
+  static List<MemoryWrite> _callMemory(List calls) => [
+    for (final call in _logicalCalls(calls))
+      ?MemoryWrite.fromArgs(call.name, call.args),
+  ];
+
+  static List<({String label, bool skill, String? detail})> _callTools(
+    List calls,
+  ) {
+    final tools = <({String label, bool skill, String? detail})>[];
+    for (final call in _logicalCalls(calls)) {
+      final name = call.name;
+      if (name.length > 120) continue;
+      Object? args = call.args;
+      if (args is String && isSkillLoadTool(name)) {
+        try {
+          args = jsonDecode(args);
+        } catch (_) {
+          args = null;
+        }
+      }
+      tools.add((
+        label: name,
+        skill: false,
+        detail: isSkillLoadTool(name) ? activityToolDetail(name, args) : null,
+      ));
+    }
+    return List.unmodifiable(tools);
+  }
 
   static const _internalKeys = {
     'command',
@@ -106,10 +173,12 @@ class ChatEventInfo {
     if (toolCalls is List &&
         toolCalls.isNotEmpty &&
         textContent.trim().isEmpty) {
-      return const ChatEventInfo._(
+      return ChatEventInfo._(
         kind: ChatEventKind.toolEvent,
         text: '',
         status: 'llamada',
+        tools: _callTools(toolCalls),
+        memory: List.unmodifiable(_callMemory(toolCalls)),
       );
     }
 
@@ -127,10 +196,19 @@ class ChatEventInfo {
           approvalPending: true,
         );
       }
-      return const ChatEventInfo._(
+      final resultName = (msg['tool_name'] ?? msg['name'])?.toString().trim();
+      final memoryResult = isMemoryTool(resultName ?? '')
+          ? MemoryWrite.settle(null, textContent)
+          : null;
+      return ChatEventInfo._(
         kind: ChatEventKind.toolEvent,
         text: '',
         status: 'completado',
+        memory: memoryResult == null ? const [] : [memoryResult],
+        tools:
+            resultName == null || resultName.isEmpty || resultName.length > 120
+            ? const []
+            : [(label: resultName, skill: false, detail: null)],
       );
     }
 
@@ -515,19 +593,51 @@ class _ToolActivityGroupState extends State<ToolActivityGroup> {
               ? (anyOk ? colors.warning : colors.error)
               : colors.textSecondary);
 
-    // Resumen de herramientas usadas (nombres únicos, máx 3) para el subtítulo.
-    final names = <String>[];
-    for (final e in events) {
-      final d = e.description;
-      if (d != null && d.isNotEmpty && !names.contains(d)) names.add(d);
-    }
-    final namesLabel = names.take(3).join(', ') + (names.length > 3 ? '…' : '');
+    // tp1216: resumen por herramienta/skill con sus recuentos. Cuentan las
+    // llamadas; los resultados solo si ninguna llamada nombra herramientas
+    // (así una llamada y su resultado no suman dos).
+    final calls = [
+      for (final e in events)
+        if (e.status == 'llamada') ...e.tools,
+    ];
+    final source = calls.isNotEmpty
+        ? calls
+        : [for (final e in events) ...e.tools];
+    final tools = summarizeToolRun(
+      source.map(
+        (t) =>
+            (label: t.label, skill: t.skill, detail: t.detail, running: false),
+      ),
+    );
 
-    // Subtítulo colapsado: nombres de herramientas o "actividad" al expandir.
+    // mp1215: each memory result settles the oldest unmatched memory call
+    // (args give action/target/preview); only confirmed writes are marked.
+    final pendingMemoryCalls = <MemoryWrite>[];
+    final landedMemory = <MemoryWrite>[];
+    for (final e in events) {
+      if (e.status == 'llamada') {
+        pendingMemoryCalls.addAll(e.memory);
+        continue;
+      }
+      for (final result in e.memory) {
+        final call = pendingMemoryCalls.isEmpty
+            ? null
+            : pendingMemoryCalls.removeAt(0);
+        if (!result.landed) continue;
+        landedMemory.add(
+          MemoryWrite(
+            action: call?.action ?? result.action,
+            userTarget: result.userTarget || (call?.userTarget ?? false),
+            landed: true,
+            preview: call?.preview,
+          ),
+        );
+      }
+    }
+
+    // Subtítulo colapsado: el resumen, o "actividad" sin nombres/al expandir.
     final s = Strings.of(context);
-    final headLabel = _expanded
-        ? s.cevActivity
-        : (namesLabel.isNotEmpty ? namesLabel : s.cevActivity);
+    final headLabel = s.cevActivity;
 
     return Padding(
       padding: const EdgeInsets.only(left: 12, right: 40, top: 2, bottom: 2),
@@ -547,15 +657,17 @@ class _ToolActivityGroupState extends State<ToolActivityGroup> {
                   Icon(Icons.bolt_rounded, size: 14, color: accent),
                   const SizedBox(width: 7),
                   Flexible(
-                    child: Text(
-                      headLabel,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colors.textDisabled,
-                      ),
-                    ),
+                    child: tools.isNotEmpty && !_expanded
+                        ? ToolRunSummaryLine(items: tools, fontSize: 11)
+                        : Text(
+                            headLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: colors.textDisabled,
+                            ),
+                          ),
                   ),
                   const SizedBox(width: 8),
                   Text(
@@ -586,6 +698,10 @@ class _ToolActivityGroupState extends State<ToolActivityGroup> {
                 ],
               ),
             ),
+          ),
+          memorySavedMarkers(
+            landedMemory,
+            padding: const EdgeInsets.only(left: 2),
           ),
           AnimatedSize(
             duration: const Duration(milliseconds: 180),
@@ -643,15 +759,16 @@ class _ToolStepState extends State<_ToolStep> {
       label = s.cevStatusDone;
     }
 
+    final named = info.tools.map((t) => t.label).toSet();
     final name = (info.description != null && info.description!.isNotEmpty)
         ? info.description!
-        : s.cevToolFallback;
+        : (named.isNotEmpty ? named.join(', ') : s.cevToolFallback);
     final hasDetail =
         (info.command != null && info.command!.isNotEmpty) ||
         (info.output != null && info.output!.isNotEmpty);
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: 3),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -1368,6 +1485,423 @@ class _ApprovalButton extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// tp1216 · Resumen de una tanda de herramientas en UNA línea
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Una entrada del resumen: una herramienta (`terminal ×3`) o una skill
+/// (`✦ github-pr-workflow`), en el orden en que apareció por primera vez.
+final class ToolRunSummaryItem {
+  const ToolRunSummaryItem({
+    required this.label,
+    required this.count,
+    required this.skill,
+    required this.running,
+    this.memory = false,
+  });
+
+  final String label;
+  final int count;
+
+  /// mp1215: the agent's `memory` tool, shown as its own «🧠 memoria» chip.
+  final bool memory;
+
+  /// Es una skill: o el gateway marcó el paso como `skill`, o es una carga
+  /// `skill_view` cuyo argumento `name` la identifica.
+  final bool skill;
+
+  /// Alguna de sus llamadas sigue en curso.
+  final bool running;
+}
+
+/// Agrega los pasos de una tanda por herramienta/skill. Solo usa lo que el
+/// servidor dio (nombre del paso, su tipo y el detalle seguro ya proyectado);
+/// una `skill_view` sin nombre conocido cuenta como herramienta normal.
+/// Las skills van primero: son lo más informativo de la tanda.
+List<ToolRunSummaryItem> summarizeToolRun(
+  Iterable<({String label, bool skill, String? detail, bool running})> steps,
+) {
+  final order = <String>[];
+  final counts = <String, int>{};
+  final running = <String>{};
+  final skills = <String>{};
+  for (final step in steps) {
+    final label = step.label.trim();
+    if (label.isEmpty || isInternalActivityLabel(label)) continue;
+    String name = label;
+    var skill = step.skill;
+    if (!skill && isMemoryTool(label)) {
+      final key = 'm:memory';
+      if (!counts.containsKey(key)) order.add(key);
+      counts[key] = (counts[key] ?? 0) + 1;
+      if (step.running) running.add(key);
+      continue;
+    }
+    if (!skill && isSkillLoadTool(label)) {
+      final detail = step.detail?.trim();
+      if (detail != null && detail.isNotEmpty) {
+        name = detail.split(' → ').first.trim();
+        skill = name.isNotEmpty;
+        if (!skill) name = label;
+      }
+    }
+    final key = '${skill ? 's' : 't'}:$name';
+    if (!counts.containsKey(key)) order.add(key);
+    counts[key] = (counts[key] ?? 0) + 1;
+    if (skill) skills.add(key);
+    if (step.running) running.add(key);
+  }
+  final items = [
+    for (final key in order)
+      ToolRunSummaryItem(
+        label: key.substring(2),
+        count: counts[key]!,
+        skill: skills.contains(key),
+        running: running.contains(key),
+        memory: key.startsWith('m:'),
+      ),
+  ];
+  return [
+    ...items.where((item) => item.skill),
+    ...items.where((item) => item.memory),
+    ...items.where((item) => !item.skill && !item.memory),
+  ];
+}
+
+/// Texto accesible del resumen: «skill github-pr-workflow, terminal ×3…».
+String toolRunSummarySemantics(Strings s, List<ToolRunSummaryItem> items) =>
+    items
+        .map((item) {
+          final name = item.memory
+              ? s.mp1215MemoryChip
+              : item.skill
+              ? s.tp1216SkillName(item.label)
+              : item.label;
+          return item.count > 1 ? s.tp1216ToolCount(name, item.count) : name;
+        })
+        .join(', ');
+
+/// La línea compacta del resumen: `✦ github-pr-workflow · terminal ×3 ·
+/// read_file ×2`. La herramienta en curso va resaltada. Si no cabe, se corta
+/// con elipsis; más de [maxItems] entradas se resumen en «+N».
+class ToolRunSummaryLine extends StatelessWidget {
+  const ToolRunSummaryLine({
+    required this.items,
+    this.maxItems = 4,
+    this.fontSize = 11.5,
+    super.key,
+  });
+
+  final List<ToolRunSummaryItem> items;
+  final int maxItems;
+  final double fontSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    final shown = items.take(maxItems).toList(growable: false);
+    final hidden = items.length - shown.length;
+    final muted = TextStyle(color: colors.textSecondary);
+    final spans = <InlineSpan>[];
+    for (var i = 0; i < shown.length; i++) {
+      final item = shown[i];
+      if (i > 0) spans.add(TextSpan(text: ' · ', style: muted));
+      if (item.memory) {
+        final palette = MemoryLegendaryPalette.of(context);
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 3),
+              child: Icon(
+                Icons.psychology_rounded,
+                key: const ValueKey('tool-run-memory-icon'),
+                size: fontSize + 1,
+                color: palette.icon,
+              ),
+            ),
+          ),
+        );
+        spans.add(
+          TextSpan(
+            text: s.mp1215MemoryChip,
+            style: TextStyle(
+              color: item.running ? colors.textPrimary : palette.meta,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        );
+        if (item.count > 1) {
+          spans.add(
+            TextSpan(
+              text: ' ×${item.count}',
+              style: TextStyle(
+                color: colors.textSecondary,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          );
+        }
+        continue;
+      }
+      if (item.skill) {
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 3),
+              child: Icon(
+                Icons.auto_awesome_rounded,
+                key: const ValueKey('tool-run-skill-icon'),
+                size: fontSize,
+                color: colors.accentText,
+              ),
+            ),
+          ),
+        );
+      }
+      spans.add(
+        TextSpan(
+          text: item.label,
+          style: TextStyle(
+            color: item.running
+                ? colors.textPrimary
+                : (item.skill ? colors.accentText : colors.textSecondary),
+            fontWeight: item.running || item.skill
+                ? FontWeight.w600
+                : FontWeight.w500,
+          ),
+        ),
+      );
+      if (item.count > 1) {
+        spans.add(
+          TextSpan(
+            text: ' ×${item.count}',
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        );
+      }
+    }
+    if (hidden > 0) {
+      spans.add(TextSpan(text: ' · ', style: muted));
+      spans.add(TextSpan(text: s.tp1216MoreTools(hidden), style: muted));
+    }
+    return Text.rich(
+      TextSpan(children: spans),
+      key: const ValueKey('tool-run-summary'),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      semanticsLabel: toolRunSummarySemantics(s, items),
+      style: TextStyle(fontSize: fontSize, height: 1.3),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mp1215 · Marca «Guardado en memoria»
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Hermes Desktop's «legendary» memory chrome (gold→purple), tuned per theme.
+final class MemoryLegendaryPalette {
+  const MemoryLegendaryPalette._({
+    required this.from,
+    required this.to,
+    required this.icon,
+    required this.meta,
+  });
+
+  final Color from;
+  final Color to;
+  final Color icon;
+  final Color meta;
+
+  static MemoryLegendaryPalette of(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return dark
+        ? const MemoryLegendaryPalette._(
+            from: Color(0xFFF2C766),
+            to: Color(0xFFB79CFF),
+            icon: Color(0xFFD9B27A),
+            meta: Color(0xFFC3AEEF),
+          )
+        : const MemoryLegendaryPalette._(
+            from: Color(0xFFA86F00),
+            to: Color(0xFF6E43D6),
+            icon: Color(0xFF8E5FB0),
+            meta: Color(0xFF6F4FB8),
+          );
+  }
+
+  Shader shader(Rect bounds) => LinearGradient(
+    begin: Alignment.centerLeft,
+    end: Alignment.centerRight,
+    colors: [from, Color.lerp(from, to, 0.5)!, to],
+  ).createShader(bounds);
+}
+
+/// Texto de la marca según lo que dice la propia llamada.
+String memoryWriteLabel(Strings s, MemoryWrite write) =>
+    switch ((write.action, write.userTarget)) {
+      (MemoryWriteAction.add, false) => s.mp1215SavedToMemory,
+      (MemoryWriteAction.add, true) => s.mp1215SavedToProfile,
+      (MemoryWriteAction.replace, false) => s.mp1215MemoryUpdated,
+      (MemoryWriteAction.replace, true) => s.mp1215ProfileUpdated,
+      (MemoryWriteAction.remove, false) => s.mp1215RemovedFromMemory,
+      (MemoryWriteAction.remove, true) => s.mp1215RemovedFromProfile,
+    };
+
+/// Marca compacta de una escritura de memoria que aterrizó: cerebro y título
+/// en dorado→violeta y, si la llamada lo trae, el texto guardado (dos líneas,
+/// desplegable). Estática: sin brillo animado, nada que respetar en
+/// «reducir movimiento».
+class MemorySavedMarker extends StatefulWidget {
+  const MemorySavedMarker({required this.write, super.key});
+
+  final MemoryWrite write;
+
+  @override
+  State<MemorySavedMarker> createState() => _MemorySavedMarkerState();
+}
+
+class _MemorySavedMarkerState extends State<MemorySavedMarker> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    final palette = MemoryLegendaryPalette.of(context);
+    final label = memoryWriteLabel(s, widget.write);
+    final preview = widget.write.preview;
+    const previewStyle = TextStyle(fontSize: 12, height: 1.35);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        var overflows = false;
+        if (preview != null) {
+          final painter = TextPainter(
+            text: TextSpan(text: preview, style: previewStyle),
+            maxLines: 2,
+            textDirection: Directionality.of(context),
+            textScaler: MediaQuery.textScalerOf(context),
+          )..layout(maxWidth: math.max(0, constraints.maxWidth - 22));
+          overflows = painter.didExceedMaxLines;
+          painter.dispose();
+        }
+        final canToggle = overflows;
+        void toggle() => setState(() => _expanded = !_expanded);
+        return Semantics(
+          container: true,
+          button: canToggle,
+          expanded: canToggle ? _expanded : null,
+          label: preview == null ? label : '$label. $preview',
+          onTap: canToggle ? toggle : null,
+          excludeSemantics: true,
+          child: InkWell(
+            key: const ValueKey('memory-saved-marker'),
+            borderRadius: BorderRadius.circular(8),
+            onTap: canToggle ? toggle : null,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Desktop's glyph-shaped glow (drop-shadow), not a
+                      // disk behind the icon.
+                      ShaderMask(
+                        blendMode: BlendMode.srcIn,
+                        shaderCallback: palette.shader,
+                        child: Icon(
+                          Icons.psychology_rounded,
+                          key: const ValueKey('memory-saved-icon'),
+                          size: 16,
+                          shadows: [
+                            Shadow(
+                              color: palette.to.withValues(alpha: 0.45),
+                              blurRadius: 5,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: ShaderMask(
+                          blendMode: BlendMode.srcIn,
+                          shaderCallback: palette.shader,
+                          child: Text(
+                            label,
+                            key: const ValueKey('memory-saved-label'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (preview != null)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 22, top: 2),
+                      child: Text(
+                        preview,
+                        key: const ValueKey('memory-saved-preview'),
+                        maxLines: _expanded ? null : 2,
+                        overflow: _expanded
+                            ? TextOverflow.visible
+                            : TextOverflow.ellipsis,
+                        style: previewStyle.copyWith(
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  if (canToggle)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 22, top: 2),
+                      child: Text(
+                        _expanded ? s.mp1215ShowLess : s.mp1215ShowMore,
+                        key: const ValueKey('memory-saved-toggle'),
+                        style: TextStyle(fontSize: 11, color: palette.meta),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Las marcas de memoria de una tanda, en su orden; nada si no hay ninguna.
+Widget memorySavedMarkers(
+  Iterable<MemoryWrite> writes, {
+  EdgeInsetsGeometry padding = EdgeInsets.zero,
+}) {
+  final list = writes.toList(growable: false);
+  if (list.isEmpty) return const SizedBox.shrink();
+  return Padding(
+    padding: padding,
+    child: Column(
+      key: const ValueKey('memory-saved-markers'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [for (final write in list) MemorySavedMarker(write: write)],
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ThinkingTraceCard — UNA tarjeta por respuesta/run con el progreso agregado
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1394,6 +1928,10 @@ class ChatTraceEvent {
   final DateTime? startedAt;
   final Duration? duration;
 
+  /// mp1215: the write a `memory` call describes, as projected from the
+  /// gateway's own args/result. Only [MemoryWrite.landed] earns a marker.
+  final MemoryWrite? memory;
+
   ChatTraceEvent({
     required this.id,
     required this.label,
@@ -1404,9 +1942,14 @@ class ChatTraceEvent {
     this.detail,
     this.startedAt,
     this.duration,
+    this.memory,
   });
 
   bool get isDone => status == 'completed' || status == 'finished';
+
+  /// A `memory` write the gateway confirmed: settled, not failed, landed.
+  bool get memoryLanded =>
+      isDone && !isFailed && memory?.landed == true && isMemoryTool(label);
   bool get isFailed => status == 'failed' || status == 'error';
 }
 
@@ -1700,6 +2243,34 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
       )
       .toList(growable: false);
 
+  /// tp1216: herramientas y skills de la tanda, agregadas para la línea
+  /// plegada («✦ github-pr-workflow · terminal ×3 · read_file ×2»).
+  ///
+  /// Only settled steps (done/failed) count: a call still without a result
+  /// may belong to a turn another surface is running, and passive
+  /// observation must not reconstruct its tools.
+  List<ToolRunSummaryItem> get _toolSummary => summarizeToolRun(
+    _visibleEvents
+        .where(
+          (event) =>
+              event.kind != ChatTraceEventKind.reasoning &&
+              (event.isDone || event.isFailed),
+        )
+        .map(
+          (event) => (
+            label: event.label,
+            skill: event.kind == ChatTraceEventKind.skill,
+            detail: event.detail,
+            running: false,
+          ),
+        ),
+  );
+
+  /// mp1215: memory writes of this block that the gateway confirmed.
+  Iterable<MemoryWrite> get _landedMemory => _visibleEvents
+      .where((event) => event.memoryLanded)
+      .map((event) => event.memory!);
+
   String get _summary {
     final s = Strings.of(context);
     if (widget.active) {
@@ -1939,8 +2510,29 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
     if (headerBuilder != null) {
       final s = Strings.of(context);
       final muted = TextStyle(fontSize: 11.5, color: colors.textSecondary);
+      final tools = _toolSummary;
+      // tp1216: qué herramientas y skills usó la tanda, en UNA línea a todo
+      // el ancho bajo la cabecera (en la cabecera no caben junto a las
+      // acciones). Plegada solo: desplegada, la lista ya lo dice todo.
+      Widget toolsRow({VoidCallback? onTap}) => Padding(
+        padding: const EdgeInsets.only(left: 50),
+        child: Semantics(
+          button: onTap != null,
+          onTap: onTap,
+          child: InkWell(
+            key: const ValueKey('thinking-trace-tools'),
+            borderRadius: BorderRadius.circular(6),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 1),
+              child: ToolRunSummaryLine(items: tools, maxItems: 5),
+            ),
+          ),
+        ),
+      );
       if (widget.active) {
-        // El estado vivo lo cuenta la pastilla de actividad; aquí, una palabra.
+        // El estado vivo lo cuenta la pastilla de actividad (con la
+        // herramienta en curso); aquí, una palabra y lo ya hecho en la tanda.
         return headerBuilder(
           context,
           Padding(
@@ -1953,13 +2545,27 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
               style: muted,
             ),
           ),
-          const SizedBox.shrink(),
+          // Settled steps only; the running one is named by the activity pill.
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (tools.isNotEmpty) toolsRow(),
+              memorySavedMarkers(
+                _landedMemory,
+                padding: const EdgeInsets.only(left: 50, top: 2),
+              ),
+            ],
+          ),
         );
       }
       final summary = Semantics(
         button: hasEvents,
         expanded: hasEvents ? _expanded : null,
-        label: _summary,
+        label: tools.isEmpty
+            ? _summary
+            : '${_cleanTraceStatus(_summary)}. '
+                  '${toolRunSummarySemantics(s, tools)}',
         excludeSemantics: true,
         child: InkWell(
           key: const ValueKey('thinking-trace-summary'),
@@ -2002,20 +2608,42 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
           ),
         ),
       );
+      final memory = memorySavedMarkers(
+        _landedMemory,
+        padding: const EdgeInsets.only(left: 50, top: 2),
+      );
       final body = hasEvents && _expanded
           ? _buildTraceDetails(colors, tasks, muted: true)
           : const SizedBox.shrink();
+      final animatedBody = reduceMotion
+          ? body
+          : AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              alignment: Alignment.topCenter,
+              child: body,
+            );
       return headerBuilder(
         context,
         summary,
-        reduceMotion
-            ? body
-            : AnimatedSize(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOut,
-                alignment: Alignment.topCenter,
-                child: body,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (tools.isNotEmpty && !_expanded)
+              toolsRow(
+                onTap: hasEvents
+                    ? () {
+                        HapticFeedback.selectionClick();
+                        setState(() => _userExpanded = true);
+                      }
+                    : null,
               ),
+            // mp1215: a landed memory write stays visible, folded or not.
+            memory,
+            animatedBody,
+          ],
+        ),
       );
     }
 
@@ -2131,6 +2759,10 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
                     ],
                   ),
                 ),
+              ),
+              memorySavedMarkers(
+                _landedMemory,
+                padding: const EdgeInsets.only(left: 25),
               ),
               if (hasEvents)
                 if (reduceMotion)

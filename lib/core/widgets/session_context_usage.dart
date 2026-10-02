@@ -9,6 +9,8 @@ import '../models/desktop_context_breakdown.dart';
 import '../models/desktop_session_snapshot.dart';
 import '../models/session.dart';
 import '../theme/app_theme.dart';
+import 'activity_pill.dart' show ActivityTicker, formatTurnElapsed;
+import 'compaction_dock.dart';
 
 typedef SessionContextBreakdownLoader =
     Future<DesktopContextBreakdown?> Function();
@@ -28,6 +30,8 @@ Future<void> showSessionContextPopover({
   required SessionContextBreakdownLoader loadBreakdown,
   required ValueChanged<SessionContextMetrics> onMetricsSnapshot,
   SessionContextModeSectionBuilder? modeSectionBuilder,
+  ValueListenable<CompactionProgress?>? compaction,
+  DateTime Function()? clock,
 }) {
   final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
   final navigator = Navigator.of(context);
@@ -47,6 +51,8 @@ Future<void> showSessionContextPopover({
           loadBreakdown: loadBreakdown,
           onMetricsSnapshot: onMetricsSnapshot,
           modeSectionBuilder: modeSectionBuilder,
+          compaction: compaction,
+          clock: clock,
           onClose: navigator.pop,
         ),
     transitionBuilder: (context, animation, secondaryAnimation, child) {
@@ -76,6 +82,8 @@ class _SessionContextPopoverFrame extends StatelessWidget {
     required this.onMetricsSnapshot,
     required this.onClose,
     this.modeSectionBuilder,
+    this.compaction,
+    this.clock,
   });
 
   final Rect anchorRect;
@@ -84,6 +92,8 @@ class _SessionContextPopoverFrame extends StatelessWidget {
   final ValueChanged<SessionContextMetrics> onMetricsSnapshot;
   final VoidCallback onClose;
   final SessionContextModeSectionBuilder? modeSectionBuilder;
+  final ValueListenable<CompactionProgress?>? compaction;
+  final DateTime Function()? clock;
 
   @override
   Widget build(BuildContext context) {
@@ -143,6 +153,8 @@ class _SessionContextPopoverFrame extends StatelessWidget {
                 onMetricsSnapshot: onMetricsSnapshot,
                 onClose: onClose,
                 modeSectionBuilder: modeSectionBuilder,
+                compaction: compaction,
+                clock: clock,
               ),
             ),
           ),
@@ -374,12 +386,24 @@ class SessionContextPopoverButton extends StatefulWidget {
     this.modeColor,
     this.modeSectionBuilder,
     this.compressionCount = 0,
+    this.compaction,
+    this.clock,
     super.key,
   });
 
   final ValueListenable<SessionContextMetrics> metrics;
   final SessionContextBreakdownLoader loadBreakdown;
   final ValueChanged<SessionContextMetrics> onMetricsSnapshot;
+
+  /// A compaction running now or just finished (still lingering). While
+  /// non-null the ring and percentage give way to the compaction state —
+  /// spinner + «Compactando…» + elapsed, then a brief ✓ «Compactada» — and
+  /// the popover this pill opens carries the full facts. This replaced the
+  /// separate floating compaction pill above the composer.
+  final CompactionProgress? compaction;
+
+  /// Injectable clock for the compaction elapsed time (tests).
+  final DateTime Function()? clock;
 
   /// Non-null only when the approval mode is worth flagging (YOLO / read-only
   /// / a per-session override) — same "prominent" gate the old app-bar mode
@@ -390,8 +414,8 @@ class SessionContextPopoverButton extends StatefulWidget {
 
   /// How many times this session has ever been compacted (0 hides the
   /// segment). A durable fact of the session, unlike the transient
-  /// in-progress/just-finished compaction dock — this is the only place that
-  /// says so once the dock itself is long gone.
+  /// in-progress/just-finished [compaction] state — this is the only place
+  /// that says so once that state is gone.
   final int compressionCount;
 
   @override
@@ -402,7 +426,27 @@ class SessionContextPopoverButton extends StatefulWidget {
 class _SessionContextPopoverButtonState
     extends State<SessionContextPopoverButton> {
   final GlobalKey _anchorKey = GlobalKey();
+  late final ValueNotifier<CompactionProgress?> _compaction = ValueNotifier(
+    widget.compaction,
+  );
   bool _opening = false;
+
+  @override
+  void didUpdateWidget(SessionContextPopoverButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // An open popover listens to this, so its compaction section stays live.
+    // It lives on another route: notify after this frame, never mid-build.
+    if (identical(_compaction.value, widget.compaction)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _compaction.value = widget.compaction;
+    });
+  }
+
+  @override
+  void dispose() {
+    _compaction.dispose();
+    super.dispose();
+  }
 
   Future<void> _open() async {
     if (_opening) return;
@@ -419,6 +463,8 @@ class _SessionContextPopoverButtonState
         loadBreakdown: widget.loadBreakdown,
         onMetricsSnapshot: widget.onMetricsSnapshot,
         modeSectionBuilder: widget.modeSectionBuilder,
+        compaction: _compaction,
+        clock: widget.clock,
       );
     } finally {
       _opening = false;
@@ -436,17 +482,58 @@ class _SessionContextPopoverButtonState
         valueListenable: widget.metrics,
         builder: (context, value, _) {
           final percent = value.percent;
+          final compaction = widget.compaction;
+          final reduceMotion =
+              MediaQuery.maybeDisableAnimationsOf(context) ?? false;
           final semanticsLabel = [
+            if (compaction != null)
+              compactionStatusText(
+                strings,
+                compaction,
+                Localizations.localeOf(context).languageCode,
+              ),
             _contextTriggerSemanticsLabel(strings, value),
             ?widget.modeLabel,
-            if (widget.compressionCount > 0)
+            if (widget.compressionCount > 0 && compaction == null)
               strings.chaSessionCompactedTooltip(widget.compressionCount),
           ].join(' · ');
           final modeLabel = widget.modeLabel;
+          // Ring + percentage normally; the compaction state while one runs
+          // or has just finished. One slot, cross-faded in place.
+          final Widget lead = compaction == null
+              ? Row(
+                  key: const ValueKey('context-pill-usage'),
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SessionContextRing(
+                      percent: percent,
+                      size: 14,
+                      strokeWidth: 2,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      _contextTriggerText(value),
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
+                )
+              : CompactionPillSegment(
+                  key: const ValueKey('context-pill-compaction'),
+                  compaction: compaction,
+                  clock: widget.clock,
+                );
           return Semantics(
             button: true,
             onTap: _open,
             label: semanticsLabel,
+            // Announces compaction start/end: the label changes only then
+            // (the elapsed clock is not part of it).
+            liveRegion: compaction != null,
             excludeSemantics: true,
             child: Tooltip(
               message: strings.chaContextUsageOpen,
@@ -476,19 +563,21 @@ class _SessionContextPopoverButtonState
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        SessionContextRing(
-                          percent: percent,
-                          size: 14,
-                          strokeWidth: 2,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          _contextTriggerText(value),
-                          style: TextStyle(
-                            color: colors.textPrimary,
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w700,
-                            fontFeatures: const [FontFeature.tabularFigures()],
+                        Flexible(
+                          // Ring+percentage ⇄ compaction state, cross-faded
+                          // in place. No AnimatedSize: this pill sits in the
+                          // composer footer, which relayouts while the
+                          // transcript streams, and a size animation there
+                          // re-dirties itself mid-layout.
+                          child: AnimatedSwitcher(
+                            duration: reduceMotion
+                                ? Duration.zero
+                                : const Duration(milliseconds: 220),
+                            layoutBuilder: (current, previous) => Stack(
+                              alignment: Alignment.centerLeft,
+                              children: [...previous, ?current],
+                            ),
+                            child: lead,
                           ),
                         ),
                         if (modeLabel != null) ...[
@@ -517,7 +606,8 @@ class _SessionContextPopoverButtonState
                             ),
                           ),
                         ],
-                        if (widget.compressionCount > 0) ...[
+                        if (widget.compressionCount > 0 &&
+                            compaction == null) ...[
                           const SizedBox(width: 6),
                           Container(
                             height: 12,
@@ -679,6 +769,8 @@ class SessionContextFloatingPanel extends StatefulWidget {
     required this.onMetricsSnapshot,
     required this.onClose,
     this.modeSectionBuilder,
+    this.compaction,
+    this.clock,
     super.key,
   });
 
@@ -689,6 +781,10 @@ class SessionContextFloatingPanel extends StatefulWidget {
   final ValueChanged<SessionContextMetrics> onMetricsSnapshot;
   final VoidCallback onClose;
   final SessionContextModeSectionBuilder? modeSectionBuilder;
+
+  /// Compaction running or just finished; its full facts head the panel.
+  final ValueListenable<CompactionProgress?>? compaction;
+  final DateTime Function()? clock;
 
   @override
   State<SessionContextFloatingPanel> createState() =>
@@ -752,13 +848,28 @@ class _SessionContextFloatingPanelState
                         _breakdown!,
                         fallback: liveMetrics,
                       );
-                return _PanelContents(
+                final contents = _PanelContents(
                   metrics: metrics,
                   breakdown: _breakdown,
                   loading: _loading,
                   error: _error,
                   onClose: widget.onClose,
                   modeSectionBuilder: widget.modeSectionBuilder,
+                );
+                final compaction = widget.compaction;
+                if (compaction == null) return contents;
+                return ValueListenableBuilder<CompactionProgress?>(
+                  valueListenable: compaction,
+                  builder: (context, progress, _) => _PanelContents(
+                    metrics: metrics,
+                    breakdown: _breakdown,
+                    loading: _loading,
+                    error: _error,
+                    onClose: widget.onClose,
+                    modeSectionBuilder: widget.modeSectionBuilder,
+                    compaction: progress,
+                    clock: widget.clock,
+                  ),
                 );
               },
             ),
@@ -777,6 +888,8 @@ class _PanelContents extends StatelessWidget {
     required this.error,
     required this.onClose,
     this.modeSectionBuilder,
+    this.compaction,
+    this.clock,
   });
 
   final SessionContextMetrics metrics;
@@ -785,11 +898,14 @@ class _PanelContents extends StatelessWidget {
   final Object? error;
   final VoidCallback onClose;
   final SessionContextModeSectionBuilder? modeSectionBuilder;
+  final CompactionProgress? compaction;
+  final DateTime Function()? clock;
 
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     final colors = Theme.of(context).hermes;
+    final compaction = this.compaction;
     final categories = breakdown?.categories ?? const [];
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -818,6 +934,11 @@ class _PanelContents extends StatelessWidget {
             ),
           ],
         ),
+        if (compaction != null) ...[
+          const SizedBox(height: 4),
+          _CompactionPanelRow(compaction: compaction, clock: clock),
+          const SizedBox(height: 8),
+        ],
         const SizedBox(height: 6),
         _ContextOverview(metrics: metrics),
         const SizedBox(height: 10),
@@ -852,6 +973,71 @@ class _PanelContents extends StatelessWidget {
           modeSectionBuilder!(context, onClose),
         ],
       ],
+    );
+  }
+}
+
+/// The compaction's full facts at the top of the context panel: the same
+/// outcome text the old floating pill showed («Compactado · 34 → 12
+/// mensajes · …») or «Compactando · 22 msj · ~21.5k tok» with the measured
+/// clock. Only what Hermes published; no estimate.
+class _CompactionPanelRow extends StatelessWidget {
+  const _CompactionPanelRow({required this.compaction, this.clock});
+
+  final CompactionProgress compaction;
+  final DateTime Function()? clock;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    final lang = Localizations.localeOf(context).languageCode;
+    final finished = compaction.isFinished;
+    return Container(
+      key: const ValueKey('context-panel-compaction'),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        color: colors.surfaceVariant.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.divider.withValues(alpha: 0.7)),
+      ),
+      child: ActivityTicker(
+        active: !finished,
+        clock: clock,
+        builder: (context, now) => Row(
+          children: [
+            CompactionGlyph(compaction: compaction),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                compactionStatusText(strings, compaction, lang),
+                key: const ValueKey('context-panel-compaction-text'),
+                style: TextStyle(
+                  fontSize: 12.5,
+                  height: 1.3,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textPrimary,
+                ),
+              ),
+            ),
+            if (!finished) ...[
+              const SizedBox(width: 8),
+              ExcludeSemantics(
+                child: Text(
+                  formatTurnElapsed(compaction.elapsed(now)),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: colors.textSecondary,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

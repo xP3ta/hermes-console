@@ -74,6 +74,21 @@ class DockCreateOrbit {
   });
 }
 
+/// Height from the bottom edge the default [Dock] covers: safe inset, the
+/// 12dp gap, the style's lift, the 48dp bar and a small breathing gap.
+/// Content that must not hide behind the dock reserves this much.
+double dockFootprint(BuildContext context) {
+  final colors = Theme.of(context).hermes;
+  final style = DockPreferencesController.instance.value.general.style;
+  return MediaQuery.paddingOf(context).bottom +
+      12 +
+      resolveDockVisual(colors, style).lift +
+      _dockBarHeight +
+      8;
+}
+
+const double _dockBarHeight = 48;
+
 /// EL dock flotante de la app. Uno solo, para todos los perfiles y todas las
 /// pantallas.
 ///
@@ -374,10 +389,19 @@ class _DockState extends State<Dock>
       showBack: showBack,
     );
     final createIndex = slots.indexOf(DockItemId.create);
+    // One indicator slides between destinations; the accent "+" never takes
+    // it (it is an action, not a place).
+    final selectedSlot = slots.indexWhere(
+      (slot) =>
+          slot != null &&
+          !dockItemIsAccent(slot) &&
+          widget.actions[slot]?.selected == true,
+    );
 
     final bar = DockBar(
       key: ValueKey('$_prefix-floating-dock'),
       style: profile.style,
+      selectedIndex: selectedSlot == -1 ? null : selectedSlot,
       children: [
         for (final slot in slots)
           _tileForSlot(
@@ -437,7 +461,8 @@ class _DockState extends State<Dock>
               left: dockSideMargin,
               right: dockSideMargin,
               bottom: dockBottom,
-              child: bar,
+              // Press and indicator animations repaint only the bar.
+              child: RepaintBoundary(child: bar),
             ),
           ],
         );
@@ -575,6 +600,7 @@ class _DockState extends State<Dock>
       toggled: ownsCreateTray ? _expanded : null,
       innerRadius: innerRadius,
       compact: compact,
+      selectionBackground: false,
       focusNode: ownsCreateTray ? _createFocus : null,
       onTap: ownsCreateTray
           ? _toggleCreate

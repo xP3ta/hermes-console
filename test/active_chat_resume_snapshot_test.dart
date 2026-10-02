@@ -2139,7 +2139,7 @@ void main() {
           expect(request.method, 'GET');
           expect(request.url.path, '/api/sessions/stored-chat/messages');
           expect(request.url.queryParameters, {
-            'limit': '500',
+            'limit': '${ActiveChat.authoritativeTranscriptPageSize}',
             'order': 'latest',
             'offset': '0',
             'include_compacted': 'true',
@@ -4687,6 +4687,40 @@ void main() {
     expect(storage.value, isNot(contains('second-attempt')));
   });
 
+  test(
+    'stop-parked gateway-accepted prompt can be deleted from the local queue',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-parked-accepted',
+          'session_key': 'stored-chat',
+          'messages': <Object>[],
+          'inflight': {
+            'user': 'actual',
+            'assistant': 'parcial',
+            'streaming': true,
+          },
+          'queued': {'user': 'después'},
+          'running': true,
+          'status': 'working',
+        });
+      final chat = _chat('parked-accepted-delete', gateway);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      expect(chat.queuedEntries.single.kind, QueuedEntryKind.desktopAccepted);
+
+      await chat.cancel();
+
+      expect(chat.queueParked, isTrue);
+      final parked = chat.queuedEntries.single;
+      expect(parked.text, 'después');
+      expect(parked.kind, QueuedEntryKind.text);
+      expect(await chat.cancelQueuedByIdentity(parked.id), isTrue);
+      expect(chat.queuedEntries, isEmpty);
+      expect(chat.queuedMessages, isEmpty);
+    },
+  );
+
   group('fail-open compression restore (Hermes Desktop has no fence)', () {
     Map<String, dynamic> ring(String state, {String runtime = 'runtime-a'}) {
       if (state == 'gone') {
@@ -5719,6 +5753,78 @@ void main() {
             .expand(_generatedImageRefs),
         isEmpty,
       );
+    },
+  );
+
+  test(
+    'REST lleva MEDIA de un tool result de texto al asistente final',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..resumeExistingError = const TuiGatewayRpcError(
+          'session.resume',
+          'not found',
+          code: 4007,
+        );
+      final chat = _chat(
+        'resume-tool-media-rest',
+        gateway,
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'data': [
+                {'id': 1, 'role': 'user', 'content': 'haz el informe'},
+                {
+                  'id': 2,
+                  'role': 'assistant',
+                  'content': '',
+                  'tool_calls': [
+                    {
+                      'id': 'call-report-1',
+                      'type': 'function',
+                      'function': {
+                        'name': 'mcp_docs_render',
+                        'arguments': '{}',
+                      },
+                    },
+                  ],
+                },
+                {
+                  'id': 3,
+                  'role': 'tool',
+                  'tool_call_id': 'call-report-1',
+                  'tool_name': 'mcp_docs_render',
+                  'content':
+                      'Informe generado.\nMEDIA:/home/hermes/work/informe.pdf',
+                },
+                {'id': 4, 'role': 'assistant', 'content': 'Ya está listo.'},
+              ],
+            }),
+            200,
+          ),
+        ),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      final finalAssistant = chat.messages.singleWhere(
+        (message) => message['id'] == 4,
+      );
+      final refs = _generatedImageRefs(finalAssistant);
+      expect(refs, hasLength(1));
+      expect(refs.single['source'], '/home/hermes/work/informe.pdf');
+      expect(refs.single['kind'], 'serverPath');
+      expect(refs.single['tool_call_id'], 'call-report-1');
+      expect(finalAssistant['content'], 'Ya está listo.');
+      expect(
+        chat.messages
+            .where((message) => message['id'] != 4)
+            .expand(_generatedImageRefs),
+        isEmpty,
+      );
+      final artifact = chat.resolveSessionArtifacts().single;
+      expect(artifact.displayName, 'informe.pdf');
+      expect(artifact.managedReference, '/home/hermes/work/informe.pdf');
     },
   );
 

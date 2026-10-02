@@ -171,10 +171,21 @@ class _GeneralDockShellState extends State<GeneralDockShell> {
           return widget.body;
         }
         final current = _currentDestination;
+        final media = MediaQuery.of(context);
         return Stack(
           fit: StackFit.expand,
           children: [
-            widget.body,
+            // The dock floats over the bottom of the screen. The body ends
+            // above it, so scrolled to the end the last row is readable
+            // instead of hidden under the bar. The system inset is part of
+            // the footprint, so it is not reported twice.
+            MediaQuery(
+              data: media.copyWith(padding: media.padding.copyWith(bottom: 0)),
+              child: Padding(
+                padding: EdgeInsets.only(bottom: dockFootprint(context)),
+                child: widget.body,
+              ),
+            ),
             Dock(
               profileId: DockProfileId.general,
               showBackContext: _isSubscreen,

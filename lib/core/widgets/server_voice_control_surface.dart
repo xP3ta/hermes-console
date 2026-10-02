@@ -345,6 +345,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
         await Future<void>.delayed(const Duration(milliseconds: 1200));
         if (!mounted) return;
         final status = await widget.dashboard.getActionStatus(actionName);
+        if (!mounted) return;
         final rawLines = status['lines'];
         setState(() {
           _setupLines = rawLines is List
@@ -1188,6 +1189,31 @@ class _ServerVoiceParametersEditorState
     super.initState();
     _patch = <String, dynamic>{};
     _provider = widget.provider;
+    if (widget.section == 'stt') _repairLiteralAutoSttLanguages();
+  }
+
+  /// Console 1.2.14 guardaba «Automático» como el texto `auto` (issue #65).
+  /// Hermes STT toma el primer idioma no vacío (`stt.<proveedor>.language`,
+  /// alias `language_code`, luego `stt.language`) y lo reenvía al proveedor,
+  /// que lo rechaza. Se prepara ya la reparación a "" para que Guardar quede
+  /// disponible y no dependa de volver a elegir Automático a mano.
+  void _repairLiteralAutoSttLanguages() {
+    final stt = widget.config['stt'];
+    if (stt is! Map) return;
+    bool isLiteralAuto(Object? value) =>
+        value is String && value.trim().toLowerCase() == 'auto';
+    for (final key in const ['language', 'language_code']) {
+      if (isLiteralAuto(stt[key])) _writePath(_patch, 'stt.$key', '');
+    }
+    for (final entry in stt.entries) {
+      final section = entry.value;
+      if (section is! Map) continue;
+      for (final key in const ['language', 'language_code']) {
+        if (isLiteralAuto(section[key])) {
+          _writePath(_patch, 'stt.${entry.key}.$key', '');
+        }
+      }
+    }
   }
 
   @override
@@ -1688,7 +1714,17 @@ class _ServerVoiceParametersEditorState
     }
     final values = _selectableValues(key, spec, value);
     if (values.isNotEmpty) {
-      final current = value?.toString().trim();
+      // Hermes STT entiende «automático» como idioma vacío (sus defaults usan
+      // `language: ""`) y reenvía cualquier otro texto al proveedor, que
+      // rechaza `auto` (issue #65). Se muestra como Automático y se guarda "".
+      final sttAutoLanguage =
+          widget.section == 'stt' &&
+          _fieldConcept(key) == 'language' &&
+          values.contains('auto');
+      final raw = value?.toString().trim();
+      final current = sttAutoLanguage && (raw == null || raw.isEmpty)
+          ? 'auto'
+          : raw;
       return _labeledControl(
         colors: colors,
         label: label,
@@ -1718,6 +1754,10 @@ class _ServerVoiceParametersEditorState
               ? null
               : (next) {
                   if (next == null) return;
+                  if (sttAutoLanguage && next == 'auto') {
+                    _set(key, '');
+                    return;
+                  }
                   _set(
                     key,
                     type == 'number' ? num.tryParse(next) ?? next : next,

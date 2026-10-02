@@ -2146,6 +2146,45 @@ void main() {
     expect(source.watchCount, 2);
   });
 
+  testWidgets('roster refresh sleeps in background and restarts on resume', (
+    tester,
+  ) async {
+    final manager = await _manager();
+    final source = _WatchSource(
+      _snapshot(
+        profiles: const [AgentProfile(name: 'infra')],
+        board: const KanbanBoard(columns: [], latestEventId: 10),
+      ),
+    );
+    addTearDown(source.events.close);
+    await tester.pumpWidget(
+      _host(manager: manager, snapshot: source.snapshot, dataSource: source),
+    );
+    await tester.pumpAndSettle();
+    expect(source.loadCount, 1);
+
+    await tester.pump(const Duration(seconds: 10));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump(const Duration(seconds: 25));
+    expect(source.loadCount, 1);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    await tester.pump();
+    expect(source.loadCount, 2);
+
+    // The stale background tick (t=60 s) must not reload 25 s after resume.
+    await tester.pump(const Duration(seconds: 28));
+    expect(source.loadCount, 2);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+    expect(source.loadCount, 3);
+  });
+
   testWidgets('newer refresh wins when loads complete out of order', (
     tester,
   ) async {

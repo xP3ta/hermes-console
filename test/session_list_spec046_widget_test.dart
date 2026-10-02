@@ -1022,10 +1022,11 @@ void main() {
       await _pumpUntil(tester, find.text('Conversation 0'));
       rosterFails = true;
 
-      // Backoff never undercuts the 1 s base (jitter spreads above it).
+      // Backoff never undercuts the 1 s base (jitter spreads above it; the
+      // first attempt over [1 s, 1.5 s], so 0.75 → 1.375 s).
       events.addError(StateError('offline'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 999));
+      await tester.pump(const Duration(milliseconds: 1374));
       expect(reconnects, 0);
       await tester.pump(const Duration(milliseconds: 1));
       expect(reconnects, 1);
@@ -1047,7 +1048,7 @@ void main() {
       rosterFails = false;
       events.addError(StateError('lost after a stable interval'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 999));
+      await tester.pump(const Duration(milliseconds: 1374));
       expect(reconnects, 2);
       await tester.pump(const Duration(milliseconds: 1));
       expect(
@@ -1297,7 +1298,7 @@ void main() {
     final label = tester.widget<Text>(
       find.byKey(const ValueKey('session-running-session-0')),
     );
-    expect(label.data, 'background work', reason: 'never "working"');
+    expect(label.data, 'Background · 1', reason: 'never "working"');
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 61));
   });
@@ -1397,7 +1398,7 @@ void main() {
     final label = tester.widget<Text>(
       find.byKey(const ValueKey('session-running-session-0')),
     );
-    expect(label.data, startsWith('working'));
+    expect(label.data, startsWith('Working…'));
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 61));
   });
@@ -1993,6 +1994,71 @@ void main() {
         ),
         hasLength(1),
       );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'library safety refresh sleeps in background and restarts on resume',
+    (tester) async {
+      var pageRequests = 0;
+      final dashboard = _dashboard(
+        MockClient((request) async {
+          if (request.url.path != '/api/sessions') {
+            return http.Response('{}', 404);
+          }
+          pageRequests += 1;
+          return _pageResponse(
+            [_sessionRow(0, title: 'Quiet conversation')],
+            total: 1,
+            limit: 50,
+            offset: 0,
+          );
+        }),
+      );
+      final gateway = _gateway(_healthyGatewayHttp());
+      final repository = SessionRepository(dashboard, gateway);
+      addTearDown(() {
+        repository.close();
+        dashboard.close();
+      });
+      await tester.pumpWidget(
+        _host(
+          SessionListScreen(
+            connection: _connection(),
+            connManager: await _manager(),
+            clientOverride: gateway,
+            repositoryOverride: repository,
+            eventStreamOverride: const Stream<TuiGatewayEvent>.empty(),
+          ),
+        ),
+      );
+      await _pumpUntil(tester, find.text('Quiet conversation'));
+      await tester.pump(const Duration(seconds: 1));
+      final initial = pageRequests;
+
+      await tester.pump(const Duration(seconds: 30));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump(const Duration(seconds: 50));
+      expect(pageRequests, initial, reason: 'no refresh in background');
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      for (var i = 0; i < 40 && pageRequests == initial; i++) {
+        await tester.pump(const Duration(milliseconds: 25));
+      }
+      final afterResume = pageRequests;
+      expect(afterResume, greaterThan(initial), reason: 'resume refreshes');
+
+      // The next safety refresh is a full interval after the resume, not the
+      // stale tick that the background phase would have fired 40 s later.
+      await tester.pump(const Duration(seconds: 45));
+      expect(pageRequests, afterResume);
+      await tester.pump(const Duration(seconds: 20));
+      expect(pageRequests, greaterThan(afterResume));
       expect(tester.takeException(), isNull);
     },
   );

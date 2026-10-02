@@ -1,5 +1,8 @@
 import 'dart:async';
 
+// Transitive via flutter_test; not added to pubspec to keep the lockfile.
+// ignore: depend_on_referenced_packages
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -252,11 +255,10 @@ void main() {
     expect(chat.transportStatus.disconnectedSince, isNotNull);
   });
 
-  test('offline transport replaces a thinking headline but auth does not', () {
-    final offline = _disconnected(ChatTransportState.reconnecting);
+  test('a visible transport loss replaces the headline but auth does not', () {
     expect(
       chatActivityHeadlineForTransport(
-        status: offline,
+        transportLossVisible: true,
         authRequired: false,
         activityHeadline: 'Thinking…',
         reconnectingHeadline: 'Connection lost — reconnecting…',
@@ -265,13 +267,151 @@ void main() {
     );
     expect(
       chatActivityHeadlineForTransport(
-        status: offline,
+        transportLossVisible: true,
         authRequired: true,
         activityHeadline: 'Thinking…',
         reconnectingHeadline: 'Connection lost — reconnecting…',
       ),
       'Thinking…',
     );
+    expect(
+      chatActivityHeadlineForTransport(
+        transportLossVisible: false,
+        authRequired: false,
+        activityHeadline: 'Thinking…',
+        reconnectingHeadline: 'Connection lost — reconnecting…',
+      ),
+      'Thinking…',
+    );
+  });
+
+  group('ChatTransportVisibility (fake clock)', () {
+    late DateTime now;
+    late ChatTransportVisibility visibility;
+    late List<bool> edges;
+
+    void feed(ChatTransportStatus status, {bool foreground = true}) =>
+        visibility.update(
+          status: status,
+          activeTurn: true,
+          authRequired: false,
+          appForeground: foreground,
+        );
+
+    void advance(FakeAsync async, Duration by) {
+      now = now.add(by);
+      async.elapse(by);
+    }
+
+    setUp(() {
+      now = DateTime(2026, 10, 1, 14);
+      visibility = ChatTransportVisibility(clock: () => now);
+      edges = <bool>[];
+      visibility.addListener(() {
+        if (edges.isEmpty || edges.last != visibility.visible) {
+          edges.add(visibility.visible);
+        }
+      });
+    });
+
+    tearDown(() => visibility.dispose());
+
+    test('a 1 s offline → reconnecting → connected blip never shows', () {
+      fakeAsync((async) {
+        feed(const ChatTransportStatus(ChatTransportState.connected));
+        final lostAt = now;
+        feed(
+          ChatTransportStatus(
+            ChatTransportState.offline,
+            disconnectedSince: lostAt,
+          ),
+        );
+        advance(async, const Duration(milliseconds: 400));
+        feed(
+          ChatTransportStatus(
+            ChatTransportState.reconnecting,
+            disconnectedSince: lostAt,
+          ),
+        );
+        advance(async, const Duration(milliseconds: 600));
+        feed(const ChatTransportStatus(ChatTransportState.connected));
+        advance(async, const Duration(seconds: 10));
+        expect(visibility.visible, isFalse);
+        expect(edges, isEmpty);
+        expect(visibility.recoveries, 0);
+      });
+    });
+
+    test('a 6 s outage shows after 3 s and clears 2 s after reconnect', () {
+      fakeAsync((async) {
+        feed(const ChatTransportStatus(ChatTransportState.connected));
+        final lostAt = now;
+        feed(
+          ChatTransportStatus(
+            ChatTransportState.offline,
+            disconnectedSince: lostAt,
+          ),
+        );
+        advance(async, const Duration(milliseconds: 2999));
+        expect(visibility.visible, isFalse);
+        // Re-feeding the same loss (screen rebuild) must not re-arm the grace.
+        feed(
+          ChatTransportStatus(
+            ChatTransportState.offline,
+            disconnectedSince: lostAt,
+          ),
+        );
+        advance(async, const Duration(milliseconds: 1));
+        expect(visibility.visible, isTrue);
+
+        advance(async, const Duration(seconds: 3));
+        feed(const ChatTransportStatus(ChatTransportState.connected));
+        advance(async, const Duration(milliseconds: 1999));
+        expect(visibility.visible, isTrue);
+        feed(const ChatTransportStatus(ChatTransportState.connected));
+        advance(async, const Duration(milliseconds: 1));
+        expect(visibility.visible, isFalse);
+        expect(edges, [true, false]);
+        expect(visibility.recoveries, 1);
+      });
+    });
+
+    test('a real outage stays visible until the transport reconnects', () {
+      fakeAsync((async) {
+        final lostAt = now;
+        feed(
+          ChatTransportStatus(
+            ChatTransportState.offline,
+            disconnectedSince: lostAt,
+          ),
+        );
+        advance(async, const Duration(minutes: 10));
+        expect(visibility.visible, isTrue);
+        expect(visibility.displayState, ChatTransportState.offline);
+        // A reconnect attempt that fails again keeps it shown.
+        feed(
+          ChatTransportStatus(
+            ChatTransportState.reconnecting,
+            disconnectedSince: lostAt,
+          ),
+        );
+        advance(async, const Duration(minutes: 1));
+        expect(visibility.visible, isTrue);
+        expect(visibility.displayState, ChatTransportState.reconnecting);
+        // A connected flicker shorter than the hysteresis does not clear it.
+        feed(const ChatTransportStatus(ChatTransportState.connected));
+        advance(async, const Duration(seconds: 1));
+        feed(
+          ChatTransportStatus(
+            ChatTransportState.offline,
+            disconnectedSince: now,
+          ),
+        );
+        advance(async, const Duration(seconds: 5));
+        expect(visibility.visible, isTrue);
+        expect(edges, [true]);
+      });
+    });
   });
 
   testWidgets('short active-turn blip never shows the persistent row', (

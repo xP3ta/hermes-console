@@ -17,6 +17,8 @@ import 'package:hermes_android/core/utils/byte_bounded_lru_cache.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // Dashboard page tokens are shared per base URL across clients.
+  setUp(DashboardClient.resetSharedPasswordSessionsForTesting);
   // `_loadApiKeys` now reads Keystore for every connection without a plaintext
   // key (not just migrating ones), and a storage failure there aborts init
   // instead of being swallowed as corrupt metadata — see connection_manager.dart.
@@ -670,6 +672,55 @@ void main() {
             return http.Response('unauthorized', 401);
           }
           return http.Response('not found', 404);
+        }),
+      );
+
+      expect(await client.healthCheck(), isFalse);
+      client.close();
+    });
+
+    // #1215: /health answers 200 while the server is busy streaming large
+    // transcripts; the authenticated probe can time out or return 5xx. That
+    // is a slow server, not a missing one, and the library must not flip to
+    // "no gateway connection" for it.
+    for (final outcome in ['503', '429', 'timeout', 'reset']) {
+      test('healthCheck keeps a reachable server online when the auth probe '
+          'is slow or overloaded ($outcome)', () async {
+        final client = ApiClient(
+          baseUrl: 'http://hermes.local:8642',
+          apiKey: 'valid-key',
+          httpClient: MockClient((request) async {
+            if (request.url.path == '/health') {
+              return http.Response('{}', 200);
+            }
+            if (request.url.path == '/api/sessions') {
+              switch (outcome) {
+                case 'timeout':
+                  throw TimeoutException('slow list');
+                case 'reset':
+                  throw http.ClientException('connection reset');
+                default:
+                  return http.Response('busy', int.parse(outcome));
+              }
+            }
+            return http.Response('not found', 404);
+          }),
+        );
+
+        expect(await client.healthCheck(), isTrue);
+        client.close();
+      });
+    }
+
+    test('healthCheck still fails when /health itself fails', () async {
+      final client = ApiClient(
+        baseUrl: 'http://hermes.local:8642',
+        apiKey: 'valid-key',
+        httpClient: MockClient((request) async {
+          if (request.url.path == '/health') {
+            throw http.ClientException('connection refused');
+          }
+          return http.Response('{"object":"list","data":[]}', 200);
         }),
       );
 

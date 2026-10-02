@@ -11,6 +11,7 @@ import '../services/ssh_commands.dart';
 import '../services/ssh_session_service.dart';
 import '../screens/lock_screen.dart';
 import '../theme/app_theme.dart';
+import '../utils/ssh_error.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/ssh_host_key_dialog.dart';
@@ -172,7 +173,12 @@ class _SshTerminalScreenState extends State<SshTerminalScreen> {
                   Icon(Icons.error_outline, size: 44, color: colors.error),
                   const SizedBox(height: 16),
                   Text(
-                    session.error ?? Strings.of(context).sshConnError,
+                    session.failure == null
+                        ? Strings.of(context).sshConnError
+                        : localizedSshError(
+                            Strings.of(context),
+                            session.failure!,
+                          ),
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 13, color: colors.textSecondary),
                   ),

@@ -438,12 +438,55 @@ abstract interface class MissionHostedGroupsReadDataSource {
   });
 }
 
+/// Profiles and sessions read on their own, for a roster-only refresh.
+final class MissionRosterRead {
+  final List<AgentProfile> profiles;
+  final List<Session> sessions;
+  final MissionCapabilityState profilesCapability;
+  final MissionCapabilityState sessionsCapability;
+  final Object? profilesError;
+  final Object? sessionsError;
+
+  const MissionRosterRead({
+    required this.profiles,
+    required this.sessions,
+    required this.profilesCapability,
+    required this.sessionsCapability,
+    this.profilesError,
+    this.sessionsError,
+  });
+}
+
+/// Optional partial refresh driven by the Gateway's change events.
+///
+/// While [liveChangesHealthy] holds, Mission Control can skip its periodic
+/// full reload: `sessions.changed` refreshes only the roster
+/// ([loadRoster]) and rooms are re-read only when `groups.list` shows they
+/// moved or their last driver evidence was active ([refreshHostedGroups]).
+abstract interface class MissionLiveRefreshDataSource {
+  /// Global Gateway events (`sessions.changed`…); errors when the socket
+  /// drops. Null when this source has no live channel.
+  Stream<TuiGatewayEvent>? watchLiveChanges();
+
+  /// The socket is up and the backend announced `change_events`.
+  bool get liveChangesHealthy;
+
+  Future<MissionRosterRead> loadRoster();
+
+  /// [previous] with only the rooms that changed (or were active) re-read.
+  /// Throws when the capability generation moved: the caller must reload.
+  Future<HostedGroupsSnapshot> refreshHostedGroups(
+    HostedGroupsSnapshot previous,
+  );
+}
+
 final class MissionControlRepository
     implements
         MissionControlDataSource,
         MissionProfileAvatarDataSource,
         MissionHostedGroupsDataSource,
-        MissionHostedGroupsReadDataSource {
+        MissionHostedGroupsReadDataSource,
+        MissionLiveRefreshDataSource {
   final MissionProfilesLoader profilesLoader;
   final MissionSessionsLoader sessionsLoader;
   final MissionBoardLoader boardLoader;
@@ -451,9 +494,19 @@ final class MissionControlRepository
   final MissionProfileAvatarLoader? profileAvatarLoader;
   final MissionHostedGroupsGateway? hostedGroupsGateway;
   final void Function()? onClose;
+
+  /// Global Gateway events and their health (see
+  /// [MissionLiveRefreshDataSource]); both null without a live channel.
+  final Stream<TuiGatewayEvent> Function()? liveChanges;
+  final bool Function()? liveChangesAvailable;
   bool _closed = false;
   final Map<String, RoomLogCursor> _logCursors = {};
+  final Map<String, HostedGroupLogPage> _logSeeds = {};
   int? _logCursorGeneration;
+
+  /// Rooms read at once: enough to hide per-room latency, few enough not to
+  /// flood the one shared Gateway socket.
+  static const roomReadConcurrency = 4;
 
   MissionControlRepository({
     required this.profilesLoader,
@@ -463,6 +516,8 @@ final class MissionControlRepository
     this.profileAvatarLoader,
     this.hostedGroupsGateway,
     this.onClose,
+    this.liveChanges,
+    this.liveChangesAvailable,
   });
 
   factory MissionControlRepository.forConnection(SavedConnection connection) {
@@ -498,6 +553,9 @@ final class MissionControlRepository
       kanbanEventsLoader: (since) => kanban.events(since: since),
       profileAvatarLoader: desktop.profileAvatar,
       hostedGroupsGateway: _TuiMissionHostedGroupsGateway(desktop),
+      liveChanges: () => desktop.events,
+      liveChangesAvailable: () =>
+          desktop.isConnected && desktop.changeEventsAvailable,
       onClose: () {
         lease.release();
         kanban.close();
@@ -557,25 +615,112 @@ final class MissionControlRepository
     );
   }
 
-  Future<HostedGroupsSnapshot> _loadHostedGroups() async {
+  @override
+  Stream<TuiGatewayEvent>? watchLiveChanges() {
+    if (_closed) throw StateError('MissionControlRepository is closed');
+    return liveChanges?.call();
+  }
+
+  @override
+  bool get liveChangesHealthy =>
+      !_closed &&
+      liveChanges != null &&
+      (liveChangesAvailable?.call() ?? false);
+
+  @override
+  Future<MissionRosterRead> loadRoster() async {
+    if (_closed) throw StateError('MissionControlRepository is closed');
+    final results = await Future.wait<Object>([
+      _capture(profilesLoader),
+      _capture(sessionsLoader),
+    ]);
+    final profiles = results[0] as _MissionLoadResult<List<AgentProfile>>;
+    final sessions = results[1] as _MissionLoadResult<List<Session>>;
+    return MissionRosterRead(
+      profiles: profiles.value ?? const [],
+      sessions: sessions.value ?? const [],
+      profilesCapability: _capability(profiles),
+      sessionsCapability: _capability(sessions),
+      profilesError: profiles.error,
+      sessionsError: sessions.error,
+    );
+  }
+
+  /// A room needs `groups.state` unless the list row proves it unchanged
+  /// and its last driver evidence was quiet: an active room is always
+  /// re-read so a finished turn never keeps showing as working.
+  static bool _roomMoved(
+    HostedGroupRoom listed,
+    HostedGroupRoom? previous,
+    RoomDriverStatus? driver,
+  ) =>
+      previous == null ||
+      !listed.latestSeqKnown ||
+      !previous.latestSeqKnown ||
+      listed.latestSeq != previous.latestSeq ||
+      listed.revision != previous.revision ||
+      listed.authorityGatewayId != previous.authorityGatewayId ||
+      listed.authorityEpoch != previous.authorityEpoch ||
+      driver == null ||
+      driver.running ||
+      driver.working ||
+      driver.blocked ||
+      driver.needsUser;
+
+  @override
+  Future<HostedGroupsSnapshot> refreshHostedGroups(
+    HostedGroupsSnapshot previous,
+  ) async {
+    if (_closed) throw StateError('MissionControlRepository is closed');
     final gateway = hostedGroupsGateway;
-    if (gateway == null) return HostedGroupsSnapshot.empty;
+    final known = previous.capabilities;
+    if (gateway == null || known == null) {
+      throw StateError('hosted groups were not loaded');
+    }
     final capabilities = await gateway.capabilities();
-    if (!capabilities.hasSharedRoomSurface) {
-      return HostedGroupsSnapshot(capabilities: capabilities);
+    if (capabilities.generation != known.generation ||
+        !capabilities.hasSharedRoomSurface ||
+        previous.rooms.length != previous.logs.length) {
+      throw StateError('hosted groups capability changed');
     }
     final listed = await gateway.list(generation: capabilities.generation);
+    final previousIndex = {
+      for (var i = 0; i < previous.rooms.length; i++)
+        previous.rooms[i].roomId: i,
+    };
+    final stale = <String>[
+      for (final room in listed)
+        if (_roomMoved(room, switch (previousIndex[room.roomId]) {
+          final i? => previous.rooms[i],
+          null => null,
+        }, previous.driverStatuses[room.roomId]))
+          room.roomId,
+    ];
+    final listedIds = {for (final room in listed) room.roomId};
+    _logCursors.removeWhere((roomId, _) => !listedIds.contains(roomId));
+    final reads = await _readRooms(
+      gateway,
+      stale,
+      generation: capabilities.generation,
+      skipLogAtTip: true,
+    );
+    final readById = {
+      for (var i = 0; i < stale.length; i++) stale[i]: reads[i],
+    };
     final states = <HostedGroupRoom>[];
     final logs = <HostedGroupLogPage>[];
     final driverStatuses = <String, RoomDriverStatus>{};
-    final listedIds = {for (final room in listed) room.roomId};
-    _logCursors.removeWhere((roomId, _) => !listedIds.contains(roomId));
     for (final listedRoom in listed) {
-      final read = await _readRoom(
-        gateway,
-        listedRoom.roomId,
-        generation: capabilities.generation,
-      );
+      final read = readById[listedRoom.roomId];
+      if (read == null) {
+        final i = previousIndex[listedRoom.roomId]!;
+        states.add(previous.rooms[i]);
+        logs.add(previous.logs[i]);
+        if (previous.driverStatuses[listedRoom.roomId] case final status?) {
+          driverStatuses[listedRoom.roomId] = status;
+        }
+        continue;
+      }
       final state = read.room;
       if (state.roomId != listedRoom.roomId ||
           state.revision < listedRoom.revision) {
@@ -595,15 +740,93 @@ final class MissionControlRepository
     );
   }
 
+  /// Resumes each room log from [snapshot] (the last one this client showed)
+  /// so reopening Bot Mode reads only what is new, not every transcript.
+  void seedHostedLogs(HostedGroupsSnapshot snapshot) {
+    if (snapshot.rooms.length != snapshot.logs.length) return;
+    for (var i = 0; i < snapshot.rooms.length; i++) {
+      final roomId = snapshot.rooms[i].roomId;
+      if (_logCursors.containsKey(roomId)) continue;
+      _logSeeds[roomId] = snapshot.logs[i];
+    }
+  }
+
+  Future<HostedGroupsSnapshot> _loadHostedGroups() async {
+    final gateway = hostedGroupsGateway;
+    if (gateway == null) return HostedGroupsSnapshot.empty;
+    final capabilities = await gateway.capabilities();
+    if (!capabilities.hasSharedRoomSurface) {
+      return HostedGroupsSnapshot(capabilities: capabilities);
+    }
+    final listed = await gateway.list(generation: capabilities.generation);
+    final states = <HostedGroupRoom>[];
+    final logs = <HostedGroupLogPage>[];
+    final driverStatuses = <String, RoomDriverStatus>{};
+    final listedIds = {for (final room in listed) room.roomId};
+    _logCursors.removeWhere((roomId, _) => !listedIds.contains(roomId));
+    final reads = await _readRooms(
+      gateway,
+      [for (final room in listed) room.roomId],
+      generation: capabilities.generation,
+    );
+    for (var i = 0; i < listed.length; i++) {
+      final listedRoom = listed[i];
+      final read = reads[i];
+      final state = read.room;
+      if (state.roomId != listedRoom.roomId ||
+          state.revision < listedRoom.revision) {
+        throw const FormatException('incoherent hosted room state');
+      }
+      states.add(state);
+      logs.add(read.log);
+      if (read.driverStatus case final status?) {
+        driverStatuses[state.roomId] = status;
+      }
+    }
+    return HostedGroupsSnapshot(
+      capabilities: capabilities,
+      rooms: List.unmodifiable(states),
+      logs: List.unmodifiable(logs),
+      driverStatuses: Map.unmodifiable(driverStatuses),
+    );
+  }
+
+  /// Reads every room with at most [roomReadConcurrency] in flight, keeping
+  /// the listed order. Any failure fails the whole read, as before.
+  Future<List<_RoomRead>> _readRooms(
+    MissionHostedGroupsGateway gateway,
+    List<String> roomIds, {
+    required int generation,
+    bool skipLogAtTip = false,
+  }) async {
+    final results = List<_RoomRead?>.filled(roomIds.length, null);
+    var next = 0;
+    Future<void> worker() async {
+      while (next < roomIds.length) {
+        final index = next++;
+        results[index] = await _readRoom(
+          gateway,
+          roomIds[index],
+          generation: generation,
+          skipLogAtTip: skipLogAtTip,
+        );
+      }
+    }
+
+    await Future.wait([
+      for (var i = 0; i < roomReadConcurrency && i < roomIds.length; i++)
+        worker(),
+    ]);
+    return [for (final result in results) result!];
+  }
+
   /// `groups.state` (+driver status) and the room log. Incremental gateways
   /// read only `since_seq = cursor`; legacy ones re-read the full log.
-  Future<
-    ({HostedGroupRoom room, HostedGroupLogPage log, RoomDriverStatus? driverStatus})
-  >
-  _readRoom(
+  Future<_RoomRead> _readRoom(
     MissionHostedGroupsGateway gateway,
     String roomId, {
     required int generation,
+    bool skipLogAtTip = false,
   }) async {
     if (gateway is! MissionHostedGroupsIncrementalGateway) {
       final state = await gateway.state(roomId, generation: generation);
@@ -615,9 +838,27 @@ final class MissionControlRepository
       roomId,
       generation: generation,
     );
-    final delta = await _cursorFor(incremental, roomId, generation).pull();
+    final cursor = _cursorFor(incremental, roomId, generation);
+    final held = cursor.log;
+    if (skipLogAtTip && held != null && _cursorAtTip(held, state.room)) {
+      // groups.state proves nothing was appended since the cursor's last
+      // read under this authority: the log read would return no events.
+      return (room: state.room, log: held, driverStatus: state.driverStatus);
+    }
+    final delta = await cursor.pull();
     return (room: state.room, log: delta.log, driverStatus: state.driverStatus);
   }
+
+  /// True only when [room] (read after [log]) carries an explicit
+  /// `latest_seq` equal to the log's tip, under the same authority, and the
+  /// log is complete up to that tip. Anything else reads the log.
+  static bool _cursorAtTip(HostedGroupLogPage log, HostedGroupRoom room) =>
+      room.latestSeqKnown &&
+      !log.hasMore &&
+      log.cursor == log.latestSeq &&
+      room.latestSeq == log.latestSeq &&
+      room.authorityGatewayId == log.authority.gatewayId &&
+      room.authorityEpoch == log.authority.epoch;
 
   RoomLogCursor _cursorFor(
     MissionHostedGroupsIncrementalGateway gateway,
@@ -632,6 +873,7 @@ final class MissionControlRepository
       roomId,
       () => RoomLogCursor(
         roomId: roomId,
+        initial: _logSeeds.remove(roomId),
         load: ({required sinceSeq, required limit}) => gateway.logSince(
           roomId,
           sinceSeq: sinceSeq,
@@ -640,6 +882,22 @@ final class MissionControlRepository
         ),
       ),
     );
+  }
+
+  /// The log after a rename/stop. Incremental gateways continue the room's
+  /// cursor (the delta since the last read, or a complete paged read when
+  /// none is open yet) instead of re-reading every page from seq 0; a
+  /// rotated authority or rewound log still restarts the cursor from zero.
+  Future<HostedGroupLogPage> _mutationLog(
+    MissionHostedGroupsGateway gateway,
+    String roomId,
+    int generation,
+  ) async {
+    if (gateway is! MissionHostedGroupsIncrementalGateway) {
+      return gateway.log(roomId, generation: generation);
+    }
+    final incremental = gateway as MissionHostedGroupsIncrementalGateway;
+    return (await _cursorFor(incremental, roomId, generation).pull()).log;
   }
 
   Future<MissionHostedGroupsGateway> _requireHosted(
@@ -673,7 +931,12 @@ final class MissionControlRepository
     required int generation,
   }) async {
     final gateway = await _requireHosted(GroupMethod.state, generation);
-    final read = await _readRoom(gateway, room.roomId, generation: generation);
+    final read = await _readRoom(
+      gateway,
+      room.roomId,
+      generation: generation,
+      skipLogAtTip: true,
+    );
     return _verifiedWorkspaceReadback(
       previous: room,
       current: read.room,
@@ -691,20 +954,45 @@ final class MissionControlRepository
     required int generation,
   }) async {
     final gateway = await _requireHosted(GroupMethod.send, generation);
-    await gateway.send(
+    final tail = await gateway.send(
       room.roomId,
       text: text,
       attempt: attempt,
       generation: generation,
     );
-    final current = await gateway.state(room.roomId, generation: generation);
-    // send returns the acknowledgement tail, not the room's full conversation.
-    final log = await gateway.log(room.roomId, generation: generation);
+    // send already verified its acknowledgement tail (the log since the
+    // acknowledged event). When that tail carries this attempt's event and
+    // continues the room's cursor exactly under the room's authority, it IS
+    // the next delta: take it instead of reading groups.state and the log
+    // again, and let the room poller bring the driver status.
+    if (gateway is MissionHostedGroupsIncrementalGateway &&
+        tail.authority.gatewayId == room.authorityGatewayId &&
+        tail.authority.epoch == room.authorityEpoch &&
+        tail.events.any(
+          (e) =>
+              e.eventId == attempt.durableEventId && e.kind == 'message.user',
+        ) &&
+        _logCursorGeneration == generation) {
+      final merged = _logCursors[room.roomId]?.absorb(tail);
+      if (merged != null) {
+        return _verifiedWorkspaceReadback(
+          previous: room,
+          current: room,
+          log: merged.log,
+          generation: generation,
+        );
+      }
+    }
+    // Otherwise read it back like a refresh: incremental gateways fetch only
+    // the delta after the room's cursor instead of the whole log again (a
+    // long room made every send wait for dozens of log pages).
+    final read = await _readRoom(gateway, room.roomId, generation: generation);
     return _verifiedWorkspaceReadback(
       previous: room,
-      current: current,
-      log: log,
+      current: read.room,
+      log: read.log,
       generation: generation,
+      driverStatus: read.driverStatus,
     );
   }
 
@@ -720,7 +1008,7 @@ final class MissionControlRepository
       name: name,
       generation: generation,
     );
-    final log = await gateway.log(room.roomId, generation: generation);
+    final log = await _mutationLog(gateway, room.roomId, generation);
     return _verifiedWorkspaceReadback(
       previous: room,
       current: current,
@@ -736,7 +1024,7 @@ final class MissionControlRepository
   }) async {
     final gateway = await _requireHosted(GroupMethod.stop, generation);
     final current = await gateway.stop(room.roomId, generation: generation);
-    final log = await gateway.log(room.roomId, generation: generation);
+    final log = await _mutationLog(gateway, room.roomId, generation);
     return _verifiedWorkspaceReadback(
       previous: room,
       current: current,
@@ -819,9 +1107,16 @@ final class MissionControlRepository
     if (_closed) return;
     _closed = true;
     _logCursors.clear();
+    _logSeeds.clear();
     onClose?.call();
   }
 }
+
+typedef _RoomRead = ({
+  HostedGroupRoom room,
+  HostedGroupLogPage log,
+  RoomDriverStatus? driverStatus,
+});
 
 final class _MissionLoadResult<T> {
   final T? value;

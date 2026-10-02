@@ -9,7 +9,7 @@ import '../../main.dart';
 import '../models/session_category.dart';
 import '../models/desktop_active_session.dart';
 import '../models/desktop_control_center.dart';
-import '../models/session_activity.dart';
+import '../models/session_live_status.dart';
 import '../navigation/chat_route.dart';
 import '../services/active_chat_service.dart';
 import '../services/connection_manager.dart';
@@ -24,8 +24,10 @@ import '../services/session_repository.dart';
 import '../services/tui_gateway_client.dart';
 import '../services/shared_gateway_pool.dart';
 import '../utils/home_recent_sessions.dart';
+import '../utils/session_title.dart';
 import '../utils/session_timestamp.dart';
 import '../theme/app_theme.dart';
+import '../widgets/onstage_gate.dart';
 import '../widgets/accent_card.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_drawer.dart';
@@ -127,6 +129,10 @@ List<Session> changedDurableSessions(
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SessionListScreen extends StatefulWidget {
+  /// How many times the filtered/sorted session view was recomputed.
+  @visibleForTesting
+  static int debugFilterPasses = 0;
+
   final SavedConnection connection;
   final ConnectionManager connManager;
   final ApiClient? clientOverride;
@@ -197,6 +203,12 @@ class _SessionListScreenState extends State<SessionListScreen>
   final ScrollController _libraryScrollController = ScrollController();
 
   final Map<String, bool> _pendingArchiveByLogicalId = {};
+
+  /// Bumped by in-place mutations of [_sessions], [_searchResults] or
+  /// [_pendingArchiveByLogicalId]; reassignments are caught by identity.
+  int _listRevision = 0;
+  Object? _filteredKey;
+  List<Session> _filteredCache = const [];
   SessionCategory _activeCategory = SessionCategory.chats;
   bool _showArchived = false;
 
@@ -209,11 +221,11 @@ class _SessionListScreenState extends State<SessionListScreen>
   ActiveChatService? _activeChats;
   GlobalActivityAggregate? _globalActivity;
   PageRoute<dynamic>? _route;
-  // Fallback estable (sin chats activos) mientras se resuelve el servicio, para
-  // no crear un ValueNotifier nuevo en cada build.
-  final ValueNotifier<Set<String>> _noActiveChats = ValueNotifier<Set<String>>(
-    const {},
-  );
+  final OnstageGate _activeIdsGate = OnstageGate();
+
+  /// ss1215: repaints the rows in the same frame an attached chat's live
+  /// status changes (tool, waiting, done), held while a chat covers the list.
+  final OnstageGate _liveStatusGate = OnstageGate();
 
   @override
   void didChangeDependencies() {
@@ -223,6 +235,11 @@ class _SessionListScreenState extends State<SessionListScreen>
         context.findAncestorStateOfType<HermesAppState>()?.activeChats;
     _globalActivity ??=
         widget.globalActivityOverride ?? _activeChats?.globalActivity;
+    // `activeIds` is force-notified on every subagent event of a run. While a
+    // chat covers this list, hold those notifications and deliver one on
+    // return instead of rebuilding the hidden ListView each time.
+    _activeIdsGate.bind(context, _activeChats?.activeIds);
+    _liveStatusGate.bind(context, _activeChats?.liveStatusRevision);
     final route = ModalRoute.of(context);
     if (route is PageRoute<dynamic> && !identical(route, _route)) {
       hermesRouteObserver.unsubscribe(this);
@@ -256,11 +273,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     _eventReconnectBackoff = GatewayReconnectBackoff(
       random: widget.eventReconnectRandomOverride,
     );
-    _sessionSafetyTimer = Timer.periodic(sessionLibrarySafetyRefreshInterval, (
-      _,
-    ) {
-      if (_libraryRefreshAllowed) unawaited(_fetchSessions(showLoader: false));
-    });
+    _armSessionSafetyTimer();
     _activeChats = widget.activeChatsOverride;
     _globalActivity = widget.globalActivityOverride;
     _client =
@@ -331,6 +344,18 @@ class _SessionListScreenState extends State<SessionListScreen>
     if (mounted) setState(() {});
   }
 
+  /// Safety refresh while the app is visible. Cancelled in background (its
+  /// ticks would only wake the isolate to find refresh disallowed) and re-armed
+  /// on resume, whose health check already refreshes the library at once.
+  void _armSessionSafetyTimer() {
+    _sessionSafetyTimer?.cancel();
+    _sessionSafetyTimer = Timer.periodic(sessionLibrarySafetyRefreshInterval, (
+      _,
+    ) {
+      if (_libraryRefreshAllowed) unawaited(_fetchSessions(showLoader: false));
+    });
+  }
+
   bool get _libraryRefreshAllowed =>
       mounted && _foreground && _route?.isCurrent != false;
 
@@ -338,9 +363,14 @@ class _SessionListScreenState extends State<SessionListScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
     if (_foreground) {
+      if (_sessionSafetyTimer == null) _armSessionSafetyTimer();
       _checkHealth();
       _scheduleEventReconnect(immediate: true);
     } else {
+      if (state != AppLifecycleState.inactive) {
+        _sessionSafetyTimer?.cancel();
+        _sessionSafetyTimer = null;
+      }
       _eventReconnectTimer?.cancel();
       _eventReconnectTimer = null;
       _eventStableTimer?.cancel();
@@ -435,7 +465,8 @@ class _SessionListScreenState extends State<SessionListScreen>
     _activityLease = null;
     _ownedActivityClient = null;
     _client.close();
-    _noActiveChats.dispose();
+    _activeIdsGate.dispose();
+    _liveStatusGate.dispose();
     super.dispose();
   }
 
@@ -847,6 +878,31 @@ class _SessionListScreenState extends State<SessionListScreen>
   bool _isLocalActive(Session session) =>
       _localChatForSession(session)?.sessionActivity.active == true;
 
+  /// ss1215: the one status this row shows — the attached chat's own state
+  /// when it has proof, the roster otherwise (see
+  /// [resolveSessionLiveStatus]); the same value the chat pill and Inicio
+  /// read.
+  SessionLiveStatus _liveStatusFor(Session session) {
+    final chat = _localChatForSession(session);
+    final profile = Session.profileOwner(session.profile);
+    final aggregate = _globalActivity;
+    final globalActive =
+        aggregate != null &&
+        (aggregate.isActive(widget.connection.id, profile, session.id) ||
+            aggregate.isActive(
+              widget.connection.id,
+              profile,
+              session.logicalId,
+            ));
+    return resolveSessionLiveStatus(
+      chat: chat?.liveStatus,
+      chatAuthoritative:
+          chat != null && (chat.hasDesktopRuntime || chat.lastTerminalAt != null),
+      chatSettledAt: chat?.lastTerminalAt,
+      global: globalActive ? _globalForSession(session) : null,
+    );
+  }
+
   GlobalActivity? _globalForSession(Session session) {
     final aggregate = _globalActivity;
     if (aggregate == null) return null;
@@ -1056,7 +1112,8 @@ class _SessionListScreenState extends State<SessionListScreen>
   bool _isHidden(Session session) =>
       _archive?.isSessionHidden(session) ?? false;
   String _titleFor(Session session) =>
-      _archive?.titleForSession(session) ?? session.displayTitle;
+      _archive?.titleForSession(session, strings: Strings.of(context)) ??
+      localizedSessionTitle(Strings.of(context), session);
 
   void _replaceSessionArchived(Session session, bool archived) {
     _sessions = [
@@ -1142,6 +1199,7 @@ class _SessionListScreenState extends State<SessionListScreen>
 
     setState(() {
       _pendingArchiveByLogicalId[session.logicalId] = archived;
+      _listRevision++;
     });
     try {
       await repository.setArchived(
@@ -1157,6 +1215,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       setState(() {
         _replaceSessionArchived(session, archived);
         _pendingArchiveByLogicalId.remove(session.logicalId);
+        _listRevision++;
       });
       _showArchiveResult(archived, localOnly: false);
     } on DashboardHttpException catch (error) {
@@ -1166,6 +1225,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         if (!mounted) return;
         setState(() {
           _pendingArchiveByLogicalId.remove(session.logicalId);
+          _listRevision++;
         });
         _showArchiveResult(archived, localOnly: true);
         return;
@@ -1182,6 +1242,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     if (!mounted) return;
     setState(() {
       _pendingArchiveByLogicalId.remove(session.logicalId);
+      _listRevision++;
     });
     await _fetchSessions();
     if (!mounted) return;
@@ -1380,7 +1441,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     setState(() {
       bool retained(Session row) =>
           !aliases.contains(row.id) && !aliases.contains(row.logicalId);
-      _sessions.removeWhere((row) => !retained(row));
+      _sessions = _sessions.where(retained).toList();
       _searchResults = _searchResults?.where(retained).toList();
       _searching = false;
     });
@@ -1611,7 +1672,44 @@ class _SessionListScreenState extends State<SessionListScreen>
 
   // ── Filtering ────────────────────────────────────────────────────────────
 
+  /// [_computeFilteredSessions] memoized on every input it reads: list
+  /// identities and in-place revision, local archive state (pin/archive/
+  /// hidden/titles), query, category, archived toggle and locale.
   List<Session> get _filteredSessions {
+    final key = (
+      _sessions,
+      _searchResults,
+      _listRevision,
+      _archive,
+      _archive?.revision,
+      _searchQuery,
+      _activeCategory,
+      _showArchived,
+      Localizations.localeOf(context),
+    );
+    final previous = _filteredKey;
+    if (previous is _FilterKey && _sameFilterKey(previous, key)) {
+      return _filteredCache;
+    }
+    _filteredKey = key;
+    return _filteredCache = List<Session>.unmodifiable(
+      _computeFilteredSessions(),
+    );
+  }
+
+  static bool _sameFilterKey(_FilterKey a, _FilterKey b) =>
+      identical(a.$1, b.$1) &&
+      identical(a.$2, b.$2) &&
+      a.$3 == b.$3 &&
+      identical(a.$4, b.$4) &&
+      a.$5 == b.$5 &&
+      a.$6 == b.$6 &&
+      a.$7 == b.$7 &&
+      a.$8 == b.$8 &&
+      a.$9 == b.$9;
+
+  List<Session> _computeFilteredSessions() {
+    SessionListScreen.debugFilterPasses++;
     final query = _searchQuery.trim().toLowerCase();
     final source = query.isNotEmpty && _repository != null
         ? (_searchResults ?? const <Session>[])
@@ -1909,7 +2007,8 @@ class _SessionListScreenState extends State<SessionListScreen>
                         ))
                 : ListenableBuilder(
                     listenable: Listenable.merge([
-                      _activeChats?.activeIds ?? _noActiveChats,
+                      _activeIdsGate,
+                      _liveStatusGate,
                       ?_globalActivity,
                       // La reserva inferior depende de si el dock está
                       // activado (interruptor global de Ajustes).
@@ -1974,21 +2073,12 @@ class _SessionListScreenState extends State<SessionListScreen>
   Widget _sessionRow(Session session, Strings s, HermesThemeColors colors) {
     final archived = _isArchived(session);
     final pinned = _isPinned(session);
-    final localActivity = _localChatForSession(session)?.sessionActivity;
-    final globalActive =
-        (_globalActivity?.isActive(
-              widget.connection.id,
-              Session.profileOwner(session.profile),
-              session.id,
-            ) ??
-            false) ||
-        (_globalActivity?.isActive(
-              widget.connection.id,
-              Session.profileOwner(session.profile),
-              session.logicalId,
-            ) ??
-            false);
-    final streamActive = localActivity?.active == true || globalActive;
+    final status = _liveStatusFor(session);
+    // Una compactación enciende la fila (punto + «Compactando») pero no
+    // ofrece «Detener»: no es un turno que se pueda parar.
+    final streamActive = status.isLive;
+    final stoppable =
+        streamActive && status.phase != SessionLivePhase.compacting;
     return Dismissible(
       key: ValueKey('${session.id}-$archived'),
       direction: DismissDirection.horizontal,
@@ -2016,12 +2106,9 @@ class _SessionListScreenState extends State<SessionListScreen>
         title: _titleFor(session),
         formattedTime: _relativeTime(session.lastActivityAt, s),
         pinned: pinned,
-        activity: globalActive ? _globalForSession(session) : null,
-        localActivity: localActivity,
-        // Una compactación enciende la fila (punto + "Compactando") pero no
-        // ofrece "Detener": no es un turno que se pueda parar.
-        streamActive: streamActive || localActivity?.compacting == true,
-        onStop: streamActive ? () => _stopSession(session) : null,
+        status: status,
+        streamActive: streamActive,
+        onStop: stoppable ? () => _stopSession(session) : null,
         onTap: () => _openChat(session),
         onLongPress: () => _showSessionContextMenu(session),
       ),
@@ -2359,36 +2446,40 @@ class _LiveDotState extends State<_LiveDot>
     );
     final ring = _ring;
     if (ring == null) return dot;
-    return SizedBox(
-      width: 8,
-      height: 8,
-      child: AnimatedBuilder(
-        animation: ring,
-        builder: (context, child) {
-          final t = Curves.easeOut.transform(ring.value);
-          return Stack(
-            clipBehavior: Clip.none,
-            alignment: Alignment.center,
-            children: [
-              Transform.scale(
-                scale: 1 + 1.6 * t,
-                child: Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: widget.color.withValues(alpha: 0.55 * (1 - t)),
-                      width: 1.5,
+    // The ring repaints every frame while the row is live: keep it on its own
+    // layer so each tick does not repaint the row's title, preview and card.
+    return RepaintBoundary(
+      child: SizedBox(
+        width: 8,
+        height: 8,
+        child: AnimatedBuilder(
+          animation: ring,
+          builder: (context, child) {
+            final t = Curves.easeOut.transform(ring.value);
+            return Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.center,
+              children: [
+                Transform.scale(
+                  scale: 1 + 1.6 * t,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: widget.color.withValues(alpha: 0.55 * (1 - t)),
+                        width: 1.5,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              ?child,
-            ],
-          );
-        },
-        child: dot,
+                ?child,
+              ],
+            );
+          },
+          child: dot,
+        ),
       ),
     );
   }
@@ -2639,8 +2730,9 @@ class _SessionTile extends StatelessWidget {
   /// Hay un stream del chat en curso en segundo plano para esta sesión: la
   /// respuesta/ejecución sigue aunque saliste. Cuenta como "viva".
   final bool streamActive;
-  final GlobalActivity? activity;
-  final SessionActivity? localActivity;
+
+  /// ss1215: the session's single derived status (chat, list and Home).
+  final SessionLiveStatus status;
   final Future<void> Function()? onStop;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
@@ -2651,25 +2743,19 @@ class _SessionTile extends StatelessWidget {
     required this.formattedTime,
     this.pinned = false,
     this.streamActive = false,
-    this.activity,
-    this.localActivity,
+    this.status = SessionLiveStatus.idle,
     this.onStop,
     required this.onTap,
     required this.onLongPress,
   });
 
   /// Semantic state of the live row: the dot and the status line share its
-  /// colour (green working, calm tint compacting, amber waiting, error
-  /// failed, muted stale/idle), so the status never reads like the title.
-  SessionStatusTone get _statusTone {
-    final local = localActivity;
-    if (local != null && local.showsActivity) {
-      return sessionStatusToneFor(local.kind, stale: local.stale);
-    }
-    final global = activity;
-    if (global != null) return globalStatusToneFor(global);
-    return SessionStatusTone.working;
-  }
+  /// colour (green working, calm tint compacting, amber waiting, muted
+  /// stale/idle), so the status never reads like the title.
+  SessionStatusTone get _statusTone => sessionStatusToneFor(
+    sessionLiveStatusKind(status),
+    stale: status.stale,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -2677,10 +2763,8 @@ class _SessionTile extends StatelessWidget {
     final strings = Strings.of(context);
     final preview =
         sessionListPreview(session) ?? strings.sessionPreviewUnavailable;
-    final activityLabel = localActivity?.showsActivity == true
-        ? _sessionActivityLabel(strings, localActivity!)
-        : activity != null
-        ? _globalActivityLabel(strings, activity!)
+    final activityLabel = status.isLive
+        ? sessionLiveStatusLabel(strings, status)
         : strings.slRunningBadge;
     // El borrador se cuenta como texto descriptivo hilado en la línea de
     // vista previa ("Borrador · Resume los cambios…"), no como una píldora
@@ -2732,7 +2816,8 @@ class _SessionTile extends StatelessWidget {
                         // Punto de "te necesita": la señal de atención del
                         // mockup, sin robarle sitio al título.
                         if (!streamActive &&
-                            activity?.requiresAction == true) ...[
+                            status.phase ==
+                                SessionLivePhase.waitingForUser) ...[
                           const SizedBox(width: 7),
                           Container(
                             key: ValueKey('session-attention-${session.id}'),
@@ -2844,42 +2929,17 @@ String _sentenceCase(String value) =>
 
 /// Separador "·" del pie del tile (modelo · tiempo).
 
-String _sessionActivityLabel(Strings strings, SessionActivity activity) =>
-    switch (activity.kind) {
-      SessionActivityKind.preparing => strings.slActivityPreparing,
-      SessionActivityKind.generating => strings.slActivityGenerating,
-      SessionActivityKind.usingTools => strings.slActivityUsingTools,
-      SessionActivityKind.responding => strings.chaPipelineStreaming,
-      SessionActivityKind.waitingForUser => strings.slActivityWaiting,
-      SessionActivityKind.compacting => strings.slActivityCompacting,
-      SessionActivityKind.delegated => strings.slActivityDelegated,
-      SessionActivityKind.backgroundProcess =>
-        activity.backgroundItemCount > 0
-            ? strings.chaBackgroundActivityCount(activity.backgroundItemCount)
-            : strings.slActivityBackground,
-      SessionActivityKind.idle => strings.slActivityUnknown,
-    };
-
-String _globalActivityLabel(Strings strings, GlobalActivity activity) {
-  final phase = switch (activity.phase) {
-    GlobalActivityPhase.preparing => strings.slActivityPreparing,
-    GlobalActivityPhase.generating => strings.slActivityGenerating,
-    GlobalActivityPhase.usingTools => strings.slActivityUsingTools,
-    GlobalActivityPhase.delegated => strings.slActivityDelegated,
-    GlobalActivityPhase.backgroundWork => strings.slActivityBackground,
-    GlobalActivityPhase.compacting => strings.slActivityCompacting,
-    GlobalActivityPhase.waitingForUser => strings.slActivityWaiting,
-    GlobalActivityPhase.completing => strings.slActivityCompleting,
-    // Sin detalle probado nunca se afirma «trabajando»: solo el último estado
-    // conocido. Las fases terminales no llegan aquí (la fila no es activa).
-    GlobalActivityPhase.completed ||
-    GlobalActivityPhase.interrupted ||
-    GlobalActivityPhase.failed ||
-    GlobalActivityPhase.unknown => null,
-  };
-  if (phase == null) return strings.slActivityStale;
-  return activity.stale ? '$phase · ${strings.slActivityStale}' : phase;
-}
-
 /// Tiempo relativo localizado para los tiles ("2h ago", "ahora", "14/6").
 String _relativeTime(double ts, Strings s) => formatSessionRelativeTime(ts, s);
+
+typedef _FilterKey = (
+  List<Session>,
+  List<Session>?,
+  int,
+  SessionArchive?,
+  int?,
+  String,
+  SessionCategory,
+  bool,
+  Locale,
+);

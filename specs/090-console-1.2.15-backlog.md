@@ -20,6 +20,17 @@ followed from Console itself (dogfooding Bot Mode on the phone), instead of the 
   - Cost: Forja on Opus, Astra/Argos on Sonnet, Radar local — keep heavy work in few long turns.
 - Keep all public output in English; never publish owner data (clean_snapshot.sh + term scan).
 
+## 0.1 Fixes before 1.2.15 features
+- **Orphaned composer drafts** (`fix/draft-orphan`): after a send is accepted, no draft of that
+  turn may survive — even if the user leaves the chat before the ACK or the process dies. The
+  draft is linked to the turn's `clientTurnId` once the outbox write is durable and is retired
+  by that exact identity on ACK or on restore when the turn has left the outbox. Drafts of
+  sends that were NOT accepted keep surviving close/process death. Fixes the duplicated
+  draft row next to the real session and sent text reappearing in the composer.
+- **Home lineage duplication** (`fix/home-lineage-dup`): investigated and closed without code.
+  The server already projects compression chains to one row; the duplicate reported by the
+  owner was the orphaned `mob-…` draft above.
+
 ## 1. Headline: Bot Desktop live view and takeover ("Pantalla")
 Owner request (2026-09-27): watch live what a bot/subagent does on the host (browser, desktop)
 and take control from the phone — fluid, no lag, no battery/network drain. Same model as Hermes

@@ -3532,6 +3532,88 @@ void main() {
 
   group('ActiveChat — ciclo run con streaming', () {
     test(
+      'mp1215: a live memory write lands only on the gateway success result',
+      () async {
+        final gateway = _AttachmentDesktopGateway();
+        final chat = ActiveChat(
+          compressionRestoreStore: testCompressionRestoreStore(),
+          connection: _conn(id: 'conn-desktop-memory-live'),
+          sessionId: 'sess-desktop-memory-live',
+          sessionTitle: 'Memoria en vivo',
+          notifications: null,
+          onTerminal: () {},
+          desktopGateway: gateway,
+          terminalReconcileBudget: Duration.zero,
+        )..smoothStreaming = false;
+        addTearDown(chat.dispose);
+        addTearDown(gateway.close);
+        expect(
+          await chat.send(
+            fullText: 'Recuerda mi zona horaria',
+            model: 'hermes-agent',
+            history: const [],
+          ),
+          isTrue,
+        );
+        final done = chat.changes.firstWhere(
+          (event) => event == ActiveChatEvent.done,
+        );
+        Map<String, dynamic> memoryStep(String id) =>
+            (chat.messages.firstWhere(
+                      (m) => m['role'] == 'assistant',
+                    )[assistantActivityTraceKey]
+                    as List)
+                .cast<Map<String, dynamic>>()
+                .singleWhere((step) => step['id'] == id);
+
+        const args = {
+          'action': 'add',
+          'target': 'user',
+          'content': 'Vive en Lisboa (WEST).',
+        };
+        gateway.emit('tool.start', const {
+          'tool_id': 'mem-1',
+          'name': 'memory',
+          'args': args,
+        });
+        await Future<void>.delayed(Duration.zero);
+        expect(memoryStep('mem-1')['memory'], {
+          'action': 'add',
+          'target': 'user',
+          'landed': false,
+          'preview': 'Vive en Lisboa (WEST).',
+        }, reason: 'running is never marked as saved');
+        gateway.emit('tool.complete', const {
+          'tool_id': 'mem-1',
+          'name': 'memory',
+          'args': args,
+          'result': {'success': true, 'target': 'user', 'entry_count': 3},
+        });
+        gateway.emit('tool.start', const {
+          'tool_id': 'mem-2',
+          'name': 'memory',
+          'args': {'action': 'add', 'content': 'Demasiado largo'},
+        });
+        gateway.emit('tool.complete', const {
+          'tool_id': 'mem-2',
+          'name': 'memory',
+          'args': {'action': 'add', 'content': 'Demasiado largo'},
+          'result': {'success': false, 'error': 'Memory is full.'},
+        });
+        gateway.emit('message.complete', const {'text': 'Hecho.'});
+        await done.timeout(const Duration(seconds: 1));
+
+        expect(memoryStep('mem-1')['memory'], {
+          'action': 'add',
+          'target': 'user',
+          'landed': true,
+          'preview': 'Vive en Lisboa (WEST).',
+        });
+        expect(memoryStep('mem-2')['memory']['landed'], isFalse);
+      },
+    );
+
+    test(
       'reasoning, tools y respuesta final comparten un solo mensaje assistant',
       () async {
         final gateway = _AttachmentDesktopGateway();

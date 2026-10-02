@@ -50,4 +50,33 @@ void main() {
     expect(s.setActiveSessionsRunning(1), '1 sesión reciente');
     expect(s.setActiveSessionsNote, contains('últimos 5 minutos'));
   });
+
+  test('platform states follow the app language', () {
+    final en = lookupStrings(const Locale('en'));
+    final es = lookupStrings(const Locale('es'));
+
+    expect(gatewayPlatformStateLabel(en, 'connected'), 'connected');
+    expect(gatewayPlatformStateLabel(en, 'disconnected'), 'disconnected');
+    expect(gatewayPlatformStateLabel(en, 'connecting'), 'connecting');
+    expect(gatewayPlatformStateLabel(en, 'error'), 'error');
+    expect(gatewayPlatformStateLabel(en, 'starting'), 'starting');
+    expect(gatewayPlatformStateLabel(en, 'stopped'), 'stopped');
+    expect(
+      en.setPlatformStatus(
+        'api_server',
+        gatewayPlatformStateLabel(en, 'disconnected'),
+      ),
+      'Platform api_server: disconnected.',
+    );
+
+    expect(gatewayPlatformStateLabel(es, 'connected'), 'conectada');
+    expect(gatewayPlatformStateLabel(es, 'disconnected'), 'desconectada');
+    expect(gatewayPlatformStateLabel(es, 'connecting'), 'conectando');
+    expect(gatewayPlatformStateLabel(es, 'error'), 'con error');
+    expect(gatewayPlatformStateLabel(es, 'starting'), 'arrancando');
+    expect(gatewayPlatformStateLabel(es, 'stopped'), 'detenida');
+
+    // Unknown upstream states are shown raw rather than hidden.
+    expect(gatewayPlatformStateLabel(en, 'draining'), 'draining');
+  });
 }

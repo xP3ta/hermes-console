@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -20,6 +20,7 @@ import '../services/active_chat_service.dart';
 import '../services/chat_draft_store.dart';
 import '../services/connection_manager.dart';
 import '../bots/data/desktop_projection_rooms.dart';
+import '../bots/data/room_member_prompts.dart';
 import '../bots/state/attention.dart';
 import '../bots/ui/room/room_dictation.dart';
 import '../bots/ui/room/room_gateway.dart';
@@ -37,6 +38,8 @@ import '../bots/ui/roster/roster_model.dart';
 import '../bots/state/bot_chat_target.dart';
 import '../services/shared_gateway_pool.dart';
 import '../services/mission_control_repository.dart';
+import '../services/mission_snapshot_cache.dart';
+import '../services/mission_snapshot_prewarm.dart';
 import '../services/mission_bot_chat_store.dart';
 import '../services/mission_organization_store.dart';
 import '../services/notifications/background_listener.dart';
@@ -133,7 +136,59 @@ final class MissionControlOpenTarget {
   }) : surface = MissionControlOwnedSurface.room;
 }
 
+/// Mission Control route for app-level entries (notifications, widgets) that
+/// already know their destination: it appears without its own slide so the
+/// destination pushed on top is the only visible transition. Back still
+/// animates normally.
+class MissionControlOwnerRoute<T> extends MaterialPageRoute<T> {
+  MissionControlOwnerRoute({required super.builder, super.settings});
+
+  @override
+  Duration get transitionDuration => Duration.zero;
+
+  @override
+  Duration get reverseTransitionDuration => const Duration(milliseconds: 300);
+}
+
 class MissionControlScreen extends StatefulWidget {
+  /// Opens [target] in a Mission Control of [connectionId] that is already
+  /// in [navigator]'s stack. Returns false when none is alive (the caller
+  /// then pushes a new one). If the target is already the visible route
+  /// nothing is pushed, so a repeated tap never stacks a second copy.
+  static bool openInExisting(
+    NavigatorState navigator,
+    String connectionId,
+    MissionControlOpenTarget target,
+  ) {
+    for (final state in _MissionControlScreenState._live.reversed) {
+      if (!state.mounted || state.widget.connection.id != connectionId) {
+        continue;
+      }
+      final route = state._ownRoute;
+      if (route == null ||
+          !route.isActive ||
+          !identical(route.navigator, navigator)) {
+        continue;
+      }
+      final shown = state._targetRoute;
+      if (shown != null &&
+          shown.isCurrent &&
+          state._targetKey == _targetKeyOf(target)) {
+        return true;
+      }
+      navigator.popUntil((candidate) => identical(candidate, route));
+      state._requestTarget(target);
+      return true;
+    }
+    return false;
+  }
+
+  static String _targetKeyOf(MissionControlOpenTarget target) =>
+      switch (target.surface) {
+        MissionControlOwnedSurface.bot => 'bot:${target.profile ?? ''}',
+        MissionControlOwnedSurface.room => 'room:${target.roomId ?? ''}',
+      };
+
   final SavedConnection connection;
   final ConnectionManager connManager;
   final MissionControlDataSource? dataSource;
@@ -157,6 +212,16 @@ class MissionControlScreen extends StatefulWidget {
   final HermesDesktopProfileAssetsGateway? profileAssetsGateway;
   final BotProfileGateway? botProfileGateway;
 
+  /// Last-snapshot cache; defaults to the shared one for the real repository
+  /// (injected data sources opt in explicitly).
+  @visibleForTesting
+  final MissionSnapshotCache? snapshotCache;
+
+  /// Background first read to reuse; defaults to the shared one for the real
+  /// repository (injected data sources opt in explicitly).
+  @visibleForTesting
+  final MissionSnapshotPrewarm? prewarm;
+
   /// Per-bot model catalog/reasoning (tests); defaults to the gateway.
   final BotModelGateway? botModelGateway;
   @visibleForTesting
@@ -179,6 +244,8 @@ class MissionControlScreen extends StatefulWidget {
     this.botProfileGateway,
     this.botModelGateway,
     this.modelOptionsLoader,
+    this.snapshotCache,
+    this.prewarm,
     super.key,
   });
 
@@ -189,6 +256,7 @@ class MissionControlScreen extends StatefulWidget {
 class _MissionControlScreenState extends State<MissionControlScreen>
     with WidgetsBindingObserver {
   late final MissionControlDataSource _dataSource;
+  MissionSnapshotCache? _snapshotCache;
   late final MissionProfileAvatarCache? _profileAvatarCache;
   late final MissionOrganizationStoreContract _organizationStore;
   late final MissionBotChatStore _botChatStore;
@@ -212,7 +280,15 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   int _loadGeneration = 0;
   bool _lifecyclePaused = false;
   bool _disposed = false;
-  bool _initialOpenDispatched = false;
+  MissionControlOpenTarget? _pendingTarget;
+
+  /// Every mounted Mission Control, so app-level entries reuse one.
+  static final List<_MissionControlScreenState> _live = [];
+  ModalRoute<dynamic>? _ownRoute;
+
+  /// Route this screen pushed for the last opened room/Bot Chat target.
+  Route<dynamic>? _targetRoute;
+  String? _targetKey;
   late final ChatSurfaceCoordinator _surfaceCoordinator;
 
   MissionOrganization? get _selectedOrganization {
@@ -227,6 +303,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   @override
   void initState() {
     super.initState();
+    _live.add(this);
+    _pendingTarget = widget.initialOpenTarget;
     _surfaceCoordinator = ChatSurfaceCoordinator(routeOwner: widget);
     _dataSource =
         widget.dataSource ??
@@ -255,12 +333,45 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _organizations = _organizationStore.load(widget.connection.id);
     WidgetsBinding.instance.addObserver(this);
     _scheduleRosterRefresh();
-    unawaited(_load());
+    _watchLiveChanges();
+    _snapshotCache =
+        widget.snapshotCache ??
+        (widget.dataSource == null ? MissionSnapshotCache.shared : null);
+    final cached = _snapshotCache?.read(widget.connection);
+    if (cached != null) {
+      // Paint what the user saw last time; the read below refreshes it.
+      _snapshot = cached;
+      _loading = false;
+      final source = _dataSource;
+      if (source is MissionControlRepository) {
+        source.seedHostedLogs(cached.hostedGroups);
+      }
+      // Open the target from the cached snapshot on the first frame instead
+      // of showing Mission Control while the refresh is in flight.
+      _scheduleInitialOpen(cached);
+    }
+    unawaited(
+      MissionSnapshotPrewarm.markOpened(
+        widget.connManager.prefs,
+        widget.connection.id,
+      ),
+    );
+    final prewarm =
+        widget.prewarm ??
+        (widget.dataSource == null ? MissionSnapshotPrewarm.shared : null);
+    // A background read started from Home is still in flight: wait for it
+    // instead of asking the server twice. It is a fresh read, so no extra
+    // refresh follows.
+    final inFlight = prewarm?.claim(widget.connection);
+    unawaited(
+      _load(refresh: cached != null, reuse: cached == null ? inFlight : null),
+    );
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _ownRoute = ModalRoute.of(context);
     final service =
         widget.activeChats ??
         context.findAncestorStateOfType<HermesAppState>()?.activeChats;
@@ -276,7 +387,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   @override
   void dispose() {
     _disposed = true;
+    _live.remove(this);
     _rosterTimer?.cancel();
+    _eventRefreshTimer?.cancel();
+    unawaited(_liveChangeSubscription?.cancel());
+    _liveChangeSubscription = null;
     _rosterSearchOpen.dispose();
     _statusRevision.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -286,6 +401,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _kanbanReconnectTimer?.cancel();
     unawaited(_kanbanSubscription?.cancel());
     _kanbanSubscription = null;
+    final last = _snapshot;
+    if (last != null) _snapshotCache?.write(widget.connection, last);
     _profileAvatarCache?.clear();
     _profileAssetsLease?.release();
     if (widget.dataSource == null) _dataSource.close();
@@ -298,6 +415,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _surfaceCoordinator.handleLifecycle(state);
     switch (state) {
       case AppLifecycleState.resumed:
+        // The roster tick sleeps in background; the resume load below is the
+        // refresh, so the next tick comes a full interval later.
+        if (_rosterTimer == null) _scheduleRosterRefresh();
         if (!_lifecyclePaused) return;
         _lifecyclePaused = false;
         _kanbanReconnectDelay = const Duration(seconds: 3);
@@ -306,6 +426,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
       case AppLifecycleState.detached:
+        if (state != AppLifecycleState.inactive) {
+          _rosterTimer?.cancel();
+          _rosterTimer = null;
+        }
         _lifecyclePaused = true;
         _kanbanRefreshDebounce?.cancel();
         _kanbanReconnectTimer?.cancel();
@@ -320,20 +444,230 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   final _rosterSearchOpen = ValueNotifier<bool>(false);
 
   /// Roster refresh while visible (spec 070 plan: roster every 30 s).
+  ///
+  /// Without healthy live change events every tick is a full reload, as
+  /// before. With them (see [MissionLiveRefreshDataSource]) a tick only
+  /// refreshes the roster and the rooms that moved while something is shown
+  /// as active, and a full reload runs every [liveBackstopInterval].
   static const rosterRefreshInterval = Duration(seconds: 30);
+
+  /// Full reload backstop while change events are healthy.
+  static const liveBackstopInterval = Duration(seconds: 120);
+
+  /// Minimum gap between event-driven partial refreshes: `sessions.changed`
+  /// fires every 2 s during a turn, and a refresh per event would cost more
+  /// than the old 30 s reload. The first event after a quiet gap refreshes
+  /// at once; later ones coalesce into one trailing refresh.
+  static const liveEventRefreshGap = Duration(seconds: 30);
   Timer? _rosterTimer;
+
+  StreamSubscription<TuiGatewayEvent>? _liveChangeSubscription;
+
+  /// The live channel delivered no error since the last full reload. A
+  /// dropped socket loses events, so the screen polls until a full reload
+  /// (which reconnects) proves the stream again.
+  bool _liveChangesOk = false;
+  bool _partialInFlight = false;
+
+  /// A change event arrived while the screen was covered, paused or within
+  /// [liveEventRefreshGap] of the last partial refresh.
+  bool _liveChangeDirty = false;
+
+  /// The last applied snapshot showed activity ([_showsActivity]).
+  bool _activityPainted = false;
+
+  /// Roster ticks since the last full reload (the backstop counts these).
+  int _ticksSinceFullLoad = 0;
+
+  /// Running for [liveEventRefreshGap] after each partial refresh.
+  Timer? _eventRefreshTimer;
+
+  MissionLiveRefreshDataSource? get _liveSource {
+    final source = _dataSource;
+    return source is MissionLiveRefreshDataSource
+        ? source as MissionLiveRefreshDataSource
+        : null;
+  }
+
+  /// Kanban has its own stream; while it is reconnecting the board (and a
+  /// "running" task) is only refreshed by the full reload.
+  bool get _liveChangesHealthy =>
+      _liveChangesOk &&
+      _liveChangeSubscription != null &&
+      !(_kanbanReconnectTimer?.isActive ?? false) &&
+      (_liveSource?.liveChangesHealthy ?? false);
+
+  bool get _refreshAllowed =>
+      !_disposed &&
+      mounted &&
+      !_lifecyclePaused &&
+      ModalRoute.of(context)?.isCurrent != false;
 
   void _scheduleRosterRefresh() {
     _rosterTimer?.cancel();
     _rosterTimer = Timer.periodic(rosterRefreshInterval, (_) {
-      if (_disposed || !mounted || _lifecyclePaused) return;
-      if (ModalRoute.of(context)?.isCurrent == false) return;
-      if (_loading || _refreshing) return;
-      unawaited(_load(refresh: true));
+      if (!_refreshAllowed) return;
+      if (_loading || _refreshing || _partialInFlight) return;
+      if (!_liveChangesHealthy) {
+        unawaited(_load(refresh: true));
+        return;
+      }
+      _ticksSinceFullLoad++;
+      if (_ticksSinceFullLoad * rosterRefreshInterval.inSeconds >=
+          liveBackstopInterval.inSeconds) {
+        unawaited(_load(refresh: true));
+        return;
+      }
+      // Also once more after activity was last painted: a worker that
+      // just went stale must repaint as idle, never stay "working".
+      if (_liveChangeDirty || _activityPainted || _showsActivity()) {
+        unawaited(_refreshPartial());
+      }
     });
   }
 
-  Future<void> _load({bool refresh = false}) async {
+  void _watchLiveChanges() {
+    final source = _liveSource;
+    if (source == null) return;
+    final Stream<TuiGatewayEvent>? events;
+    try {
+      events = source.watchLiveChanges();
+    } catch (_) {
+      return;
+    }
+    if (events == null) return;
+    _liveChangeSubscription = events.listen(
+      _onLiveChange,
+      onError: (Object _) {
+        _liveChangesOk = false;
+        _eventRefreshTimer?.cancel();
+        _eventRefreshTimer = null;
+      },
+    );
+  }
+
+  void _onLiveChange(TuiGatewayEvent event) {
+    if (event.type != 'sessions.changed') return;
+    if (!_liveChangesOk) {
+      // First event after a dropped socket: the stream is back but events
+      // were lost meanwhile, so reload everything now. Without
+      // `change_events` the 30 s tick stays in charge (no reload storm).
+      if (_refreshAllowed &&
+          !_loading &&
+          !_refreshing &&
+          (_liveSource?.liveChangesHealthy ?? false)) {
+        unawaited(_load(refresh: true));
+      }
+      return;
+    }
+    if (!_refreshAllowed ||
+        _eventRefreshTimer != null ||
+        _partialInFlight ||
+        _loading ||
+        _refreshing) {
+      // Read once the gap closes (or by the next tick / resume).
+      _liveChangeDirty = true;
+      return;
+    }
+    unawaited(_refreshPartial());
+  }
+
+  void _armEventRefreshGap() {
+    _eventRefreshTimer?.cancel();
+    _eventRefreshTimer = Timer(liveEventRefreshGap, () {
+      _eventRefreshTimer = null;
+      if (_refreshAllowed && _liveChangeDirty && _liveChangesHealthy) {
+        unawaited(_refreshPartial());
+      }
+    });
+  }
+
+  /// Anything on screen that a later server read could turn idle: such a
+  /// state must keep refreshing so it never stays stale.
+  bool _showsActivity() {
+    final snapshot = _snapshot;
+    if (snapshot == null) return false;
+    for (final status in snapshot.hostedGroups.driverStatuses.values) {
+      if (status.running || status.working || status.blocked) return true;
+      if (status.needsUser) return true;
+    }
+    final now = DateTime.now();
+    for (final profile in snapshot.profiles) {
+      if (BotPresence.workerIsFresh(profile.workerSession, now)) return true;
+    }
+    return false;
+  }
+
+  /// Roster (`profiles.list` + sessions) and only the rooms that moved,
+  /// merged into the shown snapshot. Kanban keeps its own event stream.
+  Future<void> _refreshPartial() async {
+    final source = _liveSource;
+    final previous = _snapshot;
+    if (source == null || previous == null || _partialInFlight) return;
+    if (_loading || _refreshing) return;
+    _partialInFlight = true;
+    _liveChangeDirty = false;
+    _armEventRefreshGap();
+    final generation = ++_loadGeneration;
+    final refreshRooms =
+        previous.hostedGroupsCapability == MissionCapabilityState.available &&
+        previous.hostedGroups.capabilities != null;
+    try {
+      final roomsFuture = refreshRooms
+          ? source.refreshHostedGroups(previous.hostedGroups)
+          : Future.value(previous.hostedGroups);
+      // Settle both before awaiting either, so a failed room read never
+      // surfaces as an unhandled error while the roster is pending.
+      final roomsResult = roomsFuture.then<Object>(
+        (value) => value,
+        onError: (Object error) => _PartialRoomsFailure(error),
+      );
+      final roster = await source.loadRoster();
+      final rooms = await roomsResult;
+      if (!mounted || generation != _loadGeneration) return;
+      if (rooms is _PartialRoomsFailure) {
+        // Capability generation, authority or coherence moved: only a full
+        // reload may decide what the rooms show now.
+        _partialInFlight = false;
+        unawaited(_load(refresh: true));
+        return;
+      }
+      final failures = {...previous.failures}
+        ..remove('profiles')
+        ..remove('sessions');
+      if (roster.profilesError case final error?) failures['profiles'] = error;
+      if (roster.sessionsError case final error?) failures['sessions'] = error;
+      final snapshot = _retainLastGoodSources(
+        MissionBackendSnapshot(
+          profiles: roster.profiles,
+          sessions: roster.sessions,
+          board: previous.board,
+          profilesCapability: roster.profilesCapability,
+          sessionsCapability: roster.sessionsCapability,
+          kanbanCapability: previous.kanbanCapability,
+          hostedGroups: rooms as HostedGroupsSnapshot,
+          hostedGroupsCapability: previous.hostedGroupsCapability,
+          failures: failures,
+          loadedAt: DateTime.now(),
+        ),
+      );
+      setState(() => _snapshot = snapshot);
+      _activityPainted = _showsActivity();
+      _snapshotCache?.write(widget.connection, snapshot);
+      _statusRevision.value++;
+      _syncLiveSubscriptions();
+    } catch (_) {
+      // A failed partial read keeps what is shown; the next tick (or the
+      // backstop) retries with a full reload if the stream is unhealthy.
+    } finally {
+      _partialInFlight = false;
+    }
+  }
+
+  Future<void> _load({
+    bool refresh = false,
+    Future<MissionBackendSnapshot>? reuse,
+  }) async {
     final generation = ++_loadGeneration;
     if (mounted) {
       setState(() {
@@ -346,14 +680,30 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       });
     }
     try {
-      final incoming = await _dataSource.load();
+      final incoming = reuse == null
+          ? await _dataSource.load()
+          : await reuse.catchError((Object _) => _dataSource.load());
       if (!mounted || generation != _loadGeneration) return;
+      final source = _dataSource;
+      if (reuse != null && source is MissionControlRepository) {
+        // The prewarm read used its own repository: resume room logs here.
+        source.seedHostedLogs(incoming.hostedGroups);
+      }
       final snapshot = _retainLastGoodSources(incoming);
       setState(() {
         _snapshot = snapshot;
         _loading = false;
         _refreshing = false;
       });
+      _ticksSinceFullLoad = 0;
+      _liveChangeDirty = false;
+      _activityPainted = _showsActivity();
+      // A reload over a healthy live socket makes the event stream whole
+      // again; over a dropped one the screen keeps polling.
+      _liveChangesOk =
+          _liveChangeSubscription != null &&
+          (_liveSource?.liveChangesHealthy ?? false);
+      _snapshotCache?.write(widget.connection, snapshot);
       _statusRevision.value++;
       _kanbanEventCursor = incoming.board?.latestEventId ?? _kanbanEventCursor;
       _syncLiveSubscriptions();
@@ -370,13 +720,37 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 
   void _scheduleInitialOpen(MissionBackendSnapshot snapshot) {
-    final target = widget.initialOpenTarget;
-    if (target == null || _initialOpenDispatched) return;
-    _initialOpenDispatched = true;
+    final target = _pendingTarget;
+    if (target == null) return;
+    _pendingTarget = null;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_openInitialTarget(target, snapshot));
     });
+  }
+
+  /// A later app-level entry for this live screen (see
+  /// [MissionControlScreen.openInExisting]).
+  void _requestTarget(MissionControlOpenTarget target) {
+    _pendingTarget = target;
+    final snapshot = _snapshot;
+    if (snapshot != null) _scheduleInitialOpen(snapshot);
+  }
+
+  Future<void> _pushTarget(
+    MissionControlOpenTarget target,
+    Route<void> route,
+  ) async {
+    _targetRoute = route;
+    _targetKey = MissionControlScreen._targetKeyOf(target);
+    try {
+      await Navigator.of(context).push(route);
+    } finally {
+      if (identical(_targetRoute, route)) {
+        _targetRoute = null;
+        _targetKey = null;
+      }
+    }
   }
 
   Future<void> _openInitialTarget(
@@ -394,7 +768,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             break;
           }
         }
-        if (agent != null) await _openChat(agent);
+        if (agent != null) await _openChat(agent, openTarget: target);
         return;
       case MissionControlOwnedSurface.room:
         final roomId = target.roomId;
@@ -405,7 +779,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         final capabilities = snapshot.hostedGroups.capabilities;
         final enabled = !widget.connection.readOnly;
         if (!mounted) return;
-        await Navigator.of(context).push(
+        await _pushTarget(
+          target,
           MaterialPageRoute<void>(
             builder: (_) => _HostedRoomWorkspace(
               draftScope: (
@@ -438,6 +813,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                 for (final profile in snapshot.profiles) profile.name: profile,
               },
               onOpenMember: _openRoomMember,
+              onOpenMemberSession: _openRoomMemberSession,
               canSend:
                   enabled &&
                   (capabilities?.supports(GroupMethod.send) ?? false),
@@ -1029,7 +1405,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 
   /// Opens the agent's canonical Bot Chat, writable like any other chat.
-  Future<void> _openChat(MissionAgent agent) async {
+  Future<void> _openChat(
+    MissionAgent agent, {
+    MissionControlOpenTarget? openTarget,
+  }) async {
     // Console-local pins are a retired compatibility tier: retire them
     // best-effort so no later build can resurrect a stale pointer.
     if (!widget.connection.readOnly) {
@@ -1089,14 +1468,20 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (observer != null) {
       observer(session);
     } else {
-      await openChatFromSection<void>(
-        context,
-        builder: (_) => buildBotChatDestination(
-          connection: widget.connection,
-          session: session,
-          initialStoredSessionId: pinnedId,
-          profile: agent.profile,
-          avatarCache: _profileAvatarCache,
+      await _pushTarget(
+        openTarget ??
+            MissionControlOpenTarget.bot(
+              sessionId: pinnedId ?? '',
+              profile: agent.profile.name,
+            ),
+        MaterialPageRoute<void>(
+          builder: (_) => buildBotChatDestination(
+            connection: widget.connection,
+            session: session,
+            initialStoredSessionId: pinnedId,
+            profile: agent.profile,
+            avatarCache: _profileAvatarCache,
+          ),
         ),
       );
     }
@@ -1171,7 +1556,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         );
       }
     }
-    final attention = AttentionSummary.fromSnapshot(groups);
+    final attention = AttentionSummary.fromSnapshot(
+      groups,
+      acks: SharedPreferencesRoomPrefs(widget.connManager.prefs).acksFor,
+    );
     final canStop =
         !widget.connection.readOnly &&
         (groups.capabilities?.supports(GroupMethod.stop) ?? false);
@@ -1426,6 +1814,43 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     else if (_snapshot case final current?) {
       await _openInitialTarget(MissionControlOpenTarget.room(sessionId: '', roomId: selected), current);
     }
+  }
+
+  /// Opens a hosted room member's own room session (`Group: <room_id>`)
+  /// as a chat, where Console renders its pending question or approval.
+  Future<void> _openRoomMemberSession(
+    String profileName,
+    String storedSessionId,
+  ) async {
+    final snapshot = _snapshot;
+    final profile = snapshot?.profiles
+        .where((p) => p.name == profileName)
+        .firstOrNull;
+    final session = Session(
+      id: storedSessionId,
+      title: profileName,
+      profile: profileName,
+      isDefaultProfile: profile?.isDefault ?? false,
+      model: profile?.model ?? '',
+      source: 'bot_room',
+      messageCount: 1,
+      isActive: true,
+      preview: '',
+      startedAt: 0,
+    );
+    final observer = widget.botChatOpenObserver;
+    if (observer != null) {
+      observer(session);
+      return;
+    }
+    await openChatFromSection<void>(
+      context,
+      builder: (_) => ChatScreen(
+        connection: widget.connection,
+        session: session,
+        initialStoredSessionId: storedSessionId,
+      ),
+    );
   }
 
   void _openRoomMember(String profileName) {
@@ -1893,25 +2318,33 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final capabilities = await (home as BotRoomLinkGateway).roomLinkRequest('groups.capabilities', {});
     if (capabilities['driver'] != true || capabilities['methods'] is! List ||
         !(capabilities['methods'] as List).contains('groups.peer.register')) { return []; }
-    final result = <_RoomPeerCandidate>[];
-    for (final connection in widget.connManager.getConnections()) {
-      if (connection.id == widget.connection.id || connection.readOnly) continue;
-      final lease = SharedGatewayPool.instance.acquire(connection);
-      final client = lease.client;
-      try {
-        for (final profile in await client.listProfiles(includeSessions: false)) {
-          final caps = await client.roomLinkRequest('groups.capabilities', {'profile': profile.name});
-          final catalog = BotRoomLink.catalog(caps, profile.name);
-          if (catalog != null && catalog['installation_id'] != capabilities['authority_gateway_id'] &&
-              caps['methods'] is List && (caps['methods'] as List).contains('groups.peer.invite')) {
-            final candidate = _RoomPeerCandidate(connection, profile, catalog);
-            if (!result.any((p) => p.key == candidate.key)) result.add(candidate);
-          }
-        }
-      } catch (_) { /* Unavailable connections never become selectable peers. */ }
-      finally { lease.release(); }
-    }
-    return result;
+    final connections = widget.connManager.getConnections().where(
+      (c) => c.id != widget.connection.id && !c.readOnly,
+    );
+    return gatherRoomPeerCandidates<SavedConnection, _RoomPeerCandidate>(
+      connections: connections,
+      probeConnection: (connection) async {
+        final lease = SharedGatewayPool.instance.acquire(connection);
+        final client = lease.client;
+        try {
+          final profiles = await client.listProfiles(includeSessions: false);
+          // One socket per connection: its per-profile probes share it.
+          final probes = await Future.wait(profiles.map((profile) async {
+            try {
+              final caps = await client.roomLinkRequest('groups.capabilities', {'profile': profile.name});
+              final catalog = BotRoomLink.catalog(caps, profile.name);
+              if (catalog != null && catalog['installation_id'] != capabilities['authority_gateway_id'] &&
+                  caps['methods'] is List && (caps['methods'] as List).contains('groups.peer.invite')) {
+                return _RoomPeerCandidate(connection, profile, catalog);
+              }
+            } catch (_) { /* That profile never becomes a selectable peer. */ }
+            return null;
+          }));
+          return probes.whereType<_RoomPeerCandidate>().toList();
+        } finally { lease.release(); }
+      },
+      keyOf: (candidate) => candidate.key,
+    );
   }
 
   Future<void> _attachRoomPeers(HostedGroupRoom room, List<_RoomPeerCandidate> peers) async {
@@ -2063,13 +2496,21 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       }
       final rooms = [...snapshot.hostedGroups.rooms];
       final logs = [...snapshot.hostedGroups.logs];
+      // Only the mutated room's driver evidence may change: every other
+      // room keeps its approvals and working state until the next load.
+      final driverStatuses = {...snapshot.hostedGroups.driverStatuses};
+      final roomId = result.room.roomId;
       if (result.room.disbanded) {
         rooms.removeAt(index);
         if (index < logs.length) logs.removeAt(index);
+        driverStatuses.remove(roomId);
       } else {
         rooms[index] = result.room;
         if (result.log != null && index < logs.length) {
           logs[index] = result.log!;
+        }
+        if (result.driverStatus case final status?) {
+          driverStatuses[roomId] = status;
         }
       }
       setState(() {
@@ -2084,6 +2525,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             capabilities: capabilities,
             rooms: List.unmodifiable(rooms),
             logs: List.unmodifiable(logs),
+            driverStatuses: Map.unmodifiable(driverStatuses),
           ),
           hostedGroupsCapability: snapshot.hostedGroupsCapability,
           failures: snapshot.failures,
@@ -2094,6 +2536,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         room: result.room,
         log: result.log,
         capabilityGeneration: result.capabilityGeneration,
+        driverStatus: result.driverStatus,
       );
     } catch (error) {
       debugPrint(
@@ -2534,6 +2977,30 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       ],
     );
   }
+}
+
+/// Probes every connection at once and returns their candidates in
+/// connection order, first key wins. A connection whose probe throws
+/// contributes nothing: unavailable connections never become peers.
+@visibleForTesting
+Future<List<R>> gatherRoomPeerCandidates<C, R>({
+  required Iterable<C> connections,
+  required Future<List<R>> Function(C connection) probeConnection,
+  required String Function(R candidate) keyOf,
+}) async {
+  final perConnection = await Future.wait(connections.map((connection) async {
+    try {
+      return await probeConnection(connection);
+    } catch (_) {
+      return <R>[];
+    }
+  }));
+  final seen = <String>{};
+  return [
+    for (final candidates in perConnection)
+      for (final candidate in candidates)
+        if (seen.add(keyOf(candidate))) candidate,
+  ];
 }
 
 final class _RoomPeerCandidate {
@@ -3282,14 +3749,36 @@ class _BotsTab extends StatefulWidget {
 }
 
 class _BotsTabState extends State<_BotsTab> {
-  (HostedGroupsSnapshot, AttentionSummary)? _attentionCache;
+  (HostedGroupsSnapshot, int, AttentionSummary)? _attentionCache;
+
+  @override
+  void initState() {
+    super.initState();
+    RoomLocalPrefs.changes.addListener(_onAcksChanged);
+  }
+
+  @override
+  void dispose() {
+    RoomLocalPrefs.changes.removeListener(_onAcksChanged);
+    super.dispose();
+  }
+
+  // Opening a room or dismissing a card there acknowledges it: the amber
+  // "needs you" on its row and on its bots goes out right away.
+  void _onAcksChanged() {
+    if (mounted) setState(() {});
+  }
 
   AttentionSummary get _attention {
     final groups = widget.snapshot.hostedGroups;
+    final revision = RoomLocalPrefs.changes.value;
     final cached = _attentionCache;
-    if (cached != null && identical(cached.$1, groups)) return cached.$2;
-    final summary = AttentionSummary.fromSnapshot(groups);
-    _attentionCache = (groups, summary);
+    if (cached != null && identical(cached.$1, groups) && cached.$2 == revision) {
+      return cached.$3;
+    }
+    final prefs = SharedPreferencesRoomPrefs(widget.prefs);
+    final summary = AttentionSummary.fromSnapshot(groups, acks: prefs.acksFor);
+    _attentionCache = (groups, revision, summary);
     return summary;
   }
 
@@ -3407,6 +3896,10 @@ class _HostedRoomWorkspace extends StatefulWidget {
 
   /// See `_RoomsTab.onOpenMember`.
   final ValueChanged<String> onOpenMember;
+
+  /// Opens a member's room session chat (profile, durable session id).
+  final Future<void> Function(String profile, String storedSessionId)?
+  onOpenMemberSession;
   final bool canSend;
   final bool canRename;
   final bool canStop;
@@ -3434,6 +3927,7 @@ class _HostedRoomWorkspace extends StatefulWidget {
     required this.avatarCache,
     required this.localProfiles,
     required this.onOpenMember,
+    this.onOpenMemberSession,
     required this.canSend,
     required this.canRename,
     required this.canStop,
@@ -3530,7 +4024,24 @@ class _HostedRoomWorkspaceState extends State<_HostedRoomWorkspace> {
         // `groups.retry` stays retired in Console until upstream binds it
         // to revision/log position (docs/hosted_identity_transition_matrix).
         canRetry: false,
+        canAnswerPrompts: writable && widget.canSend,
       ),
+      // Member questions/approvals the room projection does not carry, read
+      // from each member's own session on the pooled socket.
+      memberPrompts: connection == null
+          ? null
+          : GatewayRoomMemberPrompts(
+              (method, params) =>
+                  pooledRoomPromptRequest(connection, method, params),
+            ),
+      onOpenMemberChat: switch (widget.onOpenMemberSession) {
+        final open? => (member, stored) {
+          if (_profileFor(member) != null) {
+            unawaited(open(member.owner.profile, stored));
+          }
+        },
+        null => null,
+      },
       profileFor: _profileFor,
       avatarCache: widget.avatarCache,
       prefs: _prefs ?? MemoryRoomPrefs(),
@@ -3883,4 +4394,10 @@ Future<T> _kickRoomWatchAfter<T>(Future<T> send) async {
   final result = await send;
   unawaited(BackgroundListener.kickRoomWatch());
   return result;
+}
+
+/// A partial room refresh that must fall back to a full reload.
+final class _PartialRoomsFailure {
+  final Object error;
+  const _PartialRoomsFailure(this.error);
 }

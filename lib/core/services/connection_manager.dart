@@ -510,6 +510,7 @@ class ConnectionManager {
     final jsonList = prefs.getStringList(_key) ?? [];
     var needsResave = false;
     final validConnections = <SavedConnection>[];
+    final keystoreLoads = <Future<void>>[];
 
     for (final j in jsonList) {
       final Map<String, dynamic> map;
@@ -536,20 +537,27 @@ class ConnectionManager {
         needsResave = true;
         continue;
       }
-      // Storage failures are not corrupt metadata. Abort initialization before
-      // rewriting prefs or pruning anything: migration must not remove the
-      // only remaining copy of a key when the Keystore write failed.
       final plainKey = (map['api_key'] as String?) ?? '';
-      if (plainKey.isNotEmpty) {
-        await _secure.writeApiKey(conn.id, plainKey);
-        _apiKeyCache[conn.id] = plainKey;
-        needsResave = true;
-      } else {
-        final stored = await _secure.readApiKey(conn.id);
-        if (stored != null && stored.isNotEmpty) _apiKeyCache[conn.id] = stored;
-      }
+      if (plainKey.isNotEmpty) needsResave = true;
       validConnections.add(conn);
+      keystoreLoads.add(() async {
+        if (plainKey.isNotEmpty) {
+          await _secure.writeApiKey(conn.id, plainKey);
+          _apiKeyCache[conn.id] = plainKey;
+        } else {
+          final stored = await _secure.readApiKey(conn.id);
+          if (stored != null && stored.isNotEmpty) {
+            _apiKeyCache[conn.id] = stored;
+          }
+        }
+      }());
     }
+    // Keystore round trips run concurrently; every one settles before the
+    // first failure is rethrown. Storage failures are not corrupt metadata:
+    // abort initialization before rewriting prefs or pruning anything, so a
+    // migration never removes the only remaining copy of a key when the
+    // Keystore write failed.
+    await Future.wait(keystoreLoads);
     if (needsResave) await _saveAll(validConnections);
   }
 
@@ -1033,15 +1041,14 @@ class ConnectionManager {
   /// las conexiones vivas y todos los ajustes globales. Devuelve cuántas quitó.
   Future<int> pruneOrphanData() async {
     final valid = getConnections().map((c) => c.id).toSet();
-    var removed = 0;
-    for (final k in prefs.getKeys().toList()) {
+    final orphans = prefs.getKeys().where((k) {
       final id = _connIdOfKey(k);
-      if (id != null && id.isNotEmpty && !valid.contains(id)) {
-        await prefs.remove(k);
-        removed++;
-      }
-    }
-    return removed;
+      return id != null && id.isNotEmpty && !valid.contains(id);
+    }).toList();
+    // Independent keys: issue the removals together instead of one platform
+    // round trip per key on the startup path.
+    await Future.wait(orphans.map(prefs.remove));
+    return orphans.length;
   }
 
   Future<void> deleteConnection(String id) async {
@@ -1639,6 +1646,22 @@ class ApiClient {
 
   // ── Health check ─────────────────────────────────────────────────────
 
+  /// `/health` alone, for callers whose next request is itself an
+  /// authenticated read (Home's paged session list): that read is the auth
+  /// proof, so [healthCheck]'s extra `/api/sessions` fetch would only repeat
+  /// it in series.
+  Future<bool> healthReachable() async {
+    try {
+      final health = await _http
+          .get(Uri.parse('$baseUrl/health'), headers: _headers)
+          .timeout(const Duration(seconds: 10));
+      return health.statusCode == 200;
+    } catch (e) {
+      debugPrint('[connection] excepción silenciada (se asume false): $e');
+      return false;
+    }
+  }
+
   Future<bool> healthCheck() async {
     try {
       final health = await _http
@@ -1646,14 +1669,26 @@ class ApiClient {
           .timeout(const Duration(seconds: 10));
       if (health.statusCode == 401 || health.statusCode == 403) return false;
       if (health.statusCode != 200) return false;
-
-      // /health may be intentionally public on some deployments. Confirm that
-      // the saved API key can also reach an authenticated endpoint before the
-      // add/update connection dialogs accept it as valid.
+    } catch (e) {
+      debugPrint('[connection] excepción silenciada (se asume false): $e');
+      return false;
+    }
+    // /health may be intentionally public on some deployments. Confirm that
+    // the saved API key can also reach an authenticated endpoint. Only an
+    // answer refutes it: a timeout, reset or 408/429/5xx from a server that
+    // just answered /health is load, not an outage (#1215).
+    try {
       final sessions = await _http
           .get(Uri.parse('$baseUrl/api/sessions'), headers: _headers)
           .timeout(const Duration(seconds: 10));
-      return sessions.statusCode == 200;
+      final status = sessions.statusCode;
+      return status == 200 || status == 408 || status == 429 || status >= 500;
+    } on TimeoutException {
+      return true;
+    } on http.ClientException {
+      return true;
+    } on SocketException {
+      return true;
     } catch (e) {
       debugPrint('[connection] excepción silenciada (se asume false): $e');
       return false;
@@ -2435,9 +2470,15 @@ class DashboardClient {
   static final Map<String, _DashboardSharedPasswordSession>
   _sharedPasswordSessions = {};
 
+  /// Page tokens scraped from `GET /`, shared by every client of the same
+  /// Dashboard and Basic credentials. Without it each short-lived client
+  /// downloaded the whole SPA index before its first API call.
+  static final Map<String, String> _sharedPageTokens = {};
+
   @visibleForTesting
   static void resetSharedPasswordSessionsForTesting() {
     _sharedPasswordSessions.clear();
+    _sharedPageTokens.clear();
   }
 
   final http.Client _http;
@@ -2447,6 +2488,11 @@ class DashboardClient {
   String? _basicUser;
   String? _basicPass;
   String? _token;
+
+  /// True when [_token] was adopted from [_sharedPageTokens] rather than
+  /// scraped by this client. A legacy `?token=` WebSocket upgrade has no 401
+  /// retry path, so it never trusts a token it did not scrape itself.
+  bool _tokenFromSharedCache = false;
   bool _closed = false;
 
   /// Cookies de sesión de un Dashboard con login propio (`hermes_session_at`,
@@ -2609,11 +2655,19 @@ class DashboardClient {
     _passwordLoginFuture = null;
   }
 
-  Future<String> _getToken() async {
+  Future<String> _getToken({bool allowShared = true}) async {
     await _ensureSecrets();
     final manual = _manualToken;
     if (manual != null && manual.isNotEmpty) return manual;
-    if (_token != null) return _token!;
+    if (_token != null && (allowShared || !_tokenFromSharedCache)) {
+      return _token!;
+    }
+    final tokenKey = _pageTokenKey;
+    final shared = allowShared ? _sharedPageTokens[tokenKey] : null;
+    if (shared != null) {
+      _tokenFromSharedCache = true;
+      return _token = shared;
+    }
     final basic = _basicAuthHeader;
     final res = await _http
         .get(
@@ -2667,8 +2721,14 @@ class DashboardClient {
       );
     }
     _token = match.group(1)!;
+    _tokenFromSharedCache = false;
+    _sharedPageTokens[tokenKey] = _token!;
     return _token!;
   }
+
+  String get _pageTokenKey => sha256
+      .convert(utf8.encode('$_baseUrl\u0000${_basicAuthHeader ?? ''}'))
+      .toString();
 
   /// ¿Tenemos usuario+contraseña para el login por formulario del Dashboard?
   bool get _hasPasswordCreds =>
@@ -2931,7 +2991,14 @@ class DashboardClient {
   /// Invalida solo la sesión que produjo el 401. Una respuesta tardía no puede
   /// borrar cookies que otro request ya renovó o volvió a autenticar.
   void _resetSession({String? sentCookie}) {
+    final rejectedToken = _token;
     _token = null;
+    // Evict the shared token only if it is the one that was just rejected; a
+    // newer token another client already scraped stays usable.
+    if (rejectedToken != null &&
+        _sharedPageTokens[_pageTokenKey] == rejectedToken) {
+      _sharedPageTokens.remove(_pageTokenKey);
+    }
     if (!_hasPasswordCreds) {
       _cookies.clear();
       _passwordLoginFuture = null;
@@ -3052,7 +3119,7 @@ class DashboardClient {
       }
       return DashboardWebSocketAuth(
         queryName: 'token',
-        credential: await _getToken(),
+        credential: await _getToken(allowShared: false),
         headers: headers,
       );
     } on DashboardWebSocketAuthException {
@@ -3902,22 +3969,34 @@ class DashboardClient {
     int offset = 0,
   }) async {
     final normalizedProfile = profile.trim();
+    final boundedLimit = limit.clamp(1, 500);
     final query = Uri(
       queryParameters: {
-        'limit': '$limit',
+        'limit': '$boundedLimit',
         'order': 'latest',
         'offset': '$offset',
+        'include_compacted': 'true',
         if (normalizedProfile.isNotEmpty) 'profile': normalizedProfile,
       },
     ).query;
     final data = await apiGet(
       'sessions/${Uri.encodeComponent(sessionId)}/messages?$query',
     );
-    final raw = data['messages'] ?? data['data'];
+    final raw = data.containsKey('messages') ? data['messages'] : data['data'];
+    final resolved = data['session_id'];
     return SessionMessagesPage.fromRaw(
       rawMessages: raw,
       pagination: data['pagination'],
       paginationProvided: data.containsKey('pagination'),
+      requestedLimit: boundedLimit,
+      requestedOffset: offset,
+      resolvedTipId: resolved is String && resolved.trim().isNotEmpty
+          ? resolved.trim()
+          : null,
+      coverage: const {
+        CoreReadCoverage.tipOnly,
+        CoreReadCoverage.metadataPartial,
+      },
     );
   }
 
@@ -4013,6 +4092,22 @@ class DashboardClient {
     body: {'data_url': dataUrl, 'mime_type': mimeType},
     timeout: timeout ?? audioTranscribeRequestTimeout(dataUrl),
   );
+
+  /// POST /api/audio/tts-lease — señal de precalentamiento/liberación del
+  /// motor TTS, igual que los interruptores de voz de Desktop. Hermes informa
+  /// de un fallo de precarga en el cuerpo, nunca como error HTTP.
+  Future<Map<String, dynamic>> setTtsLease(
+    String lease, {
+    required bool active,
+    String? profile,
+  }) => apiPost(
+    'audio/tts-lease${_profileQuery(profile)}',
+    body: {'lease': lease, 'active': active},
+    timeout: audioTtsLeaseRequestTimeout,
+  );
+
+  /// Adquirir puede cargar un modelo local en el servidor; Desktop usa 180 s.
+  static const Duration audioTtsLeaseRequestTimeout = Duration(seconds: 180);
 
   /// Sonda sin efectos de una ruta de audio (spec 048/US5), por el MISMO
   /// camino autenticado que el resto del Dashboard. Es un `POST` con cuerpo

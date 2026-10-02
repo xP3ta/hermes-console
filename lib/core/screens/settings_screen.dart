@@ -57,6 +57,18 @@ import '../widgets/install_source_section.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
+/// Readable, localized label for a gateway platform state (`connected`…).
+/// Unknown states are shown raw as a fallback (spec 028 A-026).
+String gatewayPlatformStateLabel(Strings s, String state) => switch (state) {
+  'connected' => s.i18n1215PlatformConnected,
+  'disconnected' => s.i18n1215PlatformDisconnected,
+  'connecting' => s.i18n1215PlatformConnecting,
+  'error' => s.i18n1215PlatformError,
+  'starting' => s.i18n1215PlatformStarting,
+  'stopped' => s.i18n1215PlatformStopped,
+  _ => state,
+};
+
 /// Estado del único canal que consume Hermes Console.
 ///
 /// `/api/status` también publica conectores de terceros configurados en el
@@ -2766,16 +2778,32 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     }
 
     setState(() => _busy = true);
+    Object? requestError;
     try {
-      await _client.restartGateway();
-      if (!mounted) return;
-      _snack(Strings.of(context).setGatewayRestarting);
       // Espera resiliente a que el gateway vuelva (en vez de un delay fijo que
-      // dejaba la app pillada si el reinicio tardaba).
-      await _waitForGatewayBack();
-      if (mounted) _snack(Strings.of(context).setGatewayRestarted);
-    } catch (e) {
-      if (mounted) _snack(Strings.of(context).setRestartError(e.toString()));
+      // dejaba la app pillada si el reinicio tardaba). Only a gateway seen
+      // running again is announced as restarted.
+      final outcome = await runGatewayRestart(
+        restart: () async {
+          try {
+            await _client.restartGateway();
+          } catch (e) {
+            requestError = e;
+            rethrow;
+          }
+        },
+        waitUntilBack: () => _waitForGatewayBack(),
+        onRequested: () {
+          if (mounted) _snack(Strings.of(context).setGatewayRestarting);
+        },
+      );
+      if (!mounted) return;
+      final s = Strings.of(context);
+      _snack(switch (outcome) {
+        GatewayRestartOutcome.back => s.setGatewayRestarted,
+        GatewayRestartOutcome.notBack => s.setGatewayNotBack,
+        GatewayRestartOutcome.failed => s.setRestartError('$requestError'),
+      });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -2853,18 +2881,6 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     return cur != null && latest != null && cur < latest;
   }
 
-  /// Estados de plataforma del gateway ("connected"…) en español legible; los
-  /// desconocidos se muestran crudos como fallback (spec 028 A-026).
-  String _platformStateEs(String state) => switch (state) {
-    'connected' => 'conectada',
-    'disconnected' => 'desconectada',
-    'connecting' => 'conectando',
-    'error' => 'con error',
-    'starting' => 'arrancando',
-    'stopped' => 'detenida',
-    _ => state,
-  };
-
   /// Lista de avisos legibles; vacía = todo en orden. La versión del esquema de
   /// config NO es un aviso: el agente funciona igual y solo indica que hay un
   /// esquema más nuevo disponible (migración opcional y aditiva).
@@ -2881,9 +2897,10 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     for (final e in _platforms.entries) {
       if (e.value != 'connected') {
         w.add(
-          Strings.of(
-            context,
-          ).setPlatformStatus(e.key, _platformStateEs(e.value)),
+          Strings.of(context).setPlatformStatus(
+            e.key,
+            gatewayPlatformStateLabel(Strings.of(context), e.value),
+          ),
         );
       }
     }
@@ -3067,7 +3084,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
               _diagRow(
                 colors,
                 e.key,
-                _platformStateEs(e.value),
+                gatewayPlatformStateLabel(Strings.of(context), e.value),
                 e.value == 'connected',
               ),
             _diagRow(
@@ -3336,9 +3353,11 @@ class _AboutCardState extends State<_AboutCard> {
   Future<void> _loadVersion() async {
     try {
       final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
       setState(() => _version = '${info.version}+${info.buildNumber}');
     } catch (e) {
       debugPrint('[settings] no se pudo leer PackageInfo: $e');
+      if (!mounted) return;
       setState(() => _version = '1.0.0');
     }
   }

@@ -77,6 +77,119 @@ void main() {
         home: Scaffold(body: child),
       );
 
+  testWidgets('miniatura compacta con error no corta la etiqueta', (
+    tester,
+  ) async {
+    final file = File('${Directory.systemTemp.path}/compact_error_thumb.png');
+    // PNG 1x1 válido: basta para que la tarjeta pinte la miniatura.
+    file.writeAsBytesSync(const [
+      0x89,
+      0x50,
+      0x4E,
+      0x47,
+      0x0D,
+      0x0A,
+      0x1A,
+      0x0A,
+      0x00,
+      0x00,
+      0x00,
+      0x0D,
+      0x49,
+      0x48,
+      0x44,
+      0x52,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      0x08,
+      0x06,
+      0x00,
+      0x00,
+      0x00,
+      0x1F,
+      0x15,
+      0xC4,
+      0x89,
+      0x00,
+      0x00,
+      0x00,
+      0x0D,
+      0x49,
+      0x44,
+      0x41,
+      0x54,
+      0x78,
+      0x9C,
+      0x63,
+      0x60,
+      0x00,
+      0x02,
+      0x00,
+      0x00,
+      0x05,
+      0x00,
+      0x01,
+      0x0D,
+      0x0A,
+      0x2D,
+      0xB4,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x49,
+      0x45,
+      0x4E,
+      0x44,
+      0xAE,
+      0x42,
+      0x60,
+      0x82,
+    ]);
+    addTearDown(() {
+      if (file.existsSync()) file.deleteSync();
+    });
+    await tester.pumpWidget(
+      host(
+        Center(
+          child: AttachmentCard(
+            name: 'foto.png',
+            mimeType: 'image/png',
+            sizeLabel: '1 KB',
+            thumbnailFile: file,
+            compact: true,
+            showUploadState: true,
+            uploadState: AttachmentUploadState.error,
+            onRetry: () {},
+            onRemove: () {},
+          ),
+        ),
+      ),
+    );
+
+    // En 80 dp la píldora de texto quedaba en «Error al…»: el estado lo
+    // comunican el color, el botón de reintentar y la etiqueta accesible.
+    for (final text in tester.widgetList<Text>(find.byType(Text))) {
+      final painter = TextPainter(
+        text: TextSpan(text: text.data, style: text.style),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+      )..layout(maxWidth: tester.getSize(find.byWidget(text)).width);
+      expect(
+        painter.didExceedMaxLines,
+        isFalse,
+        reason: 'texto cortado en la miniatura compacta: "${text.data}"',
+      );
+    }
+    expect(find.byIcon(Icons.refresh_rounded), findsOneWidget);
+  });
+
   testWidgets('adjunto en subida muestra progreso y permite quitarlo', (
     tester,
   ) async {
@@ -1486,5 +1599,175 @@ void main() {
     await tester.pump();
     expect(renderedPages, contains(2));
     expect(find.byKey(const ValueKey('attachment-pdf-page-2')), findsOneWidget);
+  });
+
+  group('HTML preview card while scrolling', () {
+    setUp(GeneratedMediaAttachmentCard.clearReadyMemoForTesting);
+    tearDown(GeneratedMediaAttachmentCard.clearReadyMemoForTesting);
+
+    Future<void> io(WidgetTester tester) async {
+      for (var i = 0; i < 4; i++) {
+        await tester.pump();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 30)),
+        );
+      }
+      await tester.pump();
+    }
+
+    testWidgets(
+      'a card scrolled away and back comes back ready on its first frame, '
+      'with no second download and no height jump',
+      (tester) async {
+        tester.view.physicalSize = const Size(412, 915);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final directory = Directory.systemTemp.createTempSync('html-scroll-');
+        addTearDown(() => directory.deleteSync(recursive: true));
+        final file = File('${directory.path}/widget.html')
+          ..writeAsStringSync('<p>hola</p>');
+        var loads = 0;
+        const reference = GeneratedMediaReference(
+          source: '/workspace/out/widget.html',
+          kind: GeneratedMediaKind.file,
+          sourceKind: GeneratedMediaSourceKind.serverPath,
+          displayName: 'widget.html',
+          mimeType: 'text/html',
+          htmlPreview: true,
+        );
+        final controller = ScrollController();
+        addTearDown(controller.dispose);
+        // Same shape as the chat transcript: reversed, lazy, no keep-alive.
+        await tester.pumpWidget(
+          host(
+            ListView.builder(
+              controller: controller,
+              reverse: true,
+              addAutomaticKeepAlives: false,
+              itemCount: 40,
+              itemBuilder: (context, index) => index == 2
+                  ? GeneratedMediaAttachmentCard(
+                      reference: reference,
+                      autoLoad: true,
+                      readyMemoKey: 'connection\u0000default\u0000widget',
+                      load: (onProgress, isCancelled) async {
+                        loads++;
+                        return file;
+                      },
+                    )
+                  : SizedBox(height: 200, child: Text('row $index')),
+            ),
+          ),
+        );
+        await io(tester);
+        final card = find.byType(GeneratedMediaAttachmentCard);
+        expect(loads, 1);
+        expect(find.text('Abrir'), findsOneWidget);
+        final readyHeight = tester.getSize(card).height;
+
+        // Far past the cache extent: the row is disposed, as in the chat.
+        controller.jumpTo(6000);
+        await tester.pump();
+        expect(card, findsNothing);
+
+        controller.jumpTo(0);
+        await tester.pump();
+        // First frame after coming back: already the ready card.
+        expect(find.text('Descargar'), findsNothing);
+        expect(find.byType(LinearProgressIndicator), findsNothing);
+        expect(find.text('Abrir'), findsOneWidget);
+        expect(tester.getSize(card).height, readyHeight);
+
+        await io(tester);
+        expect(loads, 1);
+        expect(tester.getSize(card).height, readyHeight);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('a deleted cache file is downloaded again, never shown stale', (
+      tester,
+    ) async {
+      final directory = Directory.systemTemp.createTempSync('html-memo-');
+      addTearDown(() {
+        if (directory.existsSync()) directory.deleteSync(recursive: true);
+      });
+      var file = File('${directory.path}/a.html')
+        ..writeAsStringSync('<p>a</p>');
+      var loads = 0;
+      const reference = GeneratedMediaReference(
+        source: '/workspace/out/a.html',
+        kind: GeneratedMediaKind.file,
+        sourceKind: GeneratedMediaSourceKind.serverPath,
+        displayName: 'a.html',
+        mimeType: 'text/html',
+        htmlPreview: true,
+      );
+      Widget card() => GeneratedMediaAttachmentCard(
+        reference: reference,
+        autoLoad: true,
+        readyMemoKey: 'scope-a',
+        load: (onProgress, isCancelled) async {
+          loads++;
+          return file;
+        },
+      );
+      await tester.pumpWidget(host(card()));
+      await io(tester);
+      expect(loads, 1);
+      await tester.pumpWidget(host(const SizedBox.shrink()));
+
+      file.deleteSync();
+      file = File('${directory.path}/b.html')..writeAsStringSync('<p>b</p>');
+      await tester.pumpWidget(host(card()));
+      expect(find.text('Abrir'), findsNothing);
+      await io(tester);
+      expect(loads, 2);
+      expect(find.text('Abrir'), findsOneWidget);
+    });
+
+    testWidgets('another scope never reuses a remembered file', (tester) async {
+      final directory = Directory.systemTemp.createTempSync('html-scope-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final file = File('${directory.path}/w.html')..writeAsStringSync('<p/>');
+      var loads = 0;
+      const reference = GeneratedMediaReference(
+        source: '/workspace/out/w.html',
+        kind: GeneratedMediaKind.file,
+        sourceKind: GeneratedMediaSourceKind.serverPath,
+        displayName: 'w.html',
+        mimeType: 'text/html',
+        htmlPreview: true,
+      );
+      Widget card(String? scope) => GeneratedMediaAttachmentCard(
+        key: ValueKey(scope),
+        reference: reference,
+        autoLoad: false,
+        readyMemoKey: scope,
+        load: (onProgress, isCancelled) async {
+          loads++;
+          return file;
+        },
+      );
+      await tester.pumpWidget(host(card('scope-a')));
+      await tester.tap(find.text('Descargar'));
+      await io(tester);
+      expect(loads, 1);
+      expect(find.text('Abrir'), findsOneWidget);
+
+      await tester.pumpWidget(host(card('scope-b')));
+      expect(find.text('Descargar'), findsOneWidget);
+      await tester.pumpWidget(host(card(null)));
+      expect(find.text('Descargar'), findsOneWidget);
+      expect(loads, 1);
+
+      // Without a scope nothing is remembered at all.
+      await tester.tap(find.text('Descargar'));
+      await io(tester);
+      expect(loads, 2);
+      await tester.pumpWidget(host(const SizedBox.shrink()));
+      await tester.pumpWidget(host(card(null)));
+      expect(find.text('Descargar'), findsOneWidget);
+    });
   });
 }

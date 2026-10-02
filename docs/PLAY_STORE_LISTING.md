@@ -93,7 +93,17 @@ credentials.
 This is an independent, unofficial application. It is not affiliated with,
 sponsored by, or maintained by Nous Research or the Hermes Agent authors.
 
-## Novedades — `1.2.12 (9010)`
+## Novedades — `1.2.15 (9470)`
+
+### Español (máximo 500 caracteres)
+
+Modo Bot al instante: ves quién responde y quién va después, y «Te necesita» solo cuando hace falta. Los chats abren al momento, se pueden buscar y marcan lo nuevo desde tu última visita. Adjuntos y archivos generados visibles al reabrir. Dictado que no pierde texto, idioma automático corregido (#65), lectura en voz alta estable y errores reales del servidor. Recuperación tras cortes más fiable y más textos traducidos.
+
+### English (maximum 500 characters)
+
+Bot Mode opens instantly: see who is replying and who is next, with "Needs you" only when it matters. Chats open right away, can be searched and mark what is new since your last visit. Attachments and generated files show up when you reopen a chat. Dictation no longer loses text, automatic language fixed (#65), steadier read aloud and real server errors. More reliable recovery after dropouts and more translated text.
+
+## Novedades anteriores — `1.2.12 (9010)`
 
 ### Español (máximo 500 caracteres)
 

@@ -42,7 +42,7 @@ import 'package:flutter/rendering.dart'
         RenderSliverMultiBoxAdaptor,
         ScrollCacheExtent,
         ScrollDirection;
-import 'package:flutter/scheduler.dart' show SchedulerBinding;
+import 'package:flutter/scheduler.dart' show SchedulerBinding, SchedulerPhase;
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:image_picker/image_picker.dart';
@@ -75,6 +75,7 @@ import '../models/generated_artifact.dart';
 import '../models/interactive_prompt.dart';
 import '../models/prepared_turn.dart';
 import '../models/session_activity.dart';
+import '../models/session_live_status.dart';
 import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
 import '../navigation/chat_route.dart';
@@ -82,6 +83,8 @@ import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
 import '../services/hermes_update_monitor.dart';
 import '../services/active_chat_service.dart';
 import '../services/approval_policy.dart';
+import 'chat_content_screen.dart';
+import 'image_viewer_screen.dart';
 import '../services/compaction_tracker.dart';
 import '../services/session_reconciler.dart';
 import '../services/artifact_export_service.dart';
@@ -89,6 +92,7 @@ import '../services/attachment_uploader.dart';
 import '../services/command_risk.dart';
 import '../services/bridge_client.dart';
 import '../services/bridge_update_service.dart';
+import '../services/chat_content_extractor.dart';
 import '../services/chat_draft_store.dart';
 import '../services/chat_preference_store.dart';
 import '../services/desktop_gateway_capabilities.dart';
@@ -112,6 +116,7 @@ import '../widgets/chat_connection_recovery_row.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/inline_message_editor.dart';
 import '../widgets/stale_running_session_banner.dart';
+import '../widgets/user_server_attachment_card.dart';
 import 'foreground_conversation_reader.dart';
 import '../services/voice/conversation/native_voice.dart';
 import '../services/voice/conversation/native_voice_session_configurator.dart';
@@ -128,10 +133,13 @@ import 'voice_settings_screen.dart';
 import '../theme/app_theme.dart';
 import '../../l10n/app_localizations.dart';
 import '../utils/api_error.dart';
+import '../utils/session_title.dart';
+import '../utils/short_server_path.dart';
 import '../utils/voice_error.dart';
 import '../utils/chat_error.dart';
 import '../utils/byte_bounded_lru_cache.dart';
 import '../utils/chat_turn.dart';
+import '../utils/chat_read_marker.dart';
 import '../utils/markdown_clipboard.dart';
 import '../utils/responsive.dart';
 import '../utils/slash_commands.dart';
@@ -146,7 +154,6 @@ import 'extensions_center_screen.dart';
 import 'memory_screen.dart';
 import 'models_screen.dart';
 import 'recovery_center_screen.dart';
-import 'skills_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
 import 'chat_render_projection.dart';
@@ -154,6 +161,7 @@ import '../widgets/action_approval.dart';
 import '../widgets/agent_task_widgets.dart';
 import '../widgets/attachment_card.dart';
 import '../widgets/attachment_history_preview.dart';
+import '../widgets/artifact_viewer/artifact_viewer_screen.dart';
 import '../widgets/attachment_source_sheet.dart';
 import '../widgets/generated_image_card.dart';
 import '../widgets/generated_video_card.dart';
@@ -173,6 +181,7 @@ import '../widgets/markdown_table.dart';
 import '../widgets/mission_profile_avatar.dart';
 import '../bots/ui/bot_identity.dart';
 import '../bots/ui/roster/living_bot_face.dart';
+import '../bots/ui/room/room_widgets.dart' show RoomSeparator;
 import '../widgets/motion_entrance.dart';
 import '../widgets/subagent_activity_card.dart';
 import '../design/modal.dart'
@@ -191,6 +200,8 @@ import '../widgets/voice_disclosure_dialog.dart';
 import '../widgets/voice_stage.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/chat_find_bar.dart';
+import '../utils/transcript_search.dart';
 
 /// El streaming sustituye mapas de mensaje completos. Esta caché usa identidad
 /// porque las anclas pertenecen al objeto renderizado, así que hay que retirar
@@ -775,7 +786,10 @@ List<_StructuredGeneratedVideo> _structuredGeneratedVideos(
   final refs = <_StructuredGeneratedVideo>[];
   final seen = <String>{};
   for (final entry in raw.whereType<Map>()) {
-    if (entry['media_kind'] != GeneratedMediaKind.video.name) continue;
+    final mediaKind = entry['media_kind'];
+    // `tool_media`: any file a text tool result announced with `MEDIA:`.
+    final anyKind = mediaKind == 'tool_media';
+    if (!anyKind && mediaKind != GeneratedMediaKind.video.name) continue;
     final toolCallId = entry['tool_call_id'];
     final source = entry['source'];
     if (toolCallId is! String ||
@@ -784,7 +798,8 @@ List<_StructuredGeneratedVideo> _structuredGeneratedVideos(
       continue;
     }
     final reference = GeneratedMediaService.referenceFromSource(source);
-    if (reference == null || reference.kind != GeneratedMediaKind.video) {
+    if (reference == null ||
+        (!anyKind && reference.kind != GeneratedMediaKind.video)) {
       continue;
     }
     if (entry['kind'] != reference.sourceKind.name) continue;
@@ -1002,6 +1017,7 @@ enum _ModelSource { desktop, bridge, dashboard, gateway }
 enum _ChatControlAction {
   permissions,
   refresh,
+  content,
   artifacts,
   details,
   cron,
@@ -1036,14 +1052,32 @@ String friendlyModelName(String id) {
       : id;
   final lower = raw.toLowerCase();
 
-  // Familia Claude: "claude-familia-major-minor[-fecha]" → "Familia major.minor".
-  final claude = RegExp(
-    r'^claude-(opus|sonnet|haiku)-(\d+)-(\d+)',
-  ).firstMatch(lower);
+  // Familia Claude: "claude-familia-major[-.]minor[-fecha][-variante]" →
+  // "Familia major.minor[ Variante]". The minor is one or two digits so a
+  // date pin (`claude-sonnet-4-20250514`) is never read as a version, and a
+  // dotted OpenRouter id (`anthropic/claude-sonnet-4.6`) is recognised too.
+  final claude =
+      RegExp(
+        r'^claude-(opus|sonnet|haiku)-(\d+)(?:[.-](\d{1,2})(?!\d))?',
+      ).firstMatch(lower) ??
+      RegExp(r'^claude-(\d+)(?:[.-](\d))?-(opus|sonnet|haiku)').firstMatch(
+        lower,
+      );
   if (claude != null) {
-    final family = claude.group(1)!;
+    final legacy = RegExp(r'^\d').hasMatch(claude.group(1)!);
+    final family = legacy ? claude.group(3)! : claude.group(1)!;
+    final major = legacy ? claude.group(1)! : claude.group(2)!;
+    final minor = legacy ? claude.group(2) : claude.group(3);
     final capitalized = family[0].toUpperCase() + family.substring(1);
-    return '$capitalized ${claude.group(2)}.${claude.group(3)}';
+    final version = minor == null ? major : '$major.$minor';
+    final rest = lower.substring(claude.end).replaceFirst(RegExp(r'-\d{8}'), '');
+    final variant = RegExp(
+      r'^-(fast|thinking|preview|latest|flash)\b',
+    ).firstMatch(rest)?.group(1);
+    final tag = variant == null
+        ? ''
+        : ' ${variant[0].toUpperCase()}${variant.substring(1)}';
+    return '$capitalized $version$tag';
   }
 
   // Familia GPT: mantiene "GPT-" en mayúsculas y conserva el resto del nombre.
@@ -1201,6 +1235,11 @@ class ChatScreen extends StatefulWidget {
   final bool requestComposerFocus;
   final String? initialStoredSessionId;
 
+  /// Carpeta del servidor donde debe arrancar un chat NUEVO abierto desde un
+  /// proyecto o worktree. Viaja en `session.create` como `cwd` +
+  /// `cwd_explicit`, igual que Desktop; null para un chat sin carpeta.
+  final String? newChatWorkspace;
+
   /// Caché de identidad que Mission Control ya mantiene para Bot Chat.
   final MissionProfileAvatarCache? missionAvatarCache;
 
@@ -1222,6 +1261,12 @@ class ChatScreen extends StatefulWidget {
   @visibleForTesting
   final ChatDraftStore? draftStoreOverride;
 
+  /// Replaces the Dashboard fetch of server-side user attachments
+  /// (`@image:`/`@file:` lines) in widget tests.
+  @visibleForTesting
+  final Future<void> Function(String path, File destination)?
+  userServerMediaFetcher;
+
   const ChatScreen({
     required this.connection,
     required this.session,
@@ -1231,6 +1276,7 @@ class ChatScreen extends StatefulWidget {
     this.initialVoiceMode = false,
     this.requestComposerFocus = false,
     this.initialStoredSessionId,
+    this.newChatWorkspace,
     this.missionAvatarCache,
     this.missionBotProfile,
     this.performanceProbe,
@@ -1239,6 +1285,7 @@ class ChatScreen extends StatefulWidget {
     this.cancelStreamOverride,
     this.sendAttemptObserver,
     this.draftStoreOverride,
+    this.userServerMediaFetcher,
     super.key,
   });
 
@@ -1255,6 +1302,12 @@ class _ChatScreenState extends State<ChatScreen>
   late final ActiveChatService _chatService;
   late final ActiveChat _chat;
   StreamSubscription<ActiveChatEvent>? _chatSub;
+
+  /// Debounced transport loss shared by the recovery row, the activity pill
+  /// headline and the companion mood, so a socket blip shorter than the grace
+  /// never flashes "connection lost" on any of them.
+  final ChatTransportVisibility _transportVisibility =
+      ChatTransportVisibility();
   bool _chatBound = false;
   final ValueNotifier<SessionContextMetrics> _sessionContextMetrics =
       ValueNotifier(SessionContextMetrics.unknown);
@@ -1267,7 +1320,9 @@ class _ChatScreenState extends State<ChatScreen>
   Completer<bool>? _sessionContextBootstrapRetryCompleter;
   bool _sessionContextAwaitingPostCompactionMetrics = false;
   int? _desktopRuntimePresentationFingerprint;
+  Object? _lastSessionConfigPresentation;
   (bool, int, int, int, int)? _activityPresentationFingerprint;
+  bool _lastAwaitsUnseenInput = false;
   bool _lastDesktopCompacting = false;
   PendingSessionConfigChange? _pendingModelConfirmation;
   NavigatorState? _modelConfirmationNavigator;
@@ -1284,6 +1339,10 @@ class _ChatScreenState extends State<ChatScreen>
   Map<String, dynamic>? _editingUserMessageTarget;
   double? _editingUserMessageWidth;
   String? _editingUserMessageText;
+
+  /// Text the user rewrote and tried to save. A failed save keeps it in the
+  /// open editor instead of throwing it away.
+  String? _editingUserMessageDraft;
   int? _editingUserMessageOrdinal;
   String? _editingQueuedEntryId;
   bool _editingRewriteSubmitted = false;
@@ -1294,10 +1353,44 @@ class _ChatScreenState extends State<ChatScreen>
   /// puede avanzar en segundo plano, pero su respuesta no aparece mientras se
   /// edita: Cancelar revela el progreso real y Guardar rebobina el turno.
   List<Map<String, dynamic>> get _messages {
+    final editing = _editingMessagesSnapshot;
+    if (editing != null) return editing;
+    final scheduler = SchedulerBinding.instance;
+    final inFramePipeline =
+        scheduler.schedulerPhase == SchedulerPhase.persistentCallbacks;
+    final cached = _frameMessagesSnapshot;
+    if (cached != null &&
+        inFramePipeline &&
+        identical(_frameMessagesChat, _chat)) {
+      return cached;
+    }
     final probe = widget.performanceProbe;
     if (probe != null) probe.publicTranscriptReads += 1;
-    return _editingMessagesSnapshot ?? _chat.messages;
+    final messages = _chat.messages;
+    // While a turn streams, every read is a full privacy/editorial projection
+    // of the whole transcript, and one build reads it once or more per row.
+    // Inside the build/layout/paint pipeline nothing can mutate the service
+    // (events arrive asynchronously, and the list entries already index into
+    // this same snapshot), so reuse it until the frame ends. Event handlers
+    // and post-frame callbacks run outside that phase and always read fresh.
+    if (inFramePipeline) {
+      _frameMessagesSnapshot = messages;
+      _frameMessagesChat = _chat;
+      if (!_frameMessagesClearScheduled) {
+        _frameMessagesClearScheduled = true;
+        scheduler.addPostFrameCallback((_) {
+          _frameMessagesClearScheduled = false;
+          _frameMessagesSnapshot = null;
+          _frameMessagesChat = null;
+        });
+      }
+    }
+    return messages;
   }
+
+  List<Map<String, dynamic>>? _frameMessagesSnapshot;
+  ActiveChat? _frameMessagesChat;
+  bool _frameMessagesClearScheduled = false;
 
   bool get _editingTranscriptChanged {
     final before = _editingMessagesSnapshot;
@@ -1318,6 +1411,7 @@ class _ChatScreenState extends State<ChatScreen>
     _editingUserMessageTarget = null;
     _editingUserMessageWidth = null;
     _editingUserMessageText = null;
+    _editingUserMessageDraft = null;
     _editingUserMessageOrdinal = null;
     _editingRewriteSubmitted = false;
     _editingMessagesSnapshot = null;
@@ -1349,6 +1443,7 @@ class _ChatScreenState extends State<ChatScreen>
       !_messageRefreshInFlight!.passiveOnly &&
       !_messageRefreshInFlight!.published;
   int? _messageRefreshAnchorEpoch;
+  int _hydrationAnchorSerial = 0;
   bool _messageRefreshReanchorScheduled = false;
   ForegroundConversationReader? _passiveConversationReader;
   bool _chatRouteVisible = false;
@@ -1509,7 +1604,6 @@ class _ChatScreenState extends State<ChatScreen>
   bool get _sending => _chat.sending;
   bool _compressionCommandInFlight = false;
   bool? _lastDesktopCompressionPresentation;
-  bool _compressionDraftFocusRetained = false;
   bool get _compressingSession =>
       _compressionCommandInFlight ||
       (_chatBound && _chat.desktopManualCompressionInFlight);
@@ -1590,6 +1684,10 @@ class _ChatScreenState extends State<ChatScreen>
   // sustituye `_sending`: después del ACK el composer vuelve a aceptar texto y
   // Hermes puede tratarlo como steering durante el run actual.
   bool _composerSubmissionInFlight = false;
+  // Identity of the submission holding [_composerSubmissionInFlight]. A
+  // `/compress` hands the slot back as soon as it is dispatched (its own
+  // fence takes over), so its late `finally` must not release a successor.
+  int _composerSubmissionClaim = 0;
   Timer? _stopConfirmationDismissTimer;
   bool _confirmedStopStatusDismissed = false;
   final RecentInterruptGuard _recentInterrupt = RecentInterruptGuard();
@@ -1630,6 +1728,243 @@ class _ChatScreenState extends State<ChatScreen>
     if (_scrollToBottomVisibility.value == value) return;
     _recordTranscriptOverlayExtentChange(value ? 48 : -48);
     _scrollToBottomVisibility.value = value;
+    if (value) {
+      _beginAwayFromBottom();
+    } else {
+      _endAwayFromBottom();
+    }
+  }
+
+  // Mensajes llegados mientras el lector está lejos del fondo. Se fija el
+  // último mensaje visible al apartarse y solo se recuenta cuando llega
+  // contenido (eventos estructurales o el primer token de una respuesta),
+  // nunca por frame ni por scroll.
+  final ValueNotifier<int> _newWhileAway = ValueNotifier(0);
+
+  // True only while the entry landing walks the lazy list up to the first
+  // unread row. Each walk step is a real scroll offset; painting them would
+  // show the transcript jumping upward screen by screen before it lands.
+  final ValueNotifier<bool> _transcriptConcealed = ValueNotifier(false);
+
+  /// Walk budget of the entry landing: long enough to build a first unread
+  /// row several screens up, short enough (~330 ms) that a blank transcript
+  /// never reads as a broken screen.
+  static const int _entryLandingWalkFrames = 20;
+
+  // "New since you left": device-local read marker per conversation (Hermes
+  // keeps none for sessions), mirroring the Room's `lastSeenSeq`.
+  SharedPreferences? _lastReadPrefs;
+  String? _lastReadKeyOnEntry;
+  bool _newSinceResolved = false;
+  Map<String, dynamic>? _newSinceFirstUnread;
+  String? _newSinceFirstUnreadKey;
+
+  String get _lastReadPrefsKey =>
+      'chat_last_read_v1.${widget.connection.id}.${widget.session.logicalId}';
+
+  /// Resolves the divider once, on the first transcript that contains the
+  /// stored marker, and lands on the first unread row if it is off screen.
+  void _resolveNewSinceYouLeft() {
+    if (_newSinceResolved || _disposed || !_chatBound) return;
+    final markerKey = _lastReadKeyOnEntry;
+    if (markerKey == null) {
+      _newSinceResolved = true;
+      return;
+    }
+    final messages = _messages;
+    if (messages.isEmpty || !_chat.messagesLoaded) return;
+    final found = chatUnreadSinceStoredMarker(messages, markerKey);
+    if (found == null && _newSinceMarkerMayBeOlder()) {
+      unawaited(_pageBackForNewSinceMarker());
+      return;
+    }
+    _newSinceResolved = true;
+    final firstUnread = found?.oldestNew;
+    if (found == null || firstUnread == null) return;
+    _newSinceFirstUnread = firstUnread;
+    _newSinceFirstUnreadKey = chatReadMarkerKey(firstUnread);
+    final unread = found.count;
+    final newestRead = found.newestRead;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_landOnNewSinceYouLeft(firstUnread, newestRead, unread));
+    });
+    setState(() {});
+  }
+
+  /// The opening page holds only the newest rows (Desktop parity), so the
+  /// stored marker can sit in an older page. Look for it as deep as the
+  /// former 500-row opening page read, never further: a marker that is
+  /// gone (rewound, compacted away) must not walk the whole history.
+  static const int _newSinceLookbackRows = 500;
+  bool _newSincePagingBack = false;
+
+  bool _newSinceMarkerMayBeOlder() =>
+      _chat.hasEarlierMessages &&
+      !_chat.earlierMessagesLoadFailed &&
+      _chat.messages.length < _newSinceLookbackRows;
+
+  /// Loads older pages through the same contiguous backfill as scrolling to
+  /// the top (rows are only ever prepended in order), then resolves again.
+  Future<void> _pageBackForNewSinceMarker() async {
+    if (_newSincePagingBack) return;
+    _newSincePagingBack = true;
+    try {
+      final before = _chat.messages.length;
+      await _chat.loadEarlierMessages(continuePastInvisible: true);
+      if (_disposed || !mounted) return;
+      if (_chat.messages.length == before) {
+        // No progress: stop looking instead of retrying in a loop.
+        _newSinceResolved = true;
+        return;
+      }
+    } finally {
+      _newSincePagingBack = false;
+    }
+    _resolveNewSinceYouLeft();
+  }
+
+  Future<void> _landOnNewSinceYouLeft(
+    Map<String, dynamic> firstUnread,
+    Map<String, dynamic> newestRead,
+    int unread,
+  ) async {
+    if (_disposed || !mounted || !_scrollController.hasClients) return;
+    var position = _scrollController.position;
+    var anchor = _messageAnchors[firstUnread];
+    double? target;
+    if (anchor != null && anchor.attached) {
+      target = chatAnswerStartOffset(anchor, position);
+      // Its top is already on screen: stay at the bottom.
+      if (target == null || target <= position.pixels) return;
+    } else {
+      // The reversed list is lazy: a first unread row far above the bottom
+      // has no render object yet. Walk up to it with the transcript hidden,
+      // so the reader sees one move (bottom, then the landing) instead of
+      // every intermediate screen of the walk. The concealment is released
+      // in the same frame as the final jump, or at the bottom if the walk
+      // fails or runs out of budget.
+      _freezeStreamingFollow();
+      _transcriptConcealed.value = true;
+      try {
+        final reached = await _materializeTranscriptAnchor(
+          firstUnread,
+          stillWanted: () => !_disposed,
+          maxFrames: _entryLandingWalkFrames,
+          // The list keeps a 1000 px cache on both sides: a step of one
+          // viewport plus that cache still builds every row it passes.
+          stepExtent: (position) => position.viewportDimension + 1000,
+        );
+        anchor = _messageAnchors[firstUnread];
+        position = _scrollController.hasClients
+            ? _scrollController.position
+            : position;
+        target = reached == true && anchor != null && anchor.attached
+            ? chatAnswerStartOffset(anchor, position)
+            : null;
+        if (target == null) {
+          if (_scrollController.hasClients) {
+            _scrollController.position.jumpTo(
+              _scrollController.position.minScrollExtent,
+            );
+          }
+          return;
+        }
+      } finally {
+        if (!_disposed) _transcriptConcealed.value = false;
+      }
+    }
+    // One jump, before the reader has seen the bottom settle: no animation
+    // that would read as a second movement after the route transition.
+    _freezeStreamingFollow();
+    // The jump button appears with the landing and pads the list bottom by
+    // its 48 dp. Show it while still at the bottom (no compensation is
+    // recorded there) and include its extent in the single jump, so the
+    // divider lands at the top in one frame instead of sliding 48 dp.
+    final buttonExtent = _scrollToBottomVisibility.value ? 0.0 : 48.0;
+    _showScrollToBottom = true;
+    position.jumpTo(target + buttonExtent);
+    if (_scrollToBottomVisibility.value) {
+      _awayMarker = newestRead;
+      _awayMarkerKey = chatReadMarkerKey(newestRead);
+      _awayCountableBaseline = _countableMessages() - unread;
+      _newWhileAway.value = unread;
+    }
+  }
+
+  bool _isNewSinceFirstUnread(Map<String, dynamic> message) {
+    final target = _newSinceFirstUnread;
+    if (target == null) return false;
+    if (identical(message, target)) return true;
+    final key = _newSinceFirstUnreadKey;
+    return key != null && chatReadMarkerKey(message) == key;
+  }
+
+  /// Marks the newest loaded message as read for the next entry.
+  void _persistLastRead() {
+    final prefs = _lastReadPrefs;
+    if (prefs == null || !_chatBound) return;
+    final key = chatReadMarkerForLeaving(_messages);
+    if (key == null) return;
+    unawaited(prefs.setString(_lastReadPrefsKey, key));
+  }
+
+  Map<String, dynamic>? _awayMarker;
+  String? _awayMarkerKey;
+  int _awayCountableBaseline = 0;
+
+  int _countableMessages() {
+    var total = 0;
+    for (final message in _messages) {
+      if (chatReadMarkerCountable(message)) total++;
+    }
+    return total;
+  }
+
+  void _beginAwayFromBottom() {
+    if (!_chatBound) return;
+    final marker = chatNewestCountableMessage(_messages);
+    _awayMarker = marker;
+    _awayMarkerKey = marker == null ? null : chatReadMarkerKey(marker);
+    _awayCountableBaseline = _countableMessages();
+    _newWhileAway.value = 0;
+  }
+
+  void _endAwayFromBottom() {
+    _awayMarker = null;
+    _awayMarkerKey = null;
+    _awayCountableBaseline = 0;
+    _newWhileAway.value = 0;
+  }
+
+  void _recountNewWhileAway({bool olderHistoryOnly = false}) {
+    if (_disposed || !_scrollToBottomVisibility.value) return;
+    if (olderHistoryOnly) {
+      // Older rows extend the far end: they are never news for the reader,
+      // only the baseline of the fallback count moves with them.
+      final total = _countableMessages();
+      _awayCountableBaseline = total - _newWhileAway.value;
+      return;
+    }
+    final messages = _messages;
+    final found = chatMessagesNewerThanMarker(
+      messages,
+      marker: _awayMarker,
+      key: _awayMarkerKey,
+    );
+    final int count;
+    if (found != null) {
+      count = found.count;
+    } else {
+      // The marker row was replaced by a copy without a durable id (an
+      // optimistic prompt reconciled by the server). The number of countable
+      // rows added since leaving the bottom still holds.
+      var total = 0;
+      for (final message in messages) {
+        if (chatReadMarkerCountable(message)) total++;
+      }
+      count = math.max(total - _awayCountableBaseline, _newWhileAway.value);
+    }
+    _newWhileAway.value = math.max(count, 0);
   }
 
   // Alto medido del hueco de las pastillas de actividad. Notifier aparte por
@@ -1666,6 +2001,23 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   bool _autoFollowStreaming = true;
+
+  // Búsqueda dentro del chat. Mientras la barra está abierta el seguimiento
+  // del fondo queda suspendido: saltar a un resultado no puede competir con
+  // el streaming ni con la hidratación. Cerrar la barra lo restaura.
+  bool _findOpen = false;
+  String _findInitialQuery = '';
+  String _findQuery = '';
+  int _findEpoch = 0;
+  final TranscriptSearchIndex _findIndex = TranscriptSearchIndex();
+  List<Map<String, dynamic>> _findMatchMessages = const [];
+  List<TranscriptMatch> _findMatches = const [];
+  final ValueNotifier<ChatFindStatus> _findStatus = ValueNotifier(
+    const ChatFindStatus(),
+  );
+  final ValueNotifier<Map<String, dynamic>?> _findActiveMessage = ValueNotifier(
+    null,
+  );
   int? _streamingScrollPointer;
   Offset? _streamingScrollOrigin;
   bool _streamingScrollGestureMoved = false;
@@ -1801,7 +2153,7 @@ class _ChatScreenState extends State<ChatScreen>
     _revealedChars = 0;
     _liveAssistantMaterialized = false;
     _liveAssistantFrame.value = null;
-    _autoFollowStreaming = readerIsAtBottom;
+    _autoFollowStreaming = readerIsAtBottom && !_findOpen;
     _showScrollToBottom = !readerIsAtBottom;
   }
 
@@ -1933,7 +2285,12 @@ class _ChatScreenState extends State<ChatScreen>
   /// sueltas, y acelera con el tamaño de la ráfaga para no quedar rezagado.
   void _advanceStreamingReveal() {
     final content = _chat.assistantContent;
-    if (!_chat.isStreaming || !_autoFollowStreaming || _reduceMotion) {
+    // Sin UI visible (app en segundo plano) no hay nada que animar: el texto
+    // se revela entero y el timer de 30 Hz no despierta al isolate.
+    if (!_chat.isStreaming ||
+        !_autoFollowStreaming ||
+        _reduceMotion ||
+        !_appInForeground) {
       _streamingRevealTimer?.cancel();
       if (_revealedChars != content.length) {
         _revealedChars = content.length;
@@ -2219,6 +2576,30 @@ class _ChatScreenState extends State<ChatScreen>
         : await _loadDraftWithRecoveryMigration(store);
     if (!mounted) return;
     _turnOutbox = outbox;
+    final submittedLink = draft.submittedTurnClientTurnId;
+    if (submittedLink != null &&
+        (_chatBound ? _chat.activeTurnDelivery : null) == null) {
+      // La outbox se escribe siempre antes del enlace. Sin registro de ese
+      // turno, ya se resolvió (entregado y retirado): el lote no se ofrece de
+      // nuevo. Con registro, decide la reconciliación normal de abajo. Con una
+      // entrega viva no se lee storage: el servicio posee esa frontera.
+      final pending = await outbox.loadAllForChat(
+        widget.connection.id,
+        widget.session.id,
+        profile: _recoveryProfile,
+      );
+      if (!mounted) return;
+      if (!pending.any((turn) => turn.clientTurnId == submittedLink)) {
+        await store.clear(
+          widget.connection.id,
+          _draftRecoverySessionId,
+          profile: _recoveryProfile,
+          onlySubmittedTurnClientTurnId: submittedLink,
+        );
+        if (!mounted) return;
+        draft = const ChatDraft(text: '', attachments: []);
+      }
+    }
     final linkedDiscard = draft.preparedTurnClientTurnId;
     if (linkedDiscard != null &&
         await outbox.isFailedBeforeAcceptanceDiscarded(
@@ -2705,6 +3086,7 @@ class _ChatScreenState extends State<ChatScreen>
     String? preparedTurnClientTurnId,
     bool preparedTurnAuthorityCaptured = false,
     bool finalDisposeSnapshot = false,
+    String? submittedTurnClientTurnId,
   }) async {
     if (widget.connection.readOnly) return false;
     if (_disposed && !finalDisposeSnapshot) return false;
@@ -2739,6 +3121,7 @@ class _ChatScreenState extends State<ChatScreen>
         preparedTurnClientTurnId: preparedTurnAuthorityCaptured
             ? preparedTurnClientTurnId
             : preparedTurnClientTurnId ?? _composerPreparedTurnClientTurnId,
+        submittedTurnClientTurnId: submittedTurnClientTurnId,
         lifecycle: _localConversationLifecycle,
         afterSave: previous.then((_) => true),
       );
@@ -2791,6 +3174,68 @@ class _ChatScreenState extends State<ChatScreen>
     } catch (error) {
       debugPrint('[chat-draft] secure cleanup failed (${error.runtimeType})');
       return false;
+    }
+  }
+
+  /// Clears the saved draft of a turn that was queued after this route was
+  /// disposed, but only while that draft is still exactly the queued batch:
+  /// newer content written for the same session is never touched.
+  Future<void> _clearQueuedDraftAfterLeaving(
+    String text,
+    List<AttachmentDraft> attachments,
+  ) async {
+    if (widget.connection.readOnly) return;
+    try {
+      final store =
+          _draftStore ??
+          widget.draftStoreOverride ??
+          ChatDraftStore(await SharedPreferences.getInstance());
+      final sessionId = _draftRecoverySessionId;
+      final profile = _recoveryProfile;
+      final stored = await store.load(
+        widget.connection.id,
+        sessionId,
+        profile: profile,
+      );
+      if (stored.text != text ||
+          !_sameAttachmentDrafts(stored.attachments, attachments)) {
+        return;
+      }
+      await store.clear(widget.connection.id, sessionId, profile: profile);
+    } catch (error) {
+      debugPrint('[chat-draft] queued cleanup failed (${error.runtimeType})');
+    }
+  }
+
+  /// Retira el borrador que sigue siendo el lote exacto de un turno ya
+  /// aceptado. No depende de esta pantalla: tras salir antes del ACK el
+  /// lifecycle ya no admite escrituras y `_clearDraft` no puede actuar. El
+  /// store solo borra si el enlace coincide, así que nunca pisa texto nuevo, y
+  /// sigue respetando las vallas de borrado de sesión/conexión.
+  Future<void> _clearSubmittedTurnDraft(String clientTurnId) async {
+    if (widget.connection.readOnly) return;
+    try {
+      final store =
+          _draftStore ??
+          widget.draftStoreOverride ??
+          ChatDraftStore(await SharedPreferences.getInstance());
+      final ids = <String>{
+        widget.session.id,
+        ?_normalCanonicalDraftId,
+        if (_chatBound) ?_chat.createdDraftSessionId,
+      }..removeWhere((id) => id.isEmpty);
+      for (final id in ids) {
+        await store.clear(
+          widget.connection.id,
+          id,
+          profile: _recoveryProfile,
+          onlySubmittedTurnClientTurnId: clientTurnId,
+        );
+      }
+    } catch (error) {
+      debugPrint(
+        '[chat-draft] submitted-turn cleanup failed (${error.runtimeType})',
+      );
     }
   }
 
@@ -3238,12 +3683,21 @@ class _ChatScreenState extends State<ChatScreen>
       // Bot surfaces own a durable canonical pin. Their -32601 compatibility
       // fallback is handled by the pin hook itself; falling back to REST here
       // would submit without the verified pin after an RMW failure.
+      // A REST fallback cannot carry the workspace; failing is more honest
+      // than silently starting the project chat in another folder.
       allowTransportFallback:
           widget.connection.kind == InstanceKind.localhost &&
           widget.connection.onDeviceLoopback &&
           !resumesStoredBotChat &&
-          !createsBotChat,
+          !createsBotChat &&
+          _newChatWorkspace == null,
+      workspace: _newChatWorkspace,
     );
+  }
+
+  String? get _newChatWorkspace {
+    final workspace = widget.newChatWorkspace?.trim() ?? '';
+    return workspace.isEmpty ? null : workspace;
   }
 
   // ── Configuración efectiva de esta sesión ─────────────────────────────────
@@ -3295,10 +3749,46 @@ class _ChatScreenState extends State<ChatScreen>
     return value is SessionModelConfigValue ? value : null;
   }
 
+  /// Identity of every pending session-config change, so a `config.set`
+  /// transition (sending → accepted/rejected) repaints the chrome even when
+  /// `session.info` itself did not change.
+  Object get _sessionConfigPresentation => Object.hashAll([
+    for (final key in DesktopSessionConfigKey.values)
+      if (_chat.pendingSessionConfigChange(key) case final change?)
+        (change.requestEpoch, change.status, change.deferred),
+  ]);
+
+  /// Model id whose `config.set` Hermes queued for the next turn (mid-turn
+  /// switch). Cleared when that turn starts.
+  String? _deferredModelId;
+
+  /// md1215: the header shows the picked model while `config.set` is in
+  /// flight, or while Hermes holds it for the next message.
+  bool get _modelChangePending {
+    if (!_chatBound) return false;
+    final change = _chat.pendingSessionConfigChange(
+      DesktopSessionConfigKey.model,
+    );
+    if (change?.status == SessionConfigChangeStatus.sending) return true;
+    final deferred = _deferredModelId;
+    return deferred != null &&
+        deferred == (_displayedSessionModel?.modelId ?? _activeModel?.model);
+  }
+
   /// Etiqueta corta del modelo activo para el AppBar (p.ej. "GPT-5.5"). Cae a un
   /// texto neutro mientras carga o si el Dashboard no está accesible.
   String get _activeModelLabel {
-    final model = _displayedSessionModel?.modelId ?? _activeModel?.model;
+    // md1215: a draft without a runtime sends `_selectedModel` with its first
+    // message; showing the server default instead read as "it did not change".
+    final staged =
+        _chatBound &&
+            !_chat.hasDesktopRuntime &&
+            _selectedModel.isNotEmpty &&
+            _selectedModel != 'hermes-agent'
+        ? _selectedModel
+        : null;
+    final model =
+        _displayedSessionModel?.modelId ?? staged ?? _activeModel?.model;
     if (model == null || model.isEmpty || model == 'hermes-agent') {
       return Strings.of(context).chaModelServer;
     }
@@ -3800,6 +4290,57 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  String get userServerMediaScope =>
+      '${widget.connection.id}\u0000$_effectiveSessionProfile';
+
+  /// Fetches a user attachment that Hermes persisted as an `@image:`/`@file:`
+  /// server path into the app-private media cache. Managed-files download is
+  /// tried first; images outside the managed root fall back to `/api/media`
+  /// (Hermes' images/screenshots/cache roots).
+  Future<File> downloadUserServerAttachment(GeneratedMediaReference reference) {
+    final profile = _effectiveSessionProfile;
+    final testFetcher = widget.userServerMediaFetcher;
+    final maxBytes = reference.kind == GeneratedMediaKind.image
+        ? GeneratedMediaService.maxImageBytes
+        : GeneratedMediaService.maxFileBytes;
+    return GeneratedMediaService.ensureDownloaded(
+      userServerMediaScope,
+      reference,
+      fetchServerPathToFile: (path, destination) async {
+        if (testFetcher != null) return testFetcher(path, destination);
+        final client = DashboardClient.lazy(widget.connection);
+        try {
+          await client.apiDownloadToFile(
+            'files/download?path=${Uri.encodeQueryComponent(path)}',
+            destination,
+            maxBytes: maxBytes,
+            profile: profile,
+          );
+        } on DashboardHttpException catch (error) {
+          if (reference.kind != GeneratedMediaKind.image ||
+              (error.statusCode != 400 && error.statusCode != 403)) {
+            rethrow;
+          }
+          final media = await client.apiGet(
+            'media?path=${Uri.encodeQueryComponent(path)}',
+          );
+          final dataUrl = media['data_url'];
+          final data = dataUrl is String && dataUrl.startsWith('data:')
+              ? Uri.tryParse(dataUrl)?.data
+              : null;
+          if (data == null || !data.isBase64) rethrow;
+          await destination.writeAsBytes(data.contentAsBytes(), flush: true);
+        } finally {
+          client.close();
+        }
+      },
+    );
+  }
+
+  /// Same scope the generated-media disk cache is keyed by.
+  String get generatedMediaCacheScope =>
+      '${widget.connection.id}\u0000$_effectiveSessionProfile';
+
   /// Resolves canonical `MEDIA:` paths through the authenticated Dashboard
   /// managed-files endpoint, then stores them only in app-private cache. This
   /// supports generated files outside Hermes' legacy image cache without
@@ -3810,7 +4351,7 @@ class _ChatScreenState extends State<ChatScreen>
     bool Function()? isCancelled,
   }) {
     final profile = _effectiveSessionProfile;
-    final cacheScope = '${widget.connection.id}\u0000$profile';
+    final cacheScope = generatedMediaCacheScope;
     final maxBytes = switch (reference.kind) {
       GeneratedMediaKind.image => GeneratedMediaService.maxImageBytes,
       GeneratedMediaKind.video => GeneratedMediaService.maxVideoBytes,
@@ -4064,6 +4605,8 @@ class _ChatScreenState extends State<ChatScreen>
       _chatBound = true;
       _chatService = app.activeChats;
       _botChatStore = MissionBotChatStore(app.connManager.prefs);
+      _lastReadPrefs = app.connManager.prefs;
+      _lastReadKeyOnEntry = app.connManager.prefs.getString(_lastReadPrefsKey);
       final resolvedSessionProfile = Session.profileOwner(
         widget.session.profile,
         fallback: app.connManager.activeProfileFor(widget.connection.id),
@@ -4105,6 +4648,9 @@ class _ChatScreenState extends State<ChatScreen>
       }
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
       _chatSub = _chat.changes.listen(_onChatEvent);
+      _chat.transportStatusListenable.addListener(_syncTransportVisibility);
+      _syncTransportVisibility();
+      _transportVisibility.addListener(_onTransportVisibilityChanged);
       _seenDurableSessionsChangeRevision = _chat.durableSessionsChangeRevision;
       _syncStopConfirmationVisibility();
       // Al entrar sobre un turno que ya venía corriendo (volver a la pantalla,
@@ -4157,6 +4703,7 @@ class _ChatScreenState extends State<ChatScreen>
           if (!mounted) return;
           _scrollToBottom(animate: false);
         });
+        _resolveNewSinceYouLeft();
       } else if (widget.session.isUnpersistedMobileDraft) {
         // Un chat recién creado todavía no existe en Hermes. Intentar
         // session.resume + REST aquí solo enseña un loader hasta recibir el
@@ -4195,7 +4742,7 @@ class _ChatScreenState extends State<ChatScreen>
   /// reconstruía la pantalla completa (transcript incluido) solo para
   /// reprogramar este temporizador.
   void _onKeyboardBottomInset(double bottomInset) {
-    if (_disposed || !mounted || bottomInset <= 0) return;
+    if (_disposed || !mounted || bottomInset <= 0 || _findOpen) return;
     // Si ya está al fondo, el resize del viewport mantiene visible el último
     // mensaje. No programes un scroll/setState durante la animación del IME.
     if (_isNearBottom) return;
@@ -4668,7 +5215,18 @@ class _ChatScreenState extends State<ChatScreen>
         !durableChangeConfirmed) {
       return true;
     }
+    // A large chat's newest page is megabytes, and `sessions.changed` fires
+    // for any session every couple of seconds while an agent works. Read the
+    // newest durable row first; when it and the local projection match the
+    // last published page, the full page cannot add anything.
+    final probe = await _chat.probePassiveDurableTail();
+    if (!_canProbePassiveRemoteActivity) return true;
+    if (probe != null && probe.unchanged && !_chat.isStreaming) {
+      _durableTranscriptReadPending = false;
+      return true;
+    }
     final fetched = await _fetchMessages(passiveOnly: true);
+    _chat.confirmPassiveDurableTail(fetched ? probe?.tail : null);
     // Only retire the pending flag on a successful read — a transient
     // failure (disconnect/network blip) must keep bypassing the runtime-
     // ownership gate on the reader's own retry, or the signal would be lost
@@ -4847,6 +5405,13 @@ class _ChatScreenState extends State<ChatScreen>
   /// Un solo valor con todo lo que está vivo: turno, tareas, compactación,
   /// segundo plano y subagentes. La pastilla y el panel se pintan desde aquí.
   ActivitySnapshot _buildActivitySnapshot() {
+    // ss1215: until the first resume/activate answer, a session that is
+    // already running on the server shows its remembered state (roster plus
+    // the last visit), so opening it never paints an empty pill first.
+    final provisional = _chat.provisionalLiveStatus;
+    if (provisional != null && provisional.turnLive && !_turnLive) {
+      return _provisionalActivitySnapshot(provisional);
+    }
     final turnActive = _turnLive;
     final activity = _chat.sessionActivity;
     final steps = turnActive
@@ -4860,10 +5425,10 @@ class _ChatScreenState extends State<ChatScreen>
       turnActive: turnActive,
       tasksActive: turnActive || _chat.remoteSurfaceOwnsLiveTurn,
       turnStartedAt: turnActive
-          ? (_turnActivityStartedAt ?? _chat.desktopTurnStartedAt)
+          ? (_chat.turnClockOrigin ?? _turnActivityStartedAt)
           : null,
       headline: turnActive ? _traceHeadline() : null,
-      waitingForUser: turnActive && _turnWaitsForUser,
+      waitingForUser: turnActive && (_turnWaitsForUser || _chat.needsInput),
       noActivityHint: turnActive && _chat.noActivityHint,
       current: steps.current,
       done: steps.done,
@@ -4882,6 +5447,34 @@ class _ChatScreenState extends State<ChatScreen>
       passiveRemote:
           _chat.hasRecentPassiveRemoteActivity ||
           _chat.safeActiveSubagentCount > 0,
+    );
+  }
+
+  ActivitySnapshot _provisionalActivitySnapshot(SessionLiveStatus status) {
+    final s = Strings.of(context);
+    final tool = status.toolLabel;
+    return ActivitySnapshot(
+      turnActive: true,
+      tasksActive: true,
+      // ps1215: the remembered turn start keeps the timer counting from the
+      // real start on reopen instead of showing no timer (or 0:00).
+      turnStartedAt: _chat.provisionalTurnStartedAt,
+      headline: switch (status.phase) {
+        SessionLivePhase.responding => s.chaPipelineStreaming,
+        SessionLivePhase.thinking => s.chaPipelineThinking,
+        _ => s.ss1215StatusWorking,
+      },
+      waitingForUser: status.phase == SessionLivePhase.waitingForUser,
+      current: tool == null
+          ? null
+          : ActivityStep(
+              id: 'ss1215-provisional',
+              kind: ActivityStepKind.tool,
+              label: tool,
+              status: ActivityStepStatus.running,
+              detail: status.toolDetail,
+            ),
+      tasks: status.tasks,
     );
   }
 
@@ -5095,7 +5688,7 @@ class _ChatScreenState extends State<ChatScreen>
   bool get _turnActivityPillRevealed {
     final startedAt = _turnActivityStartedAt;
     if (!_turnLive || startedAt == null) return false;
-    return DateTime.now().difference(startedAt) >= const Duration(seconds: 2);
+    return _chat.wallNow().difference(startedAt) >= const Duration(seconds: 2);
   }
 
   void _syncTurnActivityClock() {
@@ -5103,12 +5696,12 @@ class _ChatScreenState extends State<ChatScreen>
       // Un solo origen por turno: los tics posteriores no deben reiniciarlo o
       // el contador volvería a cero en cada herramienta.
       //
-      // Deliberadamente local y no `desktopTurnStartedAt`: ese campo pertenece
-      // al turno del runtime remoto y sobrevive a la reconciliación, así que
-      // usarlo podía pintar un contador ya en marcha (o directamente de otro
-      // turno). Tras un resume en frío esto se queda corto, lo que subestima la
-      // espera — nunca la exagera, que es el único error que alarmaría.
-      _turnActivityStartedAt ??= DateTime.now();
+      // ps1215: el origen vive en el ActiveChat, que sobrevive a salir del
+      // chat; esta pantalla solo lo lee. Antes era un campo de la pantalla y
+      // volver a entrar en un turno en marcha reiniciaba el contador a 0:00.
+      // El chat usa el inicio real del turno del gateway cuando lo conoce
+      // (snapshot de resume, `message.start`); al terminar el turno lo borra.
+      _turnActivityStartedAt = _chat.anchorTurnClock();
       return;
     }
     _turnActivityStartedAt = null;
@@ -5137,8 +5730,88 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
+  /// `toolProgress` arrives once per reasoning/thinking delta and per tool
+  /// progress tick: reasoning models stream hundreds per second. Each one used
+  /// to run the full handler (transcript projections, render invalidation and
+  /// a screen setState), so a burst cost several whole-transcript projections
+  /// per frame in a long chat. A burst is coalesced into one handler run per
+  /// frame. Any other event flushes the pending one first, so ordering is
+  /// kept and terminal/approval transitions still paint immediately; the
+  /// timer covers the case where no frame is produced (app in background).
+  ///
+  /// `subagentActivity` is coalesced too, but leading-edge: a busy child
+  /// relays several `subagent.tool`/`thinking` events per frame, yet the
+  /// first one of a frame (and the repair nudges sent as `subagentActivity`)
+  /// must still be handled synchronously so the card and the repair debounce
+  /// start from the event itself. The rest of that frame collapse into one
+  /// trailing pass. That pass is the `toolProgress` one minus the segment
+  /// boundary, so a pending `toolProgress` covers it and a pending
+  /// `subagentActivity` is upgraded when `toolProgress` joins the same frame.
+  ActiveChatEvent? _coalescedPending;
+  Timer? _toolProgressFlushTimer;
+  bool _subagentLeadingEdgeUsed = false;
+
   void _onChatEvent(ActiveChatEvent event) {
     if (_disposed || !mounted) return;
+    if (event == ActiveChatEvent.subagentActivity &&
+        !_subagentLeadingEdgeUsed &&
+        _coalescedPending == null) {
+      _subagentLeadingEdgeUsed = true;
+      SchedulerBinding.instance.scheduleFrameCallback(
+        (_) => _subagentLeadingEdgeUsed = false,
+      );
+    } else if (event == ActiveChatEvent.toolProgress ||
+        event == ActiveChatEvent.subagentActivity) {
+      final pending = _coalescedPending;
+      if (pending != null) {
+        if (event == ActiveChatEvent.toolProgress) _coalescedPending = event;
+        return;
+      }
+      _coalescedPending = event;
+      SchedulerBinding.instance.scheduleFrameCallback(
+        (_) => _flushPendingToolProgress(),
+      );
+      _toolProgressFlushTimer = Timer(
+        const Duration(milliseconds: 34),
+        _flushPendingToolProgress,
+      );
+      return;
+    }
+    _flushPendingToolProgress();
+    if (_disposed || !mounted) return;
+    _handleChatEvent(event);
+  }
+
+  void _flushPendingToolProgress() {
+    final pending = _coalescedPending;
+    if (pending == null) return;
+    _coalescedPending = null;
+    // No frame may follow (app in background): reopen the leading edge.
+    _subagentLeadingEdgeUsed = false;
+    _toolProgressFlushTimer?.cancel();
+    _toolProgressFlushTimer = null;
+    if (_disposed || !mounted) return;
+    _handleChatEvent(pending);
+  }
+
+  void _syncTransportVisibility() {
+    if (_disposed) return;
+    _transportVisibility.update(
+      status: _chat.transportStatus,
+      activeTurn: _chat.isStreaming,
+      authRequired: _chat.dashboardAuthRequired,
+      appForeground: _appInForeground,
+    );
+  }
+
+  void _onTransportVisibilityChanged() {
+    if (_disposed || !mounted) return;
+    setState(() {});
+  }
+
+  void _handleChatEvent(ActiveChatEvent event) {
+    if (_findOpen && event != ActiveChatEvent.token) _scheduleFindRefresh();
+    _syncTransportVisibility();
     // An externally observed successor can become live without a local
     // `started` event. Retire the old terminal host before publishing its
     // successor's frame, or both rows would read the same live notifier.
@@ -5151,6 +5824,8 @@ class _ChatScreenState extends State<ChatScreen>
     if (event == ActiveChatEvent.started) {
       _lastNonEmptySubagentActivities = const <SubagentActivity>[];
       _subagentPillDismissed = false;
+      // A queued model switch is applied by Hermes at this turn's start.
+      _deferredModelId = null;
     }
     _syncTurnActivityClock();
     _syncCompaction();
@@ -5234,12 +5909,19 @@ class _ChatScreenState extends State<ChatScreen>
       // puede cerrar el overlay ni programar otro scroll por fuera de ese vuelo.
       if (_messageRefreshInFlightEpoch == null) {
         _error = null;
+        // Fuera de un turno `_autoFollowStreaming` sigue en true aunque el
+        // lector haya subido: decide por la posición medida ANTES del relayout.
+        final readerWasAtBottom = _isNearBottom;
+        _resolveNewSinceYouLeft();
+        _anchorReaderAcrossServiceHydration();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           // La hidratación diferida del historial (0.20) o una compactación
           // pueden aterrizar a mitad de stream con el lector arriba. Solo
           // reengancha el fondo si el seguimiento sigue activo; si el usuario
           // pausó el seguimiento para leer, la hidratación no le roba la vista.
-          if (mounted && _autoFollowStreaming) _scrollToBottom(animate: false);
+          if (mounted && _autoFollowStreaming && readerWasAtBottom) {
+            _scrollToBottom(animate: false);
+          }
         });
       }
     }
@@ -5258,17 +5940,25 @@ class _ChatScreenState extends State<ChatScreen>
         passiveAggregate.completed,
         _chat.safeActiveSubagentCount,
       );
+      final awaitsUnseenInput = _chat.awaitsUnseenInput;
       if (contextCompacting) {
         _sessionContextAwaitingPostCompactionMetrics = true;
       }
       final invalidateAfterCompaction =
           _sessionContextAwaitingPostCompactionMetrics && !contextCompacting;
+      // md1215: config.set publishes `sessionInfo` without touching
+      // `session.info`; the pending pick must still repaint the header now.
+      final configPresentation = _sessionConfigPresentation;
       contextOnlySessionInfo =
           _desktopRuntimePresentationFingerprint != null &&
           _desktopRuntimePresentationFingerprint == presentationFingerprint &&
           _lastDesktopCompacting == compacting &&
           _lastDesktopCompressionPresentation == compressionPresentation &&
-          _activityPresentationFingerprint == activityPresentation;
+          _activityPresentationFingerprint == activityPresentation &&
+          _lastSessionConfigPresentation == configPresentation &&
+          _lastAwaitsUnseenInput == awaitsUnseenInput;
+      _lastAwaitsUnseenInput = awaitsUnseenInput;
+      _lastSessionConfigPresentation = configPresentation;
       _lastDesktopCompressionPresentation = compressionPresentation;
       _activityPresentationFingerprint = activityPresentation;
       _desktopRuntimePresentationFingerprint = presentationFingerprint;
@@ -5382,6 +6072,12 @@ class _ChatScreenState extends State<ChatScreen>
     if ((event != ActiveChatEvent.token || materializeLiveAssistant) &&
         !contextOnlySessionInfo) {
       setState(() {});
+      if (event == ActiveChatEvent.earlierMessagesLoaded) {
+        _recountNewWhileAway(olderHistoryOnly: true);
+      } else if (event != ActiveChatEvent.sessionInfo &&
+          event != ActiveChatEvent.responseMetrics) {
+        _recountNewWhileAway();
+      }
     }
     switch (event) {
       case ActiveChatEvent.started:
@@ -5874,8 +6570,17 @@ class _ChatScreenState extends State<ChatScreen>
     hermesRouteObserver.unsubscribe(this);
     // Al salir de la pantalla deja de ser la sesión visible (si lo era).
     _markChatVisible(false);
+    _persistLastRead();
     _chatSub?.cancel();
     _chatSub = null;
+    if (_chatBound) {
+      _chat.transportStatusListenable.removeListener(_syncTransportVisibility);
+    }
+    _transportVisibility.removeListener(_onTransportVisibilityChanged);
+    _transportVisibility.dispose();
+    _toolProgressFlushTimer?.cancel();
+    _toolProgressFlushTimer = null;
+    _coalescedPending = null;
     _attachmentDelivery?.removeAttachmentListener(_attachmentListener);
     _attachmentDelivery = null;
     // El modo voz YA NO se destruye al cerrar la pantalla: vive en el servicio
@@ -5889,7 +6594,12 @@ class _ChatScreenState extends State<ChatScreen>
     _stopConfirmationDismissTimer?.cancel();
     // Detén SOLO el dictado del composer (el de esta pantalla), no el TTS del
     // modo voz: ese debe seguir si está hablando en segundo plano.
+    String? dictatedDraft;
     if (_isRecording) {
+      _commitPendingDictationPartial();
+      if (_dictationBase != _dictationOriginal.trimRight()) {
+        dictatedDraft = _dictationBase;
+      }
       _sttSub?.cancel();
       _voice?.stopDictation();
     }
@@ -5920,7 +6630,7 @@ class _ChatScreenState extends State<ChatScreen>
     _streamingRevealTimer?.cancel();
     if (!_composerSubmissionInFlight && _failedTurnDiscardInFlightId == null) {
       final finalDraftSave = _saveDraftSnapshot(
-        _textController.text,
+        dictatedDraft ?? _textController.text,
         List<AttachmentDraft>.of(_pendingAttachments),
         finalDisposeSnapshot: true,
       );
@@ -5945,6 +6655,10 @@ class _ChatScreenState extends State<ChatScreen>
     _scrollController.dispose();
     _liveAssistantFrame.dispose();
     _scrollToBottomVisibility.dispose();
+    _newWhileAway.dispose();
+    _transcriptConcealed.dispose();
+    _findStatus.dispose();
+    _findActiveMessage.dispose();
     _activityPillExtent.dispose();
     _compaction.dispose();
     _sessionContextMetrics.dispose();
@@ -5956,9 +6670,13 @@ class _ChatScreenState extends State<ChatScreen>
     super.didChangeAppLifecycleState(state);
     final wasInForeground = _appInForeground;
     _appInForeground = state == AppLifecycleState.resumed;
+    if (_chatBound) _syncTransportVisibility();
     if (wasInForeground != _appInForeground) {
       _viewerAttachGeneration += 1;
       _cancelSessionContextBootstrapRetry();
+    }
+    if (!_appInForeground && (_streamingRevealTimer?.isActive ?? false)) {
+      _advanceStreamingReveal();
     }
     if (wasInForeground != _appInForeground && mounted && !_disposed) {
       setState(() {});
@@ -5977,6 +6695,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
+      _persistLastRead();
       // A setup that began while this route owned the foreground cannot regain
       // authority after an asynchronous dashboard response. This only revokes
       // the opaque preparation; an already-active opted-in conversation stays
@@ -5986,6 +6705,18 @@ class _ChatScreenState extends State<ChatScreen>
       // después de mandar la app al fondo. Persistimos el estado exacto del
       // composer (texto + adjuntos) antes de perder tiempo de ejecución.
       _draftTimer?.cancel();
+      if (_isRecording && !_transcribing) {
+        final voice = _voice;
+        if (voice != null && voice.sttRecordsThenTranscribes) {
+          // El audio ya grabado se transcribe y llega por la suscripción viva.
+          unawaited(_stopDictation());
+        } else {
+          _commitPendingDictationPartial();
+          _voice?.stopDictation();
+          _resetDictation();
+          _materializeDictation();
+        }
+      }
       if (!_composerSubmissionInFlight &&
           _failedTurnDiscardInFlightId == null) {
         unawaited(
@@ -5994,10 +6725,6 @@ class _ChatScreenState extends State<ChatScreen>
             List<AttachmentDraft>.of(_pendingAttachments),
           ),
         );
-      }
-      if (_isRecording) {
-        _voice?.stopDictation();
-        _resetDictation();
       }
     }
     // Al volver a primer plano, repinta la configuración conocida sin mutarla.
@@ -6117,6 +6844,7 @@ class _ChatScreenState extends State<ChatScreen>
       _terminalLiveHostReleasePending = false;
       if (_disposed ||
           !mounted ||
+          _findOpen ||
           _chat.isStreaming ||
           _autoFollowStreaming ||
           !_liveAssistantMaterialized ||
@@ -6221,6 +6949,7 @@ class _ChatScreenState extends State<ChatScreen>
   void _finishStreamingScrollInteraction(PointerEvent event) {
     final gestureMoved = _finishTrackedStreamingPointer(event);
     if (!_chat.isStreaming ||
+        _findOpen ||
         _autoFollowStreaming ||
         !_scrollController.hasClients) {
       return;
@@ -6317,6 +7046,10 @@ class _ChatScreenState extends State<ChatScreen>
       _liveAssistantFrame.value = null;
     }
     if (!_scrollController.hasClients) return;
+    // Already at the newest row, or bouncing past it: a jump would cut the
+    // spring (and a held drag) with a one-frame snap to the edge.
+    final position = _scrollController.position;
+    if (position.pixels <= position.minScrollExtent) return;
     if (animate && !_reduceMotion) {
       _scrollController.animateTo(
         0,
@@ -6420,7 +7153,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
     final content = (message['content'] as String?) ?? '';
     if (content.length <= _assistantChunkMaxChars ||
-        _jobChipLabel(content) != null ||
+        _jobChipLabel(content, Strings.of(context)) != null ||
         _messageKeepsLiveHost(message) ||
         (_chat.isStreaming &&
             _messages.isNotEmpty &&
@@ -6525,9 +7258,11 @@ class _ChatScreenState extends State<ChatScreen>
     _streamingViewportLock.disable();
   }
 
-  void _beginMessageRefreshViewportAnchor(int refreshEpoch) {
-    _cancelMessageRefreshViewportAnchor();
-    if (!_scrollController.hasClients || _isNearBottom) return;
+  /// Bubble closest to the centre of the viewport: the text the reader is
+  /// looking at, used to keep it in place across a transcript replacement.
+  ({Map<String, dynamic> message, RenderBox anchor})?
+  _readerViewportAnchorCandidate() {
+    if (!_scrollController.hasClients || _isNearBottom) return null;
     final viewportHeight = _scrollController.position.viewportDimension;
     Map<String, dynamic>? selectedMessage;
     RenderBox? selectedAnchor;
@@ -6551,7 +7286,16 @@ class _ChatScreenState extends State<ChatScreen>
         selectedAnchor = anchor;
       }
     }
-    if (selectedMessage == null || selectedAnchor == null) return;
+    if (selectedMessage == null || selectedAnchor == null) return null;
+    return (message: selectedMessage, anchor: selectedAnchor);
+  }
+
+  void _beginMessageRefreshViewportAnchor(int refreshEpoch) {
+    _cancelMessageRefreshViewportAnchor();
+    final candidate = _readerViewportAnchorCandidate();
+    if (candidate == null) return;
+    final selectedMessage = candidate.message;
+    final selectedAnchor = candidate.anchor;
 
     if (!_messages.any((message) => identical(message, selectedMessage))) {
       return;
@@ -6559,7 +7303,7 @@ class _ChatScreenState extends State<ChatScreen>
 
     RenderBox? lookup() {
       if (_messageRefreshAnchorEpoch != refreshEpoch) return null;
-      final message = chatRefreshFindAnchorMessage(selectedMessage!, _messages);
+      final message = chatRefreshFindAnchorMessage(selectedMessage, _messages);
       return message == null ? null : _messageAnchors[message];
     }
 
@@ -6571,6 +7315,42 @@ class _ChatScreenState extends State<ChatScreen>
     )) {
       _cancelMessageRefreshViewportAnchor();
     }
+  }
+
+  /// A transcript replaced by the service outside a screen-owned read
+  /// (resume reconciliation, another surface's finished turn, compaction)
+  /// inserts rows below the reader in the reversed list. Without an anchor the
+  /// numeric offset is kept and the text being read jumps up by the height of
+  /// the new rows. Anchor the bubble being read for the next layout only.
+  void _anchorReaderAcrossServiceHydration() {
+    if (_chat.isStreaming || _streamingViewportLock.enabled) return;
+    final candidate = _readerViewportAnchorCandidate();
+    if (candidate == null) return;
+    final selected = candidate.message;
+    final serial = ++_hydrationAnchorSerial;
+    RenderBox? lookup() {
+      if (_hydrationAnchorSerial != serial) return null;
+      final message = chatRefreshFindAnchorMessage(selected, _messages);
+      return message == null ? null : _messageAnchors[message];
+    }
+
+    _streamingViewportLock.enable();
+    if (!_streamingViewportLock.expectAnchorVisualChange(
+      candidate.anchor,
+      lookup,
+    )) {
+      _streamingViewportLock.disable();
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || _hydrationAnchorSerial != serial) return;
+      _hydrationAnchorSerial++;
+      // Another owner (a new turn, a refresh) may have taken the lock during
+      // this frame; release it only if nothing else claimed it since.
+      if (!_chat.isStreaming && _messageRefreshAnchorEpoch == null) {
+        _streamingViewportLock.disable();
+      }
+    });
   }
 
   void _releaseMessageRefreshViewportAnchorAfterLayout(int refreshEpoch) {
@@ -6664,6 +7444,9 @@ class _ChatScreenState extends State<ChatScreen>
           });
         },
       );
+      // ss1215: whatever this load proved (or failed to prove), the
+      // remembered status no longer stands in for it.
+      if (!passiveOnly) _chat.settleProvisionalLiveStatus();
       if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
         return false;
       }
@@ -6678,8 +7461,12 @@ class _ChatScreenState extends State<ChatScreen>
       } else {
         _releaseMessageRefreshViewportAnchorAfterLayout(refreshEpoch);
       }
+      // Also after a reopen painted cached rows first: the marker is resolved
+      // against the first loaded transcript, not against the cached preview.
+      _resolveNewSinceYouLeft();
       return true;
     } catch (e) {
+      if (!passiveOnly) _chat.settleProvisionalLiveStatus();
       if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
         return false;
       }
@@ -6778,17 +7565,22 @@ class _ChatScreenState extends State<ChatScreen>
     String? initialText,
     bool queueOnly = false,
   }) async {
+    // A compression in flight no longer refuses the send: `_sendMessageOnce`
+    // routes it to the queue, which holds it until the compression ends.
     if (_composerSubmissionInFlight ||
         _attachmentSubmitting ||
-        _attachmentMutationInFlight ||
-        _compressingSession) {
+        _attachmentMutationInFlight) {
       return false;
     }
     // Claim the in-flight slot BEFORE any await: two same-tick sends (double
     // tap) must never both pass the guard above and submit twice.
     _composerSubmissionInFlight = true;
+    final claim = ++_composerSubmissionClaim;
     try {
-      await _recentInterrupt.interruptBeforeSend(_chat.cancel);
+      // Queuing behind a compression must never interrupt it.
+      if (!_compressingSession) {
+        await _recentInterrupt.interruptBeforeSend(_chat.cancel);
+      }
     } catch (_) {
       if (mounted) {
         setState(() => _composerSubmissionInFlight = false);
@@ -6819,13 +7611,14 @@ class _ChatScreenState extends State<ChatScreen>
         queueOnly: queueOnly,
       );
     } finally {
+      final ownsSlot = claim == _composerSubmissionClaim;
       if (mounted) {
         setState(() {
-          _composerSubmissionInFlight = false;
+          if (ownsSlot) _composerSubmissionInFlight = false;
           if (submitsAttachment) _attachmentSubmitting = false;
         });
       } else {
-        _composerSubmissionInFlight = false;
+        if (ownsSlot) _composerSubmissionInFlight = false;
         if (submitsAttachment) _attachmentSubmitting = false;
       }
       _syncPassiveTranscriptRefresh(refreshNow: true);
@@ -6854,6 +7647,17 @@ class _ChatScreenState extends State<ChatScreen>
     final usesComposerState =
         textOverride == null || includeComposerAttachments;
     final rawComposerText = (textOverride ?? _textController.text).trim();
+    // Commands cannot wait in the queue, and running one now could start a
+    // second /compress over the one in flight. The text stays in the composer.
+    if (!skipSlashRouting &&
+        _compressingSession &&
+        rawComposerText.startsWith('/')) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(str.cq1215CommandWaitsForCompaction)),
+        kind: HermesNoticeKind.warning,
+      );
+      return false;
+    }
     if (!skipSlashRouting &&
         rawComposerText.startsWith('/') &&
         shouldRouteSlashBeforeBusyAttachmentQueue(rawComposerText)) {
@@ -6879,7 +7683,11 @@ class _ChatScreenState extends State<ChatScreen>
         return false;
       }
       if (local != null) {
-        await _executeSlash(local.command, local.arg);
+        await _executeSlash(
+          local.command,
+          local.arg,
+          fromComposerSubmission: true,
+        );
         return true;
       }
       if (!isUnavailableSlashName(invocation.name)) {
@@ -7106,10 +7914,11 @@ class _ChatScreenState extends State<ChatScreen>
     );
     final mentionAnnotation = buildBotMentionAnnotation(mentions);
     final waitsForExternalOwner = _chat.hasAuthoritativePassiveRemoteActivity;
+    final waitsForCompression = _compressingSession;
     // Every queued composer turn is written to the encrypted outbox before the
     // composer is cleared. This preserves FIFO across process death and keeps a
     // rejected head visible for explicit retry instead of dropping it.
-    if (_sending || waitsForExternalOwner) {
+    if (_sending || waitsForExternalOwner || waitsForCompression) {
       // Normal sends are next turns, never implicit steering: redirecting can
       // interrupt the live parent and its children. Steer stays a queue action.
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -7140,6 +7949,18 @@ class _ChatScreenState extends State<ChatScreen>
         _showOutboxUnavailable();
         return false;
       }
+      if (!mounted) {
+        // The route closed while the enqueue was in flight. The turn is now
+        // durable in the queue, so its saved draft must not come back on
+        // reopen as a second copy of the same prompt.
+        if (usesComposerState) {
+          await _clearQueuedDraftAfterLeaving(
+            composerTextAtSubmit,
+            attachments,
+          );
+        }
+        return true;
+      }
       if (usesComposerState &&
           _textController.text == composerTextAtSubmit &&
           _sameAttachmentDrafts(_pendingAttachments, attachments)) {
@@ -7157,7 +7978,15 @@ class _ChatScreenState extends State<ChatScreen>
       if (mounted) {
         HermesNotice.of(context)
           ..hideCurrentSnackBar()
-          ..showSnackBar(SnackBar(content: Text(str.chaSteerQueued)));
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                waitsForCompression && !_sending
+                    ? str.cq1215QueuedUntilCompacted
+                    : str.chaSteerQueued,
+              ),
+            ),
+          );
       }
       return true;
     }
@@ -7243,6 +8072,22 @@ class _ChatScreenState extends State<ChatScreen>
       _observeAttachmentDelivery(null);
       _scheduleDraftSave();
       return false;
+    }
+
+    // La outbox ya es durable: desde aquí el borrador cifrado se atribuye a
+    // este intento exacto. Si la pantalla muere antes del ACK, el ACK (o el
+    // siguiente restore) lo retira por identidad sin depender del widget.
+    if (textOverride == null &&
+        _textController.text == composerTextAtSubmit &&
+        _sameAttachmentDrafts(_pendingAttachments, attachments)) {
+      _draftTimer?.cancel();
+      unawaited(
+        _saveDraftSnapshot(
+          composerTextAtSubmit,
+          attachments,
+          submittedTurnClientTurnId: prepared.clientTurnId,
+        ),
+      );
     }
 
     if (replacesProvenRejectedProjection) {
@@ -7389,6 +8234,9 @@ class _ChatScreenState extends State<ChatScreen>
       // no pertenece al envío aceptado y nunca debe borrarse junto con él.
       _scheduleDraftSave();
     }
+    // Si la pantalla se cerró antes del ACK, `_clearDraft` no puede escribir.
+    // El borrado condicionado solo retira el lote enlazado a este turno.
+    await _clearSubmittedTurnDraft(prepared.clientTurnId);
     _preparedTurn = acceptedTurn;
 
     if (mounted) {
@@ -7621,6 +8469,9 @@ class _ChatScreenState extends State<ChatScreen>
     if (widget.connection.readOnly ||
         _editingUserMessage ||
         _compressingSession ||
+        // Queued by the gateway behind the live reply: it has no durable row
+        // yet, so a rewrite of it could only fail.
+        message['_desktopAcceptedQueued'] == true ||
         ordinal == null ||
         parsed.text.trim().isEmpty ||
         !_attachmentsCanBeReused(parsed.attachments)) {
@@ -7779,6 +8630,29 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
+  /// A failed save leaves the editor open with the rewritten text, ready to
+  /// retry or cancel, instead of closing it and losing what the user typed.
+  void _keepFailedEditOpen(String edited) {
+    if (_editingUserMessageTarget == null) {
+      _clearUserMessageEditingState();
+      _restoreFailedEditToComposer(edited);
+      return;
+    }
+    _editingUserMessageDraft = edited;
+    _editingRewriteSubmitted = false;
+  }
+
+  /// The editor already closed when the rewrite started, so a late rejection
+  /// has no editor to go back to: hand the text to an empty composer instead
+  /// of dropping it. A composer the user is already typing in is not touched.
+  void _restoreFailedEditToComposer(String edited) {
+    if (_textController.text.trim().isNotEmpty) return;
+    _textController.value = TextEditingValue(
+      text: edited,
+      selection: TextSelection.collapsed(offset: edited.length),
+    );
+  }
+
   void _cancelUserMessageEdit() {
     if (_editingRewriteSubmitted) return;
     FocusManager.instance.primaryFocus?.unfocus();
@@ -7800,7 +8674,7 @@ class _ChatScreenState extends State<ChatScreen>
         : await _resolveAttachmentsForEdit(parsed.attachments);
     if (!mounted) return;
     if (nativeAttachments == null) {
-      setState(_clearUserMessageEditingState);
+      setState(() => _keepFailedEditOpen(edited));
       HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).chaEditFailed)),
         kind: HermesNoticeKind.error,
@@ -7859,7 +8733,9 @@ class _ChatScreenState extends State<ChatScreen>
     }
     if (!mounted) return;
     setState(() {
-      if (failed || _editingMessagesSnapshot == null) {
+      if (failed) {
+        _keepFailedEditOpen(edited);
+      } else if (_editingMessagesSnapshot == null) {
         _clearUserMessageEditingState();
       }
     });
@@ -7900,6 +8776,30 @@ class _ChatScreenState extends State<ChatScreen>
         kind: HermesNoticeKind.error,
       );
     }
+  }
+
+  Future<void> _sendQueuedEntryNow(QueuedEntryView entry) async {
+    if (await _chat.sendQueuedNow(entry.id) || !mounted) return;
+    final strings = Strings.of(context);
+    _showQueueActionFailed(
+      entry.missingAttachment
+          ? strings.q1215QueueMissingAttachment
+          : strings.chaQueueSendNowFailed,
+    );
+  }
+
+  Future<void> _deleteQueuedEntry(String id) async {
+    if (await _chat.cancelQueuedByIdentity(id) || !mounted) return;
+    _showQueueActionFailed(Strings.of(context).chaQueueDeleteFailed);
+  }
+
+  void _showQueueActionFailed(String message) {
+    HermesNotice.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message)),
+        kind: HermesNoticeKind.error,
+      );
   }
 
   Future<void> _steerQueuedEntry(String id) async {
@@ -8103,7 +9003,11 @@ class _ChatScreenState extends State<ChatScreen>
   /// Ejecuta un comando slash conocido sin decidir el foco globalmente. Las
   /// rutas y superficies modales gestionan su propio foco; los errores conservan
   /// la invocación y las acciones aceptadas consumen el composer.
-  Future<void> _executeSlash(SlashCommand cmd, String arg) async {
+  Future<void> _executeSlash(
+    SlashCommand cmd,
+    String arg, {
+    bool fromComposerSubmission = false,
+  }) async {
     if (cmd.action == SlashAction.remote) {
       await _executeRemoteSlash(cmd, arg);
       return;
@@ -8127,7 +9031,10 @@ class _ChatScreenState extends State<ChatScreen>
     }
     if (cmd.action == SlashAction.compress) {
       final invocation = _textController.text;
-      final consumed = await _compressDesktopSession(arg);
+      final consumed = await _compressDesktopSession(
+        arg,
+        fromComposerSubmission: fromComposerSubmission,
+      );
       if (!mounted || !consumed) return;
       _consumeSlashInvocation(invocation);
       return;
@@ -8148,7 +9055,16 @@ class _ChatScreenState extends State<ChatScreen>
           await _setModelByName(arg.trim());
         }
       case SlashAction.skills:
-        _pushScreen(SkillsScreen(connection: widget.connection));
+        final connManager = context
+            .findAncestorStateOfType<HermesAppState>()!
+            .connManager;
+        _pushScreen(
+          buildCapabilitiesHub(
+            connection: widget.connection,
+            connManager: connManager,
+            capabilities: connManager.loadCapabilities(widget.connection.id),
+          ),
+        );
       case SlashAction.memory:
         _pushScreen(MemoryScreen(connection: widget.connection));
       case SlashAction.soul:
@@ -8159,6 +9075,8 @@ class _ChatScreenState extends State<ChatScreen>
         _pushScreen(ActivityScreen(connection: widget.connection));
       case SlashAction.kanban:
         _pushScreen(TasksScreen(connection: widget.connection));
+      case SlashAction.find:
+        _openFind(initialQuery: arg);
       case SlashAction.unavailable:
         return;
       case SlashAction.remote:
@@ -8236,7 +9154,10 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<bool> _compressDesktopSession(String focusTopic) async {
+  Future<bool> _compressDesktopSession(
+    String focusTopic, {
+    bool fromComposerSubmission = false,
+  }) async {
     if (_compressingSession) {
       _restoreComposerFocusAfterCompression();
       HermesNotice.of(context).showSnackBar(
@@ -8261,9 +9182,16 @@ class _ChatScreenState extends State<ChatScreen>
     _compressionInvocation = invocation;
     setState(() {
       _compressionCommandInFlight = true;
-      _compressionDraftFocusRetained = false;
       _slashSuggestions = const [];
       _textController.clear();
+      // From here `_compressingSession` fences the composer: what the user
+      // types next is queued behind the compression, so the submit slot that
+      // carried this `/compress` is released now instead of minutes later.
+      // Only that slot: a palette pick never owns someone else's send.
+      if (fromComposerSubmission) {
+        _composerSubmissionInFlight = false;
+        _composerSubmissionClaim++;
+      }
     });
     _syncCompaction();
     try {
@@ -8305,11 +9233,9 @@ class _ChatScreenState extends State<ChatScreen>
       final succeeded = _compressionSucceeded(result);
       _finishCompactionBar(result);
       if (!succeeded) {
-        // Dos preguntas distintas, no una: si el composer se desbloquea
-        // (`retainWhileFenced`, sin cambios: solo la ruta legacy —
-        // `compressionStatus` null — se desbloquea; un `pending` nativo
-        // fiable se queda bloqueado, igual que antes de esta noche) y si el
-        // texto se restaura. Para esto último, `compressionStatus` es la
+        // El composer ya es editable durante la compactación (lo escrito va a
+        // la cola); la única pregunta es si el texto se restaura. Para eso,
+        // `compressionStatus` es la
         // señal fiable en la ruta nativa (`pending` es lo único genuinamente
         // incierto; aborted/lock_held son un rechazo real). La ruta legacy
         // nunca la toca — ahí `accepted` es la señal: unknown == genuinamente
@@ -8319,9 +9245,7 @@ class _ChatScreenState extends State<ChatScreen>
         final fenced = result.compressionStatus != null
             ? result.compressionStatus == DesktopCompressionStatus.pending
             : result.accepted != DesktopCommandAcceptance.rejected;
-        _restoreComposerFocusAfterCompression(
-          retainWhileFenced: result.compressionStatus == null,
-        );
+        _restoreComposerFocusAfterCompression();
         if (!fenced) _restoreSlashInvocation(invocation);
       }
       return succeeded;
@@ -8357,8 +9281,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  void _restoreComposerFocusAfterCompression({bool retainWhileFenced = true}) {
-    _compressionDraftFocusRetained = retainWhileFenced;
+  void _restoreComposerFocusAfterCompression() {
     _textFocusNode.canRequestFocus = true;
     _textFocusNode.requestFocus();
     FocusManager.instance.applyFocusChangesIfNeeded();
@@ -8408,9 +9331,10 @@ class _ChatScreenState extends State<ChatScreen>
   Future<bool> _setModelByName(String arg) async {
     final q = arg.toLowerCase();
     try {
-      if (!_chat.hasDesktopRuntime &&
-          !await _chat.ensureDesktopRuntime(acquireForExplicitAction: true)) {
-        return false;
+      // Without a live runtime the lookup falls back to the other catalogs and
+      // _applyModelDirect stages or refuses exactly like the model sheet does.
+      if (!_chat.hasDesktopRuntime) {
+        await _chat.ensureDesktopRuntime(acquireForExplicitAction: true);
       }
       final (_, providers) = await _loadModelOptions();
       final matches = <(ModelProvider, String)>[];
@@ -8601,14 +9525,23 @@ class _ChatScreenState extends State<ChatScreen>
       return false;
     }
 
+    final deferred = result.deferred;
+    if (mounted) setState(() => _deferredModelId = deferred ? modelId : null);
     await _rememberSessionModel(
       provider.slug,
       modelId,
       updateEffectiveDisplay: false,
     );
     if (mounted) {
+      final name = friendlyModelName(modelId);
       HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(str.chaModelActive(friendlyModelName(modelId)))),
+        SnackBar(
+          content: Text(
+            deferred
+                ? str.md1215ModelNextMessage(name)
+                : str.chaModelActive(name),
+          ),
+        ),
       );
     }
     return true;
@@ -8864,6 +9797,7 @@ class _ChatScreenState extends State<ChatScreen>
             permissions: strings.chaPermissionsTitle,
             refresh: strings.chaUpdateTitle,
             artifacts: strings.chaArtifactsAction,
+            content: strings.sa1215ContentAction,
             details: strings.chaSessionDetailsAction,
             cron: strings.crnOpenFromConversation,
             recovery: strings.chaControlRecovery,
@@ -8873,7 +9807,7 @@ class _ChatScreenState extends State<ChatScreen>
             releaseDesktop: strings.chaControlReleaseDesktop,
             releaseUnavailable: strings.chaRuntimeReleaseUnavailable,
           ),
-          conversationTitle: widget.session.displayTitle,
+          conversationTitle: localizedSessionTitle(strings, widget.session),
           readOnly: sessionReadOnly,
           showReleaseDesktop: _chat.showReleaseToDesktopControl,
           releaseDesktopEnabled: _chat.canReleaseToDesktop,
@@ -8883,6 +9817,7 @@ class _ChatScreenState extends State<ChatScreen>
           onPermissions: () => select(_ChatControlAction.permissions),
           onRefresh: () => select(_ChatControlAction.refresh),
           onArtifacts: () => select(_ChatControlAction.artifacts),
+          onContent: () => select(_ChatControlAction.content),
           onDetails: () => select(_ChatControlAction.details),
           onCron: () => select(_ChatControlAction.cron),
           onRecovery:
@@ -8908,6 +9843,8 @@ class _ChatScreenState extends State<ChatScreen>
         if (policy != null) _showModeSheet(policy);
       case _ChatControlAction.refresh:
         unawaited(_fetchMessages());
+      case _ChatControlAction.content:
+        unawaited(_openChatContent());
       case _ChatControlAction.artifacts:
         unawaited(_showSessionArtifacts());
       case _ChatControlAction.details:
@@ -8997,6 +9934,80 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         ),
       ),
+    );
+  }
+
+  /// sa1215: per-chat «Archivos y enlaces» (Desktop Artifacts view scoped to
+  /// this conversation). Reads the loaded transcript; older pages load only
+  /// on the screen's explicit action.
+  Future<void> _openChatContent() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ChatContentScreen(
+          transcript: () => _chat.contentHistoryTranscript,
+          hasOlder: () => _chat.hasEarlierMessages,
+          loadOlder: () =>
+              _chat.loadEarlierMessages(continuePastInvisible: true),
+          onOpenFile: _openChatContentFile,
+          launchExternal: (uri) =>
+              launchUrl(uri, mode: LaunchMode.externalApplication),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openChatContentFile(ChatContentItem item) async {
+    final navigator = Navigator.of(context);
+    final value = item.value;
+    if (value.startsWith('data:')) {
+      final data = Uri.tryParse(value)?.data;
+      if (data == null || item.kind != ChatContentKind.image) {
+        throw const ChatContentUnreachable();
+      }
+      await navigator.push<void>(
+        MaterialPageRoute(
+          builder: (_) => ImageViewerScreen(
+            imageUrl: item.label,
+            imageBytes: data.contentAsBytes(),
+          ),
+        ),
+      );
+      return;
+    }
+    final reference = GeneratedMediaService.referenceFromSource(value);
+    if (reference == null) throw const ChatContentUnreachable();
+    final file = reference.sourceKind == GeneratedMediaSourceKind.https
+        ? await downloadGeneratedMedia(reference)
+        : await downloadUserServerAttachment(reference);
+    if (!mounted) return;
+    if (reference.kind == GeneratedMediaKind.image &&
+        !reference.displayName.toLowerCase().endsWith('.svg')) {
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      await navigator.push<void>(
+        MaterialPageRoute(
+          builder: (_) =>
+              ImageViewerScreen(imageUrl: file.path, imageBytes: bytes),
+        ),
+      );
+      return;
+    }
+    final length = await file.length();
+    if (!mounted) return;
+    await openArtifactViewer(
+      context,
+      name: reference.displayName,
+      mimeType: reference.mimeType,
+      file: file,
+      sizeBytes: length,
+      onOpenExternal: () => unawaited(
+        openGeneratedMediaExternally(
+          file,
+          mimeType: reference.mimeType,
+          expectedSize: length,
+        ).catchError((Object _) {}),
+      ),
+      onShare: () => unawaited(shareMediaFile(file).catchError((Object _) {})),
     );
   }
 
@@ -9128,44 +10139,249 @@ class _ChatScreenState extends State<ChatScreen>
     }
     final target = _messages[messageIndex];
     _freezeStreamingFollow();
-    final position = _scrollController.position;
-
-    Future<bool> alignIfMounted() async {
-      final anchor = _messageAnchors[target];
-      if (anchor == null || !anchor.attached) return false;
-      await scrollChatAnswerToStart(
-        anchor,
-        position,
-        duration: _reduceMotion ? Duration.zero : chatNavigationDuration,
-      );
-      return true;
-    }
-
-    if (await alignIfMounted()) return;
-    position.jumpTo(position.minScrollExtent);
-    await SchedulerBinding.instance.endOfFrame;
-    if (!mounted || !_scrollController.hasClients) return;
-    if (await alignIfMounted()) return;
-
-    for (var attempt = 0; attempt < 80; attempt++) {
-      if (!mounted || !_scrollController.hasClients) return;
-      if (position.pixels >= position.maxScrollExtent - 1) break;
-      position.jumpTo(
-        (position.pixels + position.viewportDimension * 0.9).clamp(
-          position.minScrollExtent,
-          position.maxScrollExtent,
-        ),
-      );
-      await SchedulerBinding.instance.endOfFrame;
-      if (await alignIfMounted()) return;
-    }
-
-    if (mounted) {
+    final revealed = await _revealTranscriptMessage(target);
+    if (revealed == false && mounted) {
       HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).artifactSourceUnavailable)),
         kind: HermesNoticeKind.warning,
       );
     }
+  }
+
+  /// Desplaza el historial hasta que [target] quede alineado arriba. Devuelve
+  /// true si lo alcanzó, false si recorrió todo sin materializarlo y null si la
+  /// pantalla o el scroll desaparecieron a mitad del recorrido.
+  /// [stillWanted] permite a un llamador abandonar el recorrido cuando otro
+  /// posterior (p. ej. el siguiente resultado de búsqueda) lo sustituye.
+  Future<bool?> _revealTranscriptMessage(
+    Map<String, dynamic> target, {
+    bool Function()? stillWanted,
+  }) async {
+    bool live() =>
+        mounted &&
+        _scrollController.hasClients &&
+        (stillWanted == null || stillWanted());
+    if (!live()) return null;
+    final reached = await _materializeTranscriptAnchor(
+      target,
+      stillWanted: stillWanted,
+    );
+    if (reached != true) return reached;
+    final anchor = _messageAnchors[target];
+    if (anchor == null || !anchor.attached || !live()) return null;
+    await scrollChatAnswerToStart(
+      anchor,
+      _scrollController.position,
+      duration: _reduceMotion ? Duration.zero : chatNavigationDuration,
+    );
+    return true;
+  }
+
+  /// Walks the lazy reversed history from the bottom up until [target] has a
+  /// laid-out anchor. True when it is attached (possibly without moving),
+  /// false after reaching the top without building it, null when the screen
+  /// or scroll went away or [stillWanted] withdrew the walk.
+  Future<bool?> _materializeTranscriptAnchor(
+    Map<String, dynamic> target, {
+    bool Function()? stillWanted,
+    int maxFrames = 80,
+    double Function(ScrollPosition position)? stepExtent,
+  }) async {
+    bool live() =>
+        mounted &&
+        _scrollController.hasClients &&
+        (stillWanted == null || stillWanted());
+    bool attached() => _messageAnchors[target]?.attached ?? false;
+    if (!live()) return null;
+    if (attached()) return true;
+    // Read the position after every frame: entering the chat can still swap
+    // the list's scrollable (loading state → transcript), which disposes the
+    // position a caller captured before the walk.
+    var position = _scrollController.position;
+    position.jumpTo(position.minScrollExtent);
+    await SchedulerBinding.instance.endOfFrame;
+    if (!live()) return null;
+    if (attached()) return true;
+
+    for (var attempt = 0; attempt < maxFrames; attempt++) {
+      if (!live()) return null;
+      position = _scrollController.position;
+      if (position.pixels >= position.maxScrollExtent - 1) break;
+      final step =
+          stepExtent?.call(position) ?? position.viewportDimension * 0.9;
+      position.jumpTo(
+        (position.pixels + step).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        ),
+      );
+      await SchedulerBinding.instance.endOfFrame;
+      if (!live()) return null;
+      if (attached()) return true;
+    }
+    return false;
+  }
+
+  void _openFind({String initialQuery = ''}) {
+    if (_findOpen) {
+      if (initialQuery.trim().isNotEmpty) _applyFindQuery(initialQuery);
+      return;
+    }
+    // Suspende el seguimiento del fondo con la misma ruta que un lector que
+    // pausa el stream con el dedo; en reposo basta con desactivar la bandera.
+    _freezeStreamingFollow();
+    setState(() {
+      _findOpen = true;
+      _findInitialQuery = initialQuery.trim();
+      _autoFollowStreaming = false;
+    });
+    if (_findInitialQuery.isNotEmpty) _applyFindQuery(_findInitialQuery);
+  }
+
+  void _closeFind() {
+    if (!_findOpen) return;
+    _findEpoch++;
+    _findQuery = '';
+    _findMatches = const [];
+    _findMatchMessages = const [];
+    _findIndex.clear();
+    _findStatus.value = const ChatFindStatus();
+    _findActiveMessage.value = null;
+    setState(() => _findOpen = false);
+    // Restaura el comportamiento normal: quien está en el fondo vuelve a
+    // seguirlo; quien quedó leyendo arriba conserva su vista y la flecha.
+    if (!_isNearBottom) {
+      _showScrollToBottom = true;
+      return;
+    }
+    if (_chat.isStreaming) {
+      _streamingViewportLock.disable();
+      _autoFollowStreaming = true;
+      _revealedChars = _chat.assistantContent.length;
+      _showScrollToBottom = false;
+      _publishLiveAssistantFrame();
+      _scheduleLiveFollowFrame();
+    } else if (_liveAssistantMaterialized) {
+      _scheduleTerminalLiveHostRelease();
+    } else {
+      _autoFollowStreaming = true;
+    }
+  }
+
+  bool _findRefreshScheduled = false;
+
+  void _scheduleFindRefresh() {
+    if (_findRefreshScheduled) return;
+    _findRefreshScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _findRefreshScheduled = false;
+      if (_disposed || !mounted || !_findOpen) return;
+      _recomputeFindMatches(keepCurrent: true);
+    });
+  }
+
+  void _recomputeFindMatches({required bool keepCurrent}) {
+    final previousStatus = _findStatus.value;
+    final previousIndex = previousStatus.current;
+    final previousMessage = previousIndex == null
+        ? null
+        : _findMatchMessages[previousIndex];
+    final previousMatch = previousIndex == null
+        ? null
+        : _findMatches[previousIndex];
+    final messages = _messages;
+    final matches = _findIndex.search(messages, _findQuery);
+    _findMatches = matches;
+    _findMatchMessages = [for (final m in matches) messages[m.messageIndex]];
+    int? current = matches.isEmpty ? null : 0;
+    if (keepCurrent && previousMessage != null && previousMatch != null) {
+      for (var i = 0; i < matches.length; i++) {
+        if (identical(_findMatchMessages[i], previousMessage) &&
+            matches[i].start == previousMatch.start) {
+          current = i;
+          break;
+        }
+      }
+    }
+    _publishFindStatus(current);
+  }
+
+  void _publishFindStatus(int? current, {bool searchingOlder = false}) {
+    _findStatus.value = ChatFindStatus(
+      query: _findQuery,
+      total: _findMatches.length,
+      current: current,
+      canSearchOlder: _chat.hasEarlierMessages,
+      searchingOlder: searchingOlder,
+    );
+    _findActiveMessage.value = current == null
+        ? null
+        : _findMatchMessages[current];
+  }
+
+  void _applyFindQuery(String query) {
+    if (!_findOpen) return;
+    _findEpoch++;
+    _findQuery = query;
+    _recomputeFindMatches(keepCurrent: false);
+    unawaited(_revealCurrentFindMatch());
+  }
+
+  Future<void> _revealCurrentFindMatch() async {
+    final current = _findStatus.value.current;
+    if (current == null) return;
+    final epoch = _findEpoch;
+    final source = _findMatchMessages[current];
+    final projection = _currentRenderProjection;
+    final messages = _messages;
+    var target = source;
+    final sourceIndex = messages.indexWhere((m) => identical(m, source));
+    if (sourceIndex >= 0) {
+      final renderIndex = projection.nearestRenderableMessageIndex(sourceIndex);
+      if (renderIndex != null) target = messages[renderIndex];
+    }
+    if (epoch != _findEpoch) return;
+    await _revealTranscriptMessage(
+      target,
+      stillWanted: () => _findOpen && epoch == _findEpoch,
+    );
+  }
+
+  void _stepFindMatch(int delta) {
+    final status = _findStatus.value;
+    final current = status.current;
+    if (current == null || status.total == 0) return;
+    _findEpoch++;
+    _publishFindStatus((current + delta) % status.total);
+    unawaited(_revealCurrentFindMatch());
+  }
+
+  /// Pagina historial anterior (la misma paginación del botón «cargar
+  /// anteriores») hasta encontrar la consulta o agotar el historial.
+  Future<void> _searchOlderFindMessages() async {
+    if (!_findOpen || _findQuery.trim().isEmpty) return;
+    final epoch = ++_findEpoch;
+    _publishFindStatus(null, searchingOlder: true);
+    while (mounted &&
+        !_disposed &&
+        _findOpen &&
+        epoch == _findEpoch &&
+        _chat.hasEarlierMessages) {
+      final before = _messages.length;
+      await _loadEarlierMessages();
+      if (!mounted || _disposed || !_findOpen || epoch != _findEpoch) return;
+      _findMatches = _findIndex.search(_messages, _findQuery);
+      if (_findMatches.isNotEmpty) break;
+      // Sin progreso (fallo de red): no reintentes en bucle.
+      if (_messages.length == before) break;
+    }
+    if (!mounted || _disposed || !_findOpen || epoch != _findEpoch) return;
+    _recomputeFindMatches(keepCurrent: false);
+    // Deja que la carga conserve primero el viewport del lector (su ajuste
+    // post-frame) y solo entonces recorre la lista hasta el resultado.
+    await SchedulerBinding.instance.endOfFrame;
+    if (!mounted || _disposed || !_findOpen || epoch != _findEpoch) return;
+    unawaited(_revealCurrentFindMatch());
   }
 
   bool _isSubagentOpenPending(SubagentActivity activity) {
@@ -9317,7 +10533,9 @@ class _ChatScreenState extends State<ChatScreen>
         context: context,
         builder: (_) => AlertDialog(
           title: Text(s.sesDeleteTitle),
-          content: Text(s.sesDeleteContent(widget.session.displayTitle)),
+          content: Text(
+            s.sesDeleteContent(localizedSessionTitle(s, widget.session)),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -9341,7 +10559,7 @@ class _ChatScreenState extends State<ChatScreen>
       final verified = await LockScreen.verify(
         context,
         lock,
-        reason: s.sesDeleteContent(widget.session.displayTitle),
+        reason: s.sesDeleteContent(localizedSessionTitle(s, widget.session)),
       );
       if (!verified || !mounted || isReadOnly()) return;
     }
@@ -9458,14 +10676,17 @@ class _ChatScreenState extends State<ChatScreen>
   /// Cabecera de la ThinkingTraceCard mientras aún no hay herramientas.
   String _traceHeadline() {
     final s = Strings.of(context);
+    // ss1215: the headline only speaks when no step is running (a running
+    // tool names itself). «Ejecutando herramientas…» with none listed read
+    // as a pill out of sync with its own panel; between steps the agent is
+    // thinking, as the list and Home say.
     final activityHeadline = switch (_pipelineState) {
       ChatPipelineState.connecting => s.chaPipelineConnecting,
-      ChatPipelineState.executing => s.chaPipelineExecuting,
       ChatPipelineState.streaming => s.chaPipelineStreaming,
       _ => s.chaPipelineThinking,
     };
     return chatActivityHeadlineForTransport(
-      status: _chat.transportStatus,
+      transportLossVisible: _transportVisibility.visible,
       authRequired: _chat.dashboardAuthRequired,
       activityHeadline: activityHeadline,
       reconnectingHeadline: s.chaConnectionLostReconnecting,
@@ -10002,11 +11223,16 @@ class _ChatScreenState extends State<ChatScreen>
         },
         drawer: dedicatedChrome || connManager == null
             ? null
-            : HermesDrawer(
-                connection: widget.connection,
-                connManager: connManager,
-                current: DrawerSection.chat,
-                connected: true,
+            // The header/Bots dot mirror the live chat transport instead of
+            // always claiming the instance is online.
+            : ValueListenableBuilder<ChatTransportStatus>(
+                valueListenable: _chat.transportStatusListenable,
+                builder: (context, transport, _) => HermesDrawer(
+                  connection: widget.connection,
+                  connManager: connManager,
+                  current: DrawerSection.chat,
+                  connected: transport.isConnected,
+                ),
               ),
         appBar: HermesAppBar(
           centerTitle: !dedicatedChrome,
@@ -10084,6 +11310,18 @@ class _ChatScreenState extends State<ChatScreen>
                                   ),
                                 ),
                               ),
+                              if (_modelChangePending) ...[
+                                const SizedBox(width: 5),
+                                Tooltip(
+                                  key: const ValueKey('md1215-model-pending'),
+                                  message: str.md1215ModelPending,
+                                  child: Icon(
+                                    Icons.schedule_rounded,
+                                    size: 14,
+                                    color: colors.textSecondary,
+                                  ),
+                                ),
+                              ],
                               const SizedBox(width: 3),
                               Icon(
                                 Icons.expand_more_rounded,
@@ -10118,6 +11356,8 @@ class _ChatScreenState extends State<ChatScreen>
                     icon: const Icon(Icons.more_vert_rounded),
                     onSelected: (action) {
                       switch (action) {
+                        case _BotChatHeaderAction.find:
+                          _openFind();
                         case _BotChatHeaderAction.model:
                           _showModelSheet();
                         case _BotChatHeaderAction.controls:
@@ -10125,6 +11365,23 @@ class _ChatScreenState extends State<ChatScreen>
                       }
                     },
                     itemBuilder: (context) => [
+                      PopupMenuItem(
+                        key: const ValueKey('bot-chat-find-action'),
+                        value: _BotChatHeaderAction.find,
+                        child: Row(
+                          children: [
+                            const Icon(Icons.search_rounded, size: 20),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                str.cs1215FindAction,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                       PopupMenuItem(
                         key: const ValueKey('bot-chat-model-action'),
                         value: _BotChatHeaderAction.model,
@@ -10184,7 +11441,12 @@ class _ChatScreenState extends State<ChatScreen>
                         : colors.textSecondary,
                     onPressed: _newChat,
                   ),
-                  const SizedBox(width: 4),
+                  IconButton(
+                    key: const ValueKey('chat-find-trigger'),
+                    icon: const Icon(Icons.search_rounded),
+                    tooltip: str.cs1215FindAction,
+                    onPressed: _openFind,
+                  ),
                   IconButton(
                     key: const ValueKey('chat-control-trigger'),
                     icon: const Icon(Icons.more_vert),
@@ -10228,6 +11490,7 @@ class _ChatScreenState extends State<ChatScreen>
                             valueListenable: _chat.transportStatusListenable,
                             builder: (_, status, _) =>
                                 ChatConnectionRecoveryRow(
+                                  visibility: _transportVisibility,
                                   status: status,
                                   activeTurn: _chat.isStreaming,
                                   authRequired: _chat.dashboardAuthRequired,
@@ -10238,6 +11501,13 @@ class _ChatScreenState extends State<ChatScreen>
                                   recoveredLabel: str.chaConnectionRecovered,
                                 ),
                           ),
+                          if (_chat.awaitsUnseenInput)
+                            _AwaitingUnseenInputNotice(
+                              message: str.cr1215AwaitingUnseenInput,
+                              actionLabel: str.cr1215ShowQuestion,
+                              onShow: () =>
+                                  unawaited(_chat.rehydrateOpenRequests()),
+                            ),
                           if (_chat.localTranscriptTruncationNoticeVisible)
                             _LocalTranscriptTruncationNotice(
                               message: str.chaLocalTranscriptTruncated,
@@ -10255,6 +11525,17 @@ class _ChatScreenState extends State<ChatScreen>
                               onDismiss: () => setState(
                                 () => _coreReadCoverageNoticeDismissed = true,
                               ),
+                            ),
+                          if (_findOpen)
+                            ChatFindBar(
+                              status: _findStatus,
+                              initialQuery: _findInitialQuery,
+                              onQueryChanged: _applyFindQuery,
+                              onOlder: () => _stepFindMatch(1),
+                              onNewer: () => _stepFindMatch(-1),
+                              onSearchOlderMessages: () =>
+                                  unawaited(_searchOlderFindMessages()),
+                              onClose: _closeFind,
                             ),
                           Expanded(
                             child: Stack(
@@ -10354,6 +11635,8 @@ class _ChatScreenState extends State<ChatScreen>
                                                         key: const ValueKey(
                                                           'chat-scroll-to-bottom',
                                                         ),
+                                                        newMessages:
+                                                            _newWhileAway,
                                                         onTap: _scrollToBottom,
                                                       ),
                                                     ),
@@ -10386,6 +11669,9 @@ class _ChatScreenState extends State<ChatScreen>
                                               snapshot:
                                                   _buildActivitySnapshot(),
                                               actions: _buildActivityActions(),
+                                              // ps1215: the same clock the
+                                              // chat measures the turn with.
+                                              clock: _chat.wallNow,
                                               suspended: _slashPaletteVisible,
                                             ),
                                             KeyedSubtree(
@@ -10467,10 +11753,6 @@ class _ChatScreenState extends State<ChatScreen>
                                                     _confirmInterruptSubagent,
                                               ),
                                             ),
-                                            // Nearest the composer: the
-                                            // compaction pill, padded into
-                                            // the same measured gap.
-                                            _buildCompactionPill(),
                                           ],
                                         ),
                                       ),
@@ -11257,7 +12539,7 @@ class _ChatScreenState extends State<ChatScreen>
                                       provider: p,
                                       modelId: modelId,
                                       isActive:
-                                          _selectedProvider == p.slug &&
+                                          _isSelectedProvider(p.slug) &&
                                           _selectedModel == modelId,
                                     ),
                                 ],
@@ -11345,6 +12627,13 @@ class _ChatScreenState extends State<ChatScreen>
           : () => _applyModel(sheetCtx, setSheet, provider, modelId),
     );
   }
+
+  /// md1215: `session.info` names a user-defined endpoint `custom:<key>`
+  /// while its catalog row uses the bare key; resolve through the catalog's
+  /// aliases like Desktop does so the active row is recognised.
+  bool _isSelectedProvider(String slug) =>
+      _selectedProvider == slug ||
+      _desktopModelCatalog?.providerFor(_selectedProvider)?.slug == slug;
 
   /// Cambia el modelo del runtime actual o lo captura para el primer submit.
   Future<void> _applyModel(
@@ -11606,11 +12895,33 @@ class _ChatScreenState extends State<ChatScreen>
   String _dictationBase = '';
   String _dictationOriginal = '';
   bool _dictationSendInFlight = false;
+  bool _dictationStarting = false;
   Completer<void>? _dictationCompletion;
+
+  /// Plazo máximo para recibir el final tras pulsar parar. Los motores que
+  /// graban y transcriben al parar (Whisper local, servidor Hermes) tardan lo
+  /// que dure el audio y ya acotan su propia transcripción; cortar antes
+  /// descartaba lo dictado con un falso «no se reconoció voz».
+  Duration _dictationStopBudget(VoiceService voice) =>
+      voice.sttRecordsThenTranscribes
+      ? const Duration(minutes: 3)
+      : const Duration(seconds: 4);
 
   Future<void> _startDictation() async {
     final voice = _voice;
     if (voice == null) return;
+    // Los `await` previos a escuchar dejan el micro pulsable: un segundo toque
+    // abría otra escucha y dejaba la primera huérfana.
+    if (_dictationStarting || _isRecording) return;
+    _dictationStarting = true;
+    try {
+      await _startDictationGuarded(voice);
+    } finally {
+      _dictationStarting = false;
+    }
+  }
+
+  Future<void> _startDictationGuarded(VoiceService voice) async {
     final perf = Stopwatch()..start();
     debugPrint('[VOICE-PERF] dictation.button.tap');
     // Cancela cualquier red de seguridad pendiente del dictado ANTERIOR: si no,
@@ -11669,6 +12980,9 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
     if (!await voice.prepareForMicrophoneCapture()) return;
+    // The STT check can wait on the runtime permission prompt. If the chat
+    // closed meanwhile, never open a capture nobody owns or can stop.
+    if (!mounted || _disposed) return;
     // El dictado transforma el mismo composer sin desmontar su TextField. Si el
     // teclado ya estaba abierto conserva la conexión IME; tocar el micrófono no
     // debe cerrarlo ni abrirlo por sorpresa.
@@ -11745,7 +13059,7 @@ class _ChatScreenState extends State<ChatScreen>
   /// (_dictationBase = texto actual al arrancar). Así el micro no "sigue
   /// escribiendo" solo con alucinaciones del STT sobre ruido/silencio.
   void _onDictationSegmentDone() {
-    if (!_isRecording && !_transcribing) return;
+    if (!mounted || (!_isRecording && !_transcribing)) return;
     _commitPendingDictationPartial();
     _resetDictation();
     _materializeDictation();
@@ -11764,7 +13078,27 @@ class _ChatScreenState extends State<ChatScreen>
     _textController.selection = TextSelection.collapsed(offset: text.length);
   }
 
-  void _materializeDictation() => _setComposerText(_dictationBase);
+  /// Vuelca lo dictado al composer. Si el usuario escribió mientras el motor
+  /// grababa o esperaba al servidor, su texto se conserva y lo dictado se
+  /// inserta en el punto donde empezó el dictado; reemplazarlo por
+  /// [_dictationBase] borraba lo tecleado durante una transcripción lenta.
+  void _materializeDictation() {
+    final current = _textController.text;
+    final origin = _dictationOriginal.trimRight();
+    var text = _dictationBase;
+    if (current != _dictationOriginal) {
+      final dictated = _dictationBase.startsWith(origin)
+          ? _dictationBase.substring(origin.length).trim()
+          : _dictationBase.trim();
+      if (!current.startsWith(origin)) {
+        text = _joinDictation(current, dictated);
+      } else {
+        final typed = current.substring(origin.length).trim();
+        text = _joinDictation(_joinDictation(origin, dictated), typed);
+      }
+    }
+    _setComposerText(text);
+  }
 
   /// Si el motor cierra sin emitir un resultado final, usa el último parcial
   /// retenido en memoria. El usuario solo lo ve después de parar.
@@ -11796,7 +13130,7 @@ class _ChatScreenState extends State<ChatScreen>
     // El fallback empieza antes de esperar al motor: un backend que tarda en
     // cerrar no puede dejar la fila de dictado bloqueada indefinidamente.
     _stopFallback?.cancel();
-    _stopFallback = Timer(const Duration(seconds: 4), () {
+    _stopFallback = Timer(_dictationStopBudget(voice), () {
       if (mounted && (_isRecording || _transcribing)) {
         _commitPendingDictationPartial();
         _resetDictation();
@@ -11841,8 +13175,12 @@ class _ChatScreenState extends State<ChatScreen>
         }
       }
       if (completion != null && !completion.isCompleted) {
+        final voice = _voice;
         await completion.future.timeout(
-          const Duration(milliseconds: 4300),
+          (voice == null
+                  ? const Duration(seconds: 4)
+                  : _dictationStopBudget(voice)) +
+              const Duration(milliseconds: 300),
           onTimeout: () {
             if (mounted && (_isRecording || _transcribing)) {
               _commitPendingDictationPartial();
@@ -12829,8 +14167,22 @@ class _ChatScreenState extends State<ChatScreen>
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        _chat.queueParked
+                        _chat.queueParkedAfterCompression
+                            ? Strings.of(
+                                context,
+                              ).cq1215QueueParkedAfterCompaction
+                            // A stuck head is the more useful note: resuming a
+                            // queue from a previous run would not send it either.
+                            : _chat.queueParkedFromPreviousSession &&
+                                  !_queueHeadStuck(queuedEntries)
+                            ? Strings.of(
+                                context,
+                              ).lo1216QueueParkedFromPreviousSession
+                            : _chat.queueParked &&
+                                  !_chat.queueParkedFromPreviousSession
                             ? Strings.of(context).chaQueueParkedNote
+                            : _queueHeadStuck(queuedEntries)
+                            ? Strings.of(context).q1215QueueHeadStuckNote
                             : Strings.of(context).chaQueuedNote,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -12856,7 +14208,7 @@ class _ChatScreenState extends State<ChatScreen>
               alignment: Alignment.centerRight,
               child: TextButton.icon(
                 key: const ValueKey('chat-queue-resume'),
-                onPressed: _chat.resumeParkedQueue,
+                onPressed: _resumeParkedQueue,
                 icon: const Icon(Icons.play_arrow_rounded),
                 label: Text(Strings.of(context).chaQueueResume),
                 style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
@@ -12881,10 +14233,11 @@ class _ChatScreenState extends State<ChatScreen>
                 onSteer: () =>
                     unawaited(_steerQueuedEntry(queuedEntries[i].id)),
                 onSendNow: () =>
-                    unawaited(_chat.sendQueuedNow(queuedEntries[i].id)),
-                onDelete: () => unawaited(
-                  _chat.cancelQueuedByIdentity(queuedEntries[i].id),
-                ),
+                    unawaited(_sendQueuedEntryNow(queuedEntries[i])),
+                onDelete: () =>
+                    unawaited(_deleteQueuedEntry(queuedEntries[i].id)),
+                onAbandon: () =>
+                    unawaited(_abandonUncertainQueued(queuedEntries[i])),
               ),
               if (i != queuedEntries.length - 1)
                 Divider(
@@ -12898,6 +14251,45 @@ class _ChatScreenState extends State<ChatScreen>
         ],
       ),
     );
+  }
+
+  /// Nothing is running and the first queued row will not go on its own
+  /// (unconfirmed, left over from an earlier run, attachment missing, retries
+  /// used up). The header must not promise it will be sent "when the turn
+  /// ends". A row merely `blocked` may have a retry scheduled, so it does not
+  /// count by itself.
+  bool _queueHeadStuck(List<QueuedEntryView> entries) {
+    if (_chat.isStreaming || entries.isEmpty) return false;
+    final head = entries.first;
+    if (head.kind == QueuedEntryKind.desktopAccepted) return false;
+    final retryKey = head.id.startsWith('prepared:')
+        ? head.id.substring('prepared:'.length)
+        : head.id;
+    return head.stopWaitingAvailable ||
+        head.missingAttachment ||
+        _chat.queuedRetriesExhausted.contains(retryKey);
+  }
+
+  Future<void> _abandonUncertainQueued(QueuedEntryView entry) async {
+    final strings = Strings.of(context);
+    final confirmed = await showHermesConfirmDialog(
+      context: context,
+      title: strings.chatQueueAbandonTitle,
+      message: entry.serverAccepted
+          ? strings.q1215QueueAbandonAcceptedBody
+          : strings.chatQueueAbandonBody,
+      confirmLabel: strings.chatQueueAbandonConfirm,
+      cancelLabel: strings.commonCancel,
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+    if (await _chat.abandonUncertainQueuedTurn(entry.id) || !mounted) return;
+    _showQueueActionFailed(Strings.of(context).q1215QueueAbandonFailed);
+  }
+
+  void _resumeParkedQueue() {
+    if (_chat.resumeParkedQueue()) return;
+    _showQueueActionFailed(Strings.of(context).q1215QueueResumeFailed);
   }
 
   ConsoleComposerDictation _composerDictation({
@@ -13156,18 +14548,17 @@ class _ChatScreenState extends State<ChatScreen>
           ? Strings.of(context).botChatComposerHint(_botDisplayName!)
           : Strings.of(context).chaHintUser,
       onKeyboardSubmit: _composerKeyboardSubmit,
-      onContentInserted: (content) =>
-          unawaited(_insertKeyboardContent(content)),
-      // A retained invocation may keep focus without authorizing edits or a
-      // second submission.
-      fieldReadOnly: _compressingSession,
-      // El usuario puede preparar texto y abrir el teclado mientras el
-      // transcript interactivo termina de publicar. El envío se mantiene
-      // bloqueado hasta entonces; adjuntar y dictar siguen cerrados porque
-      // mezclarían el lote en vuelo.
-      fieldEnabled:
-          !_attachmentSubmitting &&
-          (!_compressingSession || _compressionDraftFocusRetained),
+      // Pegar una imagen desde el teclado es adjuntar: cerrado mientras
+      // compacta, igual que el `+`.
+      onContentInserted: _compressingSession
+          ? null
+          : (content) => unawaited(_insertKeyboardContent(content)),
+      // Mientras compacta se puede escribir y poner en cola el siguiente
+      // turno; la cola lo retiene hasta que termine. La invocación `/compress`
+      // ya salió del composer y un comando escrito ahora no se ejecuta
+      // (`_sendMessageOnce`), así que no hay segundo envío. Adjuntar y dictar
+      // siguen cerrados porque mezclarían el lote en vuelo.
+      fieldEnabled: !_attachmentSubmitting,
       voiceModeAction: _composerVoiceModeAction(colors, showStop),
       showStop: showStop,
       // Sin lanzadera mientras compacta: la barra de compactación sobre el
@@ -13181,11 +14572,13 @@ class _ChatScreenState extends State<ChatScreen>
           !_interactiveMessageRefreshPending &&
           !_composerSubmissionInFlight &&
           !_attachmentSubmitting &&
-          !_compressingSession &&
           !_attachmentMutationInFlight &&
           !_nothingToSend,
       onSend: (_, _) => _sendMessage(),
-      onQueue: _sending || _chat.hasAuthoritativePassiveRemoteActivity
+      onQueue:
+          _sending ||
+              _chat.hasAuthoritativePassiveRemoteActivity ||
+              _compressingSession
           ? () => _sendMessage(queueOnly: true)
           : null,
       onStop: _cancelStream,
@@ -13193,54 +14586,20 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  /// Pastilla de compactación: vive en la pila flotante del transcript, justo
-  /// encima del composer, así que el transcript reserva su alto medido y
-  /// nunca tapa el último mensaje ni el composer. Entra y sale con un fundido.
-  Widget _buildCompactionPill() {
-    final compaction =
-        _compaction.current ??
-        (_compressingSession || _chat.desktopRestoredCompressionRunning
-            ? CompactionProgress(
-                startedAt: _chat.desktopCompactionStartedAt ?? DateTime.now(),
-                manual: true,
-                messagesBefore: _chat.desktopCompactionMessagesBefore,
-                tokensBefore: _chat.desktopCompactionTokensBefore,
-              )
-            : null);
-    return AnimatedSwitcher(
-      duration: _reduceMotion
-          ? Duration.zero
-          : const Duration(milliseconds: 220),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, animation) => FadeTransition(
-        opacity: animation,
-        child: ScaleTransition(
-          scale: Tween<double>(begin: 0.96, end: 1).animate(animation),
-          child: child,
-        ),
-      ),
-      layoutBuilder: (current, previous) => Stack(
-        alignment: Alignment.bottomCenter,
-        children: [...previous, ?current],
-      ),
-      child: compaction == null
-          ? const SizedBox.shrink(key: ValueKey('compaction-pill-empty'))
-          // One key for live and done: the pill morphs in place (no
-          // cross-fade between two pills); only appearing/leaving animates.
-          : Padding(
-              key: const ValueKey('compaction-pill'),
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-              child: AnimatedSize(
-                duration: _reduceMotion
-                    ? Duration.zero
-                    : const Duration(milliseconds: 200),
-                curve: Curves.easeOutCubic,
-                child: CompactionDock(compaction: compaction),
-              ),
-            ),
-    );
-  }
+  /// Compactación en curso o recién terminada, o `null`. Se pinta dentro de
+  /// la mini píldora de contexto+modo bajo el composer (tp1216), no en una
+  /// pastilla flotante aparte.
+  CompactionProgress? get _visibleCompaction =>
+      _compaction.current ??
+      (_chatBound &&
+              (_compressingSession || _chat.desktopRestoredCompressionRunning)
+          ? CompactionProgress(
+              startedAt: _chat.desktopCompactionStartedAt ?? DateTime.now(),
+              manual: true,
+              messagesBefore: _chat.desktopCompactionMessagesBefore,
+              tokensBefore: _chat.desktopCompactionTokensBefore,
+            )
+          : null);
 
   /// Píldora combinada contexto+modo flotando bajo el composer (ver mockup
   /// aprobado "v8 · estado debajo del input"): sustituye a los antiguos
@@ -13249,8 +14608,17 @@ class _ChatScreenState extends State<ChatScreen>
   /// Sigue abriendo el mismo `showSessionContextPopover`; la sección de modo
   /// se reutiliza de `_buildApprovalModeSection` en vez de duplicarla.
   Widget _buildFloatingStatusPill(HermesThemeColors colors) {
+    final compaction = _visibleCompaction;
     if (_isBotChatSurface) {
-      return const SizedBox.shrink();
+      // Sin píldora de contexto: la compactación nunca se queda sin señal.
+      return compaction == null
+          ? const SizedBox.shrink()
+          : Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Center(
+                child: CompactionInlineIndicator(compaction: compaction),
+              ),
+            );
     }
     final flag = _modeFlag(colors);
     return Padding(
@@ -13270,6 +14638,7 @@ class _ChatScreenState extends State<ChatScreen>
           compressionCount: _chatBound
               ? _chat.desktopSessionCompressionCount
               : 0,
+          compaction: compaction,
         ),
       ),
     );
@@ -13402,6 +14771,7 @@ class _ChatScreenState extends State<ChatScreen>
         child: _EmptyChatState(
           model: _activeModelLabel,
           agentName: _assistantName,
+          workspace: _newChatWorkspace,
         ),
       );
     }
@@ -13468,10 +14838,30 @@ class _ChatScreenState extends State<ChatScreen>
                 _readerPreservedTurnInsertions.contains,
               );
               final unit = _materializeRenderUnit(plan);
-              final child = _buildRenderUnit(
-                unit,
-                assistantSlice: assistantSlice,
+              Widget child = _wrapFindHighlight(
+                _buildRenderUnit(unit, assistantSlice: assistantSlice),
+                unit: unit,
+                sourceMessages: sourceMessages,
               );
+              if (_newSinceFirstUnread != null &&
+                  (assistantSlice?.showHeader ?? true) &&
+                  sourceMessages.any(_isNewSinceFirstUnread)) {
+                // Inside the row (not a list entry of its own): indices and
+                // the reader anchors keep their slots, and the landing jump
+                // aligns the divider with the top of the screen.
+                child = Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    RoomSeparator(
+                      key: const ValueKey('chat-new-since-divider'),
+                      label: Strings.of(context).sc1215NewSinceYouLeft,
+                      highlight: true,
+                    ),
+                    child,
+                  ],
+                );
+              }
               final assistantMessage =
                   unit is Map<String, dynamic> &&
                       unit['role'] == 'assistant' &&
@@ -13575,7 +14965,50 @@ class _ChatScreenState extends State<ChatScreen>
       onDismissError: () => setState(() => _refreshErrorNoticeDismissed = true),
       // Bajo el botón «cargar anteriores» (8 + 48 + 8) cuando está a la vista.
       errorTopInset: _chat.hasEarlierMessages ? 64 : 8,
-      child: transcript,
+      // Always in the tree so hiding never rebuilds the list or loses its
+      // scroll position; laid out while hidden so the landing walk can build
+      // rows, but neither painted nor touchable.
+      child: ValueListenableBuilder<bool>(
+        valueListenable: _transcriptConcealed,
+        builder: (context, concealed, child) => Visibility(
+          visible: !concealed,
+          maintainState: true,
+          maintainAnimation: true,
+          maintainSize: true,
+          child: child!,
+        ),
+        child: transcript,
+      ),
+    );
+  }
+
+  /// Resaltado del resultado actual de la búsqueda. Envuelve solo el
+  /// contenido de filas estables: el host vivo del streaming queda fuera para
+  /// no interponer nada en la geometría que mide el lock del viewport.
+  Widget _wrapFindHighlight(
+    Widget child, {
+    required Object unit,
+    required List<Map<String, dynamic>> sourceMessages,
+  }) {
+    if (!_findOpen) return child;
+    final messages = _messages;
+    if (_chat.isStreaming &&
+        messages.isNotEmpty &&
+        identical(unit, messages.first)) {
+      return child;
+    }
+    if (unit is Map<String, dynamic> && _messageKeepsLiveHost(unit)) {
+      return child;
+    }
+    return ValueListenableBuilder<Map<String, dynamic>?>(
+      valueListenable: _findActiveMessage,
+      builder: (context, active, child) => ChatFindMatchHighlight(
+        active:
+            active != null && sourceMessages.any((m) => identical(m, active)),
+        semanticLabel: Strings.of(context).cs1215CurrentMatchLabel,
+        child: child!,
+      ),
+      child: child,
     );
   }
 
@@ -13666,12 +15099,12 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   bool get _turnWaitsForUser =>
-      _chat.pendingApproval != null || _chat.pendingInteractivePrompt != null;
+      _chat.pendingApproval != null ||
+      _chat.pendingInteractivePrompt != null ||
+      _chat.awaitsUnseenInput;
 
   HermesSparkMood _liveCompanionMood() {
-    final transport = _chat.transportStatus.state;
-    if (transport == ChatTransportState.offline ||
-        transport == ChatTransportState.reconnecting) {
+    if (_transportVisibility.visible && !_chat.dashboardAuthRequired) {
       return HermesSparkMood.offline;
     }
     if (_turnWaitsForUser) return HermesSparkMood.waiting;
@@ -13688,9 +15121,9 @@ class _ChatScreenState extends State<ChatScreen>
     // indeterminada pareciese bloqueada. El composer conserva el único estado
     // vivo hasta que Desktop reconcilia el transcript.
     if (_compressingSession) return const SizedBox.shrink();
-    return ValueListenableBuilder<ChatTransportStatus>(
-      valueListenable: _chat.transportStatusListenable,
-      builder: (context, _, _) {
+    return ListenableBuilder(
+      listenable: _transportVisibility,
+      builder: (context, _) {
         final mood = _liveCompanionMood();
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -13720,7 +15153,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (unit is _UserTurnGroup) {
       final rawContent = (unit.primary['content'] as String?) ?? '';
       final content = projectedUserVisibleContent(unit.primary);
-      final systemChip = _jobChipLabel(content);
+      final systemChip = _jobChipLabel(content, Strings.of(context));
       if (systemChip != null && unit.supplements.isEmpty) {
         return _SystemBlobChip(label: systemChip, raw: content);
       }
@@ -13748,6 +15181,7 @@ class _ChatScreenState extends State<ChatScreen>
             : null,
         editing: identical(unit.primary, _editingUserMessageTarget),
         editingText: _editingUserMessageText,
+        editingDraft: _editingUserMessageDraft,
         editingWidth: _editingUserMessageWidth,
         editSaving: _editingRewriteSubmitted,
         onCancelEdit: _cancelUserMessageEdit,
@@ -13792,7 +15226,7 @@ class _ChatScreenState extends State<ChatScreen>
     // CUALQUIER rol: el de compactación a veces llega como role=assistant (no
     // user), por eso no bastaba con el chip de _UserMessage. Se muestra un chip
     // limpio en vez del muro de texto.
-    final systemChip = _jobChipLabel(content);
+    final systemChip = _jobChipLabel(content, Strings.of(context));
     if (systemChip != null) {
       return _SystemBlobChip(label: systemChip, raw: content);
     }
@@ -13995,6 +15429,7 @@ class _ChatScreenState extends State<ChatScreen>
           : null,
       editing: role == 'user' && identical(msg, _editingUserMessageTarget),
       editingText: _editingUserMessageText,
+      editingDraft: _editingUserMessageDraft,
       editingWidth: _editingUserMessageWidth,
       editSaving: _editingRewriteSubmitted,
       onCancelEdit: _cancelUserMessageEdit,
@@ -14378,6 +15813,46 @@ class _DesktopAuthRequiredBanner extends StatelessWidget {
   }
 }
 
+/// Hermes reports the turn as waiting on the user but no question card is
+/// on screen (the request frame died with a socket). Honest copy instead of
+/// a busy spinner, plus an action that asks the server for the open request.
+class _AwaitingUnseenInputNotice extends StatelessWidget {
+  const _AwaitingUnseenInputNotice({
+    required this.message,
+    required this.actionLabel,
+    required this.onShow,
+  });
+
+  final String message;
+  final String actionLabel;
+  final VoidCallback onShow;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return Semantics(
+      key: const ValueKey('chat-awaiting-unseen-input'),
+      container: true,
+      liveRegion: true,
+      label: message,
+      child: _ChatNoticeSurface(
+        icon: Icons.help_outline_rounded,
+        iconColor: colors.warning,
+        message: message,
+        trailing: TextButton(
+          key: const ValueKey('chat-awaiting-unseen-input-show'),
+          onPressed: onShow,
+          style: TextButton.styleFrom(
+            minimumSize: const Size(48, 48),
+            foregroundColor: colors.accentText,
+          ),
+          child: Text(actionLabel),
+        ),
+      ),
+    );
+  }
+}
+
 class _CoreReadPartialCoverageNotice extends StatelessWidget {
   const _CoreReadPartialCoverageNotice({
     required this.message,
@@ -14554,9 +16029,7 @@ class _EditQueuedEntrySheetState extends State<_EditQueuedEntrySheet> {
             children: [
               TextButton(
                 onPressed: () => _close(),
-                child: Text(
-                  MaterialLocalizations.of(context).cancelButtonLabel,
-                ),
+                child: Text(strings.commonCancel),
               ),
               FilledButton(
                 style: FilledButton.styleFrom(
@@ -14564,7 +16037,8 @@ class _EditQueuedEntrySheetState extends State<_EditQueuedEntrySheet> {
                   minimumSize: const Size(0, 46),
                 ),
                 onPressed: () => _close(_controller.text.trim()),
-                child: Text(strings.chaEditApply),
+                // Saving only rewrites the queued text; it stays in the queue.
+                child: Text(strings.commonSave),
               ),
             ],
           ),
@@ -14581,7 +16055,7 @@ class _UserTurnGroup {
   _UserTurnGroup(this.primary);
 }
 
-enum _BotChatHeaderAction { model, controls }
+enum _BotChatHeaderAction { find, model, controls }
 
 /// Cabecera del Bot Chat: avatar + nombre del bot + estado vivo, con el mismo
 /// protagonismo que la cabecera de una Room. El modelo y los controles viven
@@ -14895,8 +16369,13 @@ class _SlashPalette extends StatelessWidget {
 class _EmptyChatState extends StatelessWidget {
   final String model;
   final String agentName;
+  final String? workspace;
 
-  const _EmptyChatState({required this.model, this.agentName = 'hermes'});
+  const _EmptyChatState({
+    required this.model,
+    this.agentName = 'hermes',
+    this.workspace,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -14978,6 +16457,37 @@ class _EmptyChatState extends StatelessWidget {
                   ),
                 ],
               ),
+              if (workspace case final folder?) ...[
+                const SizedBox(height: 14),
+                ConstrainedBox(
+                  key: const ValueKey('pj1215-chat-workspace'),
+                  constraints: const BoxConstraints(maxWidth: 300),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.folder_outlined,
+                        size: 14,
+                        color: colors.textSecondary,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          Strings.of(
+                            context,
+                          ).pj1215ChatWorkspace(shortServerPath(folder)),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -15490,6 +17000,7 @@ class _MessageBubble extends StatelessWidget {
   final ValueChanged<double>? onEdit;
   final bool editing;
   final String? editingText;
+  final String? editingDraft;
   final double? editingWidth;
   final bool editSaving;
   final VoidCallback? onCancelEdit;
@@ -15521,6 +17032,7 @@ class _MessageBubble extends StatelessWidget {
     this.onEdit,
     this.editing = false,
     this.editingText,
+    this.editingDraft,
     this.editingWidth,
     this.editSaving = false,
     this.onCancelEdit,
@@ -15541,6 +17053,7 @@ class _MessageBubble extends StatelessWidget {
             onEdit: onEdit,
             editing: editing,
             editingText: editingText,
+            editingDraft: editingDraft,
             editingWidth: editingWidth,
             editSaving: editSaving,
             onCancelEdit: onCancelEdit,
@@ -15585,11 +17098,16 @@ class _ParsedAttachment {
   /// Ruta local persistente de la imagen, si el adjunto era una imagen. Permite
   /// leer historiales legacy `⟦img:...⟧` sin romper miniaturas existentes.
   final String? imagePath;
+
+  /// Server copy persisted by Hermes as an `@image:`/`@file:` line. Used when
+  /// the private local copy is missing (reinstall, other device, eviction).
+  final UserServerAttachmentRef? serverRef;
   const _ParsedAttachment(
     this.name,
     this.sizeLabel, {
     this.historyReference,
     this.imagePath,
+    this.serverRef,
   });
 }
 
@@ -15661,15 +17179,15 @@ final RegExp _kanbanWorkRe = RegExp(
   caseSensitive: false,
 );
 
-String? _jobChipLabel(String raw) {
-  if (_kanbanWorkRe.hasMatch(raw)) return 'Tarea del Kanban';
+String? _jobChipLabel(String raw, Strings strings) {
+  if (_kanbanWorkRe.hasMatch(raw)) return strings.i18n1215KanbanTask;
   final skill = _invokedSkillName(raw);
-  if (skill != null) return 'Skill · $skill';
+  if (skill != null) return strings.m1215SkillChip(skill);
   final t = raw.trimLeft();
   // Handoff de compactación sin mensaje real detrás → chip discreto.
   if (t.startsWith('[CONTEXT COMPACTION') &&
       _stripContextCompaction(raw).trim().isEmpty) {
-    return 'Contexto previo';
+    return strings.i18n1215PreviousContext;
   }
   final lower = t.toLowerCase();
   final looksJob =
@@ -15680,7 +17198,7 @@ String? _jobChipLabel(String raw) {
           lower.contains('delivery:') ||
           lower.contains('invoked'));
   if (looksJob && _stripCronPreamble(raw).trim().isEmpty) {
-    return 'Tarea programada';
+    return strings.i18n1215ScheduledTask;
   }
   return null;
 }
@@ -15807,9 +17325,95 @@ AssistantOperationalProjection _projectOperationalArtifacts(
   );
 }
 
-({List<_ParsedAttachment> attachments, String text}) _parseUserContent(
-  String raw,
+typedef _ParsedUserContent = ({
+  List<_ParsedAttachment> attachments,
+  String text,
+});
+
+/// Bounded memo: every rebuild of a user bubble re-reads its content, and the
+/// transcript content of a row never changes in place.
+final LinkedHashMap<String, _ParsedUserContent> _parsedUserContentMemo =
+    LinkedHashMap<String, _ParsedUserContent>();
+const int _parsedUserContentMemoLimit = 256;
+
+_ParsedUserContent _parseUserContent(String raw) {
+  final cached = _parsedUserContentMemo.remove(raw);
+  if (cached != null) {
+    _parsedUserContentMemo[raw] = cached;
+    return cached;
+  }
+  final parsed = _parseUserContentUncached(raw);
+  _parsedUserContentMemo[raw] = parsed;
+  while (_parsedUserContentMemo.length > _parsedUserContentMemoLimit) {
+    _parsedUserContentMemo.remove(_parsedUserContentMemo.keys.first);
+  }
+  return parsed;
+}
+
+bool _parsedAttachmentIsImage(_ParsedAttachment attachment) =>
+    attachment.historyReference?.type == AttachmentType.image ||
+    (attachment.historyReference == null &&
+        attachmentKindFor(attachment.name, '') == AttachmentKind.image);
+
+/// Pairs Hermes' `@image:`/`@file:` lines with the `[📎 …]` markers of the same
+/// send (same kind, same order) so one attachment renders once; unmatched
+/// lines become standalone chips.
+List<_ParsedAttachment> _withServerRefs(
+  List<_ParsedAttachment> attachments,
+  List<UserServerAttachmentRef> serverRefs,
 ) {
+  if (serverRefs.isEmpty) return attachments;
+  final images = serverRefs.where((ref) => ref.isImage).toList();
+  final files = serverRefs.where((ref) => !ref.isImage).toList();
+  final paired = <_ParsedAttachment>[
+    for (final attachment in attachments)
+      switch (_parsedAttachmentIsImage(attachment) ? images : files) {
+        final pool when pool.isNotEmpty => _ParsedAttachment(
+          attachment.name,
+          attachment.sizeLabel,
+          historyReference: attachment.historyReference,
+          imagePath: attachment.imagePath,
+          serverRef: pool.removeAt(0),
+        ),
+        _ => attachment,
+      },
+  ];
+  for (final ref in serverRefs) {
+    if (images.contains(ref) || files.contains(ref)) {
+      paired.add(_ParsedAttachment(ref.displayName, '', serverRef: ref));
+    }
+  }
+  return List<_ParsedAttachment>.unmodifiable(paired);
+}
+
+_ParsedUserContent _parseUserContentUncached(String raw) {
+  final parsed = _parseUserContentMarkers(raw);
+  final serverRefs = parsed.serverRefs;
+  if (serverRefs.isEmpty) {
+    return (attachments: parsed.attachments, text: parsed.text);
+  }
+  var text = parsed.text.trim();
+  // Native-vision turns flatten each image part to a `[screenshot]` line; the
+  // lifted `@image:` ref already stands for it (Desktop drops it too).
+  if (serverRefs.any((ref) => ref.isImage)) {
+    text = text
+        .split('\n')
+        .where((line) => line.trim() != '[screenshot]')
+        .join('\n')
+        .trim();
+  }
+  return (
+    attachments: _withServerRefs(parsed.attachments, serverRefs),
+    text: text,
+  );
+}
+
+({
+  List<_ParsedAttachment> attachments,
+  String text,
+  List<UserServerAttachmentRef> serverRefs,
+})
+_parseUserContentMarkers(String raw) {
   raw = stripBotMentionNote(raw);
   // Quita los blobs de SISTEMA que no son del usuario: preámbulo de cron/skill y
   // el resumen de compactación de contexto. Si tras ellos hay un mensaje real,
@@ -15824,11 +17428,17 @@ AssistantOperationalProjection _projectOperationalArtifacts(
   final legacyImagePaths = <String>[];
   final indexedImgRe = RegExp(r'^⟦img:(\d+):(.+)⟧$');
   final legacyImgRe = RegExp(r'^⟦img:(.+)⟧$');
+  final serverRefs = <UserServerAttachmentRef>[];
   final kept = <String>[];
   for (final l in raw.split('\n')) {
     final reference = AttachmentHistoryReference.tryParseMarker(l);
     if (reference != null) {
       historyReferences.putIfAbsent(reference.index, () => reference);
+      continue;
+    }
+    final serverRef = UserServerAttachmentRef.tryParseLine(l);
+    if (serverRef != null) {
+      serverRefs.add(serverRef);
       continue;
     }
     final indexed = indexedImgRe.firstMatch(l.trim());
@@ -15844,7 +17454,9 @@ AssistantOperationalProjection _projectOperationalArtifacts(
     kept.add(l);
   }
   final lines = kept;
-  if (lines.isEmpty) return (attachments: const [], text: '');
+  if (lines.isEmpty) {
+    return (attachments: const [], text: '', serverRefs: serverRefs);
+  }
 
   final markerRe = RegExp(r'^\[📎 (.+?)\]$');
   final parsedAttachments = <_ParsedAttachment>[];
@@ -15876,7 +17488,11 @@ AssistantOperationalProjection _projectOperationalArtifacts(
     markerCount++;
   }
   if (parsedAttachments.isEmpty) {
-    return (attachments: const [], text: lines.join('\n'));
+    return (
+      attachments: const [],
+      text: lines.join('\n'),
+      serverRefs: serverRefs,
+    );
   }
 
   var rest = lines.skip(markerCount).toList();
@@ -15889,7 +17505,11 @@ AssistantOperationalProjection _projectOperationalArtifacts(
     // Compat con el formato anterior (línea de ruta entre paréntesis).
     rest = rest.skip(1).toList();
   }
-  return (attachments: parsedAttachments, text: rest.join('\n').trim());
+  return (
+    attachments: parsedAttachments,
+    text: rest.join('\n').trim(),
+    serverRefs: serverRefs,
+  );
 }
 
 /// Chip limpio que sustituye a un blob de SISTEMA (preámbulo de cron/skill o
@@ -16044,6 +17664,46 @@ class _TimelineSystemEventRow extends StatelessWidget {
   }
 }
 
+/// Last laid-out size of a user bubble, read when its edit button is tapped.
+final class _BubbleSizeHolder {
+  Size? size;
+}
+
+class _BubbleSizeReporter extends SingleChildRenderObjectWidget {
+  const _BubbleSizeReporter({required this.holder, super.child});
+
+  final _BubbleSizeHolder holder;
+
+  @override
+  _RenderBubbleSizeReporter createRenderObject(BuildContext context) =>
+      _RenderBubbleSizeReporter(holder);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderBubbleSizeReporter renderObject,
+  ) {
+    renderObject.holder = holder;
+  }
+}
+
+class _RenderBubbleSizeReporter extends RenderProxyBox {
+  _RenderBubbleSizeReporter(this._holder);
+
+  _BubbleSizeHolder _holder;
+  set holder(_BubbleSizeHolder value) {
+    if (identical(value, _holder)) return;
+    _holder = value;
+    if (hasSize) value.size = size;
+  }
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    _holder.size = size;
+  }
+}
+
 class _UserMessage extends StatelessWidget {
   final String content;
   final bool verbose;
@@ -16052,6 +17712,7 @@ class _UserMessage extends StatelessWidget {
   final ValueChanged<double>? onEdit;
   final bool editing;
   final String? editingText;
+  final String? editingDraft;
   final double? editingWidth;
   final bool editSaving;
   final VoidCallback? onCancelEdit;
@@ -16066,6 +17727,7 @@ class _UserMessage extends StatelessWidget {
     this.onEdit,
     this.editing = false,
     this.editingText,
+    this.editingDraft,
     this.editingWidth,
     this.editSaving = false,
     this.onCancelEdit,
@@ -16085,6 +17747,20 @@ class _UserMessage extends StatelessWidget {
           Builder(
             builder: (context) {
               final historyReference = attachment.historyReference;
+              final serverRef = attachment.serverRef;
+              final chatState = serverRef == null
+                  ? null
+                  : context.findAncestorStateOfType<_ChatScreenState>();
+              if (serverRef != null && chatState != null) {
+                return UserServerAttachmentCard(
+                  name: attachment.name,
+                  sizeLabel: attachment.sizeLabel,
+                  localReference: historyReference,
+                  serverRef: serverRef,
+                  cacheScope: chatState.userServerMediaScope,
+                  loader: chatState.downloadUserServerAttachment,
+                );
+              }
               if (historyReference != null) {
                 return AttachmentHistoryCard(
                   key: ValueKey(
@@ -16126,7 +17802,11 @@ class _UserMessage extends StatelessWidget {
     final List<String> metaLines = _buildMetaLines(verbose, metadata);
     final timestamp = _formatMessageTimestamp(metadata);
     final parsed = _parseUserContent(content);
-    final bubbleMeasureKey = GlobalKey();
+    // No GlobalKey here: a fresh key on every build remounted the inline
+    // editor below it on each chat rebuild (streaming, presence, timers) and
+    // wiped what the user was typing. The bubble reports its laid-out size
+    // into a plain holder instead.
+    final bubbleSize = _BubbleSizeHolder();
 
     return ChatMessageSelectionArea(
       enabled: !editing,
@@ -16143,138 +17823,144 @@ class _UserMessage extends StatelessWidget {
           children: [
             KeyedSubtree(
               key: const ValueKey('user-message-bubble'),
-              child: Container(
-                key: bubbleMeasureKey,
-                // Mientras se edita la burbuja se ensancha al ancho máximo de
-                // una burbuja normal (alineada a la derecha) para que el texto
-                // tenga sitio, en vez de quedarse con el ancho del original.
-                width: editing ? double.infinity : null,
-                padding: EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: compact ? 8 : 11,
-                ),
-                // Burbuja estilo Claude: panel suave uniforme, redondeado, SIN
-                // borde. El mensaje del agente va en texto plano; el del usuario
-                // en esta burbuja sutil.
-                decoration: BoxDecoration(
-                  color: colors.surfaceVariant.withValues(alpha: 0.6),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: editing
-                    ? InlineMessageEditor(
-                        initialText: editingText ?? parsed.text.trim(),
-                        saving: editSaving,
-                        attachments: parsed.attachments.isEmpty
-                            ? null
-                            : _buildAttachmentCards(
-                                context,
-                                parsed.attachments,
-                              ),
-                        onCancel: onCancelEdit!,
-                        onSave: onSaveEdit!,
-                      )
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (metaLines.isNotEmpty)
-                            _MetaBlock(lines: metaLines, onDark: true),
-                          if (parsed.attachments.isNotEmpty)
-                            Padding(
-                              padding: EdgeInsets.only(
-                                bottom: parsed.text.isNotEmpty ? 8 : 0,
-                              ),
-                              child: _buildAttachmentCards(
-                                context,
-                                parsed.attachments,
-                              ),
-                            ),
-                          if (parsed.text.isNotEmpty)
-                            MarkdownBody(
-                              data: parsed.text,
-                              selectable: false,
-                              // Respeta los saltos de línea simples (CommonMark los
-                              // colapsaría en espacios → texto "todo junto").
-                              softLineBreak: true,
-                              onTapLink: (text, href, title) =>
-                                  openChatMarkdownLink(context, href),
-                              styleSheet: _userSheet(theme, colors),
-                            ),
-                          if (supplements.isNotEmpty) ...[
-                            const SizedBox(height: 11),
-                            Divider(
-                              height: 1,
-                              color: colors.divider.withValues(alpha: 0.45),
-                            ),
-                            const SizedBox(height: 9),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.add_comment_outlined,
-                                  size: 14,
-                                  color: colors.accent,
+              child: _BubbleSizeReporter(
+                holder: bubbleSize,
+                child: Container(
+                  // Mientras se edita la burbuja se ensancha al ancho máximo de
+                  // una burbuja normal (alineada a la derecha) para que el texto
+                  // tenga sitio, en vez de quedarse con el ancho del original.
+                  width: editing ? double.infinity : null,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: compact ? 8 : 11,
+                  ),
+                  // Burbuja estilo Claude: panel suave uniforme, redondeado, SIN
+                  // borde. El mensaje del agente va en texto plano; el del usuario
+                  // en esta burbuja sutil.
+                  decoration: BoxDecoration(
+                    color: colors.surfaceVariant.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: editing
+                      ? InlineMessageEditor(
+                          initialText: editingText ?? parsed.text.trim(),
+                          draftText: editingDraft,
+                          saving: editSaving,
+                          attachments: parsed.attachments.isEmpty
+                              ? null
+                              : _buildAttachmentCards(
+                                  context,
+                                  parsed.attachments,
                                 ),
-                                const SizedBox(width: 6),
-                                Flexible(
-                                  child: Text(
-                                    Strings.of(
-                                      context,
-                                    ).chaSteerSupplementsLabel,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                      color: colors.textSecondary,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 7),
-                            for (
-                              var index = 0;
-                              index < supplements.length;
-                              index++
-                            )
+                          onCancel: onCancelEdit!,
+                          onSave: onSaveEdit!,
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (metaLines.isNotEmpty)
+                              _MetaBlock(lines: metaLines, onDark: true),
+                            if (parsed.attachments.isNotEmpty)
                               Padding(
                                 padding: EdgeInsets.only(
-                                  bottom: index == supplements.length - 1
-                                      ? 0
-                                      : 7,
+                                  bottom: parsed.text.isNotEmpty ? 8 : 0,
                                 ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Container(
-                                      width: 2,
-                                      height: 18,
-                                      margin: const EdgeInsets.only(
-                                        top: 2,
-                                        right: 8,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: colors.accent.withValues(
-                                          alpha: 0.55,
-                                        ),
-                                        borderRadius: BorderRadius.circular(2),
-                                      ),
-                                    ),
-                                    Expanded(
-                                      child: Text(
-                                        supplements[index],
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          height: 1.35,
-                                          color: colors.textPrimary,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                                child: _buildAttachmentCards(
+                                  context,
+                                  parsed.attachments,
                                 ),
                               ),
+                            if (parsed.text.isNotEmpty)
+                              MarkdownBody(
+                                data: parsed.text,
+                                selectable: false,
+                                // Respeta los saltos de línea simples (CommonMark los
+                                // colapsaría en espacios → texto "todo junto").
+                                softLineBreak: true,
+                                onTapLink: (text, href, title) =>
+                                    openChatMarkdownLink(context, href),
+                                styleSheet: _userSheet(theme, colors),
+                              ),
+                            if (supplements.isNotEmpty) ...[
+                              const SizedBox(height: 11),
+                              Divider(
+                                height: 1,
+                                color: colors.divider.withValues(alpha: 0.45),
+                              ),
+                              const SizedBox(height: 9),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.add_comment_outlined,
+                                    size: 14,
+                                    color: colors.accent,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Flexible(
+                                    child: Text(
+                                      Strings.of(
+                                        context,
+                                      ).chaSteerSupplementsLabel,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: colors.textSecondary,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 7),
+                              for (
+                                var index = 0;
+                                index < supplements.length;
+                                index++
+                              )
+                                Padding(
+                                  padding: EdgeInsets.only(
+                                    bottom: index == supplements.length - 1
+                                        ? 0
+                                        : 7,
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        width: 2,
+                                        height: 18,
+                                        margin: const EdgeInsets.only(
+                                          top: 2,
+                                          right: 8,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: colors.accent.withValues(
+                                            alpha: 0.55,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            2,
+                                          ),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          supplements[index],
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            height: 1.35,
+                                            color: colors.textPrimary,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
                           ],
-                        ],
-                      ),
+                        ),
+                ),
               ),
             ),
             if (!editing)
@@ -16284,12 +17970,8 @@ class _UserMessage extends StatelessWidget {
                   if (onEdit != null)
                     IconButton(
                       onPressed: () {
-                        final box =
-                            bubbleMeasureKey.currentContext?.findRenderObject()
-                                as RenderBox?;
-                        if (box != null && box.hasSize) {
-                          onEdit!(box.size.width);
-                        }
+                        final size = bubbleSize.size;
+                        if (size != null) onEdit!(size.width);
                       },
                       tooltip: Strings.of(context).chaEditMessage,
                       padding: EdgeInsets.zero,
@@ -16379,6 +18061,7 @@ List<ChatTraceEvent> _assistantActivityEvents(
         detail: measured?.detail,
         startedAt: measured?.startedAt,
         duration: measured?.duration,
+        memory: MemoryWrite.fromStep(step[memoryWriteStepKey]),
       ),
     );
   }
@@ -16690,7 +18373,6 @@ class _AssistantMessage extends StatelessWidget {
         split.answer,
       ).whereType<GeneratedMediaFileSegment>()) {
         final reference = segment.reference;
-        if (reference.kind != GeneratedMediaKind.video) continue;
         textualGeneratedVideoSources[reference.source] =
             (textualGeneratedVideoSources[reference.source] ?? 0) + 1;
       }
@@ -17255,17 +18937,17 @@ class _GeneratedMediaSlotState extends State<_GeneratedMediaSlot> {
         widget.reference.mimeType == 'application/pdf' ||
         widget.reference.displayName.toLowerCase().endsWith('.pdf');
     if (!isPdf) {
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute(
-          builder: (_) => GeneratedFileViewerScreen(
-            name: widget.reference.displayName,
-            mimeType: widget.reference.mimeType,
-            sizeBytes: length,
-            onOpenWith: onOpenExternal,
-            onShare: onShare,
-            onSave: onSave,
-          ),
-        ),
+      // In-app viewer: HTML/SVG in a locked WebView, Markdown/code/text and
+      // images natively; anything else falls back to "Abrir con…"/Share.
+      await openArtifactViewer(
+        context,
+        name: widget.reference.displayName,
+        mimeType: widget.reference.mimeType,
+        file: file,
+        sizeBytes: length,
+        onOpenExternal: onOpenExternal,
+        onShare: onShare,
+        onSave: onSave,
       );
       return;
     }
@@ -17331,6 +19013,9 @@ class _GeneratedMediaSlotState extends State<_GeneratedMediaSlot> {
     if (state == null) return const SizedBox.shrink();
     return GeneratedMediaAttachmentCard(
       reference: widget.reference,
+      // The lazy transcript disposes rows that scroll far away; this lets a
+      // returning card (e.g. an HTML preview) come back ready, not reload.
+      readyMemoKey: state.generatedMediaCacheScope,
       autoLoad:
           widget.reference.sourceKind == GeneratedMediaSourceKind.serverPath,
       load: (onProgress, isCancelled) => state.downloadGeneratedMedia(
@@ -17629,6 +19314,7 @@ class _QueuedRow extends StatelessWidget {
   final VoidCallback onSteer;
   final VoidCallback onSendNow;
   final VoidCallback onDelete;
+  final VoidCallback onAbandon;
 
   const _QueuedRow({
     required this.entry,
@@ -17640,6 +19326,7 @@ class _QueuedRow extends StatelessWidget {
     required this.onSteer,
     required this.onSendNow,
     required this.onDelete,
+    required this.onAbandon,
   });
 
   @override
@@ -17650,7 +19337,10 @@ class _QueuedRow extends StatelessWidget {
         ? '${entry.text.substring(0, 72)}…'
         : entry.text;
     final isEditing = editingId == entry.id;
-    final accepted = entry.kind == QueuedEntryKind.desktopAccepted;
+    // Already on the server: edit/send/delete cannot act (and send-now would
+    // cancel the running turn), so the row shows them disabled.
+    final accepted =
+        entry.kind == QueuedEntryKind.desktopAccepted || entry.serverAccepted;
     final editEnabled = !accepted && (editingId == null || isEditing);
     final canSteer =
         busy &&
@@ -17705,7 +19395,33 @@ class _QueuedRow extends StatelessWidget {
                       color: colors.textSecondary,
                     ),
                   ),
-                if (entry.blocked)
+                if (entry.deliveryUnknown)
+                  Text(
+                    Strings.of(context).chatQueueDeliveryUnknown,
+                    key: ValueKey('chat-queue-unknown-${entry.id}'),
+                    style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
+                else if (entry.stopWaitingAvailable)
+                  // Acknowledged in an earlier run; "retry" would promise an
+                  // action this row does not have.
+                  Text(
+                    strings.q1215QueueAcceptedStale,
+                    key: ValueKey('chat-queue-accepted-stale-${entry.id}'),
+                    style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
+                else if (entry.missingAttachment)
+                  Text(
+                    strings.q1215QueueMissingAttachment,
+                    key: ValueKey('chat-queue-missing-attachment-${entry.id}'),
+                    style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
+                else if (entry.persistenceFailed)
+                  Text(
+                    strings.qp1215QueueNotStored,
+                    key: ValueKey('chat-queue-not-stored-${entry.id}'),
+                    style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
+                else if (entry.blocked)
                   Text(
                     Strings.of(context).chatQueueBlockedRetry,
                     key: ValueKey('chat-queue-blocked-${entry.id}'),
@@ -17732,31 +19448,42 @@ class _QueuedRow extends StatelessWidget {
               ],
             ),
           ),
-          action(
-            keyName: 'chat-queue-edit-${entry.id}',
-            label: strings.chaQueueEdit,
-            icon: Icons.edit_outlined,
-            onPressed: editEnabled ? onEdit : null,
-          ),
-          if (canSteer)
+          if (entry.deliveryUnknown || entry.stopWaitingAvailable)
+            // Edit/send/delete cannot act on a message that may already be
+            // on the server; the one honest action is to stop waiting.
             action(
-              keyName: 'chat-queue-steer-${entry.id}',
-              label: strings.chaQueueSteer,
-              icon: Icons.turn_right_rounded,
-              onPressed: onSteer,
+              keyName: 'chat-queue-abandon-${entry.id}',
+              label: strings.chatQueueAbandon,
+              icon: Icons.remove_circle_outline_rounded,
+              onPressed: onAbandon,
+            )
+          else ...[
+            action(
+              keyName: 'chat-queue-edit-${entry.id}',
+              label: strings.chaQueueEdit,
+              icon: Icons.edit_outlined,
+              onPressed: editEnabled ? onEdit : null,
             ),
-          action(
-            keyName: 'chat-queue-send-now-${entry.id}',
-            label: sendLabel,
-            icon: Icons.keyboard_return_rounded,
-            onPressed: isEditing || accepted ? null : onSendNow,
-          ),
-          action(
-            keyName: 'chat-queue-delete-${entry.id}',
-            label: strings.chaQueueDelete,
-            icon: Icons.delete_outline_rounded,
-            onPressed: accepted ? null : onDelete,
-          ),
+            if (canSteer)
+              action(
+                keyName: 'chat-queue-steer-${entry.id}',
+                label: strings.chaQueueSteer,
+                icon: Icons.turn_right_rounded,
+                onPressed: onSteer,
+              ),
+            action(
+              keyName: 'chat-queue-send-now-${entry.id}',
+              label: sendLabel,
+              icon: Icons.keyboard_return_rounded,
+              onPressed: isEditing || accepted ? null : onSendNow,
+            ),
+            action(
+              keyName: 'chat-queue-delete-${entry.id}',
+              label: strings.chaQueueDelete,
+              icon: Icons.delete_outline_rounded,
+              onPressed: accepted ? null : onDelete,
+            ),
+          ],
         ],
       ),
     );
@@ -17862,14 +19589,29 @@ class _RenderBottomGapWhenVisible extends RenderShiftedBox {
 
 class _ScrollToBottomButton extends StatelessWidget {
   final VoidCallback onTap;
-  const _ScrollToBottomButton({required this.onTap, super.key});
+  final ValueListenable<int> newMessages;
+  const _ScrollToBottomButton({
+    required this.onTap,
+    required this.newMessages,
+    super.key,
+  });
 
   @override
-  Widget build(BuildContext context) => _ChatScrollButton(
-    onTap: onTap,
-    label: Strings.of(context).chaScrollToBottom,
-    icon: Icons.keyboard_arrow_down,
-    iconSize: 20,
+  Widget build(BuildContext context) => ValueListenableBuilder<int>(
+    valueListenable: newMessages,
+    builder: (context, count, _) {
+      final strings = Strings.of(context);
+      final newLabel = count > 0 ? strings.sc1215NewMessages(count) : null;
+      return _ChatScrollButton(
+        onTap: onTap,
+        label: newLabel == null
+            ? strings.chaScrollToBottom
+            : '${strings.chaScrollToBottom}, $newLabel',
+        icon: Icons.keyboard_arrow_down,
+        iconSize: 20,
+        badge: newLabel,
+      );
+    },
   );
 }
 
@@ -17951,6 +19693,10 @@ class _ChatScrollButton extends StatelessWidget {
   final double iconSize;
   final bool loading;
 
+  /// Short text shown next to the circle (e.g. "3 new"); the button keeps its
+  /// 48 dp height so the transcript padding never changes with it.
+  final String? badge;
+
   const _ChatScrollButton({
     super.key,
     required this.onTap,
@@ -17958,6 +19704,7 @@ class _ChatScrollButton extends StatelessWidget {
     required this.icon,
     this.iconSize = 18,
     this.loading = false,
+    this.badge,
   });
 
   @override
@@ -17975,15 +19722,22 @@ class _ChatScrollButton extends StatelessWidget {
           onTap: onTap,
           behavior: HitTestBehavior.opaque,
           child: SizedBox(
-            width: 48,
+            width: badge == null ? 48 : null,
             height: 48,
             child: Center(
+              widthFactor: 1,
               child: Container(
-                width: 32,
+                width: badge == null ? 32 : null,
                 height: 32,
+                padding: badge == null
+                    ? null
+                    : const EdgeInsetsDirectional.only(start: 12, end: 8),
                 decoration: BoxDecoration(
                   color: colors.surfaceVariant,
-                  shape: BoxShape.circle,
+                  shape: badge == null ? BoxShape.circle : BoxShape.rectangle,
+                  borderRadius: badge == null
+                      ? null
+                      : BorderRadius.circular(16),
                   border: Border.all(
                     color: colors.divider.withValues(alpha: 0.55),
                   ),
@@ -18003,7 +19757,26 @@ class _ChatScrollButton extends StatelessWidget {
                           color: colors.accent,
                         ),
                       )
-                    : Icon(icon, size: iconSize, color: colors.accent),
+                    : badge == null
+                    ? Icon(icon, size: iconSize, color: colors.accent)
+                    : ExcludeSemantics(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              badge!,
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: colors.accent,
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            Icon(icon, size: iconSize, color: colors.accent),
+                          ],
+                        ),
+                      ),
               ),
             ),
           ),
@@ -18129,6 +19902,16 @@ class _ChatStreamingViewportPhysics extends ScrollPhysics {
       velocity: velocity,
     );
     final overlayDelta = lock.takeOverlayExtentChange();
+    // Past an edge (the bounce region) the reader is AT that edge, not reading
+    // a row above it: every correction below would clamp the overscroll to
+    // the extent in one frame and the spring would snap instead of settling.
+    // Keep the inherited (bouncing) position; the ballistic activity started
+    // on release brings it back smoothly. Pending deltas are dropped because
+    // they describe growth the reader is already riding with the edge.
+    if (oldPosition.outOfRange) {
+      lock.clear();
+      return inherited;
+    }
     if (!lock.enabled) {
       lock.clear();
       return (inherited + overlayDelta)

@@ -135,6 +135,14 @@ class AttachmentCard extends StatelessWidget {
   final VoidCallback? onRetry;
   final VoidCallback? onTap;
 
+  /// Composer variant: a smaller thumb ([compactThumbSize]) with 24 dp
+  /// remove/retry circles, so staged images fit inside the rounded input.
+  /// Chat bubbles keep the default 120 dp thumb.
+  final bool compact;
+
+  /// Side of the image thumb in the [compact] variant.
+  static const double compactThumbSize = 80;
+
   const AttachmentCard({
     super.key,
     required this.name,
@@ -147,7 +155,10 @@ class AttachmentCard extends StatelessWidget {
     this.onRemove,
     this.onRetry,
     this.onTap,
+    this.compact = false,
   });
+
+  double get _thumbSize => compact ? compactThumbSize : 120;
 
   @override
   Widget build(BuildContext context) {
@@ -178,9 +189,13 @@ class AttachmentCard extends StatelessWidget {
   bool get _hasThumb =>
       thumbnailFile != null || (thumbnailUrl?.isNotEmpty ?? false);
 
+  // The compact composer thumb is too narrow for the text pill ("Error al…"):
+  // there the state is carried by the spinner, the retry button and the
+  // semantics label of the strip instead.
   bool get _showsImageStateBadge =>
-      uploadState == AttachmentUploadState.uploading ||
-      uploadState == AttachmentUploadState.error;
+      !compact &&
+      (uploadState == AttachmentUploadState.uploading ||
+          uploadState == AttachmentUploadState.error);
 
   /// Decode bound for the 120 dp thumb (3x). Only ONE side is fixed: giving
   /// the decoder both `cacheWidth` and `cacheHeight` resizes the bitmap to
@@ -212,8 +227,8 @@ class AttachmentCard extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Container(
-          width: 120,
-          height: 120,
+          width: _thumbSize,
+          height: _thumbSize,
           color: colors.surfaceVariant,
           child: img,
         ),
@@ -391,7 +406,7 @@ class AttachmentCard extends StatelessWidget {
                   ),
                   child: Icon(
                     Icons.close,
-                    size: 14,
+                    size: compact ? 16 : 14,
                     color: colors.textSecondary,
                   ),
                 ),
@@ -422,7 +437,7 @@ class AttachmentCard extends StatelessWidget {
               height: 48,
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.all(4),
+                  padding: EdgeInsets.all(compact ? 3 : 4),
                   decoration: BoxDecoration(
                     color: colors.surface,
                     shape: BoxShape.circle,
@@ -430,7 +445,7 @@ class AttachmentCard extends StatelessWidget {
                   ),
                   child: Icon(
                     Icons.refresh_rounded,
-                    size: 15,
+                    size: compact ? 16 : 15,
                     color: colors.textSecondary,
                   ),
                 ),
@@ -655,6 +670,13 @@ class GeneratedMediaAttachmentCard extends StatefulWidget {
   final GeneratedAudioPlayback? audioPlayback;
   final String Function(BuildContext context, Object error)? errorLabelBuilder;
 
+  /// Identity of this file within its connection and profile. When set, a
+  /// verified ready file is remembered so that a card the lazy transcript
+  /// disposed while scrolling comes back ready on its first frame, instead of
+  /// replaying consent → download → ready (a second load and two height jumps
+  /// every time it re-enters the viewport). Null disables the memo.
+  final String? readyMemoKey;
+
   const GeneratedMediaAttachmentCard({
     super.key,
     required this.reference,
@@ -664,7 +686,35 @@ class GeneratedMediaAttachmentCard extends StatefulWidget {
     this.onOpen,
     this.audioPlayback,
     this.errorLabelBuilder,
+    this.readyMemoKey,
   });
+
+  static const int _readyMemoCapacity = 128;
+
+  /// Insertion-ordered, so the first entry is the least recently used.
+  static final Map<String, ({File file, int length})> _readyMemo = {};
+
+  @visibleForTesting
+  static void clearReadyMemoForTesting() => _readyMemo.clear();
+
+  static ({File file, int length})? _recallReady(String key) {
+    final entry = _readyMemo.remove(key);
+    if (entry == null) return null;
+    // The cache may have been evicted or replaced on disk since.
+    if (!entry.file.existsSync() || entry.file.lengthSync() != entry.length) {
+      return null;
+    }
+    _readyMemo[key] = entry;
+    return entry;
+  }
+
+  static void _rememberReady(String key, File file, int length) {
+    _readyMemo.remove(key);
+    _readyMemo[key] = (file: file, length: length);
+    while (_readyMemo.length > _readyMemoCapacity) {
+      _readyMemo.remove(_readyMemo.keys.first);
+    }
+  }
 
   @override
   State<GeneratedMediaAttachmentCard> createState() =>
@@ -705,7 +755,34 @@ class _GeneratedMediaAttachmentCardState
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _totalBytes = widget.reference.sizeBytes;
+    _restoreRemembered();
     _scheduleVisibilityCheck();
+  }
+
+  String? get _memoKey {
+    final scope = widget.readyMemoKey;
+    if (scope == null) return null;
+    final reference = widget.reference;
+    return [
+      scope,
+      reference.source,
+      reference.kind.name,
+      reference.sizeBytes?.toString() ?? '',
+      reference.modifiedAt?.toUtc().microsecondsSinceEpoch.toString() ?? '',
+    ].join('\u0000');
+  }
+
+  /// Synchronous so the very first frame is already the ready card.
+  void _restoreRemembered() {
+    final key = _memoKey;
+    if (key == null) return;
+    final remembered = GeneratedMediaAttachmentCard._recallReady(key);
+    if (remembered == null) return;
+    _file = remembered.file;
+    _text = _readTextPreview(remembered.file, remembered.length);
+    _receivedBytes = remembered.length;
+    _totalBytes = remembered.length;
+    _status = GeneratedFileStatus.ready;
   }
 
   @override
@@ -735,6 +812,7 @@ class _GeneratedMediaAttachmentCardState
       _totalBytes = widget.reference.sizeBytes;
       _errorLabel = null;
       _status = GeneratedFileStatus.consent;
+      _restoreRemembered();
       _scheduleVisibilityCheck();
     }
   }
@@ -920,6 +998,10 @@ class _GeneratedMediaAttachmentCardState
       }
       final text = _readTextPreview(file, length);
       if (!mounted || generation != _generation || _cancelled) return;
+      final memoKey = _memoKey;
+      if (memoKey != null) {
+        GeneratedMediaAttachmentCard._rememberReady(memoKey, file, length);
+      }
       setState(() {
         _file = file;
         _text = text;
@@ -1045,7 +1127,9 @@ class _GeneratedMediaAttachmentCardState
   Future<void> _open() async {
     final file = _file;
     if (file == null) return;
-    if (_text != null) {
+    // A host-provided opener (the chat's in-app artifact viewer) takes text
+    // too, so Markdown/HTML/code render natively instead of as raw source.
+    if (_text != null && widget.onOpen == null) {
       await Navigator.of(context).push<void>(
         MaterialPageRoute(
           builder: (_) => GeneratedTextViewerScreen(

@@ -226,15 +226,26 @@ void main() {
     });
   });
 
-  group('CompactionDock pill', () {
-    Widget app(
-      CompactionProgress progress,
+  group('compaction inside the context pill (tp1216)', () {
+    final metrics = ValueNotifier(
+      const SessionContextMetrics(
+        contextUsed: 41000,
+        contextMax: 200000,
+        percent: 21,
+      ),
+    );
+    tearDownAll(metrics.dispose);
+
+    Widget host(
+      CompactionProgress? progress,
       _Clock clock, {
       ThemeData? theme,
       double width = 390,
       double textScale = 1,
       TextDirection? direction,
       Locale locale = const Locale('es'),
+      bool reduceMotion = false,
+      bool botChat = false,
     }) => MaterialApp(
       locale: locale,
       localizationsDelegates: const [
@@ -247,7 +258,7 @@ void main() {
       theme: theme ?? AppTheme.hermesRedDark,
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(context).copyWith(
-          disableAnimations: false,
+          disableAnimations: reduceMotion,
           textScaler: TextScaler.linear(textScale),
         ),
         child: direction == null
@@ -260,23 +271,43 @@ void main() {
             width: width,
             child: Align(
               alignment: Alignment.bottomCenter,
-              child: CompactionDock(
-                compaction: progress,
-                clock: () => clock.now,
-              ),
+              child: botChat
+                  ? (progress == null
+                        ? const SizedBox.shrink()
+                        : CompactionInlineIndicator(
+                            compaction: progress,
+                            clock: () => clock.now,
+                          ))
+                  : SessionContextPopoverButton(
+                      metrics: metrics,
+                      loadBreakdown: () async => null,
+                      onMetricsSnapshot: (_) {},
+                      modeLabel: 'YOLO',
+                      compressionCount: 2,
+                      compaction: progress,
+                      clock: () => clock.now,
+                    ),
             ),
           ),
         ),
       ),
     );
 
-    testWidgets('live: spinner, "Compactando", muted facts and real timer', (
+    String triggerLabel(WidgetTester tester) => tester
+        .getSemantics(
+          find.byKey(const ValueKey('desktop-context-usage-status')),
+        )
+        .getSemanticsData()
+        .label;
+
+    testWidgets('live: the ring becomes a spinner with "Compactando…" and the '
+        'measured clock; the facts go to semantics, never a percentage', (
       tester,
     ) async {
       await loadInterFont();
       final clock = _Clock(_t0.add(const Duration(seconds: 23)));
       await tester.pumpWidget(
-        app(
+        host(
           CompactionProgress(
             startedAt: _t0,
             manual: true,
@@ -286,23 +317,31 @@ void main() {
           clock,
         ),
       );
-      expect(find.byKey(const ValueKey('compaction-spinner')), findsOneWidget);
-      expect(find.textContaining('Compactando'), findsOneWidget);
-      expect(find.textContaining('38 msj · ~32.2k tok'), findsOneWidget);
+      final pill = find.byKey(const ValueKey('desktop-context-usage-status'));
+      expect(
+        find.descendant(
+          of: pill,
+          matching: find.byKey(const ValueKey('compaction-spinner')),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Compactando…'), findsOneWidget);
+      expect(find.text('21%'), findsNothing);
+      // The durable "compacted N times" mark gives way to the live state.
+      expect(find.byIcon(Icons.compress_rounded), findsNothing);
+      expect(find.text('YOLO'), findsOneWidget);
       expect(
         tester
             .widget<Text>(find.byKey(const ValueKey('compaction-elapsed')))
             .data,
         '0:23',
       );
-      // A compact pill sized to its content, not a full-width bar.
-      final pill = tester.getSize(
-        find.byKey(const ValueKey('compaction-dock')),
-      );
-      expect(pill.width, lessThan(390));
-      expect(pill.height, lessThanOrEqualTo(48));
-      expect(find.byType(LinearProgressIndicator), findsNothing);
-      expect(find.textContaining('%'), findsNothing);
+      final label = triggerLabel(tester);
+      expect(label, startsWith('Compactando · 38 msj · ~32.2k tok'));
+      expect(label, isNot(contains('0:23')));
+      expect(tester.getSemantics(pill).flagsCollection.isLiveRegion, isTrue);
+      // Still the same small pill, not a floating bar.
+      expect(tester.getSize(pill).height, lessThanOrEqualTo(32));
       clock.advance(const Duration(seconds: 2));
       await tester.pump(const Duration(seconds: 1));
       expect(
@@ -313,35 +352,64 @@ void main() {
       );
     });
 
-    testWidgets('done: check + before -> after, no timer', (tester) async {
+    testWidgets(
+      'done: a check and "Compactada"; the full outcome is announced',
+      (tester) async {
+        final clock = _Clock(_t0);
+        await tester.pumpWidget(
+          host(
+            CompactionProgress(
+              startedAt: _t0,
+              manual: true,
+              messagesBefore: 38,
+              messagesAfter: 34,
+              finishedAt: _t0.add(const Duration(seconds: 47)),
+            ),
+            clock,
+          ),
+        );
+        expect(
+          find.byKey(const ValueKey('compaction-done-icon')),
+          findsOneWidget,
+        );
+        expect(find.text('Compactada'), findsOneWidget);
+        expect(find.byKey(const ValueKey('compaction-elapsed')), findsNothing);
+        expect(find.byKey(const ValueKey('compaction-spinner')), findsNothing);
+        expect(
+          triggerLabel(tester),
+          startsWith('Compactado · 38 → 34 mensajes'),
+        );
+      },
+    );
+
+    testWidgets('then it fades back to the normal pill', (tester) async {
       final clock = _Clock(_t0);
       await tester.pumpWidget(
-        app(
+        host(
           CompactionProgress(
             startedAt: _t0,
             manual: true,
-            messagesBefore: 38,
-            messagesAfter: 34,
-            finishedAt: _t0.add(const Duration(seconds: 47)),
+            finishedAt: _t0.add(const Duration(seconds: 2)),
           ),
           clock,
         ),
       );
-      expect(
-        find.byKey(const ValueKey('compaction-done-icon')),
-        findsOneWidget,
-      );
-      expect(find.text('Compactado · 38 → 34 mensajes'), findsOneWidget);
-      expect(find.byKey(const ValueKey('compaction-elapsed')), findsNothing);
-      expect(find.byKey(const ValueKey('compaction-spinner')), findsNothing);
+      expect(find.text('Compactada'), findsOneWidget);
+      await tester.pumpWidget(host(null, clock));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Compactada'), findsNothing);
+      expect(find.text('21%'), findsOneWidget);
+      expect(find.byIcon(Icons.compress_rounded), findsOneWidget);
+      final pill = find.byKey(const ValueKey('desktop-context-usage-status'));
+      expect(tester.getSemantics(pill).flagsCollection.isLiveRegion, isFalse);
     });
 
-    testWidgets('no-op: "Nada que compactar" with the message count', (
+    testWidgets('no-op: "Sin cambios", announced as "Nada que compactar"', (
       tester,
     ) async {
       final clock = _Clock(_t0);
       await tester.pumpWidget(
-        app(
+        host(
           CompactionProgress(
             startedAt: _t0,
             manual: true,
@@ -352,15 +420,19 @@ void main() {
           clock,
         ),
       );
-      expect(find.text('Nada que compactar · 6 mensajes'), findsOneWidget);
+      expect(find.text('Sin cambios'), findsOneWidget);
+      expect(
+        triggerLabel(tester),
+        startsWith('Nada que compactar · 6 mensajes'),
+      );
     });
 
-    testWidgets('without facts the result falls back to the duration', (
+    testWidgets('without facts the outcome falls back to the duration', (
       tester,
     ) async {
       final clock = _Clock(_t0);
       await tester.pumpWidget(
-        app(
+        host(
           CompactionProgress(
             startedAt: _t0,
             manual: true,
@@ -369,13 +441,13 @@ void main() {
           clock,
         ),
       );
-      expect(find.text('Compactado · 71 s'), findsOneWidget);
+      expect(triggerLabel(tester), startsWith('Compactado · 71 s'));
     });
 
     testWidgets('determinate ring only from published chunks', (tester) async {
       final clock = _Clock(_t0);
       await tester.pumpWidget(
-        app(
+        host(
           CompactionProgress(
             startedAt: _t0,
             manual: false,
@@ -386,9 +458,111 @@ void main() {
         ),
       );
       final ring = tester.widget<CircularProgressIndicator>(
-        find.byType(CircularProgressIndicator),
+        find.descendant(
+          of: find.byKey(const ValueKey('compaction-spinner')),
+          matching: find.byType(CircularProgressIndicator),
+        ),
       );
       expect(ring.value, 0.25);
+    });
+
+    testWidgets('reduced motion: a still ring, no indeterminate spin', (
+      tester,
+    ) async {
+      final clock = _Clock(_t0);
+      await tester.pumpWidget(
+        host(
+          CompactionProgress(startedAt: _t0, manual: false),
+          clock,
+          reduceMotion: true,
+        ),
+      );
+      final ring = tester.widget<CircularProgressIndicator>(
+        find.descendant(
+          of: find.byKey(const ValueKey('compaction-spinner')),
+          matching: find.byType(CircularProgressIndicator),
+        ),
+      );
+      expect(ring.value, isNotNull);
+    });
+
+    testWidgets('tapping the pill opens the panel with the full facts', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(412, 915);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final clock = _Clock(_t0.add(const Duration(seconds: 12)));
+      final running = CompactionProgress(
+        startedAt: _t0,
+        manual: true,
+        messagesBefore: 22,
+        tokensBefore: 21500,
+      );
+      await tester.pumpWidget(host(running, clock));
+      await tester.tap(
+        find.byKey(const ValueKey('desktop-context-usage-status')),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('context-panel-compaction-text')),
+            )
+            .data,
+        'Compactando · 22 msj · ~21.5k tok',
+      );
+      // The panel follows the live state while it stays open.
+      await tester.pumpWidget(
+        host(
+          running.copyWith(
+            finishedAt: _t0.add(const Duration(seconds: 14)),
+            messagesAfter: 9,
+          ),
+          clock,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('context-panel-compaction-text')),
+            )
+            .data,
+        'Compactado · 22 → 9 mensajes',
+      );
+    });
+
+    testWidgets('Bot Chat fallback: a minimal indicator, never nothing', (
+      tester,
+    ) async {
+      final clock = _Clock(_t0.add(const Duration(seconds: 4)));
+      await tester.pumpWidget(
+        host(
+          CompactionProgress(startedAt: _t0, manual: false, messagesBefore: 9),
+          clock,
+          botChat: true,
+        ),
+      );
+      final indicator = find.byKey(
+        const ValueKey('compaction-inline-indicator'),
+      );
+      expect(indicator, findsOneWidget);
+      expect(find.text('Compactando…'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: indicator,
+          matching: find.byKey(const ValueKey('compaction-spinner')),
+        ),
+        findsOneWidget,
+      );
+      final semantics = tester.getSemantics(
+        find.byKey(const ValueKey('desktop-session-compression-progress')),
+      );
+      expect(semantics.getSemanticsData().label, 'Compactando · 9 msj');
+      expect(semantics.flagsCollection.isLiveRegion, isTrue);
     });
 
     for (final theme in [AppTheme.hermesRedDark, AppTheme.hermesRedLight]) {
@@ -420,11 +594,12 @@ void main() {
             ),
           ]) {
             await tester.pumpWidget(
-              app(progress, clock, theme: theme, width: 320, textScale: 2),
+              host(progress, clock, theme: theme, width: 320, textScale: 2),
             );
+            await tester.pump(const Duration(milliseconds: 300));
             expect(tester.takeException(), isNull);
             final pill = tester.getRect(
-              find.byKey(const ValueKey('compaction-dock')),
+              find.byKey(const ValueKey('desktop-context-usage-status')),
             );
             expect(pill.width, lessThanOrEqualTo(320));
           }
@@ -435,14 +610,14 @@ void main() {
     testWidgets('RTL and English', (tester) async {
       final clock = _Clock(_t0.add(const Duration(seconds: 5)));
       await tester.pumpWidget(
-        app(
+        host(
           CompactionProgress(startedAt: _t0, manual: true, messagesBefore: 3),
           clock,
           locale: const Locale('en'),
           direction: TextDirection.rtl,
         ),
       );
-      expect(find.textContaining('Compacting'), findsOneWidget);
+      expect(find.text('Compacting…'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });

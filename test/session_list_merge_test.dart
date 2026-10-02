@@ -405,4 +405,77 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('local search still updates the memoized session view', (
+    tester,
+  ) async {
+    final values = <String, String>{};
+    const channel = MethodChannel(
+      'plugins.it_nomads.com/flutter_secure_storage',
+    );
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+      call,
+    ) async {
+      final args = call.arguments as Map?;
+      switch (call.method) {
+        case 'readAll':
+          return Map<String, String>.of(values);
+        case 'read':
+          return values[args!['key']];
+        case 'write':
+          values[args!['key'] as String] = args['value'] as String;
+        case 'delete':
+          values.remove(args!['key']);
+      }
+      return null;
+    });
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      ),
+    );
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final manager = await ConnectionManager.create(prefs);
+    final client = _SessionListApiClient([
+      _session(
+        id: 'alpha',
+        title: 'Alpha plan',
+        source: 'mobile',
+        updatedAt: 2,
+      ),
+      _session(id: 'beta', title: 'Beta notes', source: 'mobile', updatedAt: 1),
+    ]);
+    final connection = SavedConnection(
+      id: 'conn-merge',
+      label: 'QA',
+      host: 'hermes.test',
+      port: 443,
+      apiKey: 'test-key',
+      useHttps: true,
+      kind: InstanceKind.vps,
+    );
+    await tester.pumpWidget(
+      _host(
+        SessionListScreen(
+          connection: connection,
+          connManager: manager,
+          clientOverride: client,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Alpha plan'), findsWidgets);
+    expect(find.text('Beta notes'), findsWidgets);
+
+    await tester.enterText(find.byType(TextField), 'beta');
+    await tester.pump();
+    expect(find.text('Alpha plan'), findsNothing);
+    expect(find.text('Beta notes'), findsWidgets);
+
+    await tester.enterText(find.byType(TextField), '');
+    await tester.pump();
+    expect(find.text('Alpha plan'), findsWidgets);
+  });
 }

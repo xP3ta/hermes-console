@@ -1,14 +1,18 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/data/desktop_projection_rooms.dart';
 import 'package:hermes_android/core/bots/ui/room/desktop_projection_room_screen.dart';
+import 'package:hermes_android/core/bots/ui/room/room_dictation.dart';
 import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
 import 'package:hermes_android/core/bots/ui/room/room_models.dart';
 import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
+import 'package:hermes_android/core/bots/ui/room/room_widgets.dart';
+import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/artifact_export_service.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -36,6 +40,10 @@ final class FakeRoomGateway implements RoomGateway {
   RoomDriverStatus? status;
   final List<(String, Map<String, Object?>)> calls = [];
   Completer<void>? approveGate;
+
+  /// When true, a successful approve leaves [status] as it was (the server
+  /// acknowledged the answer but still lists the approval).
+  bool approveKeepsStatus = false;
 
   FakeRoomGateway({required this.room, required this.log, this.status});
 
@@ -93,7 +101,7 @@ final class FakeRoomGateway implements RoomGateway {
   }) async {
     calls.add(('approve', {'choice': choice, 'request': action.requestId}));
     await approveGate?.future;
-    status = driver();
+    if (!approveKeepsStatus) status = driver();
   }
 
   @override
@@ -128,6 +136,31 @@ final class FakeActions implements RoomAttachmentActions {
   }
 }
 
+final class _FakeDictation extends RoomDictation {
+  bool _recording = false;
+  @override
+  bool get recording => _recording;
+  set recording(bool value) {
+    _recording = value;
+    notifyListeners();
+  }
+
+  @override
+  bool get transcribing => false;
+  @override
+  ValueListenable<double>? get level => null;
+  @override
+  Future<void> start({
+    required String currentText,
+    required ValueChanged<String> onText,
+    required ValueChanged<RoomDictationFailure> onFailure,
+  }) async {}
+  @override
+  Future<void> stop() async {}
+  @override
+  Future<void> cancel() async {}
+}
+
 final class _Uploader implements RoomAttachmentUploader {
   @override
   Future<String?> upload(draft) async => '/srv/uploads/${draft.name}';
@@ -159,6 +192,9 @@ Future<FakeRoomGateway> _pump(
   RoomAttachmentActions? actions,
   RoomAttachmentUploader? uploader,
   RoomLocalPrefs? prefs,
+  AgentProfile? Function(HostedGroupMember member)? profileFor,
+  void Function(HostedGroupMember member)? onOpenMember,
+  RoomDictation? dictation,
 }) async {
   tester.view.physicalSize = const Size(1080, 2400);
   tester.view.devicePixelRatio = 3;
@@ -174,10 +210,12 @@ Future<FakeRoomGateway> _pump(
         driverStatus: status,
         gateway: gateway,
         capabilities: caps,
-        profileFor: (_) => null,
+        profileFor: profileFor ?? (_) => null,
+        onOpenMember: onOpenMember,
         prefs: prefs ?? MemoryRoomPrefs(),
         attachmentActions: actions,
         uploader: uploader,
+        dictation: dictation,
         pollTimer: (_, _) => _FakeTimer(),
         clock: () => DateTime.fromMillisecondsSinceEpoch(1790000400 * 1000),
       ),
@@ -201,6 +239,20 @@ flutter test --no-pub
 | --- | --- |
 | P0/P1 | 0 |
 ''';
+
+/// Texts of the tappable spans (links) currently rendered.
+Set<String> _linkTexts(WidgetTester tester) {
+  final out = <String>{};
+  for (final rich in tester.widgetList<RichText>(find.byType(RichText))) {
+    rich.text.visitChildren((span) {
+      if (span is TextSpan && span.recognizer != null) {
+        out.add(span.text ?? span.toPlainText());
+      }
+      return true;
+    });
+  }
+  return out;
+}
 
 void main() {
   setUpAll(loadInterFont);
@@ -323,7 +375,7 @@ void main() {
   );
 
   testWidgets(
-    'round panel: collapsed summary, expanded per-member chips, stop all',
+    'status strip: summary, floating per-member detail with chips, stop all',
     (tester) async {
       final seq = EventSeq();
       final u = seq.user('@builder @review @lead @radar ship it');
@@ -343,17 +395,16 @@ void main() {
         ),
       );
       final summary = tester.widget<Text>(
-        find.byKey(const ValueKey('room-round-summary')),
+        find.byKey(const ValueKey('room-strip-summary')),
       );
-      expect(summary.data, contains('Round 1'));
-      expect(summary.data, contains('1 working'));
-      expect(summary.data, contains('1 queued'));
+      // Someone needing you wins the one line.
+      expect(summary.data, 'console-lead needs you');
       expect(
         find.byKey(const ValueKey('room-round-row-m-builder')),
         findsNothing,
       );
 
-      await tester.tap(find.byKey(const ValueKey('room-round-toggle')));
+      await tester.tap(find.byKey(const ValueKey('room-status-strip')));
       // A working face animates forever: pump frames instead of settling.
       await tester.pump(const Duration(milliseconds: 300));
       expect(
@@ -436,6 +487,33 @@ void main() {
     expect(find.byKey(const ValueKey('room-approval-apr-1')), findsNothing);
   });
 
+  testWidgets(
+    'approval card re-enables when the server still lists it after a successful answer',
+    (tester) async {
+      final seq = EventSeq();
+      final u = seq.user('@lead merge');
+      final gateway = await _pump(
+        tester,
+        events: [u, seq.started('m-lead', u['event_id'] as String)],
+        status: driver(working: true, pending: [approvalAction()]),
+      );
+      gateway.approveKeepsStatus = true;
+      final once = find.byKey(const ValueKey('room-approval-apr-1-once'));
+      await tester.tap(once);
+      await tester.pumpAndSettle();
+      for (var i = 0; i < 3; i++) {
+        final state = tester.state<RoomScreenState>(find.byType(RoomScreen));
+        await state.refresh();
+        await tester.pumpAndSettle();
+      }
+      expect(gateway.calls.where((c) => c.$1 == 'approve'), hasLength(1));
+      final button = tester.widget<TextButton>(
+        find.descendant(of: once, matching: find.byType(TextButton)),
+      );
+      expect(button.onPressed, isNotNull);
+    },
+  );
+
   testWidgets('retry card calls groups.retry for the server-listed task', (
     tester,
   ) async {
@@ -462,6 +540,66 @@ void main() {
     expect(gateway.calls.where((c) => c.$1 == 'retry').single.$2, {
       'task': 'task-r',
     });
+  });
+
+  testWidgets('failure card uses the same speaker name as the strip', (
+    tester,
+  ) async {
+    final seq = EventSeq();
+    final u = seq.user('@radar check');
+    final disc = u['event_id'] as String;
+    await _pump(
+      tester,
+      events: [
+        u,
+        seq.started('m-radar', disc, task: 'task-r'),
+        seq.failed('m-radar', disc, task: 'task-r'),
+      ],
+      status: driver(
+        blocked: true,
+        pending: [
+          {'kind': 'retry', 'task_id': 'task-r'},
+        ],
+      ),
+      profileFor: (m) => m.handle == 'radar'
+          ? AgentProfile(name: 'radar', botModeUiMeta: {'title': 'Radar'})
+          : null,
+    );
+    expect(find.text('Radar could not reply'), findsOneWidget);
+    expect(find.text('console-radar could not reply'), findsNothing);
+  });
+
+  testWidgets('mentions that cannot open anything are not rendered as links', (
+    tester,
+  ) async {
+    final opened = <String>[];
+    final seq = EventSeq();
+    final u = seq.user('@builder @radar @all look');
+    await _pump(
+      tester,
+      events: [u, seq.member('m-lead', 'lead', 'On it @builder @radar', 'd1')],
+      // Only builder has a local profile Mission Control can open.
+      profileFor: (m) =>
+          m.handle == 'builder' ? AgentProfile(name: 'builder') : null,
+      onOpenMember: (m) => opened.add(m.handle),
+    );
+    expect(_linkTexts(tester), {'@builder'});
+    await tester.tapOnText(find.textRange.ofSubstring('@builder').first);
+    await tester.pumpAndSettle();
+    expect(opened, ['builder']);
+
+    // The thread page offers the same working links.
+    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-menu-threads')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-thread-thread-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('room-thread-page')), findsOneWidget);
+    expect(_linkTexts(tester), {'@builder'});
+    await tester.tapOnText(find.textRange.ofSubstring('@builder').first);
+    await tester.pumpAndSettle();
+    expect(opened, ['builder', 'builder']);
   });
 
   testWidgets('attachment suffix renders as a card with download/open/share', (
@@ -534,6 +672,79 @@ void main() {
     },
   );
 
+  // Every keystroke and focus change rebuilt the whole RoomScreen (app
+  // bar, status strip, transcript lookup); only the composer depends on
+  // the text, the focus and the dictation state.
+  testWidgets('typing and focus rebuild only the composer, not the screen', (
+    tester,
+  ) async {
+    final seq = EventSeq();
+    final u = seq.user('status? @builder');
+    final reply = seq.member(
+      'm-builder',
+      'builder',
+      'hello',
+      u['event_id'] as String,
+    );
+    await _pump(tester, events: [u, reply], uploader: _Uploader());
+    final strip = tester.widget(find.byType(RoomStatusStrip));
+    final field = find.descendant(
+      of: find.byType(ConsoleComposer),
+      matching: find.byType(TextField),
+    );
+    await tester.tap(field);
+    await tester.pump();
+    for (final text in ['h', 'he', 'hey', 'hey ', 'hey @']) {
+      await tester.enterText(field, text);
+      await tester.pump();
+    }
+    expect(
+      identical(tester.widget(find.byType(RoomStatusStrip)), strip),
+      isTrue,
+      reason: 'the screen above the composer was not rebuilt',
+    );
+    // The composer itself still follows the text: send enabled, palette.
+    final composer = tester.widget<ConsoleComposer>(
+      find.byType(ConsoleComposer),
+    );
+    expect(composer.sendEnabled, isTrue);
+    expect(find.byKey(const ValueKey('room-mention-palette')), findsOneWidget);
+    // Losing focus hides the palette without rebuilding the screen.
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('room-mention-palette')), findsNothing);
+    await tester.enterText(field, '');
+    await tester.pump();
+    expect(
+      tester.widget<ConsoleComposer>(find.byType(ConsoleComposer)).sendEnabled,
+      isFalse,
+    );
+    expect(
+      identical(tester.widget(find.byType(RoomStatusStrip)), strip),
+      isTrue,
+    );
+  });
+
+  testWidgets('dictation state reaches the composer without a screen build', (
+    tester,
+  ) async {
+    final dictation = _FakeDictation();
+    addTearDown(dictation.dispose);
+    await _pump(tester, events: const [], dictation: dictation);
+    final strip = tester.widget(find.byType(RoomStatusStrip));
+    expect(find.byKey(const ValueKey('dictation-stop')), findsNothing);
+    dictation.recording = true;
+    await tester.pump();
+    expect(find.byKey(const ValueKey('dictation-stop')), findsOneWidget);
+    expect(
+      identical(tester.widget(find.byType(RoomStatusStrip)), strip),
+      isTrue,
+    );
+    dictation.recording = false;
+    await tester.pump();
+    expect(find.byKey(const ValueKey('dictation-stop')), findsNothing);
+  });
+
   testWidgets('attach is disabled with a reason in cross-gateway rooms', (
     tester,
   ) async {
@@ -594,6 +805,28 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('room-notify-mentions')));
     await tester.pumpAndSettle();
     expect(prefs.levels.values.single, RoomNotificationLevel.mentions);
+  });
+
+  testWidgets('read-only room still offers the notification level', (
+    tester,
+  ) async {
+    // The level is a device-local pref and read-only connections still get
+    // room notifications, so they must be able to mute a noisy room.
+    final prefs = MemoryRoomPrefs();
+    await _pump(
+      tester,
+      events: const [],
+      caps: RoomCapabilities.none,
+      prefs: prefs,
+    );
+    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('room-menu-settings')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('room-menu-notifications')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-notify-muted')));
+    await tester.pumpAndSettle();
+    expect(prefs.levels.values.single, RoomNotificationLevel.muted);
   });
 
   testWidgets('passes are one quiet line that opens the Activity sheet', (

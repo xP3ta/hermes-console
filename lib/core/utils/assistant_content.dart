@@ -138,11 +138,16 @@ class _HarmonyProjection {
   final List<String> reasoning;
   final bool reasoningInProgress;
 
+  /// True when the source ended in plain text outside any channel, think
+  /// envelope or incomplete header, i.e. in the parser's initial state.
+  final bool endsNeutral;
+
   const _HarmonyProjection({
     required this.text,
     required this.rawToPublicOffset,
     required this.reasoning,
     required this.reasoningInProgress,
+    this.endsNeutral = false,
   });
 }
 
@@ -152,14 +157,20 @@ class _HarmonyProjection {
 /// prefijos recortados, que desplazarían whitespace a la fila equivocada.
 class AssistantPublicProjection {
   final String text;
-  final List<int> _rawToPublicOffset;
+
+  /// Null when the projection is the identity (the source had no `<`).
+  final List<int>? _rawToPublicOffset;
 
   const AssistantPublicProjection._(this.text, this._rawToPublicOffset);
 
   int publicOffsetAtRawOffset(int rawOffset) {
     if (rawOffset <= 0) return 0;
-    if (rawOffset >= _rawToPublicOffset.length) return text.length;
-    return _rawToPublicOffset[rawOffset];
+    final offsets = _rawToPublicOffset;
+    if (offsets == null) {
+      return rawOffset >= text.length ? text.length : rawOffset;
+    }
+    if (rawOffset >= offsets.length) return text.length;
+    return offsets[rawOffset];
   }
 }
 
@@ -244,6 +255,7 @@ _HarmonyProjection _projectHarmony(String source, {required bool streaming}) {
   HarmonyAssistantChannel? channel;
   final harmonyThinkChannels = <HarmonyAssistantChannel?>[];
   var reasoningInProgress = false;
+  var endsNeutral = false;
   var channelReasoning = StringBuffer();
   var thinkReasoning = StringBuffer();
 
@@ -300,6 +312,7 @@ _HarmonyProjection _projectHarmony(String source, {required bool streaming}) {
             : 0;
         appendPublic(cursor, source.length - held);
         hide(source.length - held, source.length);
+        endsNeutral = channel == null;
       }
       cursor = source.length;
       break;
@@ -388,6 +401,7 @@ _HarmonyProjection _projectHarmony(String source, {required bool streaming}) {
     rawToPublicOffset: List<int>.unmodifiable(offsets),
     reasoning: List<String>.unmodifiable(reasoning),
     reasoningInProgress: reasoningInProgress,
+    endsNeutral: endsNeutral,
   );
 }
 
@@ -395,7 +409,14 @@ class _MappedProjection {
   final String text;
   final List<int> sourceToPublicOffset;
 
-  const _MappedProjection(this.text, this.sourceToPublicOffset);
+  /// True when no think tag is open at the end of the source.
+  final bool endsNeutral;
+
+  const _MappedProjection(
+    this.text,
+    this.sourceToPublicOffset, {
+    this.endsNeutral = false,
+  });
 }
 
 final RegExp _classicThinkDelimiter = RegExp(
@@ -477,13 +498,29 @@ _MappedProjection _projectClassicThink(
     appendPublic(cursor, source.length - held);
     hide(source.length - held, source.length);
   }
-  return _MappedProjection(answer.toString(), List<int>.unmodifiable(offsets));
+  return _MappedProjection(
+    answer.toString(),
+    List<int>.unmodifiable(offsets),
+    endsNeutral: privateStack.isEmpty,
+  );
 }
+
+/// Code units of assistant text examined by [projectPublicAssistantText].
+/// Benchmarks count projection work with it instead of timing the host.
+int debugAssistantProjectionInputChars = 0;
+
+/// Number of `codex_message_items` JSON strings decoded.
+int debugCodexMessageItemDecodes = 0;
 
 AssistantPublicProjection projectPublicAssistantText(
   String raw, {
   required bool streaming,
 }) {
+  // Every Harmony delimiter and every think tag starts with `<`, and so does
+  // every prefix either pass may hold back while streaming. Without one, both
+  // passes publish the source verbatim with the identity offset map.
+  if (!raw.contains('<')) return AssistantPublicProjection._(raw, null);
+  debugAssistantProjectionInputChars += raw.length;
   final harmony = _projectHarmony(raw, streaming: streaming);
   final classic = _projectClassicThink(harmony.text, streaming: streaming);
   final composed = <int>[
@@ -500,6 +537,146 @@ AssistantPublicProjection projectPublicAssistantText(
 String streamingPublicAssistantText(String raw) =>
     projectPublicAssistantText(raw, streaming: true).text.trim();
 
+// The longest Harmony delimiter (`<|channel|>`) and think tag (`</thinking>`)
+// are 11 code units and all start with `<`. A delimiter straddling a cut
+// therefore starts within the last 10 code units before it.
+const _streamingCutWindow = 10;
+
+bool _tailFreeOfDelimiterStart(String text) => !text.contains(
+  '<',
+  text.length < _streamingCutWindow ? 0 : text.length - _streamingCutWindow,
+);
+
+/// Streaming projection of [raw] plus whether the stream may be cut after it.
+///
+/// A cut is safe when both passes end in their initial state (no channel and
+/// no think envelope or tag open) and no `<` sits in the last
+/// [_streamingCutWindow] code units of either pass input. Both checks are
+/// needed: hiding a Harmony envelope can join `<thi` before it with `n` after
+/// it, so the classic input may end in a tag prefix the raw tail does not
+/// show. Then no delimiter straddles the cut, no prefix is held back, every
+/// lookahead of the earlier bytes resolved within them, the next bytes are
+/// parsed exactly as from the start, and
+/// `project(A + B) == project(A) + project(B)`.
+({String text, bool cutSafe}) _streamingTailProjection(String raw) {
+  // Without `<` no delimiter starts in [raw]; see [projectPublicAssistantText].
+  if (!raw.contains('<')) return (text: raw, cutSafe: true);
+  debugAssistantProjectionInputChars += raw.length;
+  final harmony = _projectHarmony(raw, streaming: true);
+  final classic = _projectClassicThink(harmony.text, streaming: true);
+  return (
+    text: classic.text,
+    cutSafe:
+        harmony.endsNeutral &&
+        classic.endsNeutral &&
+        _tailFreeOfDelimiterStart(raw) &&
+        _tailFreeOfDelimiterStart(harmony.text),
+  );
+}
+
+/// Incremental form of [streamingPublicAssistantText] for one answer.
+///
+/// [append] returns exactly what the whole-answer contract returned: the new
+/// public suffix, or null when the public projection of the whole raw answer
+/// is not prefix-stable (the delta is withheld). Settled text is committed at
+/// safe cuts, so each delta only re-projects the bytes since the last cut.
+final class StreamingPublicAssistantText {
+  // Raw bytes already committed, and their public projection C.
+  final StringBuffer _rawCommitted = StringBuffer();
+  final StringBuffer _committed = StringBuffer();
+  int _committedLength = 0;
+  // Leading whitespace of C. C is empty or contains a non-whitespace unit.
+  int _committedLeading = 0;
+  // Trailing whitespace of C; always inside the last committed chunk.
+  String _committedTrailing = '';
+  // Raw bytes after the last cut and their projection at the last accepted
+  // delta.
+  String _tail = '';
+  String _publishedTail = '';
+  // Published text while nothing is committed (bounded by the first cut).
+  String _publishedWithoutCommit = '';
+  int _rawLength = 0;
+
+  int get rawLength => _rawLength;
+
+  /// Raw code units settled behind the last safe cut.
+  int get committedRawLength => _rawLength - _tail.length;
+
+  String get rawText => '$_rawCommitted$_tail';
+
+  /// The public text published so far (trimmed whole-answer projection).
+  String get publicText {
+    if (_committedLength == 0) return _publishedWithoutCommit;
+    final committed = _committed.toString();
+    final tail = _publishedTail.trimRight();
+    if (tail.isEmpty) {
+      return committed.substring(
+        _committedLeading,
+        _committedLength - _committedTrailing.length,
+      );
+    }
+    return committed.substring(_committedLeading) + tail;
+  }
+
+  void clear() {
+    _rawCommitted.clear();
+    _committed.clear();
+    _committedLength = 0;
+    _committedLeading = 0;
+    _committedTrailing = '';
+    _tail = '';
+    _publishedTail = '';
+    _publishedWithoutCommit = '';
+    _rawLength = 0;
+  }
+
+  String? append(String token) {
+    _rawLength += token.length;
+    _tail += token;
+    final projection = _streamingTailProjection(_tail);
+    final tailText = projection.text;
+    final String delta;
+    if (_committedLength == 0) {
+      final projected = tailText.trim();
+      if (!projected.startsWith(_publishedWithoutCommit)) return null;
+      delta = projected.substring(_publishedWithoutCommit.length);
+      _publishedWithoutCommit = projected;
+    } else {
+      // Whole projection is C + tailText; the published text is
+      // trim(C + _publishedTail). C holds a non-whitespace unit, so the
+      // leading trim is fixed and only the tail decides the comparison.
+      final previousEnd = _publishedTail.trimRight().length;
+      final nextEnd = tailText.trimRight().length;
+      if (previousEnd == 0) {
+        delta = nextEnd == 0
+            ? ''
+            : _committedTrailing + tailText.substring(0, nextEnd);
+      } else {
+        if (nextEnd < previousEnd ||
+            !tailText.startsWith(_publishedTail.substring(0, previousEnd))) {
+          return null;
+        }
+        delta = tailText.substring(previousEnd, nextEnd);
+      }
+    }
+    _publishedTail = tailText;
+    final settledEnd = tailText.trimRight().length;
+    if (projection.cutSafe && settledEnd > 0) {
+      if (_committedLength == 0) {
+        _committedLeading = tailText.length - tailText.trimLeft().length;
+        _publishedWithoutCommit = '';
+      }
+      _rawCommitted.write(_tail);
+      _committed.write(tailText);
+      _committedLength += tailText.length;
+      _committedTrailing = tailText.substring(settledEnd);
+      _tail = '';
+      _publishedTail = '';
+    }
+    return delta;
+  }
+}
+
 /// Returns public text from a completed row/event.
 ///
 /// Invalid envelope-like literals are released byte-for-byte on completion,
@@ -510,6 +687,7 @@ String finalizedPublicAssistantText(String raw) =>
 List? _decodedCodexMessageItems(Object? rawItems) {
   Object? items = rawItems;
   if (items is String) {
+    debugCodexMessageItemDecodes++;
     try {
       items = jsonDecode(items);
     } on FormatException {
@@ -520,8 +698,10 @@ List? _decodedCodexMessageItems(Object? rawItems) {
 }
 
 /// Recovers reply text persisted by Responses API outside `content`.
-String codexMessageItemText(Object? rawItems) {
-  final items = _decodedCodexMessageItems(rawItems);
+String codexMessageItemText(Object? rawItems) =>
+    _codexMessageItemTextOf(_decodedCodexMessageItems(rawItems));
+
+String _codexMessageItemTextOf(List? items) {
   if (items == null) return '';
 
   final texts = <String>[];
@@ -550,8 +730,10 @@ String codexMessageItemText(Object? rawItems) {
 }
 
 /// Recovers reasoning-channel narration from Responses API message sidecars.
-String codexMessageItemReasoningText(Object? rawItems) {
-  final items = _decodedCodexMessageItems(rawItems);
+String codexMessageItemReasoningText(Object? rawItems) =>
+    _codexMessageItemReasoningTextOf(_decodedCodexMessageItems(rawItems));
+
+String _codexMessageItemReasoningTextOf(List? items) {
   if (items == null) return '';
 
   final messages = <String>[];
@@ -625,12 +807,25 @@ String structuredReasoningText(Map<String, dynamic> metadata) {
   return details is String ? details.trim() : '';
 }
 
-/// Combines canonical reasoning with commentary/analysis message sidecars.
-String durableAssistantReasoningText(Map<String, dynamic> metadata) {
-  final structured = structuredReasoningText(metadata);
-  final sidecar = codexMessageItemReasoningText(
-    metadata['codex_message_items'],
+/// Public reply text and reasoning narration of one Responses API sidecar,
+/// decoding a JSON string sidecar once for both.
+({String text, String reasoning}) codexMessageItemTexts(Object? rawItems) {
+  final items = _decodedCodexMessageItems(rawItems);
+  return (
+    text: _codexMessageItemTextOf(items),
+    reasoning: _codexMessageItemReasoningTextOf(items),
   );
+}
+
+/// Combines canonical reasoning with commentary/analysis message sidecars.
+String durableAssistantReasoningText(
+  Map<String, dynamic> metadata, {
+  String? sidecarReasoning,
+}) {
+  final structured = structuredReasoningText(metadata);
+  final sidecar =
+      sidecarReasoning ??
+      codexMessageItemReasoningText(metadata['codex_message_items']);
   if (structured.isEmpty) return sidecar;
   if (sidecar.isEmpty || sidecar == structured) return structured;
   return '$structured\n\n$sidecar';

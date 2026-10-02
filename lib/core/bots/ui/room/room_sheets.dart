@@ -145,13 +145,15 @@ Future<RoomMenuAction?> showRoomOverflowMenu(
               s.roomMenuActivity,
               subtitle: s.roomMenuActivitySubtitle,
             ),
+            // Device-local and read-only connections still get room
+            // notifications: the level is always offered.
+            row(
+              RoomMenuAction.notifications,
+              Icons.notifications_none_rounded,
+              s.roomMenuNotifications,
+              trailing: level(notifications),
+            ),
             if (!readOnly) ...[
-              row(
-                RoomMenuAction.notifications,
-                Icons.notifications_none_rounded,
-                s.roomMenuNotifications,
-                trailing: level(notifications),
-              ),
               row(
                 RoomMenuAction.settings,
                 Icons.tune_rounded,

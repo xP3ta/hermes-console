@@ -2,15 +2,19 @@ export '../widgets/session_status_tone.dart'
     show readableActivityTone, resolveActivityTone;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_header_title.dart';
 import '../config/flavor.dart';
+import '../models/core_read.dart';
 import '../models/desktop_active_session.dart';
 import '../models/home_widget_snapshot.dart';
-import '../models/session_activity.dart';
+import '../models/session_live_status.dart';
 import '../models/session_category.dart';
 import '../navigation/chat_route.dart';
 import '../services/agent_runtime/agent_runtime.dart';
@@ -29,10 +33,13 @@ import '../services/session_deletion.dart';
 import '../services/turn_outbox_store.dart';
 import '../services/tui_gateway_client.dart';
 import '../services/shared_gateway_pool.dart';
+import '../services/mission_snapshot_prewarm.dart';
 import '../theme/app_theme.dart';
 import '../utils/home_recent_sessions.dart';
+import '../utils/session_title.dart';
 import '../utils/assistant_operational_artifacts.dart';
 import '../utils/relative_time.dart';
+import '../widgets/onstage_gate.dart';
 import '../widgets/attachment_source_sheet.dart';
 import '../widgets/dock.dart';
 import '../widgets/dock_shortcuts.dart';
@@ -84,6 +91,12 @@ class HomeDashboardScreen extends StatefulWidget {
   final Future<DesktopActiveSessionList> Function()? activeSessionListLoader;
   final Stream<TuiGatewayEvent>? eventStreamOverride;
 
+  /// Saved Dashboard login check (defaults to [checkSavedDashboardLogin]).
+  final DashboardAuthProbe? dashboardAuthProbe;
+
+  /// Bot Mode background first read (defaults to the shared one).
+  final MissionSnapshotPrewarm? missionPrewarm;
+
   const HomeDashboardScreen({
     required this.connManager,
     this.clientFactory,
@@ -93,6 +106,8 @@ class HomeDashboardScreen extends StatefulWidget {
     @visibleForTesting this.globalActivityOverride,
     @visibleForTesting this.activeSessionListLoader,
     @visibleForTesting this.eventStreamOverride,
+    @visibleForTesting this.dashboardAuthProbe,
+    @visibleForTesting this.missionPrewarm,
     super.key,
   });
 
@@ -108,6 +123,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   SavedConnection? _active;
   bool _healthOk = false;
   bool _checking = false;
+
+  /// Saved Dashboard login of a healthy remote instance; a rejected or
+  /// missing login keeps the header pill from claiming the agent is online.
+  DashboardAuthCheck _dashboardAuth = DashboardAuthCheck.unknown;
   List<Session> _recentSessions = [];
   SessionArchive? _archive;
   final Map<String, ({double activityAt, String? user, String? assistant})>
@@ -119,7 +138,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   double _initialLoadProgress = 0;
   int _reloadEpoch = 0;
   int _refreshStatusEpoch = 0;
-  ActiveChatService? _listenedActiveChats;
+  final OnstageGate _activeIdsGate = OnstageGate();
+
+  /// ss1215: an attached chat's live status changed (tool, waiting, done):
+  /// repaint the recents in the same frame instead of on the next poll.
+  final OnstageGate _liveStatusGate = OnstageGate();
   GlobalActivityAggregate? _listenedGlobalActivity;
   TuiGatewayClient? _ownedActivityClient;
   SharedGatewayLease? _activityLease;
@@ -160,6 +183,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   @override
   void dispose() {
     _flushHomeDraft();
+    _missionPrewarm.cancel();
     hermesRouteObserver.unsubscribe(this);
     unawaited(DrawerGestureExclusion.setEnabled(false));
     _refreshStatusEpoch++;
@@ -173,7 +197,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     unawaited(_historyCleanupSubscription?.cancel());
     WidgetsBinding.instance.removeObserver(this);
     widget.connManager.activeConnectionId.removeListener(_onActiveConnChanged);
-    _listenedActiveChats?.activeIds.removeListener(_onActivityChanged);
+    _activeIdsGate.removeListener(_onActivityChanged);
+    _activeIdsGate.dispose();
+    _liveStatusGate.removeListener(_onActivityChanged);
+    _liveStatusGate.dispose();
     _listenedGlobalActivity?.removeListener(_onActivityChanged);
     _localStartPoll?.cancel();
     super.dispose();
@@ -183,11 +210,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     final activeChats = _activeChats;
-    if (!identical(_listenedActiveChats, activeChats)) {
-      _listenedActiveChats?.activeIds.removeListener(_onActivityChanged);
-      _listenedActiveChats = activeChats;
-      activeChats?.activeIds.addListener(_onActivityChanged);
-    }
+    // `activeIds` is force-notified on every subagent event of a run. While a
+    // chat covers Home, hold those notifications and deliver one on return.
+    _activeIdsGate.bind(context, activeChats?.activeIds);
+    _liveStatusGate.bind(context, activeChats?.liveStatusRevision);
     final aggregate =
         widget.globalActivityOverride ?? activeChats?.globalActivity;
     if (!identical(_listenedGlobalActivity, aggregate)) {
@@ -242,6 +268,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   @override
   void initState() {
     super.initState();
+    _activeIdsGate.addListener(_onActivityChanged);
+    _liveStatusGate.addListener(_onActivityChanged);
     WidgetsBinding.instance.addObserver(this);
     // Si se activa otra instancia desde cualquier pantalla (no solo el drawer
     // del home), recargamos al instante. Antes el home se quedaba con la
@@ -254,16 +282,42 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   }
 
   void _onActiveConnChanged() {
+    _missionPrewarm.cancel();
     if (mounted) _reload();
+  }
+
+  MissionSnapshotPrewarm get _missionPrewarm =>
+      widget.missionPrewarm ?? MissionSnapshotPrewarm.shared;
+
+  /// Once Home is healthy and idle, read Bot Mode in the background if the
+  /// user has used it on this connection, so its first entry is instant.
+  void _scheduleMissionPrewarm(SavedConnection conn) {
+    _missionPrewarm.schedule(
+      prefs: widget.connManager.prefs,
+      connection: conn,
+      stillIdle: () =>
+          _activityRefreshAllowed && _healthOk && _active?.id == conn.id,
+    );
   }
 
   void _onActivityChanged() {
     if (!mounted || _activityRebuildScheduled) return;
+    // ss1215: outside a frame (a gateway event, a timer) repaint in the next
+    // frame directly; only a notification raised while building is deferred.
+    // The post-frame path used to wait for some unrelated frame, so Inicio
+    // could keep a finished chat «working» until the user touched the screen.
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.idle ||
+        phase == SchedulerPhase.postFrameCallbacks) {
+      setState(() {});
+      return;
+    }
     _activityRebuildScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _activityRebuildScheduled = false;
       if (mounted) setState(() {});
     });
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   bool get _activityRefreshAllowed =>
@@ -485,6 +539,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _flushHomeDraft();
     }
     if (!_foreground) {
+      _missionPrewarm.cancel();
       _activityEventRefreshTimer?.cancel();
       _activityEventRefreshTimer = null;
       _activityReconnectTimer?.cancel();
@@ -599,7 +654,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       return;
     }
     final s = Strings.of(context);
-    final title = _archive?.titleForSession(session) ?? session.displayTitle;
+    final title =
+        _archive?.titleForSession(session, strings: s) ??
+        localizedSessionTitle(s, session);
     final isLocal =
         conn.kind == InstanceKind.localhost || session.source == 'mobile-local';
     var cronDeletion = LinkedCronDeletionMode.keepSchedule;
@@ -783,7 +840,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
               child: Text(
-                _archive?.titleForSession(session) ?? session.displayTitle,
+                _archive?.titleForSession(
+                      session,
+                      strings: Strings.of(context),
+                    ) ??
+                    localizedSessionTitle(Strings.of(context), session),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.titleMedium,
@@ -840,11 +901,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         action: SnackBarAction(
           label: s.slHideAction,
           onPressed: () async {
-            await _archive?.hide(session.id);
+            // Same logical key as Conversations, so a compressed chat hidden
+            // here is hidden there too.
+            await _archive?.hideSession(session);
             if (!mounted) return;
             setState(() {
               _recentSessions = _recentSessions
-                  .where((item) => item.id != session.id)
+                  .where((item) => item.logicalId != session.logicalId)
                   .toList();
             });
           },
@@ -885,6 +948,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
       setState(() {
         _healthOk = false;
+        _dashboardAuth = DashboardAuthCheck.unknown;
         _checking = false;
         _recentSessions = [];
       });
@@ -932,6 +996,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     );
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     bool ok = false;
+    // /health answered but the paged list did not (timeout, 5xx, reset).
+    // The server is reachable: keep the last known list instead of flipping
+    // Home to offline on every slow refresh (#1215).
+    var listReadUnavailable = false;
+    Future<DashboardAuthCheck>? dashboardAuthFuture;
     List<Session> sessions = [];
     List<ChatDraftEntry> drafts = [];
     // Los borradores viven en el Keystore. Un fallo puntual al desbloquearlo no
@@ -975,10 +1044,31 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
           if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
         }
       } else {
-        ok = await client.healthCheck();
+        // The paged session list below is an authenticated read, so it is
+        // the auth proof: a rejected key throws and leaves Home offline.
+        ok = await client.healthReachable();
         if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
         if (ok) {
-          sessions = await client.getSessions(profile: ownerProfile);
+          dashboardAuthFuture =
+              (widget.dashboardAuthProbe ??
+                      (c) => checkSavedDashboardLogin(widget.connManager, c))
+                  .call(conn);
+          try {
+            sessions = await client.getSessions(profile: ownerProfile);
+          } on CoreReadException catch (error) {
+            // A rejected key is a real outage of this connection.
+            if (error.kind == CoreReadErrorKind.auth ||
+                error.kind == CoreReadErrorKind.forbidden) {
+              rethrow;
+            }
+            listReadUnavailable = true;
+          } on TimeoutException {
+            listReadUnavailable = true;
+          } on http.ClientException {
+            listReadUnavailable = true;
+          } on SocketException {
+            listReadUnavailable = true;
+          }
           if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
           sessions.sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
           // La comprobación del bridge ya no depende de abrir Chat/Ajustes.
@@ -1034,18 +1124,34 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         .where(
           (s) =>
               !s.isJob &&
+              !archive.isSessionHidden(s) &&
+              !archive.isSessionArchived(s) &&
               !archive.isHidden(s.id) &&
               SessionCategory.chats.includesSource(s.source),
         )
         .toList();
     final recentLimit = _homeRecentLimit();
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
+    // The login check can take seconds on a slow Dashboard: apply it when it
+    // lands instead of holding the whole status refresh.
+    if (ok && dashboardAuthFuture != null) {
+      unawaited(
+        dashboardAuthFuture.catchError((_) => DashboardAuthCheck.unknown).then((
+          auth,
+        ) {
+          if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
+          setState(() => _dashboardAuth = auth);
+        }),
+      );
+    }
     setState(() {
       _healthOk = ok;
+      if (!ok) _dashboardAuth = DashboardAuthCheck.unknown;
       _checking = false;
       _archive = archive;
-      _recentSessions = recentSessions;
+      if (!listReadUnavailable) _recentSessions = recentSessions;
     });
+    if (ok) _scheduleMissionPrewarm(conn);
     await _refreshRemoteActivity(conn, ownerProfile);
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     unawaited(
@@ -1071,6 +1177,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     _reportInitialLoadProgress(0.92);
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
+    if (listReadUnavailable) return;
     unawaited(
       _hydrateTurnPreviews(
         conn,
@@ -1155,25 +1262,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     return null;
   }
 
-  SessionActivityKind _globalActivityKind(GlobalActivity? activity) {
-    if (activity == null || !activity.active) return SessionActivityKind.idle;
-    return switch (activity.phase) {
-      GlobalActivityPhase.preparing => SessionActivityKind.preparing,
-      GlobalActivityPhase.usingTools => SessionActivityKind.usingTools,
-      GlobalActivityPhase.waitingForUser => SessionActivityKind.waitingForUser,
-      GlobalActivityPhase.compacting => SessionActivityKind.compacting,
-      GlobalActivityPhase.delegated => SessionActivityKind.delegated,
-      GlobalActivityPhase.backgroundWork =>
-        SessionActivityKind.backgroundProcess,
-      GlobalActivityPhase.generating ||
-      GlobalActivityPhase.completing ||
-      GlobalActivityPhase.unknown => SessionActivityKind.generating,
-      GlobalActivityPhase.completed ||
-      GlobalActivityPhase.interrupted ||
-      GlobalActivityPhase.failed => SessionActivityKind.idle,
-    };
-  }
-
   List<Widget> _buildRecentRows(SavedConnection connection, int limit) {
     final rows = <Widget>[];
     final now = DateTime.now();
@@ -1196,7 +1284,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         previousGroup = group;
       }
 
-      final title = _archive?.titleForSession(session) ?? session.displayTitle;
+      final title =
+          _archive?.titleForSession(session, strings: Strings.of(context)) ??
+          localizedSessionTitle(Strings.of(context), session);
       final cached = _turnPreviews[_turnPreviewKey(connection, session)];
       final summary = homeRecentSummary(
         title: title,
@@ -1213,30 +1303,39 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         session.id,
         profile: session.profile,
       );
-      final rosterActivity = _globalActivityKind(
-        _globalActivityFor(connection, session),
-      );
+      final global = _globalActivityFor(connection, session);
 
-      Widget recentTile(
-        SessionActivityKind activity, {
-        int backgroundCount = 0,
-      }) {
-        final activityLabel = _activityLabel(
-          activity,
-          backgroundCount: backgroundCount,
+      Widget recentTile() {
+        // ss1215: the same derived status as the chat pill and the
+        // Conversaciones row (see [resolveSessionLiveStatus]).
+        final status = resolveSessionLiveStatus(
+          chat: activeChat?.liveStatus,
+          chatAuthoritative:
+              activeChat != null &&
+              (activeChat.hasDesktopRuntime ||
+                  activeChat.lastTerminalAt != null),
+          chatSettledAt: activeChat?.lastTerminalAt,
+          global: global,
         );
+        final activityLabel = status.isLive
+            ? sessionLiveStatusLabel(Strings.of(context), status)
+            : null;
         return _RecentSessionTile(
           session: session,
           title: title,
           summary: summary,
           activityLabel: activityLabel,
-          activityTone: sessionStatusToneFor(activity),
+          activityTone: sessionStatusToneFor(
+            sessionLiveStatusKind(status),
+            stale: status.stale,
+          ),
           relativeTime: relativeTime(
             session.lastActivityAt,
             languageCode: Localizations.localeOf(context).languageCode,
           ),
           onTap: () => _openChat(session),
-          onStop: activityLabel == null
+          onStop: activityLabel == null ||
+                  status.phase == SessionLivePhase.compacting
               ? null
               : () => _stopSession(connection, session),
           onManage: () => _showRecentActions(session),
@@ -1250,44 +1349,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
               ? Duration.zero
               : const Duration(milliseconds: 220),
           child: activeChat == null
-              ? recentTile(rosterActivity)
+              ? recentTile()
               : StreamBuilder<ActiveChatEvent>(
                   stream: activeChat.changes,
-                  builder: (_, _) {
-                    final localActivity = activeChat.sessionActivity;
-                    return recentTile(
-                      localActivity.showsActivity
-                          ? localActivity.kind
-                          : rosterActivity,
-                      backgroundCount: localActivity.backgroundItemCount,
-                    );
-                  },
+                  builder: (_, _) => recentTile(),
                 ),
         ),
       );
     }
     return rows;
   }
-
-  String? _activityLabel(
-    SessionActivityKind activity, {
-    int backgroundCount = 0,
-  }) => switch (activity) {
-    SessionActivityKind.preparing ||
-    SessionActivityKind.generating => Strings.of(context).chaPipelineThinking,
-    SessionActivityKind.usingTools => Strings.of(context).chaPipelineExecuting,
-    SessionActivityKind.responding => Strings.of(context).chaPipelineStreaming,
-    SessionActivityKind.waitingForUser => Strings.of(
-      context,
-    ).homeActivityAwaitingApproval,
-    SessionActivityKind.compacting => Strings.of(context).slActivityCompacting,
-    SessionActivityKind.delegated => Strings.of(context).slActivityDelegated,
-    SessionActivityKind.backgroundProcess =>
-      backgroundCount > 0
-          ? Strings.of(context).chaBackgroundActivityCount(backgroundCount)
-          : Strings.of(context).slActivityBackground,
-    SessionActivityKind.idle => null,
-  };
 
   Future<void> _stopSession(SavedConnection connection, Session session) async {
     final activeChats = _activeChats;
@@ -1683,6 +1754,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    final dashboardLoginIssue =
+        _healthOk &&
+        (_dashboardAuth == DashboardAuthCheck.invalidCredentials ||
+            _dashboardAuth == DashboardAuthCheck.loginRequired);
     final recentLimit = _homeRecentLimit();
     if (!_initialLoadComplete) {
       return Scaffold(
@@ -1744,12 +1819,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                         height: 6,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: _checking
+                          color: _checking || dashboardLoginIssue
                               ? colors.warning
                               : _healthOk
                               ? colors.success
                               : colors.textDisabled,
-                          boxShadow: _healthOk && !_checking
+                          boxShadow:
+                              _healthOk && !_checking && !dashboardLoginIssue
                               ? [
                                   BoxShadow(
                                     color: colors.success.withValues(
@@ -1767,6 +1843,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                             ? Strings.of(context).homeStatusChecking(
                                 _active?.label ??
                                     Strings.of(context).homeStatusAgentConsole,
+                              )
+                            : _healthOk &&
+                                  _dashboardAuth ==
+                                      DashboardAuthCheck.invalidCredentials
+                            ? Strings.of(
+                                context,
+                              ).m1215HomeDashboardWrongPassword(
+                                _active?.label ?? '',
+                              )
+                            : _healthOk &&
+                                  _dashboardAuth ==
+                                      DashboardAuthCheck.loginRequired
+                            ? Strings.of(
+                                context,
+                              ).m1215HomeDashboardLoginRequired(
+                                _active?.label ?? '',
                               )
                             : _healthOk
                             ? Strings.of(
@@ -2703,7 +2795,10 @@ class _RecentSessionTile extends StatelessWidget {
                           switchOutCurve: Curves.easeIn,
                           child: activityLabel != null
                               ? Padding(
-                                  key: ValueKey('activity-$activityLabel'),
+                                  // ss1215: the live line updates in place
+                                  // (tool → thinking → waiting); only the
+                                  // switch to/from the preview animates.
+                                  key: const ValueKey('activity-live'),
                                   padding: const EdgeInsets.only(top: 4),
                                   child: _ActivityLine(
                                     key: ValueKey(

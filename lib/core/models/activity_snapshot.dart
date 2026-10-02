@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart' show listEquals;
 
 import 'agent_task_list.dart';
@@ -14,6 +16,11 @@ bool isInternalActivityLabel(String label) {
       normalized == 'tool_describe' ||
       normalized == 'tool_search';
 }
+
+/// tp1216: the tool Hermes uses to load a skill's instructions (or one of
+/// its resources). Its `name` argument identifies the skill.
+bool isSkillLoadTool(String label) =>
+    label.trim().toLowerCase() == 'skill_view';
 
 enum ActivityStepKind { reasoning, tool, skill }
 
@@ -138,6 +145,22 @@ String? activityToolDetail(String tool, Object? args) {
     return trimmed.isEmpty ? null : trimmed;
   }
 
+  // tp1216: a skill load names its skill (`skill_view {name, file_path?}`),
+  // as Hermes Desktop titles it («github-pr-workflow → api.md»). Skill
+  // names are catalogue identifiers, still capped and secret-screened.
+  if (isSkillLoadTool(tool)) {
+    final name = text('name');
+    if (name != null && !_secretLike.hasMatch(name)) {
+      final file = text('file_path');
+      final fileName = file == null ? '' : _basename(file);
+      return _cap(
+        fileName.isEmpty || _secretLike.hasMatch(fileName)
+            ? name
+            : '$name → $fileName',
+      );
+    }
+  }
+
   for (final key in const ['command', 'cmd', 'script']) {
     final command = text(key);
     if (command == null) continue;
@@ -170,6 +193,193 @@ String? activityToolDetail(String tool, Object? args) {
     return _cap(value);
   }
   return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mp1215 · Escrituras de memoria que aterrizaron
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The Hermes tool that writes the agent's persistent memory/user profile.
+bool isMemoryTool(String label) => label.trim().toLowerCase() == 'memory';
+
+enum MemoryWriteAction { add, replace, remove }
+
+/// Clave del paso de `_activity_trace` que describe una llamada `memory`.
+const memoryWriteStepKey = 'memory';
+
+const int _maxMemoryPreviewChars = 280;
+
+final RegExp _memoryUnsafeChars = RegExp(
+  '[\\x00-\\x08\\x0b-\\x1f\\x7f'
+  '${String.fromCharCode(0x202a)}-${String.fromCharCode(0x202e)}'
+  '${String.fromCharCode(0x2066)}-${String.fromCharCode(0x2069)}]',
+);
+
+/// Texto de vista previa seguro: espacios colapsados, sin controles ni
+/// marcas bidi, acotado y descartado si parece un secreto.
+String? _memoryPreview(Object? raw) {
+  if (raw is! String) return null;
+  final clean = raw
+      .replaceAll(_memoryUnsafeChars, ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  if (clean.isEmpty || _secretLike.hasMatch(clean)) return null;
+  return _cap(clean, _maxMemoryPreviewChars);
+}
+
+/// Una escritura de memoria tal como la describe el propio gateway: la
+/// acción y el destino de los argumentos de la llamada (o, sin ellos, de la
+/// forma del resultado) y [landed] solo cuando el resultado confirma
+/// `success: true` sin quedar pendiente de aprobación. Sin resultado no hay
+/// marca: nada se infiere.
+final class MemoryWrite {
+  const MemoryWrite({
+    required this.action,
+    required this.userTarget,
+    required this.landed,
+    this.preview,
+  });
+
+  final MemoryWriteAction action;
+
+  /// `target: user` — el perfil del usuario, no las notas del agente.
+  final bool userTarget;
+  final bool landed;
+
+  /// Lo guardado (add/replace) o lo quitado (remove), si viene en los args.
+  final String? preview;
+
+  Map<String, dynamic> toStep() => Map<String, dynamic>.unmodifiable({
+    'action': action.name,
+    'target': userTarget ? 'user' : 'memory',
+    'landed': landed,
+    'preview': ?preview,
+  });
+
+  static MemoryWriteAction? _action(Object? value) => switch (value) {
+    'add' => MemoryWriteAction.add,
+    'replace' => MemoryWriteAction.replace,
+    'remove' => MemoryWriteAction.remove,
+    _ => null,
+  };
+
+  /// Lee el campo [memoryWriteStepKey] de un paso ya normalizado.
+  static MemoryWrite? fromStep(Object? raw) {
+    if (raw is! Map) return null;
+    final action = _action(raw['action']);
+    if (action == null) return null;
+    return MemoryWrite(
+      action: action,
+      userTarget: raw['target'] == 'user',
+      landed: raw['landed'] == true,
+      preview: _memoryPreview(raw['preview']),
+    );
+  }
+
+  /// Proyecta los argumentos de una llamada `memory` (op única o lote
+  /// `operations`). `null` si no es la herramienta o los args no la describen.
+  static MemoryWrite? fromArgs(String tool, Object? args) {
+    if (!isMemoryTool(tool)) return null;
+    final record = _memoryRecord(args);
+    if (record == null) return null;
+    String? previewOf(Map op, MemoryWriteAction action) => _memoryPreview(
+      action == MemoryWriteAction.remove
+          ? op['old_text']
+          : (op['content'] ?? op['new_text']),
+    );
+
+    MemoryWriteAction action;
+    String? preview;
+    final operations = record['operations'];
+    if (operations is List && operations.isNotEmpty) {
+      final ops = operations.whereType<Map>().toList(growable: false);
+      final actions = ops.map((op) => _action(op['action'])).toSet();
+      if (ops.length != operations.length || actions.contains(null)) {
+        return null;
+      }
+      // Un lote homogéneo conserva su acción; uno mixto «actualiza».
+      action = actions.length == 1
+          ? actions.single!
+          : MemoryWriteAction.replace;
+      for (final op in ops) {
+        preview = previewOf(op, _action(op['action'])!);
+        if (preview != null) break;
+      }
+    } else {
+      final single = _action(record['action']);
+      if (single == null) return null;
+      action = single;
+      preview = previewOf(record, action);
+    }
+    return MemoryWrite(
+      action: action,
+      userTarget: record['target'] == 'user',
+      landed: false,
+      preview: preview,
+    );
+  }
+
+  /// Asienta [call] (si se conocían sus args) con el resultado de la
+  /// herramienta. Sin args, la acción sale de la forma del resultado que
+  /// Hermes devuelve (`replaced_entry`/`removed_entry`); el texto nunca.
+  static MemoryWrite? settle(MemoryWrite? call, Object? result) {
+    final record = _memoryRecord(result);
+    if (record == null) return call;
+    final landed = memoryResultLanded(record);
+    final target = record['target'];
+    final replaced =
+        record.containsKey('replaced_entry') ||
+        record.containsKey('replaced_entries');
+    final removed =
+        record.containsKey('removed_entry') ||
+        record.containsKey('removed_entries');
+    final action =
+        call?.action ??
+        (replaced
+            ? MemoryWriteAction.replace
+            : removed
+            ? MemoryWriteAction.remove
+            : MemoryWriteAction.add);
+    return MemoryWrite(
+      action: action,
+      userTarget: target is String
+          ? target == 'user'
+          : call?.userTarget == true,
+      landed: landed,
+      preview: call?.preview,
+    );
+  }
+}
+
+Map? _memoryRecord(Object? raw) {
+  if (raw is Map) return raw;
+  if (raw is! String) return null;
+  final text = raw.trim();
+  if (!text.startsWith('{') || text.length > 65536) return null;
+  try {
+    final decoded = jsonDecode(text);
+    if (decoded is Map) return decoded;
+  } catch (_) {
+    // Hermes may append a loop warning after the JSON object.
+    final end = text.lastIndexOf('}');
+    if (end > 0) {
+      try {
+        final decoded = jsonDecode(text.substring(0, end + 1));
+        if (decoded is Map) return decoded;
+      } catch (_) {}
+    }
+  }
+  return null;
+}
+
+/// El resultado de `memory` confirma que la escritura quedó guardada: el
+/// gateway devuelve `success: true` y no la dejó en espera de aprobación.
+bool memoryResultLanded(Object? result) {
+  final record = _memoryRecord(result);
+  if (record == null) return false;
+  return record['success'] == true &&
+      record['staged'] != true &&
+      record['proposal_staged'] != true;
 }
 
 /// Todo lo que el chat sabe estar vivo AHORA, en un solo valor inmutable.

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_render_projection.dart';
@@ -1975,6 +1977,139 @@ void main() {
       final content = result.messagesNewestFirst.single['content'] as String;
       expect(content, contains('Aquí está:'));
       expect(content, contains('imagen'));
+    });
+  });
+
+  group('recovery del turno propio con texto saneado por Hermes', () {
+    // Pixel 29/09: el prompt local terminaba en salto de línea y Hermes lo
+    // guardó saneado; al reanudar se pintaban dos burbujas del mismo mensaje.
+    List<Map<String, dynamic>> users(DesktopSessionProjection projection) =>
+        projection.messagesNewestFirst
+            .where((message) => message['role'] == 'user')
+            .toList(growable: false);
+
+    DesktopSessionProjection recover(
+      List<Map<String, dynamic>> fallbackNewestFirst,
+    ) => const DesktopSessionReconciler().project(
+      DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-recovered',
+        storedSessionId: 'stored',
+        created: false,
+        inflight: DesktopInflightTurn(
+          user: 'hola mundo',
+          assistant: 'parcial',
+          streaming: true,
+        ),
+        running: true,
+      ),
+      fallbackNewestFirst: fallbackNewestFirst,
+      previousNewestFirst: fallbackNewestFirst,
+      bridgeOwnedLiveUser: true,
+    );
+
+    for (final local in const [
+      'hola mundo\n',
+      '  hola mundo',
+      'hola  mundo',
+      'hola mundo',
+    ]) {
+      test('una sola burbuja cuando el local era ${jsonEncode(local)}', () {
+        final projected = users(
+          recover([
+            {'role': 'assistant', 'content': '', '_pipeline': true},
+            {'role': 'user', 'content': local, '_optimistic': true},
+          ]),
+        );
+        expect(projected, hasLength(1));
+      });
+    }
+
+    test('un prompt distinto del runtime no se funde con el local', () {
+      final projected = users(
+        recover([
+          {'role': 'assistant', 'content': '', '_pipeline': true},
+          {'role': 'user', 'content': 'hola mundo @ops', '_optimistic': true},
+        ]),
+      );
+      expect(
+        projected.where((message) => message['_optimistic'] == true),
+        hasLength(1),
+      );
+    });
+
+    test('dos prompts optimistas abiertos no se tocan', () {
+      final projected = users(
+        recover([
+          {'role': 'assistant', 'content': '', '_pipeline': true},
+          {'role': 'user', 'content': 'hola mundo\n', '_optimistic': true},
+          {'role': 'user', 'content': 'hola mundo\n', '_optimistic': true},
+        ]),
+      );
+      expect(
+        projected.where((message) => message['_optimistic'] == true),
+        hasLength(2),
+      );
+    });
+
+    test('un optimista de un turno ya cerrado no se retira', () {
+      final projected = users(
+        recover([
+          {'role': 'assistant', 'content': '', '_pipeline': true},
+          {
+            'message_id': 'answer-old',
+            'role': 'assistant',
+            'content': 'respuesta anterior',
+          },
+          {'role': 'user', 'content': 'hola mundo\n', '_optimistic': true},
+        ]),
+      );
+      expect(
+        projected.where((message) => message['_optimistic'] == true),
+        hasLength(1),
+      );
+    });
+
+    test('un prompt de un turno ya terminado no se retira', () {
+      final projected = users(
+        recover([
+          {'role': 'assistant', 'content': '', '_pipeline': true},
+          {'role': 'user', 'content': 'hola mundo\n', '_optimistic': true},
+          {
+            'message_id': 'answer-1',
+            'role': 'assistant',
+            'content': 'respuesta anterior',
+          },
+          {
+            'message_id': 'user-1',
+            'role': 'user',
+            'content': 'pregunta anterior',
+          },
+        ]),
+      );
+      expect(
+        projected.map((message) => message['content']),
+        containsAll(['pregunta anterior', 'hola mundo']),
+      );
+      expect(projected, hasLength(2));
+    });
+
+    test('sin bridgeOwnedLiveUser (visor) no retira nada', () {
+      final projection = const DesktopSessionReconciler().project(
+        DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-viewer',
+          storedSessionId: 'stored',
+          created: false,
+          inflight: DesktopInflightTurn(user: 'hola mundo', streaming: true),
+          running: true,
+        ),
+        fallbackNewestFirst: const [
+          {'role': 'user', 'content': 'hola mundo\n', '_optimistic': true},
+        ],
+      );
+      expect(
+        users(projection).where((message) => message['_optimistic'] == true),
+        hasLength(1),
+      );
     });
   });
 }

@@ -71,6 +71,9 @@ class _SshScreenState extends State<SshScreen> {
   }
 
   Future<void> _remove() async {
+    final sessions = context
+        .findAncestorStateOfType<HermesAppState>()!
+        .sshSessions;
     final ok = await showHermesDialog<bool>(
       context: context,
       title: Strings.of(context).ssh2RemoveSsh,
@@ -89,6 +92,9 @@ class _SshScreenState extends State<SshScreen> {
       ],
     );
     if (ok == true) {
+      // Close the live shell too (including a connect in flight): otherwise
+      // the terminal would reattach to it without credentials or App Lock.
+      sessions.close(widget.connection.id);
       await _mgr.clear(widget.connection.id);
       _load();
     }

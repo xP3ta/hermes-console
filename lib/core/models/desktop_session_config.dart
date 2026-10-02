@@ -83,6 +83,11 @@ final class DesktopSessionCreateConfig {
   final bool createIfMissing;
   final bool allowTransportFallback;
 
+  /// Server-side working directory for a new chat started from a project or
+  /// worktree. Sent as `cwd` + `cwd_explicit: true` on `session.create`, the
+  /// same pair Hermes Desktop sends for a workspace-anchored new session.
+  final String? workspace;
+
   const DesktopSessionCreateConfig({
     this.model,
     this.reasoningEffort,
@@ -91,6 +96,7 @@ final class DesktopSessionCreateConfig {
     this.hidden = false,
     this.createIfMissing = true,
     this.allowTransportFallback = true,
+    this.workspace,
   });
 
   bool get isEmpty =>
@@ -100,7 +106,8 @@ final class DesktopSessionCreateConfig {
       title == null &&
       !hidden &&
       createIfMissing &&
-      allowTransportFallback;
+      allowTransportFallback &&
+      workspace == null;
 
   @override
   bool operator ==(Object other) =>
@@ -112,7 +119,8 @@ final class DesktopSessionCreateConfig {
           title == other.title &&
           hidden == other.hidden &&
           createIfMissing == other.createIfMissing &&
-          allowTransportFallback == other.allowTransportFallback;
+          allowTransportFallback == other.allowTransportFallback &&
+          workspace == other.workspace;
 
   @override
   int get hashCode => Object.hash(
@@ -123,6 +131,7 @@ final class DesktopSessionCreateConfig {
     hidden,
     createIfMissing,
     allowTransportFallback,
+    workspace,
   );
 }
 
@@ -137,12 +146,17 @@ final class DesktopConfigSetResult {
   final bool confirmRequired;
   final String? confirmMessage;
 
+  /// `config.set model` during a running turn: Hermes queues the pick and
+  /// applies it when the next turn starts (`pending_model_switch`).
+  final bool deferred;
+
   const DesktopConfigSetResult({
     required this.key,
     required this.value,
     this.warning,
     this.confirmRequired = false,
     this.confirmMessage,
+    this.deferred = false,
   });
 
   factory DesktopConfigSetResult.fromJson(
@@ -179,6 +193,7 @@ final class DesktopConfigSetResult {
       warning: warning,
       confirmRequired: confirmRequired,
       confirmMessage: confirmMessage,
+      deferred: json['deferred'] == true,
     );
   }
 }

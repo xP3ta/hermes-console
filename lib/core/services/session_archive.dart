@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../models/session.dart';
+import '../utils/session_title.dart';
 
 /// Local archive + hidden store for sessions.
 ///
@@ -33,6 +35,14 @@ class SessionArchive {
   Set<String> _pinned = {};
   Set<String> _hidden = {};
   Map<String, String> _titles = {};
+
+  int _revision = 0;
+
+  /// Advances synchronously with every in-memory change (archive, pin,
+  /// hidden, titles), including remote pin reconciliation, so readers can
+  /// memoize derived views on it. Every mutation path persists through
+  /// [_flush]/[_flushTitles], which bump it before their first await.
+  int get revision => _revision;
 
   SessionArchive._(this._prefs, this._connectionId);
 
@@ -171,8 +181,12 @@ class SessionArchive {
     return serverTitle;
   }
 
-  String titleForSession(Session session) =>
-      titleFor(session.logicalId, session.displayTitle);
+  String titleForSession(Session session, {Strings? strings}) => titleFor(
+    session.logicalId,
+    strings == null
+        ? session.displayTitle
+        : localizedSessionTitle(strings, session),
+  );
 
   Future<void> setTitle(String sessionId, String title) async {
     final clean = title.trim();
@@ -250,6 +264,7 @@ class SessionArchive {
   }
 
   Future<void> _flush() async {
+    _revision++;
     await _prefs.setStringList(_key, _archived.toList());
     await _prefs.setStringList(_pinnedKey, _pinned.toList());
     await _prefs.setStringList(_hiddenKey, _hidden.toList());
@@ -257,6 +272,7 @@ class SessionArchive {
   }
 
   Future<void> _flushTitles() async {
+    _revision++;
     await _prefs.setStringList(
       _titleKey,
       _titles.entries.map((e) => '${e.key}\t${e.value}').toList(),

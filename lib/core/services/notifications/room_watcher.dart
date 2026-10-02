@@ -501,6 +501,13 @@ const roomRoundOpenTimeout = Duration(minutes: 15);
             ? before.workingSinceMs ?? openedAt ?? nowMs
             : openedAt ?? nowMs)
       : null;
+  // A live card is up only while [workingSinceMs] is kept (level "all").
+  // When the level leaves "all" mid-round (mute or mentions), withdraw it
+  // once; otherwise it would stay on "working" for good.
+  final liveCard = level == RoomNotificationLevel.all;
+  if (!liveCard && before.workingSinceMs != null) {
+    notices.add(RoomLiveNotice(working: false, round: round));
+  }
   if (level == RoomNotificationLevel.all && (liveNow || before.live)) {
     notices.add(
       RoomLiveNotice(
@@ -536,7 +543,7 @@ const roomRoundOpenTimeout = Duration(minutes: 15);
       repliers: repliers,
       lastMemberId: lastMember,
       pendingRequestIds: pendingIds,
-      workingSinceMs: since,
+      workingSinceMs: liveCard ? since : null,
       round: round,
       openMembers: status.running || status.working ? open : const {},
       discussion: settled ? null : discussion,
@@ -714,6 +721,30 @@ class RoomWatcher {
     }
   }
 
+  /// Rooms whose `groups.state`/`groups.log` are read at the same time.
+  static const int readConcurrency = 4;
+
+  /// Maps [items] with at most [limit] calls in flight, keeping input order.
+  /// The first failure is rethrown once every started call has settled.
+  static Future<List<R>> _boundedMap<T, R>(
+    List<T> items,
+    int limit,
+    Future<R> Function(T item) map,
+  ) async {
+    final results = List<R?>.filled(items.length, null);
+    var next = 0;
+    Future<void> worker() async {
+      while (next < items.length) {
+        final index = next++;
+        results[index] = await map(items[index]);
+      }
+    }
+
+    final workers = items.length < limit ? items.length : limit;
+    await Future.wait([for (var i = 0; i < workers; i++) worker()]);
+    return results.cast<R>();
+  }
+
   /// One incremental pass. Returns false when skipped by backoff or failed.
   Future<bool> tick(BotModeGateway gateway) async {
     if (!allowsAttempt) return false;
@@ -733,10 +764,10 @@ class RoomWatcher {
       )).where((r) => !r.disbanded).take(maxRooms).toList();
       final seen = <String>{};
       final views = <RoomWatchView>[];
-      for (final listed in rooms) {
-        final key = roomKey(connId, listed);
-        seen.add(key);
-        final previousRaw = all[key];
+      // Network reads per room are independent: run them a few rooms at a
+      // time. Decisions, claims and notifications stay serial and in order.
+      final reads = await _boundedMap(rooms, readConcurrency, (listed) async {
+        final previousRaw = all[roomKey(connId, listed)];
         final previous = previousRaw == null
             ? null
             : RoomWatchState.fromJson(previousRaw);
@@ -770,6 +801,19 @@ class RoomWatcher {
           // Authority rotated or the log rewound: rebaseline silently.
           events = [];
         }
+        return (
+          previous: previous,
+          state: state,
+          events: events,
+          latest: latest,
+        );
+      });
+      for (var index = 0; index < rooms.length; index++) {
+        final listed = rooms[index];
+        final key = roomKey(connId, listed);
+        seen.add(key);
+        final (:previous, :state, :events, :latest) = reads[index];
+        final room = state.room;
         final level = await roomPrefs.notificationLevel(prefsRoomKey(room));
         final decision = decideRoomNotices(
           previous: previous,

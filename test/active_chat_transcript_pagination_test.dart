@@ -20,6 +20,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
+import 'support/lc1215_long_session_fixture.dart';
 
 /// Fake del canal Desktop que graba los flags de `session.resume` y permite
 /// emitir eventos `session.resume_progress` como haría Hermes Agent 0.20.
@@ -517,6 +518,7 @@ List<Map<String, dynamic>> _generatedImageRefs(Map<String, dynamic> message) {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  lc1215NativeLongSessionTests();
 
   test(
     'native history keeps a REST-401 profile visible with recovery open',
@@ -572,6 +574,86 @@ void main() {
       expect(await chat.loadEarlierMessages(), isFalse);
       expect(restCalls, 1);
       expect(gateway.historyRequests, hasLength(1));
+    },
+  );
+
+  test(
+    'cold open overlaps the canonical REST tail with resume and history',
+    () async {
+      final rows = _rows(40);
+      final historyGate = Completer<void>();
+      final gateway = _HistoryGateway()
+        ..resumeGate = Completer<DesktopSessionSnapshot>()
+        ..loader = () async {
+          await historyGate.future;
+          return SessionMessagesPage.fromRaw(
+            rawMessages: rows,
+            pagination: null,
+            paginationProvided: false,
+          );
+        };
+      final server = _TranscriptServer(paginate: true)..rows.addAll(rows);
+      final chat = _chat('overlapped-open', server.client(), gateway: gateway);
+      addTearDown(chat.dispose);
+
+      final loading = chat.loadMessages(expectedMessageCount: 40);
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      // The REST tail does not depend on the runtime: it is already on the
+      // wire while session.resume is still pending.
+      expect(gateway.resumeExistingCalls, 1);
+      expect(server.requests, hasLength(1));
+      gateway.resumeGate!.complete(
+        const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-overlap',
+          storedSessionId: 'stored-chat',
+          created: false,
+          messagesProvided: false,
+          messageCount: 40,
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(gateway.historyRequests, hasLength(1));
+      historyGate.complete();
+      await loading;
+
+      // The overlapped read is reused, never duplicated.
+      expect(server.requests, hasLength(1));
+      expect(server.requests.single.queryParameters['offset'], '0');
+      expect(chat.messages, hasLength(40));
+      expect(chat.hasEarlierMessages, isFalse);
+    },
+  );
+
+  test(
+    'overlapped REST tail is not issued when history exceeds the page',
+    () async {
+      final rows = _rows(300);
+      final gateway = _HistoryGateway()
+        ..snapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-large',
+          storedSessionId: 'stored-chat',
+          created: false,
+          messagesProvided: false,
+          messageCount: 300,
+        )
+        ..loader = () async => SessionMessagesPage.fromRaw(
+          rawMessages: rows,
+          pagination: null,
+          paginationProvided: false,
+        );
+      final server = _TranscriptServer(paginate: true)..rows.addAll(rows);
+      final chat = _chat('large-open', server.client(), gateway: gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(expectedMessageCount: 300);
+
+      // Native history alone covers more than one page: no speculative REST.
+      expect(server.requests, isEmpty);
+      expect(chat.messages, hasLength(300));
     },
   );
 
@@ -1454,11 +1536,13 @@ void main() {
         changes.add(await chat.reconcileAfterResume());
       }
 
+      // An unchanged chat is confirmed with a one-row tail probe per resume;
+      // the 120-row opening page is not downloaded again.
       expect(server.requests, hasLength(5));
       expect(changes, everyElement(isFalse));
       expect(
         server.requests.map((uri) => uri.queryParameters['limit']),
-        everyElement('120'),
+        everyElement('1'),
       );
       expect(
         server.requests.map((uri) => uri.queryParameters['offset']),
@@ -1514,7 +1598,12 @@ void main() {
 
     expect(await chat.reconcileAfterResume(), isFalse);
     expect(chat.messages, hasLength(240));
-    expect(server.requests.single.queryParameters['limit'], '120');
+    // Scrolling back changed the local projection, so the tail probe cannot
+    // vouch for it and the normal opening-page read follows.
+    expect(server.requests.map((uri) => uri.queryParameters['limit']), [
+      '1',
+      '120',
+    ]);
     while (chat.hasEarlierMessages) {
       final addedRows = await chat.loadEarlierMessages();
       // An exact multiple ends with an empty cursor-closing page.
@@ -1598,7 +1687,9 @@ void main() {
       expect(chat.messages, hasLength(120));
       expect(chat.hasEarlierMessages, isFalse);
       expect(await chat.loadEarlierMessages(), isFalse);
-      expect(server.requests, hasLength(2));
+      // Opening page, the tail probe (answered without pagination, which
+      // retires the probe) and the full read.
+      expect(server.requests, hasLength(3));
     },
   );
 
@@ -9827,5 +9918,86 @@ void main() {
       expect(recorded, hasLength(tombstonesBeforeSecondStop));
       expect(chat.stopConfirmationState, StopConfirmationState.confirmed);
     });
+  });
+}
+
+// lc1215 (QA 9478): a long Desktop session opened through the live gateway.
+// `session.history` only carries the active generation after the last
+// compaction; the compacted display history must stay reachable and the
+// combined transcript must paint every Desktop-visible row once, in order.
+void lc1215NativeLongSessionTests() {
+  Iterable<int> unitIndexes(ChatRenderUnitPlan unit) => switch (unit) {
+    ChatMessageUnitPlan(:final messageIndex) => [messageIndex],
+    ChatUserTurnUnitPlan(
+      :final primaryMessageIndex,
+      :final supplementMessageIndexes,
+    ) =>
+      [primaryMessageIndex, ...supplementMessageIndexes],
+    ChatToolActivityUnitPlan(:final messageIndexes) => messageIndexes,
+  };
+
+  List<String> rendered(List<Map<String, dynamic>> messages) {
+    final out = <String>[];
+    final projection = ChatRenderProjection.build(messages);
+    for (final unit in projection.units.reversed) {
+      if (unit is ChatToolActivityUnitPlan) continue;
+      final indexes = unitIndexes(unit).toList()..sort((a, b) => b - a);
+      for (final index in indexes) {
+        out.addAll(
+          RegExp(r'lc-row-\d+\b')
+              .allMatches('${messages[index]['content'] ?? ''}')
+              .map((match) => match.group(0)!),
+        );
+      }
+    }
+    return out;
+  }
+
+  test('lc1215 native open of a long compacted session paints the tail '
+      'and reaches every earlier row', () async {
+    final shape = lc1215ShapeRows();
+    final dashboard = lc1215DashboardRows(shape);
+    final native = lc1215NativeHistoryRows(dashboard);
+    final server = _TranscriptServer(paginate: true)..rows.addAll(dashboard);
+    final gateway = _HistoryGateway()
+      ..snapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-lc1215',
+        storedSessionId: 'stored-chat',
+        created: false,
+        messagesProvided: false,
+        messageCount: native.length,
+      )
+      ..loader = () async => SessionMessagesPage.fromRaw(
+        rawMessages: native,
+        pagination: null,
+        paginationProvided: false,
+      );
+    final chat = _chat(
+      'lc1215-native',
+      server.client(),
+      gateway: gateway,
+      transcriptPageSizeForTesting: 500,
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages(expectedMessageCount: native.length);
+
+    final activeVisible = lc1215DesktopVisibleMarkers(
+      shape.where((row) => row.active),
+    );
+    final opening = rendered(chat.messages);
+    expect(
+      opening.toSet().containsAll(activeVisible),
+      isTrue,
+      reason: 'missing ${activeVisible.toSet().difference(opening.toSet())}',
+    );
+    expect(chat.hasEarlierMessages, isTrue);
+
+    var guard = 0;
+    while (chat.hasEarlierMessages && guard++ < 20) {
+      await chat.loadEarlierMessages(continuePastInvisible: true);
+    }
+    expect(chat.hasEarlierMessages, isFalse);
+    expect(rendered(chat.messages), lc1215DesktopVisibleMarkers(shape));
   });
 }

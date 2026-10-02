@@ -753,12 +753,18 @@ void main() {
         ),
       );
       await _openPanel(tester);
-      expect(find.textContaining('tarea '), findsNWidgets(6));
+      // Plain task rows only: the panel header is the pill line, which now
+      // names the task in progress («Pensando… · tarea 7»).
+      final rows = find.byWidgetPredicate(
+        (widget) =>
+            widget is Text && (widget.data?.startsWith('tarea ') ?? false),
+      );
+      expect(rows, findsNWidgets(6));
       // La tarea en curso queda dentro de la ventana.
       expect(find.text('tarea 7'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('activity-tasks-toggle')));
       await tester.pump();
-      expect(find.textContaining('tarea '), findsNWidgets(9));
+      expect(rows, findsNWidgets(9));
     });
 
     testWidgets('scroll propio y seguimiento automático del paso en curso', (
