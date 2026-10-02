@@ -250,12 +250,34 @@ final class GlobalActivityAggregate extends ChangeNotifier {
         _terminalRosterGeneration.remove(scope.exactKey);
       }
       final settled = _settledRosterGeneration[scope.durableKey];
+      final stamp = row.lastActiveAt?.toUtc();
       if (settled != null) {
-        if (requestGeneration <= settled.generation ||
-            now.difference(settled.at) < ownTurnEndGrace) {
+        // The suppression keys on the finished turn. Hermes stamps
+        // `last_active` when a turn is submitted; a busy row stamped after
+        // the newest stamp seen up to the settle belongs to a newer turn
+        // (e.g. started from Desktop right after) and applies at once.
+        final baseline = settled.lastActiveAt;
+        final newerTurn =
+            rosterStatusIsBusy(row.status) &&
+            requestGeneration > settled.generation &&
+            baseline != null &&
+            stamp != null &&
+            stamp.isAfter(baseline);
+        if (!newerTurn &&
+            (requestGeneration <= settled.generation ||
+                now.difference(settled.at) < ownTurnEndGrace)) {
           continue;
         }
         _settledRosterGeneration.remove(scope.durableKey);
+      }
+      if (stamp != null) {
+        final seen = _rosterLastActive[scope.durableKey];
+        if (seen == null || stamp.isAfter(seen)) {
+          _rosterLastActive[scope.durableKey] = stamp;
+          while (_rosterLastActive.length > 256) {
+            _rosterLastActive.remove(_rosterLastActive.keys.first);
+          }
+        }
       }
       final prior = _byDurable[scope.durableKey];
       final sameIncarnation = prior?.scope.exactKey == scope.exactKey;
@@ -327,6 +349,7 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       _settledRosterGeneration[durableKey] = (
         generation: generation,
         at: _now().toUtc(),
+        lastActiveAt: _rosterLastActive[durableKey],
       );
       while (_settledRosterGeneration.length > 256) {
         _settledRosterGeneration.remove(_settledRosterGeneration.keys.first);
@@ -340,8 +363,12 @@ final class GlobalActivityAggregate extends ChangeNotifier {
     if (changed) _changed();
   }
 
-  final Map<String, ({int generation, DateTime at})> _settledRosterGeneration =
-      {};
+  final Map<String, ({int generation, DateTime at, DateTime? lastActiveAt})>
+  _settledRosterGeneration = {};
+
+  /// Newest server `last_active` stamp seen per durable session; the stamp
+  /// of the turn a settle suppresses.
+  final Map<String, DateTime> _rosterLastActive = {};
   static const ownTurnEndGrace = Duration(seconds: 10);
 
   void _recordNonBusyRoster(String durableKey) {

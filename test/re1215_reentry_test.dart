@@ -52,6 +52,7 @@ void _applyRoster(
   ActiveChatService service,
   String status, {
   int? generation,
+  DateTime? lastActiveAt,
 }) => service.globalActivity.applyRoster(
   connectionId: 'peer',
   profile: 'default',
@@ -65,6 +66,7 @@ void _applyRoster(
         runtimeSessionId: 'runtime-peer',
         storedSessionId: 'stored-peer',
         status: status,
+        lastActiveAt: lastActiveAt,
       ),
     ],
   ),
@@ -174,6 +176,46 @@ void main() {
       clock = clock.add(GlobalActivityAggregate.ownTurnEndGrace);
       _applyRoster(service, 'working');
       expect(_listStatus(service).phase, SessionLivePhase.working);
+    });
+
+    // External review of 4f45a6b: the suppression keys on the finished turn,
+    // not on every busy row read inside the window. The roster's
+    // `last_active` is the server's stamp of the turn that owns the row: a
+    // turn started from Desktop right after this one ends carries a newer
+    // stamp and must show at once, also on an aggregate that has lived for
+    // hours; a row still stamped by the finished turn stays suppressed.
+    test('a new turn started elsewhere right after the end shows at once on '
+        'a long-lived aggregate', () async {
+      // Server stamp of the turn this chat runs, seen by the list meanwhile.
+      final turnStartedAt = DateTime.now().toUtc().subtract(
+        const Duration(seconds: 30),
+      );
+      _applyRoster(service, 'working', lastActiveAt: turnStartedAt);
+      // The aggregate has lived long before this turn ends.
+      clock = clock.add(const Duration(hours: 1));
+      await finishTurn();
+      final endedAt = chat.lastTerminalAt!;
+      service.debugDisposeChatForTesting('peer', 'stored-peer');
+
+      clock = clock.add(const Duration(seconds: 1));
+      _applyRoster(service, 'working', lastActiveAt: turnStartedAt);
+      expect(
+        _listStatus(service).isLive,
+        isFalse,
+        reason: 'a busy row stamped by the finished turn is that same turn',
+      );
+
+      clock = clock.add(const Duration(seconds: 1));
+      _applyRoster(
+        service,
+        'working',
+        lastActiveAt: endedAt.add(const Duration(seconds: 2)),
+      );
+      expect(
+        _listStatus(service).phase,
+        SessionLivePhase.working,
+        reason: 'a turn started after the end is a new turn',
+      );
     });
 
     test('re-entering shows no provisional «working» pill', () async {
