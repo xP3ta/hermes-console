@@ -32,6 +32,8 @@ class _FlakyGateway
   bool onlyConnectRestores = false;
   bool reachable = false;
   int connectCalls = 0;
+  // xr1215: the rows `session.active_list` reports.
+  List<DesktopActiveSession> activeSessions = const [];
 
   Never _lost() => throw const TuiGatewayRpcError(
     'gateway.connect',
@@ -112,7 +114,7 @@ class _FlakyGateway
       await gate.future;
     }
     if (down) _lost();
-    return const DesktopActiveSessionList();
+    return DesktopActiveSessionList(sessions: activeSessions);
   }
 
   @override
@@ -393,6 +395,53 @@ void main() {
       expect(chat.queuedMessages, isEmpty);
       async.elapse(const Duration(seconds: 30));
       expect(gateway.submissions, ['turno vivo', 'seguimiento']);
+
+      chat.dispose();
+      async.flushTimers();
+    });
+  });
+
+  test('xr1215 a drain behind an in-flight check never sends while '
+      'session.active_list reports the session busy', () {
+    fakeAsync((async) {
+      const busy = [
+        DesktopActiveSession(
+          runtimeSessionId: 'runtime-remote',
+          storedSessionId: 'session-qr',
+          status: 'working',
+        ),
+      ];
+      final gateway = _FlakyGateway()
+        ..holdNextActiveLists = 1
+        ..activeSessions = busy;
+      final chat = _chat('xr-authority-busy', gateway);
+
+      // Drain A holds the authority check; a second admission drains while
+      // it is in flight.
+      chat.enqueue('primero');
+      async.flushMicrotasks();
+      async.elapse(Duration.zero);
+      expect(gateway.heldActiveLists, hasLength(1));
+      chat.enqueue('segundo');
+      async.elapse(Duration.zero);
+      expect(gateway.submissions, isEmpty);
+
+      // The server keeps answering busy: nothing is sent, however long.
+      gateway.heldActiveLists.single.complete();
+      async.elapse(const Duration(seconds: 30));
+      expect(gateway.submissions, isEmpty);
+      expect(chat.queuedMessages, ['primero', 'segundo']);
+      final checksWhileBusy = gateway.activeListCalls;
+      expect(checksWhileBusy, greaterThanOrEqualTo(2));
+
+      // Only a fresh idle answer releases the head, exactly once.
+      gateway.activeSessions = const [];
+      chat.refreshPassiveRemoteActivity();
+      async.elapse(const Duration(seconds: 5));
+      expect(gateway.submissions, ['primero']);
+      expect(chat.queuedMessages, ['segundo']);
+      async.elapse(const Duration(seconds: 30));
+      expect(gateway.submissions, ['primero']);
 
       chat.dispose();
       async.flushTimers();
