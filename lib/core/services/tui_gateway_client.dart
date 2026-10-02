@@ -1866,7 +1866,10 @@ class TuiGatewayClient
             (epoch is! String || epoch.isEmpty || epoch != epoch.trim())) {
           throw const JsonRpcWireFormatException('invalid replay epoch');
         }
-        if (payload.containsKey('heartbeat') && payload['heartbeat'] is! bool) {
+        // `heartbeat` is `bool | null` in GatewayReadyPayload: null means the
+        // capability is not offered, exactly like an absent key.
+        final heartbeat = payload['heartbeat'];
+        if (heartbeat != null && heartbeat is! bool) {
           throw const JsonRpcWireFormatException(
             'invalid heartbeat capability',
           );
