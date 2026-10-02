@@ -3709,6 +3709,7 @@ enum _SessionMessagesPageConsumer {
   loadEarlier,
   scheduledHydration,
   cancelledAnchorRepair,
+  terminalReconcile,
 }
 
 enum _SessionMessagesPageAction {
@@ -3915,6 +3916,29 @@ const _localCompactedTerminalAnchorRowIdKey =
     '_localCompactedTerminalAnchorRowId';
 const _stopProofAnchorMessageIdKey = '_localStopProofAnchorMessageId';
 const _stopProofAnchorRowIdKey = '_localStopProofAnchorRowId';
+
+/// re1215: what one terminal transcript read proved. [whole] is the entire
+/// chronological transcript; [page] is a newest page that covers the turn's
+/// fence; neither means the newest page shows the turn is not committed yet.
+final class _TerminalTranscriptRead {
+  const _TerminalTranscriptRead.whole(List<Map<String, dynamic>> this.whole)
+    : page = null,
+      context = null;
+
+  const _TerminalTranscriptRead.tail(
+    SessionMessagesPage this.page,
+    _SessionMessagesPageReadContext this.context,
+  ) : whole = null;
+
+  const _TerminalTranscriptRead.pending()
+    : whole = null,
+      page = null,
+      context = null;
+
+  final List<Map<String, dynamic>>? whole;
+  final SessionMessagesPage? page;
+  final _SessionMessagesPageReadContext? context;
+}
 
 class _TerminalProjectionFence {
   const _TerminalProjectionFence({
@@ -19970,10 +19994,10 @@ class ActiveChat {
       if (!elapsed || !stillCurrent()) return;
       if (requireAssistantText && assistantContent.trim().isNotEmpty) return;
       try {
-        final transcript = await _loadStoredMessages(_storedSessionProfile);
+        final read = await _readTerminalTranscript(messageLoadEpoch);
         if (!stillCurrent()) return;
-        final applied = _applyAuthoritativeTerminalTranscriptOnce(
-          transcript,
+        final applied = _applyTerminalTranscriptRead(
+          read,
           completingEpoch: completingEpoch,
           messageLoadEpoch: messageLoadEpoch,
         );
@@ -25656,6 +25680,146 @@ class ActiveChat {
     }
   }
 
+  /// re1215: the terminal reconcile used to page through the WHOLE session
+  /// (`ApiClient.getMessages`, 500 rows a page) on every turn end, up to four
+  /// times. The newest page decides the turn whenever it holds the turn's
+  /// fence: its prompt (or the row right before it). Then it either proves
+  /// the turn (prompt plus final reply) or proves the commit is not there
+  /// yet, and an older page cannot change that. Only a turn longer than one
+  /// page, or a fence without identity, still needs the whole transcript.
+  Future<_TerminalTranscriptRead> _readTerminalTranscript(
+    int messageLoadEpoch,
+  ) async {
+    final profile = _storedSessionProfile;
+    final fences = _terminalReconciliationFences(_messages);
+    if (_storedMessageLoader != null || fences.isEmpty) {
+      return _TerminalTranscriptRead.whole(await _loadStoredMessages(profile));
+    }
+    final context = _captureSessionMessagesPageRead(
+      consumer: _SessionMessagesPageConsumer.terminalReconcile,
+      loadEpoch: messageLoadEpoch,
+      profile: profile,
+      limit: authoritativeTranscriptPageSize,
+    );
+    final page = await _fetchStoredMessagesPage(
+      context,
+      allowNativeHistory: false,
+    );
+    if (!page.messagesFullyParsed || !page.paginationFullyParsed) {
+      return _TerminalTranscriptRead.whole(await _loadStoredMessages(profile));
+    }
+    final limit = page.limit;
+    final wholeTranscript =
+        !page.paginationProvided ||
+        (page.offset == 0 && limit != null && page.returned < limit);
+    if (wholeTranscript) return _TerminalTranscriptRead.whole(page.messages);
+    if (!_transcriptRowsHaveUnambiguousIdentityEvidence(page.messages)) {
+      return _TerminalTranscriptRead.whole(await _loadStoredMessages(profile));
+    }
+    final newestFirst = _normalizedNewestFirst(page.messages);
+    if (_terminalFencesAreCovered(
+      newestFirst,
+      fences,
+      candidateTranscriptComplete: false,
+    )) {
+      return _TerminalTranscriptRead.tail(page, context);
+    }
+    final pageDecidesTurn = fences.every(
+      (fence) => [
+        (messageId: fence.userMessageId, rowId: fence.userRowId),
+        (messageId: fence.anchorMessageId, rowId: fence.anchorRowId),
+      ].any(
+        (coordinate) =>
+            _resolveTranscriptIdentity(
+              newestFirst,
+              messageId: coordinate.messageId,
+              rowId: coordinate.rowId,
+              accepts: (_) => true,
+            ).kind ==
+            _TranscriptIdentityResolutionKind.unique,
+      ),
+    );
+    if (pageDecidesTurn) return const _TerminalTranscriptRead.pending();
+    return _TerminalTranscriptRead.whole(await _loadStoredMessages(profile));
+  }
+
+  bool _applyTerminalTranscriptRead(
+    _TerminalTranscriptRead read, {
+    required int completingEpoch,
+    required int messageLoadEpoch,
+  }) {
+    final whole = read.whole;
+    if (whole != null) {
+      return _applyAuthoritativeTerminalTranscriptOnce(
+        whole,
+        completingEpoch: completingEpoch,
+        messageLoadEpoch: messageLoadEpoch,
+      );
+    }
+    final page = read.page;
+    final context = read.context;
+    if (page == null || context == null) return false;
+    return _applyTerminalTailPageOnce(
+      page,
+      context,
+      completingEpoch: completingEpoch,
+      messageLoadEpoch: messageLoadEpoch,
+    );
+  }
+
+  /// Grafts the newest page that proves this turn onto the visible
+  /// transcript, like a passive refresh does: rows already loaded behind the
+  /// page stay, in order, and the page's rows replace their local copies.
+  bool _applyTerminalTailPageOnce(
+    SessionMessagesPage page,
+    _SessionMessagesPageReadContext context, {
+    required int completingEpoch,
+    required int messageLoadEpoch,
+  }) {
+    if (!_isCurrentEpoch(completingEpoch) ||
+        messageLoadEpoch != _messageLoadEpoch ||
+        _compactionSuppressesTerminalHydration(completingEpoch)) {
+      return false;
+    }
+    final gate = _terminalCommitGate;
+    if (gate.epoch != completingEpoch) return false;
+    if (gate.transcriptApplied) return true;
+    final fences = _terminalReconciliationFences(_messages);
+    _RefreshedTranscriptGraft? graft;
+    final transition = _consumeSessionMessagesPageEvidence(
+      page,
+      context,
+      projector: (pageProvesComplete) {
+        final candidate = _graftRefreshedTail(
+          _normalizedNewestFirst(page.messages),
+          _messages,
+          refreshedTranscriptComplete: pageProvesComplete,
+          requiredTerminalFences: fences,
+        );
+        graft = candidate;
+        return _SessionMessagesPageProjection.fromGraft(
+          _normalizedNewestFirst(page.messages),
+          candidate,
+        );
+      },
+    );
+    final accepted = graft;
+    if (!transition.publishesProjection || accepted == null) return false;
+    _captureArtifactMaps(page.messages, logicalSessionId: logicalSessionId);
+    _messages = _applyCancelledTurnTombstonesForDisplay(
+      _associateGeneratedImagesNewestFirst(
+        _preserveLocalAssistantErrors(accepted.messages, _messages),
+      ),
+      incomingTranscriptComplete: _transcriptIsComplete,
+    );
+    _mergeSteerRecords();
+    _reconcileSubagentsFromTranscript();
+    gate.transcriptApplied = true;
+    _recordPublishedDurableTail(page, context);
+    unawaited(_hydrateEditorialDisplayMetadataFromDurableHistory());
+    return true;
+  }
+
   /// El terminal de Desktop puede adelantarse unos milisegundos al commit del
   /// transcript. Una sola lectura en ese instante devuelve el turno anterior y
   /// deja una burbuja vacía hasta reabrir el chat. El intento bloqueante sigue
@@ -25713,16 +25877,16 @@ class ActiveChat {
       remaining = deadline.difference(DateTime.now());
       if (remaining.inMicroseconds <= 0) return false;
       try {
-        final transcript = await _terminalTranscriptBeforeDeadline(
-          _loadStoredMessages(_storedSessionProfile),
+        final read = await _terminalTranscriptBeforeDeadline(
+          _readTerminalTranscript(messageLoadEpoch),
           remaining,
           epochInvalidated,
         );
-        if (!stillCurrent() || transcript == null) {
+        if (!stillCurrent() || read == null) {
           return false;
         }
-        if (!_applyAuthoritativeTerminalTranscriptOnce(
-          transcript,
+        if (!_applyTerminalTranscriptRead(
+          read,
           completingEpoch: completingEpoch,
           messageLoadEpoch: messageLoadEpoch,
         )) {
@@ -25846,15 +26010,15 @@ class ActiveChat {
   /// Acota un GET y cancela el temporizador al terminar antes (éxito o error).
   /// `Future.any` por sí solo no cancela su `Future.delayed`; en widget tests y
   /// chats cerrados ese timer quedaba retenido durante todo el presupuesto.
-  Future<List<Map<String, dynamic>>?> _terminalTranscriptBeforeDeadline(
-    Future<List<Map<String, dynamic>>> request,
+  Future<T?> _terminalTranscriptBeforeDeadline<T>(
+    Future<T> request,
     Duration remaining,
     Future<void> epochInvalidated,
   ) async {
-    final deadline = Completer<List<Map<String, dynamic>>?>();
+    final deadline = Completer<T?>();
     final timer = Timer(remaining, () => deadline.complete(null));
     try {
-      return await Future.any<List<Map<String, dynamic>>?>([
+      return await Future.any<T?>([
         request,
         deadline.future,
         _disposeSignal.future.then((_) => null),

@@ -3937,7 +3937,14 @@ void main() {
         expect(warning, contains('History changed'));
         expect(terminalCalls, 1);
         expect(requests, isNotEmpty);
-        expect(requests.first.queryParameters, containsPair('limit', '500'));
+        // re1215: the terminal reads the newest page, never the whole session.
+        expect(
+          requests.first.queryParameters,
+          containsPair(
+            'limit',
+            '${ActiveChat.authoritativeTranscriptPageSize}',
+          ),
+        );
         expect(
           requests.first.queryParameters,
           containsPair('include_compacted', 'true'),
