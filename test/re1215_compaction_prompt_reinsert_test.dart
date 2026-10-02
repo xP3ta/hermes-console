@@ -474,4 +474,135 @@ void main() {
       ]);
     },
   );
+
+  test('three copies across two compactions keep the live copy once, at the '
+      'first copy\'s place', () async {
+    // Two mid-turn compactions re-insert the prompt twice: first, an
+    // intermediate copy (compacted again) and the live one.
+    final rows = <Map<String, dynamic>>[
+      _row(1, 'user', _promptTs - 60, 'Antes', active: false),
+      _row(2, 'assistant', _promptTs - 55, 'Previa', active: false),
+      _row(10, 'user', _promptTs, _prompt, active: false),
+      _row(11, 'assistant', _promptTs + 10, 'Trabajo 1', active: false),
+      _row(
+        12,
+        'user',
+        _compactionTs,
+        '[CONTEXT COMPACTION] uno',
+        active: false,
+        summary: true,
+      ),
+      _row(13, 'user', _promptTs, _prompt, active: false),
+      _row(14, 'assistant', _compactionTs + 10, 'Trabajo 2', active: false),
+      _row(
+        15,
+        'user',
+        _compactionTs + 100,
+        '[CONTEXT COMPACTION] dos',
+        active: true,
+        summary: true,
+      ),
+      _row(16, 'user', _promptTs, _prompt, active: true),
+      _row(
+        17,
+        'assistant',
+        _compactionTs + 110,
+        'Respuesta final',
+        active: true,
+      ),
+    ];
+    final chat = _chat(apiRows: rows, dashboardRows: rows);
+    addTearDown(chat.dispose);
+    await chat.loadMessages(expectedMessageCount: rows.length);
+    await _scrollToStart(chat);
+    final prompts = _renderedUserBubbles(
+      chat.messages,
+    ).where((m) => m['content'] == _prompt).toList();
+    expect(prompts, hasLength(1));
+    expect(prompts.single['id'], 16, reason: 'the live copy represents it');
+    final chronological = chat.messages.reversed.toList();
+    final promptAt = chronological.indexOf(prompts.single);
+    final previaAt = chronological.indexWhere((m) => m['content'] == 'Previa');
+    final work1At = chronological.indexWhere(
+      (m) => m['content'] == 'Trabajo 1',
+    );
+    expect(previaAt, lessThan(promptAt));
+    expect(work1At, promptAt + 1, reason: "at the first copy's place");
+    final ids = chat.messages.map((m) => m['id']).whereType<int>().toList();
+    expect(ids.toSet(), hasLength(ids.length));
+    expect(ids.where((id) => id == 13 || id == 10), isEmpty);
+  });
+
+  test('an older page that overlaps a normal prompt sent after a compaction '
+      'leaves it after the summary, once', () async {
+    final rows = <Map<String, dynamic>>[
+      for (var i = 0; i < 30; i++)
+        _row(
+          100 + i,
+          i.isEven ? 'user' : 'assistant',
+          _promptTs - 3600 + i,
+          'older ${i.isEven ? 'question' : 'answer'} $i',
+          active: false,
+        ),
+      _row(
+        200,
+        'user',
+        _compactionTs,
+        '[CONTEXT COMPACTION] s',
+        active: true,
+        summary: true,
+      ),
+      _row(201, 'user', _compactionTs + 60, 'Nuevo prompt', active: true),
+      for (var i = 0; i < 18; i++)
+        _row(
+          202 + i,
+          'assistant',
+          _compactionTs + 61 + i,
+          'post $i',
+          active: true,
+        ),
+    ];
+    final chat = _chat(apiRows: rows, dashboardRows: rows);
+    addTearDown(chat.dispose);
+    await chat.loadMessages(expectedMessageCount: rows.length);
+    expect(
+      chat.messages.last['id'],
+      200,
+      reason: 'the tail ends on the carrier',
+    );
+    // Rows land after the opening read: the next older page, read by offset,
+    // overlaps the carrier and the prompt that follows it.
+    for (var i = 0; i < 2; i++) {
+      rows.add(
+        _row(
+          300 + i,
+          'assistant',
+          _compactionTs + 200 + i,
+          'late $i',
+          active: true,
+        ),
+      );
+    }
+    await _scrollToStart(chat);
+    final chronological = chat.messages.reversed.toList();
+    final ids = chronological.map((m) => m['id']).whereType<int>().toList();
+    expect(ids.toSet(), hasLength(ids.length));
+    expect(ids.where((id) => id == 201), hasLength(1));
+    final carrierAt = ids.indexOf(200);
+    final promptAt = ids.indexOf(201);
+    // ignore: avoid_print
+    print(
+      '[re1215] overlap order around carrier: '
+      '${ids.sublist(math.max(0, carrierAt - 2), math.min(ids.length, promptAt + 3))}',
+    );
+    expect(carrierAt, isNonNegative);
+    expect(
+      promptAt,
+      carrierAt + 1,
+      reason: 'the prompt stays after the summary',
+    );
+    expect(ids.indexOf(202), promptAt + 1);
+    final sorted = [...ids]..sort();
+    expect(ids, sorted, reason: 'nothing is reordered');
+  });
 }

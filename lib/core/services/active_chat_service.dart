@@ -1108,7 +1108,10 @@ List<Map<String, dynamic>> _foldCompactionReinsertedPrompts(
       if (twinKey(candidate) != key) continue;
       folded ??= List<Map<String, dynamic>>.of(newestFirst);
       // The live copy is the representative; the first copy keeps the place.
-      folded[older] = newestFirst[newer];
+      // With several compactions the slot at [newer] may already carry the
+      // live copy folded from a newer twin: pass that one on, never the
+      // intermediate copy the original list held there.
+      folded[older] = folded[newer];
       dropped.add(newer);
       break;
     }
@@ -2076,21 +2079,35 @@ List<Map<String, dynamic>> _releaseRowsReinsertedAfterCompaction(
 ) {
   final carrier = existingNewestFirst.indexWhere(_isCompactionCarrierRow);
   if (carrier <= 0) return existingNewestFirst;
-  final olderPrompts = <TranscriptMessageIdentity>[
-    for (final row in olderPageNewestFirst)
-      if (isRealUserTurn(row)) ?_transcriptMessageIdentity(row),
+  final olderIdentities = [
+    for (final row in olderPageNewestFirst) _transcriptMessageIdentity(row),
   ];
-  if (olderPrompts.isEmpty) return existingNewestFirst;
+  bool same(TranscriptMessageIdentity? a, TranscriptMessageIdentity? b) =>
+      a != null && b != null && a.sharesExactCoordinate(b) && a.matches(b);
   List<Map<String, dynamic>>? released;
   for (var index = carrier - 1; index >= 0; index--) {
     final row = existingNewestFirst[index];
     if (!isRealUserTurn(row)) continue;
     final identity = _transcriptMessageIdentity(row);
-    if (identity == null ||
-        !olderPrompts.any(
-          (older) =>
-              identity.sharesExactCoordinate(older) && identity.matches(older),
-        )) {
+    if (identity == null) continue;
+    final inPage = olderIdentities.indexWhere((older) => same(identity, older));
+    if (inPage < 0) continue;
+    // A page that holds the prompt next to the same rows as the screen (a
+    // normal prompt sent after the compaction, read again through an offset
+    // overlap) agrees with its position, so it stays. Only a page that
+    // places it elsewhere, as the Hermes display fold does, moves it.
+    final pageOlder = inPage + 1 < olderIdentities.length
+        ? olderIdentities[inPage + 1]
+        : null;
+    final pageNewer = inPage > 0 ? olderIdentities[inPage - 1] : null;
+    if (pageOlder == null && pageNewer == null) continue;
+    final screenOlder = _transcriptMessageIdentity(
+      existingNewestFirst[index + 1],
+    );
+    final screenNewer = index > 0
+        ? _transcriptMessageIdentity(existingNewestFirst[index - 1])
+        : null;
+    if (same(screenOlder, pageOlder) || same(screenNewer, pageNewer)) {
       continue;
     }
     released ??= List<Map<String, dynamic>>.of(existingNewestFirst);
