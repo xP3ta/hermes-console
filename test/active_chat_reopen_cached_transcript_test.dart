@@ -186,4 +186,52 @@ void main() {
       expect(cachedOnReopen('heavy-0'), isFalse);
     },
   );
+  test(
+    'xr1215 the warm cache weighs nested tool payloads, not only content',
+    () async {
+      // ~4 MB per transcript lives in tool outputs, which the chat folds
+      // into the assistant row as a nested `_activity_tool_results` list.
+      // Top-level content is a few bytes, so an estimate that read only
+      // `content` would keep all twelve (~48 MB) past the 32 MB budget.
+      List<Map<String, dynamic>> nested(String tag) => [
+        for (var i = 1; i <= 100; i++) ...[
+          {'id': i * 3 - 2, 'role': 'user', 'content': '$tag q$i'},
+          {
+            'id': i * 3 - 1,
+            'role': 'assistant',
+            'content': '$tag a$i',
+            'tool_calls': [
+              {
+                'id': 'call-$tag-$i',
+                'type': 'function',
+                'function': {'name': 'read_file', 'arguments': '{}'},
+              },
+            ],
+          },
+          {
+            'id': i * 3,
+            'role': 'tool',
+            'tool_call_id': 'call-$tag-$i',
+            'content': '$tag ${'y' * 20000}',
+          },
+        ],
+      ];
+      for (var i = 0; i < 12; i++) {
+        await openAndCloseWith('nested-$i', nested('n$i'));
+      }
+      expect(
+        service.reopenTranscriptBytesForTesting,
+        lessThanOrEqualTo(ActiveChatService.reopenTranscriptCacheMaxBytes),
+      );
+      // Each retained transcript really holds ~4 MB of nested tool output.
+      expect(
+        service.reopenTranscriptBytesForTesting,
+        greaterThan(service.reopenTranscriptCountForTesting * 3 * 1024 * 1024),
+      );
+      expect(service.reopenTranscriptCountForTesting, lessThan(12));
+      expect(service.reopenTranscriptCountForTesting, greaterThan(0));
+      expect(cachedOnReopen('nested-11'), isTrue);
+      expect(cachedOnReopen('nested-0'), isFalse);
+    },
+  );
 }
