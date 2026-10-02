@@ -37,6 +37,9 @@ import 'support/in_memory_compression_restore_storage.dart';
 
 const _storedId = 'stored-bandwidth';
 
+/// Rows of the opening page, like Desktop's `LATEST_SESSION_MESSAGES_LIMIT`.
+const _firstPage = ActiveChat.authoritativeTranscriptPageSize;
+
 /// Durable transcript served like `/api/sessions/{id}/messages` on current
 /// Hermes: integer row ids and `order=latest` offsets counted back from the
 /// newest row (the endpoint has no `after_row_id`; only `/timeline` does).
@@ -426,7 +429,7 @@ void main() {
     (tester) async {
       final server = _TranscriptServer();
       final fixture = await _mount(tester, server);
-      expect(fixture.chat.messages, hasLength(500));
+      expect(fixture.chat.messages, hasLength(_firstPage));
       final readsAfterOpen = server.messageReads;
       final bytesAfterOpen = server.bytes;
 
@@ -436,13 +439,13 @@ void main() {
       final bytes = server.bytes - bytesAfterOpen;
       // ignore: avoid_print
       print('[#1215] idle 5 min: message reads=$reads bytes=$bytes');
-      expect(fixture.chat.messages, hasLength(500));
+      expect(fixture.chat.messages, hasLength(_firstPage));
       expect(
         bytes,
         lessThan(64 * 1024),
         reason:
             'an unchanged transcript must be checked with a tiny tail read, '
-            'not by downloading the newest 500 rows again',
+            'not by downloading the newest page again',
       );
       await _dispose(tester, fixture);
     },
@@ -468,7 +471,7 @@ void main() {
       final bytes = server.bytes - bytesAfterOpen;
       // ignore: avoid_print
       print('[#1215] storm 5 min: message reads=$reads bytes=$bytes');
-      expect(fixture.chat.messages, hasLength(500));
+      expect(fixture.chat.messages, hasLength(_firstPage));
       expect(bytes, lessThan(512 * 1024));
       await _dispose(tester, fixture);
     },
@@ -522,7 +525,7 @@ void main() {
 
     expect(server.heavyReads - heavy, 1);
     expect(fixture.chat.messages.first['content'], 'Edited tip from Desktop');
-    expect(fixture.chat.messages, hasLength(500));
+    expect(fixture.chat.messages, hasLength(_firstPage));
     await _dispose(tester, fixture);
   });
 
@@ -657,7 +660,7 @@ void main() {
 
   testWidgets(
     'a resume after a dropped socket probes the tail instead of re-reading '
-    'an unchanged 500-row page, and still picks up a real change',
+    'an unchanged tail page, and still picks up a real change',
     (tester) async {
       // Field log: several sockets closed together and reopened; every
       // resume re-downloaded the newest 500 rows of each open chat.
@@ -679,7 +682,7 @@ void main() {
         'bytes=${server.bytes - bytesBefore}',
       );
       expect(server.heavyReads - heavyBefore, 0);
-      expect(fixture.chat.messages, hasLength(500));
+      expect(fixture.chat.messages, hasLength(_firstPage));
 
       server.append('assistant', content: 'Written while the socket was down');
       expect(await fixture.chat.reconcileAfterResume(), isTrue);

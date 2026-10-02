@@ -2139,7 +2139,7 @@ void main() {
           expect(request.method, 'GET');
           expect(request.url.path, '/api/sessions/stored-chat/messages');
           expect(request.url.queryParameters, {
-            'limit': '500',
+            'limit': '${ActiveChat.authoritativeTranscriptPageSize}',
             'order': 'latest',
             'offset': '0',
             'include_compacted': 'true',

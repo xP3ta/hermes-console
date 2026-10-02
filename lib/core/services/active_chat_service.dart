@@ -4245,7 +4245,12 @@ enum _RuntimeRetirement { explicit, transportLoss, adoption }
 
 class ActiveChat {
   static const int _maxInitialBackfillPages = 64;
-  static const int _authoritativeTranscriptPageSize = 500;
+
+  /// Newest rows read when a chat opens and on every tail refresh, as Hermes
+  /// Desktop hydrates (`LATEST_SESSION_MESSAGES_LIMIT`). Older rows load on
+  /// demand through [loadEarlierMessages]; 500-row pages weighed up to
+  /// 1.75 MB on a phone link.
+  static const int authoritativeTranscriptPageSize = 120;
   static final Stopwatch _defaultMonotonicClock = Stopwatch()..start();
   static const Duration _voiceBargeHandoffRetention = Duration(seconds: 30);
   static const Duration _desktopRecoveryDelayCap = Duration(seconds: 15);
@@ -8016,7 +8021,7 @@ class ActiveChat {
       Duration(milliseconds: 2500),
     ],
     @visibleForTesting
-    int transcriptPageSizeForTesting = _authoritativeTranscriptPageSize,
+    int transcriptPageSizeForTesting = authoritativeTranscriptPageSize,
     @visibleForTesting double Function()? desktopRecoveryRandom,
     List<Duration> desktopRecoveryBackoff = const [
       Duration.zero,
@@ -28104,7 +28109,8 @@ class ActiveChatService {
     @visibleForTesting bool allowUnownedDesktopSnapshotForTesting = false,
     @visibleForTesting Future<bool> Function()? turnIdempotencyCapability,
     @visibleForTesting bool disableForegroundKeepAlive = false,
-    @visibleForTesting int transcriptPageSizeForTesting = 500,
+    @visibleForTesting
+    int transcriptPageSizeForTesting = ActiveChat.authoritativeTranscriptPageSize,
     @visibleForTesting int Function()? wallClockMsForTesting,
   }) {
     final owner = Session.profileOwner(

@@ -186,7 +186,7 @@ void main() {
   });
 
   test(
-    'opening page paints every Desktop-visible row of the latest 500',
+    'opening page paints every Desktop-visible row of the latest page',
     () async {
       final server = _DashboardTranscript(lc1215DashboardRows(shape));
       final chat = _chat(server.client());
@@ -194,7 +194,9 @@ void main() {
 
       await chat.loadMessages(expectedMessageCount: server.rows.length);
 
-      final tail = shape.sublist(shape.length - 500);
+      final tail = shape.sublist(
+        shape.length - ActiveChat.authoritativeTranscriptPageSize,
+      );
       final expected = lc1215DesktopVisibleMarkers(tail);
       expect(_renderedMarkers(chat.messages), expected);
       expect(chat.hasEarlierMessages, isTrue);
@@ -349,14 +351,14 @@ void main() {
       addTearDown(chat.dispose);
 
       await chat.loadMessages(expectedMessageCount: api.rows.length);
-      final before = _renderedMarkers(chat.messages);
       var guard = 0;
       while (chat.hasEarlierMessages && guard++ < 20) {
         await chat.loadEarlierMessages(continuePastInvisible: true);
       }
-      expect(_renderedMarkers(chat.messages), before);
+      // Every gateway (active) row stays, once and in order; only the
+      // archived rows behind the Dashboard are out of reach.
       expect(
-        before,
+        _renderedMarkers(chat.messages),
         lc1215DesktopVisibleMarkers(shape.where((row) => row.active)),
       );
       expect(dashboard.requests, hasLength(lessThanOrEqualTo(4)));
