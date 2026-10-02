@@ -1326,6 +1326,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     final imageCache = PaintingBinding.instance.imageCache;
     imageCache.clear();
     imageCache.clearLiveImages();
+    // co1215: parked sockets of released chats are only a reopen shortcut.
+    widget.activeChats.closeWarmGateways();
     // La voz NO reacciona aquí: esta señal binaria también llega al pasar a
     // background y evacuaba Sherpa/Whisper/ONNX en cada ida (recarga de
     // varios segundos por turno). La evacuación la decide `onTrimMemory` con
@@ -1390,6 +1392,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         _gatewayIdleTimer = null;
         if (_appLifecycle != AppLifecycleState.resumed) {
           SharedGatewayPool.instance.disconnectIdle();
+          // co1215: released chats' parked sockets follow the same rule.
+          widget.activeChats.closeWarmGateways();
         }
       });
       // No cerramos el WebSocket por lifecycle. Android puede encadenar

@@ -5093,6 +5093,27 @@ class ActiveChat {
   }
 
   bool get hasDesktopTransport => _desktopGateway != null;
+
+  /// co1215: set when the registry takes this chat's live client to keep it
+  /// warm after release; [dispose] then leaves the socket open.
+  bool _desktopGatewayHandedOff = false;
+
+  /// co1215: hands the live WebSocket client over to the registry right
+  /// before [dispose], so reopening this chat skips the handshake. Returns
+  /// null (and keeps ownership) when there is nothing worth keeping.
+  HermesDesktopGateway? _handOffConnectedDesktopGateway() {
+    final gateway = _desktopGateway;
+    if (_disposed ||
+        _desktopGatewayHandedOff ||
+        gateway == null ||
+        !gateway.isConnected ||
+        (gateway is TuiGatewayClient && gateway.isClosed)) {
+      return null;
+    }
+    _desktopGatewayHandedOff = true;
+    return gateway;
+  }
+
   bool get hasDesktopRuntime => _desktopRuntimeSessionId != null;
   bool get resumeReconciliationInFlight =>
       _resumeReconcileReservations > 0 || _resumeReconcileFlight != null;
@@ -27910,7 +27931,7 @@ class ActiveChat {
       const InteractivePromptDisposed(),
     );
     _retireDesktopRuntime();
-    unawaited(_desktopGateway?.close());
+    if (!_desktopGatewayHandedOff) unawaited(_desktopGateway?.close());
     _api.close();
     if (_ownsTranscriptDashboard) _transcriptDashboard?.close();
     _transportStatusListenable.dispose();
@@ -27988,7 +28009,11 @@ class ActiveChatService {
     GlobalActivityAggregate? globalActivity,
     bool attachDesktopRuntimeOnLoad = true,
     @visibleForTesting int Function()? homeWidgetNowMs,
+    @visibleForTesting
+    HermesDesktopGateway Function(SavedConnection connection)?
+    desktopGatewayFactory,
   }) : _prefs = prefs,
+       _desktopGatewayFactory = desktopGatewayFactory,
        _homeWidgetNowMs =
            homeWidgetNowMs ?? (() => DateTime.now().millisecondsSinceEpoch),
        _cancelledTurnStore = cancelledTurnStore,
@@ -28074,6 +28099,121 @@ class ActiveChatService {
   final Map<String, List<SteerProjection>> _steerProjectionCache = {};
   final LinkedHashMap<String, _ReopenTranscript> _reopenTranscriptCache =
       LinkedHashMap<String, _ReopenTranscript>();
+
+  /// co1215: the WebSocket client of a recently released chat stays open for
+  /// [warmGatewayGrace] so reopening it is instant (no ticket, upgrade,
+  /// gateway.ready). One client per chat as before; bounded, in memory only,
+  /// and closed on expiry, backgrounding, memory pressure, network change or
+  /// when its connection or session is forgotten.
+  static const Duration warmGatewayGrace = Duration(seconds: 60);
+  static const int warmGatewayLimit = 4;
+  final LinkedHashMap<String, _WarmChatGateway> _warmGateways =
+      LinkedHashMap<String, _WarmChatGateway>();
+  final HermesDesktopGateway Function(SavedConnection connection)?
+  _desktopGatewayFactory;
+
+  @visibleForTesting
+  int get warmGatewayCountForTesting => _warmGateways.length;
+
+  static String _warmGatewayFingerprint(SavedConnection c) => jsonEncode([
+    c.id,
+    c.kind.name,
+    c.baseUrl,
+    c.effectiveDashboardUrl,
+    c.gatewayAuthMode.storageKey,
+    sha256.convert(utf8.encode(c.apiKey)).toString(),
+    c.readOnly,
+  ]);
+
+  /// Clients this registry created (an injected gateway stays owned by its
+  /// caller and is never parked).
+  final Expando<bool> _registryOwnedGateways = Expando<bool>(
+    'co1215 registry-owned chat gateway',
+  );
+
+  /// The same client [ActiveChat] would create for itself, created here so
+  /// the registry may keep it warm after release.
+  HermesDesktopGateway? _createChatGateway(
+    SavedConnection connection, {
+    ApiClient? api,
+  }) {
+    final factory = _desktopGatewayFactory;
+    final gateway = factory != null
+        ? factory(connection)
+        : api == null &&
+              !(connection.kind == InstanceKind.localhost &&
+                  connection.onDeviceLoopback)
+        ? TuiGatewayClient(connection)
+        : null;
+    if (gateway != null) _registryOwnedGateways[gateway] = true;
+    return gateway;
+  }
+
+  void _parkWarmGateway(String key, ActiveChat chat) {
+    if (_disposed) return;
+    final current = chat._desktopGateway;
+    if (current == null || _registryOwnedGateways[current] != true) return;
+    final gateway = chat._handOffConnectedDesktopGateway();
+    if (gateway == null) return;
+    _warmGateways.remove(key)?.close();
+    _warmGateways[key] = _WarmChatGateway(
+      gateway: gateway,
+      fingerprint: _warmGatewayFingerprint(chat.connection),
+      connectionId: chat.connection.id,
+      aliases: {
+        chat.sessionId,
+        chat.logicalSessionId,
+        chat.serverSessionId,
+        if (chat.storedSessionId?.isNotEmpty == true) chat.storedSessionId!,
+      },
+      expiry: Timer(warmGatewayGrace, () {
+        final parked = _warmGateways[key];
+        if (parked != null && identical(parked.gateway, gateway)) {
+          _warmGateways.remove(key)?.close();
+        }
+      }),
+    );
+    while (_warmGateways.length > warmGatewayLimit) {
+      _warmGateways.remove(_warmGateways.keys.first)?.close();
+    }
+  }
+
+  HermesDesktopGateway? _takeWarmGateway(
+    String key,
+    SavedConnection connection,
+  ) {
+    final parked = _warmGateways.remove(key);
+    if (parked == null) return null;
+    parked.expiry.cancel();
+    final gateway = parked.gateway;
+    if (parked.fingerprint != _warmGatewayFingerprint(connection) ||
+        !gateway.isConnected ||
+        (gateway is TuiGatewayClient && gateway.isClosed)) {
+      unawaited(gateway.close());
+      return null;
+    }
+    return gateway;
+  }
+
+  /// co1215: closes every parked client now (app backgrounded, memory
+  /// pressure, network change). Attached chats keep their own sockets.
+  void closeWarmGateways() {
+    for (final parked in _warmGateways.values.toList()) {
+      parked.close();
+    }
+    _warmGateways.clear();
+  }
+
+  void _forgetWarmGateways(String connectionId, {String? sessionId}) {
+    _warmGateways.removeWhere((_, parked) {
+      final matches =
+          parked.connectionId == connectionId &&
+          (sessionId == null || parked.aliases.contains(sessionId));
+      if (matches) parked.close();
+      return matches;
+    });
+  }
+
   static const int _reopenTranscriptCacheLimit = 8;
   final Map<ActiveChat, _HomeWidgetChatMetadata> _homeWidgetMetadata = {};
   final LinkedHashMap<String, int> _observedFirstTokenLatencyCache =
@@ -28163,6 +28303,7 @@ class ActiveChatService {
       profile: owner,
       sessionId: sessionId,
     );
+    _forgetWarmGateways(connectionId, sessionId: sessionId);
     final scopeIds = <String>{sessionId};
     final matchingChats = <ActiveChat>[];
     for (final chat in _chats.values) {
@@ -28218,6 +28359,7 @@ class ActiveChatService {
 
   Future<int> clearCancelledTurnsForConnection(String connectionId) async {
     _forgetReopenTranscripts(connectionId);
+    _forgetWarmGateways(connectionId);
     var removed = 0;
     try {
       removed = await _cancelledTurnStore?.removeConnection(connectionId) ?? 0;
@@ -29022,6 +29164,10 @@ class ActiveChatService {
       if (initialStoredSessionId != null && initialStoredSessionId.isNotEmpty)
         initialStoredSessionId,
     };
+    final resolvedDesktopGateway =
+        desktopGateway ??
+        _takeWarmGateway(key, connection) ??
+        _createChatGateway(connection, api: api);
     late final ActiveChat chat;
     chat = ActiveChat(
       connection: connection,
@@ -29046,7 +29192,7 @@ class ActiveChatService {
               _refreshActiveIds();
             },
       api: api,
-      desktopGateway: desktopGateway,
+      desktopGateway: resolvedDesktopGateway,
       compressionRestoreStore: _compressionRestoreStore,
       storedMessageLoader: storedMessageLoader,
       modelCatalogCache: modelCatalogCache,
@@ -29212,6 +29358,8 @@ class ActiveChatService {
   /// Señal de red de la plataforma (`onAvailable`): sondea el socket actual
   /// y acorta el backoff de cada chat.
   void requestImmediateTransportRecovery() {
+    // co1215: a parked socket may be half-open on the old network.
+    closeWarmGateways();
     for (final chat in _chats.values) {
       chat._forgetReconnectBackoffAfterNetworkChange();
       chat.probeTransportNow();
@@ -29311,7 +29459,7 @@ class ActiveChatService {
       _refreshActiveIds();
       return;
     }
-    _dispose(entry.key);
+    _dispose(entry.key, keepGatewayWarm: true);
   }
 
   void _onChatUnused(String key) {
@@ -29326,7 +29474,7 @@ class ActiveChatService {
         chat.showReleaseToDesktopControl) {
       return;
     }
-    _dispose(key);
+    _dispose(key, keepGatewayWarm: true);
   }
 
   /// Marca el inicio de un envío: registra la sesión como activa.
@@ -29449,9 +29597,10 @@ class ActiveChatService {
     );
   }
 
-  void _dispose(String key) {
+  void _dispose(String key, {bool keepGatewayWarm = false}) {
     final chat = _chats.remove(key);
     if (chat != null) {
+      if (keepGatewayWarm) _parkWarmGateway(key, chat);
       _rememberLiveStatus(key, chat);
       _homeWidgetMetadata.remove(chat);
       _rememberSteerProjections(chat);
@@ -29620,6 +29769,7 @@ class ActiveChatService {
       chat.dispose();
     }
     _chats.clear();
+    closeWarmGateways();
     _reopenTranscriptCache.clear();
     _homeWidgetMetadata.clear();
     _cancelPendingHomeWidgetMetrics();
@@ -29628,6 +29778,29 @@ class ActiveChatService {
     globalActivity.dispose();
     activeIds.dispose();
     liveStatusRevision.dispose();
+  }
+}
+
+/// co1215: a released chat's still-connected WebSocket client, kept for a
+/// short grace so the same chat can reopen without a new handshake.
+final class _WarmChatGateway {
+  _WarmChatGateway({
+    required this.gateway,
+    required this.fingerprint,
+    required this.connectionId,
+    required this.aliases,
+    required this.expiry,
+  });
+
+  final HermesDesktopGateway gateway;
+  final String fingerprint;
+  final String connectionId;
+  final Set<String> aliases;
+  final Timer expiry;
+
+  void close() {
+    expiry.cancel();
+    unawaited(gateway.close());
   }
 }
 
