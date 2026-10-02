@@ -9,6 +9,7 @@
 // the report stays truthful when the contract is refreshed.
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/contract/gateway_contract.dart';
@@ -205,8 +206,21 @@ void main() {
 
   test('the vendored contract records its upstream source', () {
     final source = File('test/fixtures/contract/SOURCE').readAsStringSync();
-    expect(source, contains('checkout_commit: '));
-    expect(source, contains('sha256: '));
+    String field(String key) =>
+        RegExp('^$key: (.+)\$', multiLine: true)
+            .firstMatch(source)
+            ?.group(1)
+            ?.trim() ??
+        (throw StateError('SOURCE has no $key'));
+    final commit = RegExp(r'^[0-9a-f]{40}$');
+    expect(field('checkout_commit'), matches(commit));
+    expect(field('contract_last_changed_commit'), matches(commit));
+    // The recorded digest must name the bytes actually vendored: a hand-edited
+    // or partially refreshed copy fails here.
+    final vendored = File(
+      'test/fixtures/contract/gateway-contract.openrpc.json',
+    ).readAsBytesSync();
+    expect(field('sha256'), sha256.convert(vendored).toString());
     expect(
       File('tool/contract/update_contract.sh').existsSync(),
       isTrue,

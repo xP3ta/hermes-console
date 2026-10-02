@@ -27,6 +27,10 @@ final class GatewayContract {
 
   static GatewayContract? _cached;
 
+  /// A contract over an in-memory document (sampler self-tests).
+  factory GatewayContract.fromDocument(Map<String, dynamic> document) =>
+      GatewayContract._(document);
+
   static GatewayContract load() => _cached ??= GatewayContract._(
     jsonDecode(
           File(
@@ -129,6 +133,7 @@ final class ContractSampler {
         ),
       );
     }
+    out.addAll(_branchSamples(schema));
     final resolved = contract.resolve(schema);
     final properties =
         (resolved['properties'] as Map?)?.cast<String, dynamic>() ?? const {};
@@ -163,6 +168,48 @@ final class ContractSampler {
     return out;
   }
 
+  /// Branch choices of the sample being generated, by union path; a union
+  /// not listed takes its first concrete branch.
+  Map<String, int> _choices = const {};
+
+  /// When set, records every union met while generating: path → number of
+  /// concrete branches.
+  Map<String, int>? _unions;
+
+  /// One full sample per concrete branch of every `oneOf`/`anyOf` reachable
+  /// from [schema] (including unions only reachable through another branch),
+  /// so a parser that copes with the first branch alone still fails.
+  List<ContractSample> _branchSamples(Map<String, dynamic> schema) {
+    final out = <ContractSample>[];
+    final seen = <String>{};
+    final pending = <Map<String, int>>[const {}];
+    while (pending.isNotEmpty) {
+      final choices = pending.removeAt(0);
+      final unions = <String, int>{};
+      _choices = choices;
+      _unions = unions;
+      try {
+        final value = _object(_Shape.full, schema, extra: false);
+        if (choices.isNotEmpty) {
+          final label = [
+            for (final e in choices.entries) '${e.key}#${e.value}',
+          ].join(',');
+          out.add(ContractSample('branch $label', value));
+        }
+      } finally {
+        _choices = const {};
+        _unions = null;
+      }
+      for (final union in unions.entries) {
+        if (!seen.add(union.key)) continue;
+        for (var branch = 1; branch < union.value; branch++) {
+          pending.add({...choices, union.key: branch});
+        }
+      }
+    }
+    return out;
+  }
+
   bool _nullable(Map<String, dynamic> schema) {
     final resolved = contract.resolve(schema);
     final anyOf = resolved['anyOf'];
@@ -190,7 +237,7 @@ final class ContractSampler {
     Map<String, dynamic> schema, {
     required bool extra,
   }) {
-    final value = _value(shape, schema, 'root', 0, extra: extra);
+    final value = _value(shape, schema, 'root', 0, extra: extra, path: '');
     if (value is! Map<String, dynamic>) {
       throw StateError('schema root is not an object: $schema');
     }
@@ -203,6 +250,7 @@ final class ContractSampler {
     String name,
     int depth, {
     required bool extra,
+    required String path,
   }) {
     final schema = contract.resolve(raw);
     if (schema.containsKey('const')) return schema['const'];
@@ -213,11 +261,21 @@ final class ContractSampler {
       final branches = anyOf.cast<Map<String, dynamic>>();
       final nullable = branches.any((b) => b['type'] == 'null');
       if (nullable && shape == _Shape.nulls) return null;
-      final concrete = branches.firstWhere(
-        (b) => b['type'] != 'null',
-        orElse: () => const {'type': 'null'},
+      final concrete = [
+        for (final b in branches)
+          if (b['type'] != 'null') b,
+      ];
+      if (concrete.isEmpty) return null;
+      _unions?[path] = concrete.length;
+      final pick = _choices[path] ?? 0;
+      return _value(
+        shape,
+        concrete[pick],
+        name,
+        depth,
+        extra: extra,
+        path: '$path~$pick',
       );
-      return _value(shape, concrete, name, depth, extra: extra);
     }
     final type = schema['type'];
     switch (type) {
@@ -239,10 +297,24 @@ final class ContractSampler {
         final items = schema['items'];
         if (items is! Map<String, dynamic>) return <Object?>['any_$name'];
         return <Object?>[
-          _value(shape, items, '$name[0]', depth + 1, extra: extra),
+          _value(
+            shape,
+            items,
+            '$name[0]',
+            depth + 1,
+            extra: extra,
+            path: '$path[0]',
+          ),
         ];
       case 'object':
-        return _objectValue(shape, schema, name, depth, extra: extra);
+        return _objectValue(
+          shape,
+          schema,
+          name,
+          depth,
+          extra: extra,
+          path: path,
+        );
     }
     throw StateError('unsupported schema type $type at $name');
   }
@@ -261,6 +333,7 @@ final class ContractSampler {
     String name,
     int depth, {
     required bool extra,
+    required String path,
   }) {
     final out = <String, dynamic>{};
     final properties =
@@ -275,6 +348,7 @@ final class ContractSampler {
           entry.key,
           depth + 1,
           extra: extra,
+          path: '$path.${entry.key}',
         );
       }
       final additional = schema['additionalProperties'];
@@ -287,6 +361,7 @@ final class ContractSampler {
           '$name.*',
           depth + 1,
           extra: extra,
+          path: '$path.*',
         );
       }
     }
