@@ -15595,12 +15595,21 @@ class ActiveChat {
   /// mk1215: without a runtime the catalog is read sessionless; [warmGateway]
   /// (an already connected shared socket) is used when this chat's own socket
   /// is not connected yet, so the picker does not wait for a handshake.
+  ///
+  /// [connectedOnly] reads only over a socket that is already connected: the
+  /// AppBar badge must never open a handshake (or leave its timeout armed)
+  /// just because a chat was opened.
   Future<DesktopModelCatalog?> loadDesktopModelCatalog({
     bool refresh = false,
     HermesDesktopGlobalModelCatalogGateway? warmGateway,
+    bool connectedOnly = false,
   }) async {
     if (!await ensureDesktopRuntime()) {
-      return _loadGlobalModelCatalog(refresh, warmGateway);
+      return _loadGlobalModelCatalog(
+        refresh,
+        warmGateway,
+        connectedOnly: connectedOnly,
+      );
     }
     final gateway = _desktopGateway;
     final runtimeId = _desktopRuntimeSessionId;
@@ -15634,10 +15643,14 @@ class ActiveChat {
   /// caller can use its read-only fallbacks.
   Future<DesktopModelCatalog?> _loadGlobalModelCatalog(
     bool refresh,
-    HermesDesktopGlobalModelCatalogGateway? warmGateway,
-  ) async {
+    HermesDesktopGlobalModelCatalogGateway? warmGateway, {
+    bool connectedOnly = false,
+  }) async {
     final own = _desktopGateway;
     final HermesDesktopGlobalModelCatalogGateway catalogGateway;
+    if (connectedOnly && own?.isConnected != true && warmGateway == null) {
+      return _modelCatalogCache.read(connection.id, sessionProfile);
+    }
     if (warmGateway != null && own?.isConnected != true) {
       catalogGateway = warmGateway;
     } else if (own is HermesDesktopGlobalModelCatalogGateway) {

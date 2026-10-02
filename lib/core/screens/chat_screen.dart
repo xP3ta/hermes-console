@@ -4132,7 +4132,7 @@ class _ChatScreenState extends State<ChatScreen>
     var catalog = _modelPickerCache.peek(key)?.result;
     if (catalog == null &&
         !_modelPickerCache.isCoolingDown(key, ModelPickerSource.socket)) {
-      catalog = await _socketModelPickerResult();
+      catalog = await _socketModelPickerResult(connectedOnly: true);
       if (catalog != null && catalog.hasModels) {
         _modelPickerCache.write(key, catalog);
       }
@@ -4511,8 +4511,12 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<ModelPickerResult?> _socketModelPickerResult() async {
-    final catalog = await _desktopSessionModelOptions();
+  Future<ModelPickerResult?> _socketModelPickerResult({
+    bool connectedOnly = false,
+  }) async {
+    final catalog = await _desktopSessionModelOptions(
+      connectedOnly: connectedOnly,
+    );
     if (catalog == null) return null;
     return ModelPickerResult(
       info: catalog.$1,
@@ -4523,7 +4527,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<(ModelActiveInfo, List<ModelProvider>, DesktopModelCatalog)?>
-  _desktopSessionModelOptions() async {
+  _desktopSessionModelOptions({bool connectedOnly = false}) async {
     // mk1215: without a runtime the catalog is read sessionless; an already
     // connected shared socket saves the chat's own handshake.
     final warm = SharedGatewayPool.instance.acquireIfConnected(
@@ -4532,6 +4536,7 @@ class _ChatScreenState extends State<ChatScreen>
     try {
       final catalog = await _chat.loadDesktopModelCatalog(
         warmGateway: warm?.client,
+        connectedOnly: connectedOnly,
       );
       if (catalog == null) return null;
       final providers = <ModelProvider>[
