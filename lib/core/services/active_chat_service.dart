@@ -19421,11 +19421,75 @@ class ActiveChat {
     return carried;
   }
 
+  /// ms1215: once the first delta lands, the turn's live assistant row stops
+  /// being the `_pipeline` placeholder (see [_publishTokenChunk]). A
+  /// mid-stream reconnect then hands the reconciler a plain id-less reply
+  /// where it expects the live projection: the inflight is no longer anchored
+  /// to the local open turn, so the prompt and the reply are painted twice
+  /// and the doubled user count later blocks terminal authority.
+  ///
+  /// For the turn this client owns, the runtime's `inflight` IS that turn:
+  /// one open optimistic prompt equal to `inflight.user` (whitespace aside)
+  /// directly followed by exactly one id-less live reply whose public text is
+  /// a prefix of `inflight.assistant`. Only then is that reply turned back
+  /// into the live placeholder, so the inflight continues streaming into it
+  /// without dropping a character (the snapshot holds the whole text so far)
+  /// and keeps its reasoning/tool trace. Anything else is left untouched.
+  List<Map<String, dynamic>> _ownedStreamedReplyAsLivePlaceholder(
+    List<Map<String, dynamic>> newestFirst,
+    DesktopSessionSnapshot snapshot,
+  ) {
+    final inflight = snapshot.inflight;
+    final inflightUser = inflight?.user?.trim() ?? '';
+    if (inflight == null ||
+        !snapshot.running ||
+        inflightUser.isEmpty ||
+        inflight.corrections.isNotEmpty ||
+        (inflight.error?.trim().isNotEmpty ?? false) ||
+        newestFirst.length < 2) {
+      return newestFirst;
+    }
+    final reply = newestFirst[0];
+    final prompt = newestFirst[1];
+    String normalized(Object? text) =>
+        (text?.toString() ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (reply['role'] != 'assistant' ||
+        reply['_pipeline'] == true ||
+        reply['_interim'] == true ||
+        reply['_desktopInterim'] == true ||
+        reply['_cancelled'] == true ||
+        reply['_desktopSnapshotKind'] != null ||
+        _hasDurableTranscriptIdentity(reply) ||
+        !isRealUserTurn(prompt) ||
+        prompt['_optimistic'] != true ||
+        _hasDurableTranscriptIdentity(prompt) ||
+        normalized(prompt['content']) != normalized(inflightUser)) {
+      return newestFirst;
+    }
+    final streamed = (reply['content']?.toString() ?? '').trim();
+    final live = streamingPublicAssistantText(
+      inflight.assistant ?? '',
+    ).trimLeft();
+    if (!live.startsWith(streamed)) return newestFirst;
+    return [
+      Map<String, dynamic>.unmodifiable({
+        ...reply,
+        'content': '',
+        '_pipeline': true,
+      }),
+      ...newestFirst.skip(1),
+    ];
+  }
+
   void _applyDesktopRecoverySnapshot(
     DesktopSessionSnapshot snapshot,
     int turnEpoch,
   ) {
     if (!_canRecoverTurn(turnEpoch)) return;
+    _messages = _ownedStreamedReplyAsLivePlaceholder(
+      _messages,
+      snapshot,
+    ).toList(growable: true);
     final previousMessagesNewestFirst = List<Map<String, dynamic>>.unmodifiable(
       _messages.map(
         (message) => Map<String, dynamic>.unmodifiable(
