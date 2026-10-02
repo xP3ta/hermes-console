@@ -41,6 +41,9 @@ final class _SlowRoomGateway implements RoomGateway {
   /// The server stores the event but the acknowledgement/readback fails.
   bool failAfterPublish = false;
 
+  /// The room cannot be read (offline, refresh unavailable).
+  bool failRead = false;
+
   _SlowRoomGateway({required this.room, required this.events});
 
   int get _seq => events.isEmpty ? 0 : events.last['seq'] as int;
@@ -73,6 +76,7 @@ final class _SlowRoomGateway implements RoomGateway {
   @override
   Future<HostedGroupWorkspaceReadback> read(HostedGroupRoom room) async {
     await Future<void>.delayed(_rpc);
+    if (failRead) throw StateError('offline');
     return _readback;
   }
 
@@ -197,6 +201,85 @@ Future<void> _tapSend(WidgetTester tester) async {
   );
   // Exactly one frame: nothing here waits on the network.
   await tester.pump();
+}
+
+/// One stored room draft slot, like `ChatDraftStore` behind
+/// `ChatDraftRoomStore`: a save replaces it, a clear only retires the draft
+/// still bound to the acknowledged attempt.
+final class _MemoryDrafts implements RoomDraftStore {
+  String text;
+  String? threadId;
+  String? preparedId;
+
+  _MemoryDrafts({this.text = '', this.preparedId});
+
+  @override
+  Future<({String text, String? threadId, String? preparedId})> load() async {
+    await Future<void>.value();
+    return (text: text, threadId: threadId, preparedId: preparedId);
+  }
+
+  @override
+  Future<void> save(String text, {String? threadId, String? preparedId}) async {
+    await Future<void>.value();
+    this.text = text;
+    this.threadId = threadId;
+    this.preparedId = preparedId;
+  }
+
+  @override
+  Future<void> clear({required String preparedId}) async {
+    await Future<void>.value();
+    if (this.preparedId != preparedId) return;
+    text = '';
+    threadId = null;
+    this.preparedId = null;
+  }
+}
+
+/// Opens the room as Mission Control does: [snapshot] is the log captured
+/// when the room list was read, which may predate the latest send.
+Future<void> _enterRoom(
+  WidgetTester tester,
+  _SlowRoomGateway gateway,
+  HostedGroupLogPage snapshot,
+  RoomDraftStore drafts,
+) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      localizationsDelegates: Strings.localizationsDelegates,
+      supportedLocales: Strings.supportedLocales,
+      locale: const Locale('en'),
+      theme: AppTheme.hermesRedDark,
+      home: RoomScreen(
+        key: UniqueKey(),
+        room: gateway.room,
+        log: snapshot,
+        gateway: gateway,
+        capabilities: const RoomCapabilities(canSend: true),
+        profileFor: (_) => null,
+        prefs: MemoryRoomPrefs(),
+        drafts: drafts,
+        pollTimer: (_, _) => _FakeTimer(),
+        clock: () => DateTime.fromMillisecondsSinceEpoch(1790000400 * 1000),
+      ),
+    ),
+  );
+}
+
+Future<void> _leaveRoom(WidgetTester tester) =>
+    tester.pumpWidget(const SizedBox.shrink());
+
+/// A room whose server log holds one earlier message; the returned log is
+/// the snapshot Mission Control captured before any send.
+({_SlowRoomGateway gateway, HostedGroupLogPage snapshot}) _staleRoom() {
+  final events = [EventSeq().user('Earlier message')];
+  final snapshot = buildLog(events);
+  final room = buildRoom(latestSeq: snapshot.latestSeq);
+  return (
+    gateway: _SlowRoomGateway(room: room, events: List.of(events)),
+    snapshot: snapshot,
+  );
 }
 
 void main() {
@@ -434,8 +517,276 @@ void main() {
       storedPreparedId: 'prepared-lost',
     );
     await _pump(tester, drafts: drafts);
+    // Restored once a fresh read of the room confirms it never landed.
+    await tester.pump(_rpc);
     await tester.pumpAndSettle();
     expect(_composerText(tester), 'not sent yet');
     expect(drafts.calls.where((c) => c.startsWith('clear:')), isEmpty);
+  });
+
+  group('re-entering a room after a send', () {
+    testWidgets('coming back before the acknowledgement never puts the sent '
+        'text back in the composer', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final (:gateway, :snapshot) = _staleRoom();
+      final drafts = _MemoryDrafts();
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pumpAndSettle();
+      await tester.enterText(_field, 'sent once');
+      await _tapSend(tester);
+      final id = gateway.sends.single.clientEventId;
+      expect(drafts.preparedId, id, reason: 'in flight: bound to the attempt');
+
+      await _leaveRoom(tester);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(gateway.completedSends, 0, reason: 'still waiting for the ack');
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(_composerText(tester), isEmpty);
+
+      await tester.pump(_rpc * 4);
+      await tester.pumpAndSettle();
+      expect(gateway.completedSends, 1);
+      expect(_composerText(tester), isEmpty);
+      expect(drafts.text, isEmpty);
+      expect(drafts.preparedId, isNull);
+      expect(gateway.sends, hasLength(1), reason: 'never sent twice');
+    });
+
+    testWidgets('a send the server stored but answered with an error is not '
+        'restored on a stale re-entry', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final (:gateway, :snapshot) = _staleRoom();
+      gateway.failAfterPublish = true;
+      final drafts = _MemoryDrafts();
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pumpAndSettle();
+      await tester.enterText(_field, 'stored, ack lost');
+      await _tapSend(tester);
+      await tester.pump(_rpc * 3);
+      await tester.pumpAndSettle();
+      final id = gateway.sends.single.clientEventId;
+      expect(drafts.preparedId, id);
+
+      await _leaveRoom(tester);
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump();
+      expect(_composerText(tester), isEmpty);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      expect(_composerText(tester), isEmpty);
+      expect(drafts.text, isEmpty);
+      expect(find.text('stored, ack lost'), findsOneWidget, reason: 'the log');
+    });
+
+    testWidgets('a draft left by a killed app is retired once the room shows '
+        'its message', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      const id = 'prepared-killed-after-send';
+      final (:gateway, :snapshot) = _staleRoom();
+      gateway.room = buildRoom(latestSeq: snapshot.latestSeq);
+      final ev = EventSeq()..seq = snapshot.latestSeq;
+      gateway.events.add(
+        ev.user('landed before the kill')
+          ..['event_id'] = TuiGatewayClient.durableGroupEventId(id),
+      );
+      final drafts = _MemoryDrafts(
+        text: 'landed before the kill',
+        preparedId: id,
+      );
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump();
+      expect(_composerText(tester), isEmpty);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      expect(_composerText(tester), isEmpty);
+      expect(drafts.text, isEmpty);
+      expect(gateway.sends, isEmpty);
+    });
+
+    testWidgets('a draft left by a killed app whose send never landed comes '
+        'back once the room confirms it', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final (:gateway, :snapshot) = _staleRoom();
+      final drafts = _MemoryDrafts(
+        text: 'never reached the server',
+        preparedId: 'prepared-never-landed',
+      );
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      expect(_composerText(tester), 'never reached the server');
+      expect(drafts.text, 'never reached the server');
+      expect(gateway.sends, isEmpty);
+    });
+
+    testWidgets('a send that fails after leaving comes back when re-entered '
+        'while it was still in flight', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final (:gateway, :snapshot) = _staleRoom();
+      gateway.failSend = true;
+      final drafts = _MemoryDrafts();
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pumpAndSettle();
+      await tester.enterText(_field, 'network dropped');
+      await _tapSend(tester);
+      await _leaveRoom(tester);
+      await tester.pump(const Duration(milliseconds: 100));
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump(_rpc * 4);
+      await tester.pumpAndSettle();
+      expect(gateway.events, hasLength(1), reason: 'nothing was published');
+      expect(_composerText(tester), 'network dropped');
+      expect(drafts.text, 'network dropped');
+    });
+
+    testWidgets('text typed while the room is checked is kept with an unsent '
+        'draft', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final (:gateway, :snapshot) = _staleRoom();
+      final drafts = _MemoryDrafts(
+        text: 'unsent before',
+        preparedId: 'prepared-unsent-typed',
+      );
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump();
+      await tester.enterText(_field, 'typed now');
+      // Past the autosave debounce, before the room read answers.
+      await tester.pump(const Duration(milliseconds: 370));
+      expect(drafts.text, 'unsent before', reason: 'never overwritten');
+      expect(drafts.preparedId, 'prepared-unsent-typed');
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      expect(_composerText(tester), contains('unsent before'));
+      expect(_composerText(tester), contains('typed now'));
+      await _leaveRoom(tester);
+      await tester.pump();
+      expect(drafts.text, contains('unsent before'));
+      expect(drafts.text, contains('typed now'));
+    });
+    testWidgets('leaving before an unsent draft is confirmed keeps it and '
+        'the text typed meanwhile', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final (:gateway, :snapshot) = _staleRoom();
+      final drafts = _MemoryDrafts(
+        text: 'unsent before',
+        preparedId: 'prepared-unsent-leave',
+      );
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump();
+      await tester.enterText(_field, 'typed now');
+      await _leaveRoom(tester);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      expect(drafts.text, contains('unsent before'));
+      expect(drafts.text, contains('typed now'));
+    });
+
+    testWidgets('leaving before a sent draft is confirmed keeps only the '
+        'text typed meanwhile', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      const id = 'prepared-sent-leave';
+      final (:gateway, :snapshot) = _staleRoom();
+      final ev = EventSeq()..seq = snapshot.latestSeq;
+      gateway.events.add(
+        ev.user('already in the room')
+          ..['event_id'] = TuiGatewayClient.durableGroupEventId(id),
+      );
+      final drafts = _MemoryDrafts(text: 'already in the room', preparedId: id);
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump();
+      await tester.enterText(_field, 'typed now');
+      await _leaveRoom(tester);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      expect(drafts.text, 'typed now');
+      expect(drafts.preparedId, isNull);
+    });
+
+    testWidgets('a new send while an unsent draft is checked does not lose '
+        'the unsent text', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final (:gateway, :snapshot) = _staleRoom();
+      final drafts = _MemoryDrafts(
+        text: 'unsent before',
+        preparedId: 'prepared-unsent-send',
+      );
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump();
+      await tester.enterText(_field, 'quick one');
+      await _tapSend(tester);
+      await tester.pump(_rpc * 4);
+      await tester.pumpAndSettle();
+      expect(gateway.completedSends, 1);
+      expect(_composerText(tester), 'unsent before');
+      expect(drafts.text, 'unsent before');
+    });
+
+    testWidgets('leaving an unreadable room keeps the held draft and the '
+        'text typed meanwhile', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final (:gateway, :snapshot) = _staleRoom();
+      gateway.failRead = true;
+      final drafts = _MemoryDrafts(
+        text: 'unproven send',
+        preparedId: 'prepared-offline',
+      );
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      expect(_composerText(tester), isEmpty, reason: 'not proven unsent');
+      await tester.enterText(_field, 'typed offline');
+      await _leaveRoom(tester);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      expect(drafts.text, contains('unproven send'));
+      expect(drafts.text, contains('typed offline'));
+      expect(drafts.preparedId, 'prepared-offline');
+    });
+
+    testWidgets('a send readback settles a held draft the room refresh '
+        'could not', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final (:gateway, :snapshot) = _staleRoom();
+      gateway.failRead = true;
+      final drafts = _MemoryDrafts(
+        text: 'unsent, checked late',
+        preparedId: 'prepared-readback',
+      );
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      expect(_composerText(tester), isEmpty, reason: 'not proven unsent');
+      await tester.enterText(_field, 'next one');
+      await _tapSend(tester);
+      await tester.pump(_rpc * 3);
+      await tester.pumpAndSettle();
+      expect(gateway.completedSends, 1);
+      expect(_composerText(tester), 'unsent, checked late');
+      expect(drafts.text, 'unsent, checked late');
+    });
   });
 }

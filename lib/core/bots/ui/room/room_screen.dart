@@ -157,6 +157,22 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   bool _restoringDraft = false;
   bool _foreground = true;
 
+  /// Sends of this app still waiting for the server, by attempt id. They
+  /// outlive the screen that started them, so re-entering the room waits
+  /// for their outcome instead of reading a log that predates them.
+  static final Map<String, Future<bool>> _inFlightSends = {};
+
+  /// A stored draft bound to a send attempt, kept out of the composer until
+  /// the room proves whether that send landed: a sent text must never come
+  /// back as a draft, and an unsent one must never be lost.
+  ({String text, String? threadId, String preparedId})? _heldDraft;
+
+  /// Composer text typed while [_heldDraft] was unresolved and the screen
+  /// closed; written once the held draft is settled.
+  String? _typedWhileHeld;
+  bool _sentWhileHeld = false;
+  bool _settlingHeld = false;
+
   String get _roomKey => roomPrefsKey(_room);
   DateTime get _now => (widget.clock ?? DateTime.now)();
   List<HostedGroupEvent> get _events => _log?.events ?? const [];
@@ -302,6 +318,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       setState(() {});
     }
     if (added.isNotEmpty || reset) _retirePublishedOutbox();
+    _settleHeldDraftFromLog();
     unawaited(_probePrompts());
     unawaited(_probeStall());
     if (result.room.disbanded && mounted) Navigator.of(context).maybePop();
@@ -346,28 +363,171 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     if (store == null) return;
     try {
       final draft = await store.load();
-      if (!mounted || _draftDirty) return;
-      // The text of a send that already landed in the room is not a draft:
-      // its acknowledgement was lost (app closed, readback failed), so it
-      // is retired here instead of coming back into the composer.
+      if (!mounted) return;
+      // A draft bound to a send attempt is that send's text, kept until the
+      // server acknowledged it. The log this screen opened with may predate
+      // the send (or the send may still be in flight from the screen the
+      // user just left), so it stays out of the composer until the room
+      // proves the send did not land.
       final prepared = draft.preparedId;
-      if (prepared != null &&
-          _isPublished(
-            HostedGroupSendAttempt.forClientEvent(prepared).durableEventId,
-          )) {
-        unawaited(
-          store
-              .clear(preparedId: prepared)
-              .then<void>((_) {}, onError: (Object _) {}),
+      if (prepared != null && draft.text.isNotEmpty) {
+        _heldDraft = (
+          text: draft.text,
+          threadId: draft.threadId,
+          preparedId: prepared,
         );
+        await _settleHeldDraft();
         return;
       }
+      if (_draftDirty) return;
       _restoringDraft = true;
       _threadId = draft.threadId;
       _composer.text = draft.text;
       _restoringDraft = false;
     } catch (_) {
       // Never overwrite an unreadable draft.
+    }
+  }
+
+  String? _heldDurableEventId(String preparedId) {
+    try {
+      return HostedGroupSendAttempt.forClientEvent(preparedId).durableEventId;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Decides the held draft: first from a send of this app still in flight,
+  /// then from a fresh read of the room. Runs on even after the screen
+  /// closed. An unreadable room keeps it held (and stored) for a later poll.
+  Future<void> _settleHeldDraft() async {
+    if (_settlingHeld) return;
+    _settlingHeld = true;
+    try {
+      await _settleHeldDraftOnce();
+    } finally {
+      _settlingHeld = false;
+    }
+  }
+
+  Future<void> _settleHeldDraftOnce() async {
+    final held = _heldDraft;
+    if (held == null) return;
+    final durable = _heldDurableEventId(held.preparedId);
+    if (durable == null) return _resolveHeldDraft(held, published: false);
+    final inFlight = _inFlightSends[held.preparedId];
+    if (inFlight != null && await inFlight) {
+      return _resolveHeldDraft(held, published: true);
+    }
+    if (_isPublished(durable)) {
+      return _resolveHeldDraft(held, published: true);
+    }
+    if (mounted) {
+      // A refresh shows the room as it is now and settles the draft from it.
+      try {
+        await _tick();
+      } catch (_) {
+        // Still held; the next poll decides while the room stays open.
+      }
+      if (mounted || !identical(_heldDraft, held)) return;
+    }
+    final HostedGroupWorkspaceReadback result;
+    try {
+      result = await widget.gateway.read(_room);
+    } catch (_) {
+      return _keepTypedWithHeldDraft(held);
+    }
+    final log = result.log;
+    if (log == null || result.room.roomId != _room.roomId) {
+      return _keepTypedWithHeldDraft(held);
+    }
+    _resolveHeldDraft(
+      held,
+      published: log.events.any((e) => e.eventId == durable),
+    );
+  }
+
+  /// The room closed and could not be read: keep what was typed next to the
+  /// still-unproven send, bound to it, so the next visit decides both.
+  void _keepTypedWithHeldDraft(
+    ({String text, String? threadId, String preparedId}) held,
+  ) {
+    final typed = _typedWhileHeld;
+    final store = widget.drafts;
+    if (!identical(_heldDraft, held) ||
+        store == null ||
+        typed == null ||
+        typed.trim().isEmpty) {
+      return;
+    }
+    _heldDraft = null;
+    unawaited(
+      store
+          .save(
+            '${held.text}\n$typed',
+            threadId: held.threadId,
+            preparedId: held.preparedId,
+          )
+          .then<void>((_) {}, onError: (Object _) {}),
+    );
+  }
+
+  /// A fresh log from a poll or a send settles the held draft too.
+  void _settleHeldDraftFromLog() {
+    final held = _heldDraft;
+    if (held == null || _inFlightSends.containsKey(held.preparedId)) return;
+    final durable = _heldDurableEventId(held.preparedId);
+    _resolveHeldDraft(
+      held,
+      published: durable != null && _isPublished(durable),
+    );
+  }
+
+  void _resolveHeldDraft(
+    ({String text, String? threadId, String preparedId}) held, {
+    required bool published,
+  }) {
+    if (!identical(_heldDraft, held)) return;
+    _heldDraft = null;
+    final store = widget.drafts;
+    if (store == null) return;
+    if (published) {
+      unawaited(
+        store
+            .clear(preparedId: held.preparedId)
+            .then<void>((_) {}, onError: (Object _) {}),
+      );
+      if (mounted) {
+        _flushDraft();
+      } else if (_typedWhileHeld case final typed?) {
+        unawaited(
+          store
+              .save(typed, threadId: _threadId)
+              .then<void>((_) {}, onError: (Object _) {}),
+        );
+      }
+      return;
+    }
+    if (!mounted) {
+      final typed = _typedWhileHeld;
+      if (typed != null && typed.trim().isNotEmpty) {
+        unawaited(
+          store
+              .save('${held.text}\n$typed', threadId: held.threadId)
+              .then<void>((_) {}, onError: (Object _) {}),
+        );
+      }
+      return;
+    }
+    final typed = _draftDirty ? _composer.text : '';
+    _restoringDraft = true;
+    _threadId ??= held.threadId;
+    _composer.text = typed.trim().isEmpty ? held.text : '${held.text}\n$typed';
+    _restoringDraft = false;
+    // The stored slot may hold newer text now; keep both in the store.
+    if (typed.trim().isNotEmpty || _sentWhileHeld) {
+      _draftDirty = true;
+      _flushDraft();
     }
   }
 
@@ -382,7 +542,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   void _flushDraft() {
     _draftTimer?.cancel();
     final store = widget.drafts;
-    if (!_draftDirty || store == null) return;
+    // Never overwrite a held draft before it is settled.
+    if (!_draftDirty || store == null || _heldDraft != null) return;
     unawaited(
       store
           .save(_composer.text, threadId: _threadId)
@@ -395,6 +556,11 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _coverAnimation?.removeStatusListener(_onCoverChanged);
     _poller.dispose();
+    if (_heldDraft != null && _draftDirty) {
+      _typedWhileHeld = _composer.text;
+      // Settles in the background so the typed text is written.
+      unawaited(_settleHeldDraft());
+    }
     _flushDraft();
     _markSeen();
     _composer.removeListener(_onComposerChanged);
@@ -420,7 +586,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       if (result.driverStatus != null) _driver = result.driverStatus;
       _error = null;
     });
-    if (result.log != null) _retirePublishedOutbox();
+    if (result.log != null) {
+      _retirePublishedOutbox();
+      _settleHeldDraftFromLog();
+    }
   }
 
   bool _isPublished(String durableEventId) =>
@@ -797,6 +966,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     // draft bound to this attempt; the acknowledgement retires exactly it.
     _draftTimer?.cancel();
     _draftDirty = false;
+    if (_heldDraft != null) _sentWhileHeld = true;
     unawaited(
       widget.drafts
               ?.save(
@@ -839,8 +1009,22 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       while (true) {
         final message = _outbox.where((m) => !m.failed).firstOrNull;
         if (message == null) return;
+        final id = message.attempt.clientEventId;
+        final outcome = Completer<bool>();
+        _inFlightSends[id] = outcome.future;
         try {
-          final result = await _deliver(message);
+          final HostedGroupWorkspaceReadback result;
+          try {
+            result = await _deliver(message);
+            outcome.complete(true);
+          } catch (_) {
+            outcome.complete(false);
+            rethrow;
+          } finally {
+            if (identical(_inFlightSends[id], outcome.future)) {
+              _inFlightSends.remove(id);
+            }
+          }
           // The acknowledged send never waits on draft storage.
           unawaited(
             widget.drafts
