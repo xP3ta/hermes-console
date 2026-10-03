@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -5,8 +7,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/companion/data/companion_preferences.dart';
 import 'package:hermes_android/core/companion/data/companion_repository.dart';
 import 'package:hermes_android/core/companion/models/companion.dart';
+import 'package:hermes_android/core/companion/models/companion_animation_state.dart';
 import 'package:hermes_android/core/companion/render/companion_roaming_overlay.dart';
 import 'package:hermes_android/core/companion/render/companion_view.dart';
+import 'package:hermes_android/core/companion/render/spritesheet_renderer.dart';
 import 'package:hermes_android/core/companion/state/companion_controller.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_spark_mascot.dart';
@@ -17,16 +21,66 @@ class _EmptyRepo extends CompanionRepository {
   Future<List<Companion>> loadAll() async => const [];
 }
 
+/// Mascota importada de 8 fps con un atlas PNG mínimo (8x1) en disco.
+class _SpriteRepo extends CompanionRepository {
+  _SpriteRepo(this.path);
+
+  final String path;
+
+  @override
+  Future<List<Companion>> loadAll() async => [
+    Companion(
+      slug: 'nimbus',
+      name: 'Nimbus',
+      author: 'team',
+      license: 'CC0-1.0',
+      origin: CompanionOrigin.imported,
+      spritesheetAsset: path,
+      frameWidth: 1,
+      frameHeight: 1,
+      cols: 8,
+      rows: 1,
+      fps: 8,
+      states: const {
+        CompanionAnimationState.idle: RowSpec(
+          row: 0,
+          frameCount: 8,
+          loop: true,
+        ),
+        CompanionAnimationState.run: RowSpec(row: 0, frameCount: 8, loop: true),
+      },
+    ),
+  ];
+}
+
+String _writeSpritesheet() {
+  final dir = Directory.systemTemp.createTempSync('roaming-sprite-');
+  addTearDown(() => dir.deleteSync(recursive: true));
+  final file = File('${dir.path}/spritesheet.png')
+    ..writeAsBytesSync(
+      base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAgAAAABAQMAAADZzn0AAAAAA1BMVEX/AAAZ4gk3'
+        'AAAACklEQVQI12NgAAAAAgAB4iG8MwAAAABJRU5ErkJggg==',
+      ),
+    );
+  return file.path;
+}
+
 Future<CompanionController> _controller({
   bool roaming = false,
   bool showOnHome = true,
+  bool sprite = false,
 }) async {
   SharedPreferences.setMockInitialValues({
     CompanionPreferences.roamingEnabledKey: roaming,
     CompanionPreferences.showOnHomeKey: showOnHome,
+    if (sprite) CompanionPreferences.slugKey: 'nimbus',
   });
   final prefs = await CompanionPreferences.load();
-  final controller = CompanionController(_EmptyRepo(), prefs);
+  final controller = CompanionController(
+    sprite ? _SpriteRepo(_writeSpritesheet()) : _EmptyRepo(),
+    prefs,
+  );
   await controller.init();
   return controller;
 }
@@ -40,8 +94,11 @@ Future<void> _pump(
   Duration maxPause = const Duration(milliseconds: 3600),
   Duration minTravel = const Duration(milliseconds: 2200),
   Duration maxTravel = const Duration(milliseconds: 5200),
+  Duration minRest = const Duration(seconds: 20),
+  Duration maxRest = const Duration(seconds: 40),
   VoidCallback? onPetTap,
   ValueChanged<Offset>? onTravelFrame,
+  Widget child = const ColoredBox(color: Colors.black),
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -63,10 +120,12 @@ Future<void> _pump(
               maxPause: maxPause,
               minTravel: minTravel,
               maxTravel: maxTravel,
+              minRest: minRest,
+              maxRest: maxRest,
               onPetTap: onPetTap,
               petSemanticLabel: 'Mascota — abrir acciones',
               onTravelFrame: onTravelFrame,
-              child: const ColoredBox(color: Colors.black),
+              child: child,
             ),
           ),
         ),
@@ -74,6 +133,17 @@ Future<void> _pump(
     ),
   );
   await tester.pump();
+}
+
+/// Cuenta los repintados del contenido que la mascota sobrevuela (el Home).
+class _PaintCounter extends CustomPainter {
+  int paints = 0;
+
+  @override
+  void paint(Canvas canvas, Size size) => paints++;
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 void main() {
@@ -93,11 +163,11 @@ void main() {
     await _pump(tester, controller);
 
     expect(find.byKey(const ValueKey('companion-roaming-pet')), findsOneWidget);
-    final travel = tester.widget<ValueListenableBuilder<Offset>>(
+    final travel = tester.widget<CompanionRoamingPosition>(
       find.byKey(const ValueKey('companion-roaming-position')),
     );
-    expect(travel.valueListenable.value.dx, inInclusiveRange(10, 232));
-    expect(travel.valueListenable.value.dy, 10);
+    expect(travel.position.value.dx, inInclusiveRange(10, 232));
+    expect(travel.position.value.dy, 10);
     expect(find.byType(AnimatedPositioned), findsNothing);
     expect(find.byType(TweenAnimationBuilder<Offset>), findsNothing);
     final ignoreAncestors = find.ancestor(
@@ -148,10 +218,10 @@ void main() {
     );
 
     final before = tester
-        .widget<ValueListenableBuilder<Offset>>(
+        .widget<CompanionRoamingPosition>(
           find.byKey(const ValueKey('companion-roaming-position')),
         )
-        .valueListenable
+        .position
         .value;
     await tester.pump(const Duration(milliseconds: 10));
     expect(
@@ -159,21 +229,22 @@ void main() {
       HermesSparkMood.thinking,
     );
 
-    await tester.pump(const Duration(milliseconds: 51));
-    final travelling = tester.widget<ValueListenableBuilder<Offset>>(
+    // Un paso de paseo (12 por segundo) más un margen.
+    await tester.pump(const Duration(milliseconds: 84));
+    final travelling = tester.widget<CompanionRoamingPosition>(
       find.byKey(const ValueKey('companion-roaming-position')),
     );
-    expect(travelling.valueListenable.value.dy, 10);
-    expect(travelling.valueListenable.value.dx, isNot(before.dx));
+    expect(travelling.position.value.dy, 10);
+    expect(travelling.position.value.dx, isNot(before.dx));
 
-    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 84));
     expect(
       tester.widget<CompanionView>(find.byType(CompanionView)).mood,
       HermesSparkMood.idle,
     );
   });
 
-  testWidgets('presupuesto de paseo limita el trabajo a 20 pasos por segundo', (
+  testWidgets('presupuesto de paseo limita el trabajo a 12 pasos por segundo', (
     tester,
   ) async {
     final controller = await _controller(roaming: true);
@@ -195,7 +266,7 @@ void main() {
     expect(travelFrames, isNotEmpty);
     expect(
       travelFrames.length,
-      lessThanOrEqualTo(20),
+      lessThanOrEqualTo(12),
       reason: 'el paseo no debe volver a seguir cada vsync de un panel 120 Hz',
     );
     expect(find.byType(TweenAnimationBuilder<Offset>), findsNothing);
@@ -246,5 +317,123 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.byKey(const ValueKey('companion-roaming-pet')), findsOneWidget);
+  });
+
+  testWidgets('el paseo no repinta el contenido que sobrevuela', (
+    tester,
+  ) async {
+    final controller = await _controller(roaming: true);
+    final counter = _PaintCounter();
+    final travelFrames = <Offset>[];
+    await _pump(
+      tester,
+      controller,
+      minPause: const Duration(milliseconds: 10),
+      maxPause: const Duration(milliseconds: 10),
+      minTravel: const Duration(seconds: 5),
+      maxTravel: const Duration(seconds: 5),
+      onTravelFrame: travelFrames.add,
+      child: CustomPaint(painter: counter, size: const Size(300, 500)),
+    );
+    await tester.pump(const Duration(milliseconds: 10));
+    final paintsBefore = counter.paints;
+    travelFrames.clear();
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(travelFrames.length, greaterThan(10));
+    expect(
+      counter.paints - paintsBefore,
+      0,
+      reason:
+          'cada paso del paseo debe repintar solo la capa de la mascota, '
+          'no el Home que hay debajo',
+    );
+  });
+
+  testWidgets('sin interacción descansa tras unos paseos', (tester) async {
+    final controller = await _controller(roaming: true);
+    final travelFrames = <Offset>[];
+    await _pump(tester, controller, onTravelFrame: travelFrames.add);
+
+    // Dos minutos de Home en reposo con la cadencia real de pausas/paseos.
+    for (var i = 0; i < 1200; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    // Antes: ~60 % del tiempo andando a 20 pasos/s (1487 pasos en 120 s).
+    // ignore: avoid_print
+    print('idle travel steps in 120 s: ${travelFrames.length}');
+    expect(
+      travelFrames.length,
+      lessThan(500),
+      reason: 'un Home desatendido no debe pasear sin descanso',
+    );
+    expect(travelFrames, isNotEmpty, reason: 'la mascota sigue paseando');
+  });
+
+  testWidgets('un toque en cualquier punto despierta a la mascota', (
+    tester,
+  ) async {
+    final controller = await _controller(roaming: true);
+    final travelFrames = <Offset>[];
+    await _pump(
+      tester,
+      controller,
+      minRest: const Duration(minutes: 10),
+      maxRest: const Duration(minutes: 10),
+      onTravelFrame: travelFrames.add,
+    );
+    // Tres paseos caben en ~30 s; después descansa.
+    for (var i = 0; i < 400; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    travelFrames.clear();
+    for (var i = 0; i < 100; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(travelFrames, isEmpty, reason: 'debe estar descansando');
+
+    await tester.tapAt(const Offset(150, 400));
+    for (var i = 0; i < 60; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(travelFrames, isNotEmpty, reason: 'el toque recupera el paseo');
+  });
+
+  testWidgets('los frames del sprite tampoco repintan el contenido del Home', (
+    tester,
+  ) async {
+    final controller = await _controller(roaming: true, sprite: true);
+    expect(controller.activeCompanion?.slug, 'nimbus');
+    final counter = _PaintCounter();
+    await _pump(
+      tester,
+      controller,
+      // Mascota quieta: solo avanza su animación idle a 8 fps.
+      minPause: const Duration(minutes: 5),
+      maxPause: const Duration(minutes: 5),
+      child: CustomPaint(painter: counter, size: const Size(300, 500)),
+    );
+    expect(find.byType(SpritesheetRenderer), findsOneWidget);
+    final sprite = find.descendant(
+      of: find.byType(SpritesheetRenderer),
+      matching: find.byType(CustomPaint),
+    );
+    // El atlas se decodifica fuera del reloj falso del test.
+    for (var i = 0; i < 100 && sprite.evaluate().isEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+    expect(sprite, findsOneWidget, reason: 'el atlas debe decodificarse');
+    final paintsBefore = counter.paints;
+
+    for (var i = 0; i < 16; i++) {
+      await tester.pump(const Duration(milliseconds: 125));
+    }
+
+    expect(counter.paints - paintsBefore, 0);
   });
 }

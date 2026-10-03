@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/companion.dart';
@@ -20,6 +21,10 @@ import '../models/companion_display_settings.dart';
 ///   una fuente importante de raster/GC durante el scroll.
 /// - Se detiene fuera de [TickerMode], en background, con reduce-motion o si la
 ///   superficie solicita un frame estático.
+/// - Cada paso del reloj solo repinta la capa del sprite: no reconstruye
+///   widgets. Dentro de la pista del paseo de Inicio (con su
+///   `LayoutBuilder`), un `setState` por frame repintaba también el contenido
+///   del Home que queda debajo.
 class SpritesheetRenderer extends StatefulWidget {
   final Companion companion;
   final CompanionAnimationState state;
@@ -73,7 +78,11 @@ class SpritesheetRenderer extends StatefulWidget {
 class _SpritesheetRendererState extends State<SpritesheetRenderer>
     with WidgetsBindingObserver {
   Timer? _frameTimer;
-  int _frameIndex = 0;
+
+  /// Frame visible. El painter escucha este notifier: avanzar la animación
+  /// marca solo su `RepaintBoundary`, sin reconstruir ningún elemento.
+  final ValueNotifier<int> _frame = ValueNotifier<int>(0);
+  int get _frameIndex => _frame.value;
   bool _tickerModeEnabled = true;
   bool _reduceMotion = false;
   bool _appActive = true;
@@ -301,7 +310,9 @@ class _SpritesheetRendererState extends State<SpritesheetRenderer>
   void _setFrame(int value, {bool notifyWidget = false}) {
     final safe = value.clamp(0, _row.frameCount - 1).toInt();
     if (_frameIndex == safe && !notifyWidget) return;
-    if (mounted) setState(() => _frameIndex = safe);
+    _frame.value = safe;
+    // Solo un cambio de fila o de atlas altera la estructura del painter.
+    if (notifyWidget && mounted) setState(() {});
     widget.onFrameChanged?.call(safe);
   }
 
@@ -391,6 +402,7 @@ class _SpritesheetRendererState extends State<SpritesheetRenderer>
     _frameTimer = null;
     _disposePreparedFrames();
     _disposeStream();
+    _frame.dispose();
     super.dispose();
   }
 
@@ -401,78 +413,70 @@ class _SpritesheetRendererState extends State<SpritesheetRenderer>
       return SizedBox(width: widget.size, height: widget.size);
     }
 
-    final row = _row;
-    final displayIndex = _reduceMotion || !widget.animate ? 0 : _frameIndex;
-    final frame = displayIndex < _preparedFrames.length
-        ? _preparedFrames[displayIndex]
-        : null;
     return RepaintBoundary(
-      child: frame == null
-          ? _FramePaint(
-              image: image,
-              companion: widget.companion,
-              row: row,
-              frameIndex: displayIndex,
-              size: widget.size,
-            )
-          : RawImage(
-              image: frame,
-              width: widget.size,
-              height: widget.size,
-              fit: BoxFit.contain,
-              filterQuality: FilterQuality.medium,
-            ),
-    );
-  }
-}
-
-class _FramePaint extends StatelessWidget {
-  final ui.Image image;
-  final Companion companion;
-  final RowSpec row;
-  final int frameIndex;
-  final double size;
-
-  const _FramePaint({
-    required this.image,
-    required this.companion,
-    required this.row,
-    required this.frameIndex,
-    required this.size,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: Size(size, size),
-      painter: _FramePainter(
-        image: image,
-        frameWidth: image.width ~/ companion.cols,
-        frameHeight: image.height ~/ companion.rows,
-        row: row.row,
-        col: frameIndex,
+      child: CustomPaint(
+        size: Size(widget.size, widget.size),
+        painter: SpriteFramePainter(
+          image: image,
+          preparedFrames: _preparedFrames,
+          frameWidth: image.width ~/ widget.companion.cols,
+          frameHeight: image.height ~/ widget.companion.rows,
+          row: _row.row,
+          frame: _frame,
+          staticFrame: _reduceMotion || !widget.animate,
+        ),
       ),
     );
   }
 }
 
-class _FramePainter extends CustomPainter {
+/// Pinta el frame actual de [frame] sin pasar por `build`.
+///
+/// Usa la celda ya preparada (equivalente a `RawImage` con `BoxFit.contain`)
+/// o, si el backend no pudo prepararlas, recorta la celda del atlas.
+@visibleForTesting
+class SpriteFramePainter extends CustomPainter {
   final ui.Image image;
+  final List<ui.Image> preparedFrames;
   final int frameWidth;
   final int frameHeight;
   final int row;
-  final int col;
+  final ValueListenable<int> frame;
+  final bool staticFrame;
 
-  _FramePainter({
+  SpriteFramePainter({
     required this.image,
+    required this.preparedFrames,
     required this.frameWidth,
     required this.frameHeight,
     required this.row,
-    required this.col,
-  });
+    required this.frame,
+    required this.staticFrame,
+  }) : super(repaint: frame);
+
+  int get _index => staticFrame ? 0 : frame.value;
+
+  /// Celda preparada que se pintaría ahora; `null` en la ruta de fallback.
+  @visibleForTesting
+  ui.Image? get currentFrameImage {
+    final index = _index;
+    return index < preparedFrames.length ? preparedFrames[index] : null;
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
+    final prepared = currentFrameImage;
+    if (prepared != null) {
+      paintImage(
+        canvas: canvas,
+        rect: Offset.zero & size,
+        image: prepared,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.medium,
+      );
+      return;
+    }
+    final col = _index;
     final src = Rect.fromLTWH(
       (col * frameWidth).toDouble(),
       (row * frameHeight).toDouble(),
@@ -500,6 +504,12 @@ class _FramePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _FramePainter old) =>
-      old.image != image || old.row != row || old.col != col;
+  bool shouldRepaint(covariant SpriteFramePainter old) =>
+      old.image != image ||
+      !identical(old.preparedFrames, preparedFrames) ||
+      old.frameWidth != frameWidth ||
+      old.frameHeight != frameHeight ||
+      old.row != row ||
+      old.frame != frame ||
+      old.staticFrame != staticFrame;
 }

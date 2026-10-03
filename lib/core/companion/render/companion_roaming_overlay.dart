@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../../widgets/hermes_spark_mascot.dart';
 import '../models/companion_presence_level.dart';
@@ -30,6 +33,8 @@ class CompanionRoamingOverlay extends StatefulWidget {
     this.maxPause = const Duration(milliseconds: 3600),
     this.minTravel = const Duration(milliseconds: 2200),
     this.maxTravel = const Duration(milliseconds: 5200),
+    this.minRest = const Duration(seconds: 20),
+    this.maxRest = const Duration(seconds: 40),
     this.onPetTap,
     this.petSemanticLabel,
     this.onTravelFrame,
@@ -49,6 +54,11 @@ class CompanionRoamingOverlay extends StatefulWidget {
   final Duration maxPause;
   final Duration minTravel;
   final Duration maxTravel;
+
+  /// Pausa larga que sustituye a [minPause]/[maxPause] cuando la mascota lleva
+  /// [CompanionRoamingOverlay.tripsBeforeRest] paseos sin ninguna interacción.
+  final Duration minRest;
+  final Duration maxRest;
   final VoidCallback? onPetTap;
   final String? petSemanticLabel;
 
@@ -56,6 +66,11 @@ class CompanionRoamingOverlay extends StatefulWidget {
   /// acaba de cambiar; no expone contenido de la app ni se usa en producción.
   @visibleForTesting
   final ValueChanged<Offset>? onTravelFrame;
+
+  /// Paseos seguidos sin interacción tras los que la mascota descansa. Cada
+  /// paso del paseo es un frame completo (composición y desenfoque del dock
+  /// incluidos); un Home desatendido no necesita animarse sin pausa.
+  static const int tripsBeforeRest = 3;
 
   @override
   State<CompanionRoamingOverlay> createState() =>
@@ -76,17 +91,41 @@ class _CompanionRoamingOverlayState extends State<CompanionRoamingOverlay>
   bool _canAnimate = false;
   bool _syncQueued = false;
 
+  /// Paseos completados desde la última interacción del usuario.
+  int _tripsSinceActivity = 0;
+
+  /// La pausa en curso es el descanso largo (no la pausa normal).
+  bool _resting = false;
+
   /// El paseo es pixel-art decorativo y no necesita los 120 ticks/s del panel
-  /// del Pixel. Veinte pasos por segundo conservan una trayectoria continua y
-  /// evitan que un TweenAnimationBuilder mantenga el isolate ocupado por vsync.
+  /// del Pixel. Doce pasos por segundo, la cadencia típica del pixel-art,
+  /// conservan una trayectoria continua; cada paso cuesta un frame completo.
   @visibleForTesting
-  static const Duration travelFrameInterval = Duration(milliseconds: 50);
+  static const Duration travelFrameInterval = Duration(microseconds: 83334);
 
   @override
   void initState() {
     super.initState();
     _random = widget.random ?? math.Random();
     WidgetsBinding.instance.addObserver(this);
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_onGlobalPointer);
+    widget.presence?.addListener(_registerActivity);
+  }
+
+  /// Cualquier toque en la app (o un cambio de presencia) cuenta como
+  /// actividad: reinicia el contador de descanso y, si la mascota dormía,
+  /// vuelve en seguida al ritmo normal de paseo.
+  void _onGlobalPointer(PointerEvent event) {
+    if (event is PointerDownEvent) _registerActivity();
+  }
+
+  void _registerActivity() {
+    _tripsSinceActivity = 0;
+    if (!_resting || !mounted) return;
+    _resting = false;
+    _phaseTimer?.cancel();
+    _phaseTimer = null;
+    _schedulePause();
   }
 
   @override
@@ -94,6 +133,10 @@ class _CompanionRoamingOverlayState extends State<CompanionRoamingOverlay>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.random != widget.random) {
       _random = widget.random ?? math.Random();
+    }
+    if (oldWidget.presence != widget.presence) {
+      oldWidget.presence?.removeListener(_registerActivity);
+      widget.presence?.addListener(_registerActivity);
     }
   }
 
@@ -103,12 +146,15 @@ class _CompanionRoamingOverlayState extends State<CompanionRoamingOverlay>
     if (_foreground == foreground) return;
     _foreground = foreground;
     if (!foreground) _stopPhases();
+    if (foreground) _tripsSinceActivity = 0;
     if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_onGlobalPointer);
+    widget.presence?.removeListener(_registerActivity);
     _stopPhases();
     _visualPosition.dispose();
     super.dispose();
@@ -121,6 +167,7 @@ class _CompanionRoamingOverlayState extends State<CompanionRoamingOverlay>
     _travelTimer = null;
     _canAnimate = false;
     _moving = false;
+    _resting = false;
   }
 
   Duration _randomDuration(Duration min, Duration max) {
@@ -163,8 +210,13 @@ class _CompanionRoamingOverlayState extends State<CompanionRoamingOverlay>
         _phaseTimer != null) {
       return;
     }
-    _phaseTimer = Timer(_randomDuration(widget.minPause, widget.maxPause), () {
+    _resting = _tripsSinceActivity >= CompanionRoamingOverlay.tripsBeforeRest;
+    final pause = _resting
+        ? _randomDuration(widget.minRest, widget.maxRest)
+        : _randomDuration(widget.minPause, widget.maxPause);
+    _phaseTimer = Timer(pause, () {
       _phaseTimer = null;
+      _resting = false;
       if (!mounted || !_canAnimate) return;
       _startTravel();
     });
@@ -208,6 +260,7 @@ class _CompanionRoamingOverlayState extends State<CompanionRoamingOverlay>
 
       timer.cancel();
       _travelTimer = null;
+      _tripsSinceActivity++;
       setState(() => _moving = false);
       _schedulePause();
     });
@@ -241,6 +294,7 @@ class _CompanionRoamingOverlayState extends State<CompanionRoamingOverlay>
       if (!_canAnimate) {
         _phaseTimer?.cancel();
         _phaseTimer = null;
+        _resting = false;
         _travelTimer?.cancel();
         _travelTimer = null;
         final staticPosition = Offset(bounds.right, bounds.bottom);
@@ -353,14 +407,15 @@ class _CompanionRoamingOverlayState extends State<CompanionRoamingOverlay>
           children: [
             widget.child,
             if (showPet && _hasPosition)
-              Positioned(
-                left: 0,
-                top: 0,
-                child: ValueListenableBuilder<Offset>(
+              // La capa propia cubre toda la pista: mover la mascota solo
+              // vuelve a grabar esta capa (un desplazamiento sobre el sprite
+              // ya cacheado), sin reconstruir widgets ni repintar el Home que
+              // queda debajo. Fuera del sprite no hay hit-test, así que el
+              // compositor sigue recibiendo sus toques.
+              Positioned.fill(
+                child: CompanionRoamingPosition(
                   key: const ValueKey('companion-roaming-position'),
-                  valueListenable: _visualPosition,
-                  builder: (context, offset, child) =>
-                      Transform.translate(offset: offset, child: child),
+                  position: _visualPosition,
                   child: petSurface,
                 ),
               ),
@@ -385,5 +440,100 @@ class _CompanionRoamingOverlayState extends State<CompanionRoamingOverlay>
         );
       },
     );
+  }
+}
+
+/// Desplaza a [child] hasta [position] escuchando el notifier desde la capa de
+/// render: cada paso del paseo repinta solo esta frontera de repintado.
+///
+/// El `Transform` anterior no era frontera de repintado: cada paso repintaba
+/// todo el Home que queda debajo (compositor y recientes) además de
+/// reconstruir un elemento.
+@visibleForTesting
+class CompanionRoamingPosition extends SingleChildRenderObjectWidget {
+  const CompanionRoamingPosition({
+    super.key,
+    required this.position,
+    required Widget super.child,
+  });
+
+  final ValueListenable<Offset> position;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderRoamingPosition(position);
+
+  @override
+  void updateRenderObject(BuildContext context, RenderObject renderObject) {
+    (renderObject as _RenderRoamingPosition).position = position;
+  }
+}
+
+class _RenderRoamingPosition extends RenderProxyBox {
+  _RenderRoamingPosition(this._position);
+
+  ValueListenable<Offset> _position;
+
+  set position(ValueListenable<Offset> value) {
+    if (identical(value, _position)) return;
+    if (attached) {
+      _position.removeListener(_onPositionChanged);
+      value.addListener(_onPositionChanged);
+    }
+    _position = value;
+    _onPositionChanged();
+  }
+
+  void _onPositionChanged() {
+    markNeedsPaint();
+    markNeedsSemanticsUpdate();
+  }
+
+  @override
+  bool get isRepaintBoundary => true;
+
+  @override
+  void attach(PipelineOwner owner) {
+    super.attach(owner);
+    _position.addListener(_onPositionChanged);
+  }
+
+  @override
+  void detach() {
+    _position.removeListener(_onPositionChanged);
+    super.detach();
+  }
+
+  @override
+  void performLayout() {
+    size = constraints.biggest;
+    child?.layout(constraints.loosen());
+  }
+
+  @override
+  bool hitTestSelf(Offset position) => false;
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
+    final child = this.child;
+    if (child == null) return false;
+    return result.addWithPaintOffset(
+      offset: _position.value,
+      position: position,
+      hitTest: (result, transformed) =>
+          child.hitTest(result, position: transformed),
+    );
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    final child = this.child;
+    if (child != null) context.paintChild(child, offset + _position.value);
+  }
+
+  @override
+  void applyPaintTransform(RenderBox child, Matrix4 transform) {
+    final offset = _position.value;
+    transform.translateByDouble(offset.dx, offset.dy, 0, 1);
   }
 }

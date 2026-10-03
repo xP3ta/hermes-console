@@ -78,4 +78,28 @@ void main() {
       expect(frames, isEmpty);
     }
   });
+
+  testWidgets(
+    'cada frame llega a la capa de la chispa sin reconstruir widgets',
+    (tester) async {
+      final frames = <double>[];
+      await tester.pumpWidget(_host(onFrameChanged: frames.add));
+      await tester.pump();
+      final spark = find.descendant(
+        of: find.byType(HermesSparkMascot),
+        matching: find.byType(CustomPaint),
+      );
+      final painterBefore = tester.widget<CustomPaint>(spark).painter;
+
+      await tester.pump(hermesSparkFrameInterval, EnginePhase.build);
+      expect(frames, hasLength(1));
+      expect(tester.renderObject(spark).debugNeedsPaint, isTrue);
+      expect(
+        identical(tester.widget<CustomPaint>(spark).painter, painterBefore),
+        isTrue,
+        reason: 'avanzar un frame no debe reconstruir la chispa',
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 }
