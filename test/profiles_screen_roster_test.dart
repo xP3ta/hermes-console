@@ -1,6 +1,3 @@
-import 'dart:async';
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
@@ -10,56 +7,10 @@ import 'package:hermes_android/core/services/bot_roster_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
-final connection = SavedConnection(
-  id: 'roster',
-  label: 'QA',
-  host: 'hermes.local',
-  port: 8642,
-  apiKey: 'k',
-  useHttps: true,
-);
-
-String roster(List<String> names) => jsonEncode({
-  'profiles': [
-    for (final name in names) {'name': name, 'is_default': name == 'default'},
-  ],
-});
-
-/// Dashboard fake: each `GET /api/profiles` takes the next queued answer
-/// (a pending completer lets a test hold a read on the wire).
-final class FakeProfilesServer {
-  final reads = <Completer<String>>[];
-  int mutations = 0;
-  late final DashboardClient client = DashboardClient(
-    host: 'hermes.local',
-    manualToken: 'token',
-    httpClientOverride: MockClient((request) async {
-      if (request.url.path == '/api/profiles' && request.method == 'GET') {
-        final answer = Completer<String>();
-        reads.add(answer);
-        return http.Response(await answer.future, 200);
-      }
-      if (request.url.path.startsWith('/api/profiles/') &&
-          (request.method == 'PATCH' || request.method == 'DELETE')) {
-        mutations++;
-        return http.Response('{}', 200);
-      }
-      return http.Response('{}', 404);
-    }),
-  );
-}
+import 'support/bot_roster_fakes.dart';
 
 Finder inScreen(String key, Finder matching) =>
     find.descendant(of: find.byKey(ValueKey(key)), matching: matching);
-
-Future<ConnectionManager> manager() async {
-  SharedPreferences.setMockInitialValues({});
-  return ConnectionManager.create(await SharedPreferences.getInstance());
-}
 
 Widget twoScreens(
   ConnectionManager manager,
