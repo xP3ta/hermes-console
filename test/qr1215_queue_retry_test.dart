@@ -368,6 +368,38 @@ void main() {
       async.flushTimers();
     });
   });
+  // External review of 6e9596f: two entries admitted while the socket is
+  // down still trigger the queue's own redial; the head goes once and the
+  // second stays queued, in order, behind it.
+  test('xr1215 two entries queued while down still redial and keep order', () {
+    fakeAsync((async) {
+      final gateway = _FlakyGateway()..onlyConnectRestores = true;
+      final chat = _chat('xr-redial-two', gateway);
+      chat.send(fullText: 'turno vivo', model: 'hermes-agent', history: []);
+      async.flushMicrotasks();
+      chat.state = ChatPipelineState.completed;
+
+      gateway.down = true;
+      chat.enqueue('primero');
+      chat.enqueue('segundo');
+      async.elapse(const Duration(seconds: 6));
+      expect(gateway.submissions, ['turno vivo']);
+      expect(chat.queuedMessages, ['primero', 'segundo']);
+
+      gateway.reachable = true;
+      final connectsBefore = gateway.connectCalls;
+      async.elapse(const Duration(seconds: 20));
+      expect(gateway.connectCalls, greaterThan(connectsBefore));
+      expect(gateway.isConnected, isTrue);
+      expect(gateway.submissions, ['turno vivo', 'primero']);
+      expect(chat.queuedMessages, ['segundo']);
+      expect(chat.queuedRetriesExhausted, isEmpty);
+
+      chat.dispose();
+      async.flushTimers();
+    });
+  });
+
   test('xr1215 a queued head waits for connect() itself to redial the '
       'socket', () {
     fakeAsync((async) {
