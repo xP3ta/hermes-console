@@ -316,10 +316,19 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     );
   }
 
-  List<RoomRetryAction> get _visibleRetries => [
-    for (final r in _driver?.retries ?? const <RoomRetryAction>[])
-      if (!_dismissedTasks.contains(r.taskId)) r,
-  ];
+  /// Retries the server is still recovering by itself: not failures yet.
+  Set<String> get _recoveringRetries =>
+      roomRecoveringRetryTasks(_driver, _events);
+
+  List<RoomRetryAction> get _visibleRetries {
+    final recovering = _recoveringRetries;
+    return [
+      for (final r in _driver?.retries ?? const <RoomRetryAction>[])
+        if (!_dismissedTasks.contains(r.taskId) &&
+            !recovering.contains(r.taskId))
+          r,
+    ];
+  }
 
   void _markSeen() {
     final latest = _log?.latestSeq;
@@ -1460,6 +1469,13 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       return _prompts.any((p) => p is RoomMemberApproval)
           ? s.roomStatusNeedsApproval
           : s.rq1215StatusNeedsAnswer;
+    }
+    if (driver != null &&
+        _visibleRetries.isEmpty &&
+        _recoveringRetries.isNotEmpty) {
+      // The server is still checking an interrupted reply; it settles or
+      // defers it on its own, so this is not a failure (yet).
+      return s.roomStatusRecovering;
     }
     if (driver != null &&
         (_visibleRetries.isNotEmpty ||

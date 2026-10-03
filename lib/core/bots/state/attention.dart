@@ -134,9 +134,12 @@ final class RoomAttention {
         failures.remove(slot);
       }
     }
+    // An interrupted reply the server is still re-checking is not a failure.
+    final recovering = roomRecoveringRetryTasks(driverStatus, events);
     for (final action in retries) {
       final failure = failedAt[action.taskId];
-      if (acks.dismissedTasks.contains(action.taskId) ||
+      if (recovering.contains(action.taskId) ||
+          acks.dismissedTasks.contains(action.taskId) ||
           (failure != null && acks.seen(failure))) {
         continue;
       }

@@ -168,6 +168,25 @@ final class EventSeq {
     },
   );
 
+  /// Server deferral of an attempt it gave up on (`turn.deferred`, exact
+  /// payload of `hosted_room_discussion.py::_deferred_effects`).
+  Map<String, dynamic> deferred(
+    String member,
+    String discussion, {
+    int round = 0,
+    String? task,
+  }) => _event(
+    'turn.deferred',
+    {'kind': 'gateway', 'id': gatewayId},
+    {
+      ..._coords(member, discussion, round: round, task: task),
+      'seen_through_seq': seq,
+      'execution_generation': 1,
+      'reason': 'member_unavailable',
+    },
+    id: 'ddeferred:${task ?? member}:g1',
+  );
+
   /// Gateway round verdict (`room.activity`, status settled|bounded).
   Map<String, dynamic> activity(
     String discussion, {
@@ -206,12 +225,13 @@ HostedGroupLogPage buildLog(
 }
 
 RoomDriverStatus driver({
+  bool running = true,
   bool working = false,
   bool blocked = false,
   Map<String, int> counts = const {},
   List<Map<String, dynamic>> pending = const [],
 }) => RoomDriverStatus.tryParse({
-  'running': true,
+  'running': running,
   'working': working,
   'blocked': blocked,
   'counts': counts,
