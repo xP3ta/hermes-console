@@ -433,50 +433,54 @@ void main() {
     });
   });
 
-  test('xr1215 a drain behind an in-flight check never sends while '
-      'session.active_list reports the session busy', () {
-    fakeAsync((async) {
-      const busy = [
-        DesktopActiveSession(
-          runtimeSessionId: 'runtime-remote',
-          storedSessionId: 'session-qr',
-          status: 'working',
-        ),
-      ];
-      final gateway = _FlakyGateway()
-        ..holdNextActiveLists = 1
-        ..activeSessions = busy;
-      final chat = _chat('xr-authority-busy', gateway);
+  // External review of d645dd8: every busy roster status holds the queue,
+  // not only the literal `working`.
+  for (final status in const ['working', 'running', 'active']) {
+    test('xr1215 a drain behind an in-flight check never sends while '
+        'session.active_list reports the session busy ($status)', () {
+      fakeAsync((async) {
+        final busy = [
+          DesktopActiveSession(
+            runtimeSessionId: 'runtime-remote',
+            storedSessionId: 'session-qr',
+            status: status,
+          ),
+        ];
+        final gateway = _FlakyGateway()
+          ..holdNextActiveLists = 1
+          ..activeSessions = busy;
+        final chat = _chat('xr-authority-busy', gateway);
 
-      // Drain A holds the authority check; a second admission drains while
-      // it is in flight.
-      chat.enqueue('primero');
-      async.flushMicrotasks();
-      async.elapse(Duration.zero);
-      expect(gateway.heldActiveLists, hasLength(1));
-      chat.enqueue('segundo');
-      async.elapse(Duration.zero);
-      expect(gateway.submissions, isEmpty);
+        // Drain A holds the authority check; a second admission drains while
+        // it is in flight.
+        chat.enqueue('primero');
+        async.flushMicrotasks();
+        async.elapse(Duration.zero);
+        expect(gateway.heldActiveLists, hasLength(1));
+        chat.enqueue('segundo');
+        async.elapse(Duration.zero);
+        expect(gateway.submissions, isEmpty);
 
-      // The server keeps answering busy: nothing is sent, however long.
-      gateway.heldActiveLists.single.complete();
-      async.elapse(const Duration(seconds: 30));
-      expect(gateway.submissions, isEmpty);
-      expect(chat.queuedMessages, ['primero', 'segundo']);
-      final checksWhileBusy = gateway.activeListCalls;
-      expect(checksWhileBusy, greaterThanOrEqualTo(2));
+        // The server keeps answering busy: nothing is sent, however long.
+        gateway.heldActiveLists.single.complete();
+        async.elapse(const Duration(seconds: 30));
+        expect(gateway.submissions, isEmpty);
+        expect(chat.queuedMessages, ['primero', 'segundo']);
+        final checksWhileBusy = gateway.activeListCalls;
+        expect(checksWhileBusy, greaterThanOrEqualTo(2));
 
-      // Only a fresh idle answer releases the head, exactly once.
-      gateway.activeSessions = const [];
-      chat.refreshPassiveRemoteActivity();
-      async.elapse(const Duration(seconds: 5));
-      expect(gateway.submissions, ['primero']);
-      expect(chat.queuedMessages, ['segundo']);
-      async.elapse(const Duration(seconds: 30));
-      expect(gateway.submissions, ['primero']);
+        // Only a fresh idle answer releases the head, exactly once.
+        gateway.activeSessions = const [];
+        chat.refreshPassiveRemoteActivity();
+        async.elapse(const Duration(seconds: 5));
+        expect(gateway.submissions, ['primero']);
+        expect(chat.queuedMessages, ['segundo']);
+        async.elapse(const Duration(seconds: 30));
+        expect(gateway.submissions, ['primero']);
 
-      chat.dispose();
-      async.flushTimers();
+        chat.dispose();
+        async.flushTimers();
+      });
     });
-  });
+  }
 }
