@@ -722,6 +722,7 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
       '_desktopInterimPublic',
       '_desktopAcceptedQueued',
       _awaitingDurableTurnRecoveryKey,
+      responseGroupStartKey,
       'partial',
       'recoverable',
     ]) {
@@ -25226,6 +25227,11 @@ class ActiveChat {
       'role': 'assistant',
       'content': '',
       '_pipeline': true,
+      // No prompt row precedes this turn on this client. The marker is the
+      // turn boundary for response grouping and outlives message.complete,
+      // so the reply never merges into the previous answer while hydration
+      // has not brought the remote prompt yet.
+      responseGroupStartKey: true,
     });
     trace.clear();
     _activeVoiceTools.clear();

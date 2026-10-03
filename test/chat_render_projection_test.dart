@@ -910,6 +910,45 @@ void main() {
       expect(build().units, hasLength(2));
     });
 
+    test(
+      'un turno remoto cerrado sin prompt no crece la respuesta anterior',
+      () {
+        // Frame terminal: message.complete ya cerró el streaming y la
+        // hidratación todavía no trajo el prompt remoto.
+        final messages = <Map<String, dynamic>>[
+          {
+            'role': 'assistant',
+            'content': 'NUEVO',
+            '_responseGroupStart': true,
+          },
+          {'role': 'assistant', 'content': 'RESPUESTA_ANTERIOR'},
+          {'role': 'user', 'content': 'Pregunta'},
+        ];
+        for (final streamingHead in [false, true]) {
+          final projection = ChatRenderProjection.build(
+            messages,
+            streamingHead: streamingHead,
+          );
+          expect(projection.units, hasLength(3), reason: '$streamingHead');
+        }
+        // Las filas posteriores del mismo turno remoto sí se agrupan con él.
+        final later = <Map<String, dynamic>>[
+          toolRow('r2', 'terminal'),
+          ...messages,
+        ];
+        final projection = ChatRenderProjection.build(later);
+        expect(
+          projection.units.whereType<ChatMessageUnitPlan>().map(
+            (unit) => unit.memberIndexesNewestFirst,
+          ),
+          [
+            [0, 1],
+            [2],
+          ],
+        );
+      },
+    );
+
     test('una respuesta parada queda fuera del grupo', () {
       final messages = <Map<String, dynamic>>[
         {

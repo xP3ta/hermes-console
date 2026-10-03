@@ -74,6 +74,13 @@ final class ChatMessageUnitPlan extends ChatRenderUnitPlan {
 /// contiguas del mismo turno (Desktop `ResponseMessages`). Las respuestas
 /// paradas/canceladas conservan su marca propia y los eventos editoriales nunca
 /// se agrupan.
+/// Marca de la primera fila del asistente de un turno abierto sin prompt
+/// visible (iniciado desde otro cliente). Es una frontera causal y estable:
+/// sobrevive al `message.complete` que termina el streaming, así que la fila
+/// nunca se une a la respuesta del turno anterior aunque la hidratación aún no
+/// haya traído el prompt remoto.
+const responseGroupStartKey = '_responseGroupStart';
+
 bool _joinsResponseGroup(Map<String, dynamic> message) =>
     message['role'] == 'assistant' &&
     (message['display_kind']?.toString().trim().isEmpty ?? true) &&
@@ -266,6 +273,9 @@ final class ChatRenderProjection {
       if (previous is ChatMessageUnitPlan &&
           _joinsResponseGroup(messages[index]) &&
           _joinsResponseGroup(messages[previous.messageIndex]) &&
+          // A row that opened its own turn never grows the previous answer,
+          // whether or not that turn is still streaming.
+          messages[index][responseGroupStartKey] != true &&
           // A live turn without a visible prompt (started from another
           // client) opens after an answer that already closed its turn: the
           // live row keeps its own bubble instead of growing the finished one.
