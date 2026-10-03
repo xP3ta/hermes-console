@@ -1772,7 +1772,7 @@ class RoomRetryCard extends StatelessWidget {
                 Text(
                   s.roomRetryTitle(
                     member == null
-                        ? '?'
+                        ? s.roomRetryUnknownMember
                         : roomSpeakerName(member, null, profile),
                   ),
                   style: TextStyle(fontSize: 12.5, color: colors.textPrimary),
