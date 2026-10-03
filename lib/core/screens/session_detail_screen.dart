@@ -448,8 +448,14 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   // ── Presentación ───────────────────────────────────────────────────────
 
-  String _titleText(Strings s) =>
-      _session.title.trim().isNotEmpty ? _session.title.trim() : s.sesNoTitle;
+  // A local rename lives in the shared archive, like Home and Conversations.
+  String _titleText(Strings s) {
+    final local = _archive?.titleFor(_session.logicalId, '').trim() ?? '';
+    if (local.isNotEmpty) return local;
+    return _session.title.trim().isNotEmpty
+        ? _session.title.trim()
+        : s.sesNoTitle;
+  }
 
   String _statusLabel(Strings s) => switch (_state) {
     SessionState.active => s.sesUiStatusActive,
