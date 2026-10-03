@@ -74,10 +74,12 @@ class _Gateway {
                   'session_key': 'stored-${runtime.substring(8)}',
                   'stored_session_id': 'stored-${runtime.substring(8)}',
                   'status': 'idle',
-                  'current': false,
+                  'current':
+                      reportCurrent && runtime == params['current_session_id'],
                 },
             ],
           },
+          'session.close' => {'closed': true},
           _ => <String, dynamic>{'status': 'ok'},
         };
         try {
@@ -103,6 +105,10 @@ class _Gateway {
   final _resumed = <String>{};
   final busy = <Object?>{};
   final silentGap = <Object?>{};
+
+  /// `session.active_list` marks the asking runtime `current` (Hermes does
+  /// for the caller's own session); off by default, as before.
+  bool reportCurrent = false;
 
   static Future<_Gateway> start() async =>
       _Gateway._(await HttpServer.bind(InternetAddress.loopbackIPv4, 0));
@@ -452,6 +458,40 @@ void main() {
     await open('e');
     expect(gateway.sockets.length, before, reason: 'shared once proven');
     expect(pool.chatClientCount, 1);
+  });
+
+  test('handing the runtime to Desktop forgets it on the shared socket; '
+      'the other chat keeps streaming and A can re-attach later', () async {
+    gateway.reportCurrent = true;
+    final a = await open('a');
+    final b = await open('b');
+    final client = _sharedClient(pool, gateway);
+    gateway.pushEvent('runtime-a', 'status.update', const {'kind': 'noop'});
+    gateway.pushEvent('runtime-b', 'status.update', const {'kind': 'noop'});
+    await _waitUntil(() => client.replayWatermarksForTesting.length == 2);
+    a.markDesktopRuntimeConsoleOwnedForTesting();
+
+    expect(await a.releaseRuntimeForDesktop(), isTrue);
+    expect(a.desktopRuntimeSessionId, isNull);
+    expect(gateway.rpcCalls('session.close'), hasLength(1));
+    expect(client.replayWatermarksForTesting.keys.toSet(), {
+      'runtime-b',
+    }, reason: 'the retired runtime is no longer retained by chat A');
+    expect(client.watchedRuntimesForTesting, {'runtime-b'});
+
+    // Late frames of the released runtime are dropped; B still streams.
+    gateway.pushEvent('runtime-a', 'status.update', const {'kind': 'noop'});
+    gateway.pushClarify('runtime-b', 'srq-afterdesk001');
+    await _waitUntil(() => b.pendingInteractivePrompt != null);
+    expect(client.replayWatermarksForTesting.containsKey('runtime-a'), isFalse);
+    await b.respondToClarify(b.pendingInteractivePrompt!.key, 'si');
+
+    // Disposing A afterwards releases nothing twice: B keeps its runtime.
+    service.release('conn-one-socket', 'stored-a', profile: 'default');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(client.watchedRuntimesForTesting, {'runtime-b'});
+    expect(b.desktopRuntimeSessionId, 'runtime-b');
+    expect(gateway.liveSockets, 1);
   });
 
   test('a silent-fanout gap on runtime B rehydrates only chat B; A keeps '
