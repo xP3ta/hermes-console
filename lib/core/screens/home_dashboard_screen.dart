@@ -17,6 +17,7 @@ import '../models/home_widget_snapshot.dart';
 import '../models/session_live_status.dart';
 import '../models/session_category.dart';
 import '../navigation/chat_route.dart';
+import '../services/active_profile_scope.dart';
 import '../services/agent_runtime/agent_runtime.dart';
 import '../services/agent_runtime/local_termux_agent_provider.dart';
 import '../services/bridge_update_service.dart';
@@ -138,6 +139,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   double _initialLoadProgress = 0;
   int _reloadEpoch = 0;
   int _refreshStatusEpoch = 0;
+  ActiveProfileScope? _profileScope;
+  ProfileReadTicket? _statusTicket;
   final OnstageGate _activeIdsGate = OnstageGate();
 
   /// ss1215: an attached chat's live status changed (tool, waiting, done):
@@ -197,6 +200,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     unawaited(_historyCleanupSubscription?.cancel());
     WidgetsBinding.instance.removeObserver(this);
     widget.connManager.activeConnectionId.removeListener(_onActiveConnChanged);
+    _profileScope?.removeListener(_onActiveProfileChanged);
     _activeIdsGate.removeListener(_onActivityChanged);
     _activeIdsGate.dispose();
     _liveStatusGate.removeListener(_onActivityChanged);
@@ -294,6 +298,26 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   void _onActiveConnChanged() {
     _missionPrewarm.cancel();
     if (mounted) _reload();
+  }
+
+  /// Follows the active profile of [connection]. A switch re-scopes Home the
+  /// same way a connection change does: recents, draft and activity.
+  void _followProfileScope(SavedConnection? connection) {
+    final next = connection == null
+        ? null
+        : ActiveProfileScope.of(widget.connManager, connection.id);
+    if (identical(next, _profileScope)) return;
+    _profileScope?.removeListener(_onActiveProfileChanged);
+    _profileScope = next;
+    next?.addListener(_onActiveProfileChanged);
+  }
+
+  void _onActiveProfileChanged() {
+    _missionPrewarm.cancel();
+    if (!mounted) return;
+    // The previous profile's recents leave at once; the new ones follow.
+    setState(() => _recentSessions = []);
+    _reload();
   }
 
   MissionSnapshotPrewarm get _missionPrewarm =>
@@ -636,6 +660,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         _installInProgress = installInProgress;
         _uninstallInProgress = uninstallInProgress;
       });
+      _followProfileScope(active);
       _configureActivitySource(active);
       _reportInitialLoadProgress(0.64);
       await _refreshStatus();
@@ -951,13 +976,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         });
   }
 
+  /// A status refresh only paints while it is the newest one, for the same
+  /// connection AND the same active profile: a list read for the previous
+  /// profile must never land on the new one.
   bool _isCurrentStatusRefresh(int epoch, String? connectionId) =>
-      mounted && epoch == _refreshStatusEpoch && _active?.id == connectionId;
+      mounted &&
+      epoch == _refreshStatusEpoch &&
+      _active?.id == connectionId &&
+      (_statusTicket?.isCurrent ?? true);
 
   Future<void> _refreshStatus() async {
     final refreshEpoch = ++_refreshStatusEpoch;
     final conn = _active;
     final connectionId = conn?.id;
+    _statusTicket = conn == null
+        ? null
+        : ActiveProfileScope.of(widget.connManager, conn.id).capture();
     final app = context.findAncestorStateOfType<HermesAppState>();
     if (conn == null) {
       if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
@@ -1031,9 +1065,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     final client =
         widget.clientFactory?.call(conn) ??
         ApiClient(baseUrl: conn.baseUrl, apiKey: conn.apiKey);
-    final ownerProfile = Session.profileOwner(
-      widget.connManager.activeProfileFor(conn.id),
-    );
+    final ownerProfile =
+        _statusTicket?.owner ??
+        Session.profileOwner(widget.connManager.activeProfileFor(conn.id));
     try {
       if (conn.kind == InstanceKind.localhost) {
         // El agente local sirve dashboard en :9119; su health es /api/status,

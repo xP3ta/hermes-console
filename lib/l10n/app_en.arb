@@ -7910,5 +7910,6 @@
   "hr1215CompactionOnlyAuthBody": "Only the automatic conversation summary failed: nothing was lost and you can keep writing. Sign in again so compaction works again.",
   "hr1215CheckingSignIn": "Checking the {provider} sign-in…",
   "hr1215SignInCheckFailed": "Could not check the {provider} sign-in: {error}",
-  "cs1215CachedTranscript": "Saved copy · updating"
+  "cs1215CachedTranscript": "Saved copy · updating",
+  "profileScopeDefault": "Default"
 }

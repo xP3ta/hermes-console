@@ -9603,5 +9603,6 @@
   "@hr1215CheckingSignIn": {"placeholders": {"provider": {"type": "String"}}},
   "hr1215SignInCheckFailed": "No se pudo comprobar la sesión de {provider}: {error}",
   "@hr1215SignInCheckFailed": {"placeholders": {"provider": {"type": "String"}, "error": {"type": "String"}}},
-  "cs1215CachedTranscript": "Copia guardada · actualizando"
+  "cs1215CachedTranscript": "Copia guardada · actualizando",
+  "profileScopeDefault": "Predeterminado"
 }
