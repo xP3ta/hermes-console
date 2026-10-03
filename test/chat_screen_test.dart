@@ -23796,6 +23796,62 @@ void main() {
   );
 
   testWidgets(
+    'pt1215: la salida de terminal en color aparece plegada en la traza',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-pt1215-term'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_TERM_PARENT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-pt-term',
+        'name': 'terminal',
+        'args': {'command': 'make test'},
+      });
+      gateway.emit('tool.complete', const {
+        'tool_id': 'call-pt-term',
+        'name': 'terminal',
+        'args': {'command': 'make test'},
+        'result': {
+          'output': 'one\ntwo\nthree\nfour\nfive\n\x1B[31mFAILED\x1B[0m',
+          'exit_code': 2,
+        },
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      gateway.emit('message.complete', const {'text': 'PUBLIC_TERM_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(TerminalOutputCard), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(TerminalOutputCard), findsOneWidget);
+      expect(find.text('exit 2'), findsOneWidget);
+      expect(find.textContaining('FAILED', findRichText: true), findsOneWidget);
+      expect(
+        find.textContaining('two\nthree', findRichText: true),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'historial reabierto: el desplegable enseña Tareas y Hecho con detalle y duración',
     (tester) async {
       await pumpChat(

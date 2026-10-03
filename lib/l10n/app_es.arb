@@ -9415,5 +9415,8 @@
   "tc1215CopyMarkdown": "Copiar Markdown",
   "tc1215CopyCode": "{count, plural, =1{Copiar código} other{Copiar {count} bloques de código}}",
   "@tc1215CopyCode": {"placeholders": {"count": {"type": "int"}}},
-  "tc1215CopyOptionsHint": "más opciones de copia"
+  "tc1215CopyOptionsHint": "más opciones de copia",
+  "tc1215TerminalOutput": "Salida",
+  "tc1215OutputShowAll": "Ver todo ({count} líneas)",
+  "@tc1215OutputShowAll": {"placeholders": {"count": {"type": "int"}}}
 }

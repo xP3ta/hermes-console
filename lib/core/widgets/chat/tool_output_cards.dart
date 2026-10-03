@@ -1,12 +1,15 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../models/tool_output.dart';
 import '../../theme/app_theme.dart';
+import '../../utils/ansi_text.dart';
 import '../../utils/unified_diff.dart';
 
 /// Tool output cards for the chat transcript (Desktop parity:
-/// `tool/fallback.tsx` FileDiffPanel).
+/// `tool/fallback.tsx` FileDiffPanel + AnsiText).
 ///
 /// Every card is collapsed by default and builds its heavy body (parsed diff
 /// lines, ANSI spans) only once the user expands it, so a long transcript
@@ -18,6 +21,12 @@ const double _monoHeight = 1.4;
 
 /// First page of diff lines, then one more page per «show more».
 const int fileDiffPageLines = 80;
+
+/// Lines of terminal output shown while folded.
+const int terminalPreviewLines = 4;
+
+/// Hard cap of rendered terminal lines once unfolded (tail kept).
+const int terminalMaxLines = 400;
 
 class _DiffCount extends StatelessWidget {
   const _DiffCount(this.stats);
@@ -285,6 +294,160 @@ class _FileDiffBodyState extends State<FileDiffBody> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Terminal output (ANSI)
+// ─────────────────────────────────────────────────────────────────────────────
+
+Color? ansiPaletteColor(AnsiColorIndex? index, HermesThemeColors colors) {
+  if (index == null) return null;
+  return switch (index % 8) {
+    0 => index >= 8 ? colors.textDisabled : colors.textSecondary,
+    1 => colors.error,
+    2 => colors.success,
+    3 => colors.warning,
+    4 => const Color(0xFF5B9BEA),
+    5 => const Color(0xFFB57EDC),
+    6 => const Color(0xFF4FB6BE),
+    _ => colors.textPrimary,
+  };
+}
+
+/// Renders [text] with its ANSI SGR colours/bold; plain text skips parsing.
+class AnsiTextView extends StatelessWidget {
+  const AnsiTextView({
+    required this.text,
+    required this.style,
+    this.maxLines,
+    super.key,
+  });
+
+  final String text;
+  final TextStyle style;
+  final int? maxLines;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    if (!hasAnsi(text)) {
+      return Text(text, softWrap: false, maxLines: maxLines, style: style);
+    }
+    return Text.rich(
+      TextSpan(
+        style: style,
+        children: [
+          for (final segment in parseAnsi(text))
+            TextSpan(
+              text: segment.text,
+              style: TextStyle(
+                color: ansiPaletteColor(segment.fg, colors),
+                fontWeight: segment.bold ? FontWeight.w700 : null,
+              ),
+            ),
+        ],
+      ),
+      softWrap: false,
+      maxLines: maxLines,
+    );
+  }
+}
+
+/// Terminal/execute_code output: folded it shows the last
+/// [terminalPreviewLines] lines; unfolded the whole (tail-capped) output.
+class TerminalOutputCard extends StatefulWidget {
+  const TerminalOutputCard({required this.output, this.exitCode, super.key});
+
+  final String output;
+  final int? exitCode;
+
+  @override
+  State<TerminalOutputCard> createState() => _TerminalOutputCardState();
+}
+
+class _TerminalOutputCardState extends State<TerminalOutputCard> {
+  bool _expanded = false;
+  late List<String> _lines = _split(widget.output);
+
+  static List<String> _split(String output) {
+    final lines = output.split('\n');
+    return lines.length > terminalMaxLines
+        ? lines.sublist(lines.length - terminalMaxLines)
+        : lines;
+  }
+
+  @override
+  void didUpdateWidget(TerminalOutputCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.output != widget.output) _lines = _split(widget.output);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    final exit = widget.exitCode;
+    final failed = exit != null && exit != 0;
+    final foldable = _lines.length > terminalPreviewLines;
+    final shown = _expanded || !foldable
+        ? _lines
+        : _lines.sublist(_lines.length - terminalPreviewLines);
+    final style = TextStyle(
+      fontFamily: _mono,
+      fontSize: _monoSize,
+      height: _monoHeight,
+      color: colors.textSecondary,
+    );
+    final label = foldable && !_expanded
+        ? s.tc1215OutputShowAll(_lines.length)
+        : s.tc1215TerminalOutput;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _FoldRow(
+            rowKey: const ValueKey('terminal-output-row'),
+            icon: Icons.terminal_rounded,
+            label: label,
+            expanded: _expanded,
+            semanticsLabel: failed ? '$label, ${s.cevExitFailed(exit)}' : label,
+            trailing: failed
+                ? Text(
+                    'exit $exit',
+                    style: TextStyle(
+                      fontFamily: _mono,
+                      fontSize: 11,
+                      color: colors.error,
+                    ),
+                  )
+                : null,
+            onTap: foldable
+                ? () => setState(() => _expanded = !_expanded)
+                : null,
+          ),
+          Container(
+            key: ValueKey(
+              _expanded ? 'terminal-output-full' : 'terminal-output-tail',
+            ),
+            decoration: _boxDecoration(colors),
+            clipBehavior: Clip.antiAlias,
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+            child: _HorizontalCode(
+              children: [
+                AnsiTextView(
+                  text: shown.join('\n'),
+                  style: style,
+                  maxLines: math.max(1, shown.length),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// The card a finished tool contributes, or null when it has nothing to show.
 Widget? toolOutputCard(ToolOutputRecord? record) {
   if (record == null) return null;
@@ -297,6 +460,13 @@ Widget? toolOutputCard(ToolOutputRecord? record) {
         for (final file in record.files)
           FileDiffCard(key: ValueKey(file.path), file: file),
       ],
+    );
+  }
+  if (record.hasOutput) {
+    return TerminalOutputCard(
+      key: ValueKey('tool-output-${record.toolId}'),
+      output: record.output!,
+      exitCode: record.exitCode,
     );
   }
   return null;
