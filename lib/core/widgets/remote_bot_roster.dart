@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../services/bot_roster_cache.dart';
+import '../services/bot_roster_store.dart';
 import 'package:flutter/material.dart';
 import '../models/agent_profile.dart';
 import '../screens/mission_control_copy.dart';
@@ -21,6 +21,10 @@ class RemoteBotRoster extends StatefulWidget {
   final void Function(SavedConnection, AgentProfile) onDetails;
   final RemoteBotLoader? loader;
   final SharedPreferences? prefs;
+
+  /// Roster shared with every other screen; [BotRosterRegistry.shared] by
+  /// default.
+  final BotRosterRegistry? registry;
   const RemoteBotRoster({
     super.key,
     required this.connections,
@@ -31,6 +35,7 @@ class RemoteBotRoster extends StatefulWidget {
     required this.onDetails,
     this.loader,
     this.prefs,
+    this.registry,
   });
   @override
   State<RemoteBotRoster> createState() => _RemoteBotRosterState();
@@ -40,25 +45,42 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
   // Pooled leases (spec 070 T202): one shared socket per connection.
   final _leases = <String, SharedGatewayLease>{};
   final _avatars = <String, MissionProfileAvatarCache>{};
-  final _profiles = <String, List<AgentProfile>>{};
-  final _unavailable = <String>{};
+  final _failed = <String>{};
   final _loading = <String>{};
+  final _watched = <BotRosterStore>[];
   DateTime? _lastRead;
   int _epoch = 0;
+
+  BotRosterRegistry get _registry =>
+      widget.registry ?? BotRosterRegistry.shared;
+
   @override
   void initState() {
     super.initState();
-    if (widget.prefs case final prefs?) {
-      for (final connection in widget.connections) {
-        final cached = BotRosterCache(prefs).read(connection);
-        if (cached.isNotEmpty) {
-          _profiles[connection.id] = cached;
-          _unavailable.add(connection.id);
-        }
-      }
-    }
+    _watch();
     _load();
   }
+
+  /// Subscribes to the shared store of every shown connection; the cached
+  /// roster (cold start) comes from the same store.
+  void _watch() {
+    for (final store in _watched) {
+      store.removeListener(_onRoster);
+    }
+    _watched.clear();
+    for (final connection in widget.connections) {
+      _registry.hydrate(connection, prefs: widget.prefs);
+      _watched.add(_registry.store(connection.id)..addListener(_onRoster));
+    }
+  }
+
+  void _onRoster() {
+    if (mounted) setState(() {});
+  }
+
+  bool _unavailable(String connectionId) =>
+      _failed.contains(connectionId) ||
+      (_registry.peek(connectionId)?.snapshot?.fromCache ?? false);
 
   @override
   void didUpdateWidget(RemoteBotRoster oldWidget) {
@@ -76,11 +98,15 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
           ),
         );
     if (changed) {
-      if (widget.prefs case final prefs?) {
-        for (final old in oldWidget.connections) {
-          unawaited(
-            BotRosterCache(prefs).remove(old).catchError((Object _) {}),
-          );
+      // Same connection, different endpoint: its roster is no longer valid
+      // anywhere, and reads still on the wire must not publish it.
+      for (final old in oldWidget.connections) {
+        final current = widget.connections.where((c) => c.id == old.id);
+        if (current.isNotEmpty &&
+            (current.first.gatewayUrl != old.gatewayUrl ||
+                current.first.apiKey != old.apiKey ||
+                current.first.onDeviceLoopback != old.onDeviceLoopback)) {
+          _registry.forget(old.id);
         }
       }
       for (final lease in _leases.values) {
@@ -89,9 +115,9 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
       _leases.clear();
       _avatars.clear();
       _epoch++;
-      _profiles.clear();
-      _unavailable.clear();
+      _failed.clear();
       _loading.clear();
+      _watch();
     }
     if (changed ||
         (widget.refreshedAt != oldWidget.refreshedAt &&
@@ -107,6 +133,7 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
     await Future.wait(
       widget.connections.map((connection) async {
         if (!_loading.add(connection.id)) return;
+        final ticket = _registry.beginRead(connection.id);
         TuiGatewayClient? client;
         try {
           final loader = widget.loader;
@@ -129,21 +156,18 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
               await (loader?.call(connection) ??
                   client!.listProfiles(includeSessions: true));
           if (!mounted || epoch != _epoch) return;
-          if (widget.prefs case final prefs?) {
-            // Queue synchronously after the ownership check; storage failure must not hide a live roster.
-            unawaited(
-              BotRosterCache(
-                prefs,
-              ).write(connection, profiles).catchError((Object _) {}),
-            );
-          }
-          setState(() {
-            _profiles[connection.id] = profiles;
-            _unavailable.remove(connection.id);
-          });
+          // The store persists it and keeps it only if nothing newer landed.
+          _registry.publish(
+            connection.id,
+            connection.label,
+            profiles,
+            ticket: ticket,
+            sessions: true,
+          );
+          setState(() => _failed.remove(connection.id));
         } catch (_) {
           if (mounted && epoch == _epoch) {
-            setState(() => _unavailable.add(connection.id));
+            setState(() => _failed.add(connection.id));
           }
         } finally {
           if (epoch == _epoch) _loading.remove(connection.id);
@@ -154,6 +178,9 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
 
   @override
   void dispose() {
+    for (final store in _watched) {
+      store.removeListener(_onRoster);
+    }
     _epoch++;
     for (final lease in _leases.values) {
       lease.release();
@@ -163,7 +190,7 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
   }
 
   List<AgentProfile> _ordered(String connectionId) {
-    final profiles = [...?_profiles[connectionId]];
+    final profiles = [...?_registry.peek(connectionId)?.profiles];
     profiles.sort((a, b) {
       final pin = (b.botPinned ? 1 : 0).compareTo(a.botPinned ? 1 : 0);
       if (pin != 0) return pin;
@@ -187,7 +214,7 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          trailing: _unavailable.contains(connection.id)
+          trailing: _unavailable(connection.id)
               ? const Icon(Icons.cloud_off_outlined, size: 18)
               : null,
         ),

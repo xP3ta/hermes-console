@@ -190,8 +190,8 @@ class _MissionBotTaskSheetState extends State<MissionBotTaskSheet> {
               decoration: InputDecoration(
                 labelText: _english ? 'What' : 'Qué',
                 hintText: _english
-                    ? 'What should this bot do?'
-                    : '¿Qué debe hacer este bot?',
+                    ? 'What should this profile do?'
+                    : '¿Qué debe hacer este perfil?',
               ),
               validator: (value) {
                 if (value == null || value.trim().isEmpty) {

@@ -35,9 +35,35 @@ final class BotRosterCache {
     }
   }
 
-  Future<void> write(SavedConnection c, List<AgentProfile> profiles) async {
+  /// Start time (ms since epoch) of the read the stored roster came from;
+  /// 0 when unknown or stored for another endpoint.
+  int _observedAt(SavedConnection c) {
+    try {
+      final data = jsonDecode(prefs.getString(_key(c)) ?? '');
+      if (data is Map && data['endpoint'] == _endpoint(c)) {
+        final at = data['observed_at'];
+        if (at is int) return at;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  /// Persists [profiles]. The app and the background monitor (another
+  /// isolate) both write here, so with [observedAt] (when the read that
+  /// produced it started) a roster older than the stored one is dropped.
+  /// [reload] first picks up the other isolate's writes.
+  Future<void> write(
+    SavedConnection c,
+    List<AgentProfile> profiles, {
+    DateTime? observedAt,
+    bool reload = false,
+  }) async {
+    if (reload) await prefs.reload();
+    final at = observedAt?.millisecondsSinceEpoch;
+    if (at != null && _observedAt(c) > at) return;
     final raw = jsonEncode({
       'endpoint': _endpoint(c),
+      'observed_at': ?at,
       'profiles': [
         for (final p in profiles.take(512))
           {
@@ -54,7 +80,10 @@ final class BotRosterCache {
           },
       ],
     });
-    if (raw.length <= 262144) await prefs.setString(_key(c), raw);
+    // Every roster read lands here; skip rewriting an unchanged roster.
+    if (raw.length <= 262144 && prefs.getString(_key(c)) != raw) {
+      await prefs.setString(_key(c), raw);
+    }
   }
 
   Future<void> remove(SavedConnection c) async {

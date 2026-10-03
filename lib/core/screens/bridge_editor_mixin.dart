@@ -35,8 +35,12 @@ mixin BridgeEditorMixin<T extends StatefulWidget> on State<T> {
   bool _bridgeAutoLoadDone = false;
   bool _bridgeProbed = false;
 
-  BridgeManager get bridgeManager =>
-      _mgr ??= context.findAncestorStateOfType<HermesAppState>()!.bridgeManager;
+  /// Bridge manager to use instead of the app's (screens built in tests).
+  BridgeManager? get bridgeManagerOverride => null;
+
+  BridgeManager get bridgeManager => _mgr ??=
+      bridgeManagerOverride ??
+      context.findAncestorStateOfType<HermesAppState>()!.bridgeManager;
 
   bool get bridgeCanWrite {
     final c = bridge.caps;
@@ -57,6 +61,12 @@ mixin BridgeEditorMixin<T extends StatefulWidget> on State<T> {
   }
 
   Future<void> probeBridge() async {
+    // Built outside the app (tests): no bridge to probe.
+    if (bridgeManagerOverride == null &&
+        _mgr == null &&
+        context.findAncestorStateOfType<HermesAppState>() == null) {
+      return;
+    }
     var st = await bridgeManager.probe(bridgeConnectionId);
     // Autoprovisión: si corre pero falta token, obtenerlo con la gateway key.
     if (st.status == BridgeStatus.needsToken) {

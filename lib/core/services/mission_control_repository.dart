@@ -1,5 +1,5 @@
 import '../bots/data/room_log_cursor.dart';
-import 'bot_mention_roster.dart';
+import 'bot_roster_store.dart';
 import 'dart:async';
 import 'dart:math';
 
@@ -335,6 +335,50 @@ Future<List<AgentProfile>> loadMissionControlProfiles({
   }
 }
 
+/// [loadMissionControlProfiles] published to [registry], the roster every
+/// screen shares. Only the Gateway read asks for session projections, so
+/// only it is authoritative for them; the legacy Dashboard list is not.
+Future<List<AgentProfile>> loadSharedMissionProfiles({
+  required BotRosterRegistry registry,
+  required SavedConnection connection,
+  required MissionProfilesLoader desktopLoader,
+  required MissionProfilesLoader legacyDashboardLoader,
+}) async {
+  final ticket = registry.beginRead(connection.id);
+  var withSessions = false;
+  var legacy = false;
+  final List<AgentProfile> profiles;
+  try {
+    profiles = await loadMissionControlProfiles(
+      desktopLoader: () async {
+        final profiles = await desktopLoader();
+        withSessions = true;
+        return profiles;
+      },
+      legacyDashboardLoader: () {
+        legacy = true;
+        return legacyDashboardLoader();
+      },
+    );
+  } catch (error) {
+    // The Dashboard is asked only once `profiles.list` proved unsupported;
+    // if it lacks the list too, this server has no roster to show.
+    if (legacy && BotRosterRegistry.isUnsupportedRead(error)) {
+      registry.unsupported(connection.id, ticket: ticket);
+    }
+    rethrow;
+  }
+  // Shared with every screen; dropped if a newer roster already landed.
+  registry.publish(
+    connection.id,
+    connection.label,
+    profiles,
+    ticket: ticket,
+    sessions: withSessions,
+  );
+  return profiles;
+}
+
 /// Loads the same aggregate, profile-owned session surface used by Hermes
 /// Desktop. Legacy Gateways are consulted only when the aggregate route is
 /// structurally unsupported; auth, network and malformed responses fail
@@ -541,18 +585,15 @@ final class MissionControlRepository
     final lease = SharedGatewayPool.instance.acquire(connection);
     final desktop = lease.client;
     return MissionControlRepository(
-      profilesLoader: () async {
-        final rosterGeneration = BotMentionRoster.shared.generation(connection.id);
-        final profiles = await loadMissionControlProfiles(
+      profilesLoader: () => loadSharedMissionProfiles(
+        registry: BotRosterRegistry.shared,
+        connection: connection,
         // One profiles.list snapshot now carries Desktop's last/preferred
-        // session projections and hidden worker liveness. Older Gateways omit
-        // those optional fields and keep returning the same profile roster.
+        // session projections and hidden worker liveness. Older Gateways
+        // omit those optional fields and keep returning the same roster.
         desktopLoader: () => desktop.listProfiles(includeSessions: true),
         legacyDashboardLoader: dashboard.getProfiles,
-        );
-        BotMentionRoster.shared.replace(connection.id, connection.label, profiles, expectedGeneration: rosterGeneration);
-        return profiles;
-      },
+      ),
       sessionsLoader: () => loadMissionControlSessions(
         dashboardGet: dashboard.apiGet,
         legacyGatewayLoader: () => gateway.getSessions(includeChildren: true),

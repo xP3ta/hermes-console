@@ -17,6 +17,7 @@ import '../models/home_widget_snapshot.dart';
 import '../models/session_live_status.dart';
 import '../models/session_category.dart';
 import '../navigation/chat_route.dart';
+import '../services/active_profile_scope.dart';
 import '../services/agent_runtime/agent_runtime.dart';
 import '../services/agent_runtime/local_termux_agent_provider.dart';
 import '../services/bridge_update_service.dart';
@@ -45,6 +46,8 @@ import '../widgets/dock.dart';
 import '../widgets/dock_shortcuts.dart';
 import '../widgets/dock_style.dart' show dockShowsBack;
 import '../widgets/hermes_drawer.dart';
+import '../widgets/profile_switcher.dart';
+import 'profiles_screen.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/home_prompt_composer.dart';
@@ -136,6 +139,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   double _initialLoadProgress = 0;
   int _reloadEpoch = 0;
   int _refreshStatusEpoch = 0;
+  ActiveProfileScope? _profileScope;
+  ProfileReadTicket? _statusTicket;
   final OnstageGate _activeIdsGate = OnstageGate();
 
   /// ss1215: an attached chat's live status changed (tool, waiting, done):
@@ -194,6 +199,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     unawaited(_historyCleanupSubscription?.cancel());
     WidgetsBinding.instance.removeObserver(this);
     widget.connManager.activeConnectionId.removeListener(_onActiveConnChanged);
+    _profileScope?.removeListener(_onActiveProfileChanged);
     _activeIdsGate.removeListener(_onActivityChanged);
     _activeIdsGate.dispose();
     _liveStatusGate.removeListener(_onActivityChanged);
@@ -293,6 +299,26 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   void _onActiveConnChanged() {
     _missionPrewarm.cancel();
     if (mounted) _reload();
+  }
+
+  /// Follows the active profile of [connection]. A switch re-scopes Home the
+  /// same way a connection change does: recents, draft and activity.
+  void _followProfileScope(SavedConnection? connection) {
+    final next = connection == null
+        ? null
+        : ActiveProfileScope.of(widget.connManager, connection.id);
+    if (identical(next, _profileScope)) return;
+    _profileScope?.removeListener(_onActiveProfileChanged);
+    _profileScope = next;
+    next?.addListener(_onActiveProfileChanged);
+  }
+
+  void _onActiveProfileChanged() {
+    _missionPrewarm.cancel();
+    if (!mounted) return;
+    // The previous profile's recents leave at once; the new ones follow.
+    setState(() => _recentSessions = []);
+    _reload();
   }
 
   MissionSnapshotPrewarm get _missionPrewarm =>
@@ -635,6 +661,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         _installInProgress = installInProgress;
         _uninstallInProgress = uninstallInProgress;
       });
+      _followProfileScope(active);
       _configureActivitySource(active);
       _reportInitialLoadProgress(0.64);
       await _refreshStatus();
@@ -952,13 +979,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         });
   }
 
+  /// A status refresh only paints while it is the newest one, for the same
+  /// connection AND the same active profile: a list read for the previous
+  /// profile must never land on the new one.
   bool _isCurrentStatusRefresh(int epoch, String? connectionId) =>
-      mounted && epoch == _refreshStatusEpoch && _active?.id == connectionId;
+      mounted &&
+      epoch == _refreshStatusEpoch &&
+      _active?.id == connectionId &&
+      (_statusTicket?.isCurrent ?? true);
 
   Future<void> _refreshStatus() async {
     final refreshEpoch = ++_refreshStatusEpoch;
     final conn = _active;
     final connectionId = conn?.id;
+    _statusTicket = conn == null
+        ? null
+        : ActiveProfileScope.of(widget.connManager, conn.id).capture();
     final app = context.findAncestorStateOfType<HermesAppState>();
     if (conn == null) {
       if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
@@ -1036,9 +1072,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     final client =
         widget.clientFactory?.call(conn) ??
         ApiClient(baseUrl: conn.baseUrl, apiKey: conn.apiKey);
-    final ownerProfile = Session.profileOwner(
-      widget.connManager.activeProfileFor(conn.id),
-    );
+    final ownerProfile =
+        _statusTicket?.owner ??
+        Session.profileOwner(widget.connManager.activeProfileFor(conn.id));
     try {
       if (conn.kind == InstanceKind.localhost) {
         // El agente local sirve dashboard en :9119; su health es /api/status,
@@ -1791,6 +1827,23 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       appBar: HermesAppBar(
         centerTitle: false,
         titleSpacing: 0,
+        // Active profile, one tap from Home (Desktop's profile rail).
+        actions: [
+          if (_active != null)
+            ProfileSwitcherButton(
+              connection: _active!,
+              connManager: widget.connManager,
+              compact: true,
+              onManage: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ProfilesScreen(
+                    connection: _active!,
+                    connManager: widget.connManager,
+                  ),
+                ),
+              ),
+            ),
+        ],
         // Todo el bloque de título abre la hoja de estado: la línea de 16dp
         // sola quedaba lejísimos del target mínimo de 48dp, y el gesto no
         // tenía rol de botón ni pista de qué abre (spec 028 A-110).
@@ -1858,42 +1911,45 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                         ),
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        _checking
-                            ? Strings.of(context).homeStatusChecking(
-                                _active?.label ??
-                                    Strings.of(context).homeStatusAgentConsole,
-                              )
-                            : _healthOk &&
-                                  _dashboardAuth ==
-                                      DashboardAuthCheck.invalidCredentials
-                            ? Strings.of(
-                                context,
-                              ).m1215HomeDashboardWrongPassword(
-                                _active?.label ?? '',
-                              )
-                            : _healthOk &&
-                                  _dashboardAuth ==
-                                      DashboardAuthCheck.loginRequired
-                            ? Strings.of(
-                                context,
-                              ).m1215HomeDashboardLoginRequired(
-                                _active?.label ?? '',
-                              )
-                            : _healthOk
-                            ? Strings.of(
-                                context,
-                              ).homeStatusOnline(_active?.label ?? '')
-                            : _active == null
-                            ? Strings.of(context).homeStatusAgentConsole
-                            : Strings.of(
-                                context,
-                              ).homeStatusOffline(_active!.label),
-                        style: TextStyle(
-                          // ≥11px: a 9.5px el estado era casi ilegible (A-110).
-                          fontSize: 11,
-                          letterSpacing: 0.6,
-                          color: colors.textSecondary,
+                      // Flexible: con el selector de perfil en la barra, la línea
+                      // de estado debe recortarse en vez de desbordar.
+                      Flexible(
+                        child: Text(
+                          _checking
+                              ? Strings.of(context).homeStatusChecking(
+                                  _active?.label ??
+                                      Strings.of(context)
+                                          .homeStatusAgentConsole,
+                                )
+                              : _healthOk &&
+                                    _dashboardAuth ==
+                                        DashboardAuthCheck.invalidCredentials
+                              ? Strings.of(context)
+                                    .m1215HomeDashboardWrongPassword(
+                                      _active?.label ?? '',
+                                    )
+                              : _healthOk &&
+                                    _dashboardAuth ==
+                                        DashboardAuthCheck.loginRequired
+                              ? Strings.of(context)
+                                    .m1215HomeDashboardLoginRequired(
+                                      _active?.label ?? '',
+                                    )
+                              : _healthOk
+                              ? Strings.of(context)
+                                    .homeStatusOnline(_active?.label ?? '')
+                              : _active == null
+                              ? Strings.of(context).homeStatusAgentConsole
+                              : Strings.of(context)
+                                    .homeStatusOffline(_active!.label),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            // ≥11px: a 9.5px el estado era casi ilegible (A-110).
+                            fontSize: 11,
+                            letterSpacing: 0.6,
+                            color: colors.textSecondary,
+                          ),
                         ),
                       ),
                       if (_active != null) ...[

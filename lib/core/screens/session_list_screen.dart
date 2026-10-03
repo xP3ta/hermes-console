@@ -12,6 +12,7 @@ import '../models/desktop_active_session.dart';
 import '../models/desktop_control_center.dart';
 import '../models/session_live_status.dart';
 import '../navigation/chat_route.dart';
+import '../services/active_profile_scope.dart';
 import '../services/active_chat_service.dart';
 import '../services/connection_manager.dart';
 import '../services/connection_health_tracker.dart';
@@ -315,8 +316,23 @@ class _SessionListScreenState extends State<SessionListScreen>
       unawaited(_fetchSessions(showLoader: false));
     });
     _libraryScrollController.addListener(_onLibraryScroll);
+    _profileScope.addListener(_onActiveProfileChanged);
     _loadPrefs();
     _checkHealth();
+  }
+
+  late final ActiveProfileScope _profileScope = ActiveProfileScope.of(
+    widget.connManager,
+    widget.connection.id,
+  );
+
+  /// A profile switch is a workspace switch: read the new profile's list
+  /// (behind the loader). Reads still on the wire for the previous profile
+  /// are dropped by the query fingerprint and the fetch epoch.
+  void _onActiveProfileChanged() {
+    if (!mounted) return;
+    _refreshLibraryScope();
+    unawaited(_refreshRemoteActivity());
   }
 
   Future<void> _loadPrefs() async {
@@ -480,6 +496,7 @@ class _SessionListScreenState extends State<SessionListScreen>
 
   @override
   void dispose() {
+    _profileScope.removeListener(_onActiveProfileChanged);
     _archive?.removeListener(_onArchiveChanged);
     hermesRouteObserver.unsubscribe(this);
     unawaited(DrawerGestureExclusion.setEnabled(false));
@@ -797,7 +814,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     order: SessionLibraryOrder.recent,
     sources: _activeCategory.sources,
     excludeSources: _activeCategory.excludeSources,
-    profile: widget.connManager.activeProfileFor(widget.connection.id),
+    profile: _profileScope.name,
   );
 
   void _selectCategory(SessionCategory value) {

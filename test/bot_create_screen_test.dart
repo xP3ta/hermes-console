@@ -15,6 +15,8 @@ import 'package:hermes_android/core/services/profile_pet_visual_adapter.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:image_picker/image_picker.dart';
 
 const _imageDataUri =
@@ -83,6 +85,30 @@ class _FakeCreationGateway implements HermesDesktopBotCreationGateway {
     required String profile,
     required List<String> disabledSkills,
   }) async {}
+}
+
+/// A Gateway that predates `profiles.create`.
+class _LegacyCreationGateway extends _FakeCreationGateway {
+  _LegacyCreationGateway({required super.log});
+
+  @override
+  Future<void> createProfileNative({
+    required String name,
+    String? cloneFrom,
+    String description = '',
+    String soul = '',
+    String model = '',
+    String provider = '',
+    bool noSkills = false,
+    bool shareAuth = true,
+  }) async {
+    log.add('create-native-missing');
+    throw const TuiGatewayRpcError(
+      'profiles.create',
+      'Method not found',
+      code: -32601,
+    );
+  }
 }
 
 class _FakeAssetsGateway implements HermesDesktopProfileAssetsGateway {
@@ -269,6 +295,7 @@ Future<void> _pumpCreate(
   required _FakePetGateway pets,
   required _FakePetVisualMaterializer materializer,
   BotCreateImagePicker? imagePicker,
+  DashboardClient? dashboard,
   Size size = const Size(1000, 2600),
   double textScale = 1,
   double keyboardInset = 0,
@@ -303,6 +330,7 @@ Future<void> _pumpCreate(
                   imagePicker: imagePicker,
                   imageNormalizer: (_) async =>
                       AgentProfileAvatar.fromDataUri(_imageDataUri),
+                  dashboardForTesting: dashboard,
                 ),
               ),
             ),
@@ -571,6 +599,39 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('bot-create-keep-editing')));
     await _pumpUi(tester);
     expect(find.byType(BotCreateScreen), findsOneWidget);
+  });
+
+  testWidgets('one create flow: a Gateway without profiles.create falls back '
+      'to the Dashboard like the former Profiles wizard', (tester) async {
+    final log = <String>[];
+    final requests = <String>[];
+    final dashboard = DashboardClient(
+      host: '127.0.0.1',
+      port: 9119,
+      manualToken: 'dashboard-token',
+      httpClientOverride: MockClient((request) async {
+        requests.add('${request.method} ${request.url.path}');
+        return http.Response('{"ok":true}', 200);
+      }),
+    );
+    await _pumpCreate(
+      tester,
+      creation: _LegacyCreationGateway(log: log),
+      assets: _FakeAssetsGateway(log: log),
+      pets: _FakePetGateway(log: log),
+      materializer: _FakePetVisualMaterializer(log: log),
+      dashboard: dashboard,
+    );
+    await _enterName(tester, 'Infra Lead');
+    await tester.tap(find.byKey(const ValueKey('bot-create-submit')));
+    await tester.pumpAndSettle();
+
+    expect(log, ['create-native-missing']);
+    expect(requests, [
+      'POST /api/profiles',
+      'PUT /api/profiles/infra-lead/soul',
+    ]);
+    expect(find.byType(BotCreateScreen), findsNothing);
   });
 }
 

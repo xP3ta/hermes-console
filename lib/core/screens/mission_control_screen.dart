@@ -56,10 +56,10 @@ import '../widgets/chat_surface_coordinator.dart';
 import '../widgets/dock_shortcuts.dart';
 import '../widgets/mission_profile_avatar.dart';
 import '../widgets/remote_bot_roster.dart';
-import 'bot_create_screen.dart';
 import 'bot_profile_settings_screen.dart';
 import 'bot_sections_editor.dart';
 import '../services/bot_profile_client.dart';
+import '../services/bot_roster_store.dart';
 import '../services/bot_section_service.dart';
 import '../services/bot_room_link.dart';
 import 'chat_screen.dart';
@@ -67,7 +67,7 @@ import 'cron_screen.dart';
 import 'memory_screen.dart';
 import 'mission_control_copy.dart';
 import 'profile_editor_screen.dart';
-import 'profiles_screen.dart';
+import 'profile_flows.dart';
 import 'skills_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
@@ -203,6 +203,10 @@ class MissionControlScreen extends StatefulWidget {
   @visibleForTesting
   @visibleForTesting
   final ActiveChatService? activeChats;
+
+  /// Roster shared with every other screen; [BotRosterRegistry.shared] by
+  /// default.
+  final BotRosterRegistry? rosterRegistry;
   final MissionControlOpenTarget? initialOpenTarget;
   @visibleForTesting
   final ValueChanged<Session>? botChatOpenObserver;
@@ -210,6 +214,9 @@ class MissionControlScreen extends StatefulWidget {
   final RemoteBotLoader? remoteBotLoader;
   @visibleForTesting
   final HermesDesktopBotCreationGateway? botCreateGateway;
+
+  /// Stands in for the Dashboard profile delete in tests.
+  final Future<void> Function(String name)? profileDeleteOverride;
   @visibleForTesting
   final HermesDesktopProfileAssetsGateway? profileAssetsGateway;
   final BotProfileGateway? botProfileGateway;
@@ -238,10 +245,12 @@ class MissionControlScreen extends StatefulWidget {
     this.botChatStore,
     this.botChatTitleLookup,
     this.activeChats,
+    this.rosterRegistry,
     this.initialOpenTarget,
     this.botChatOpenObserver,
     this.remoteBotLoader,
     this.botCreateGateway,
+    @visibleForTesting this.profileDeleteOverride,
     this.profileAssetsGateway,
     this.botProfileGateway,
     this.botModelGateway,
@@ -265,6 +274,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   SharedGatewayLease? _profileAssetsLease;
   late final HermesDesktopProfileAssetsGateway _profileAssetsGateway;
   MissionBackendSnapshot? _snapshot;
+  late final BotRosterRegistry _roster;
+  late final BotRosterStore _rosterStore;
   List<MissionOrganization> _organizations = const [];
   String? _selectedOrganizationId;
   Object? _loadFailure;
@@ -339,13 +350,17 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     WidgetsBinding.instance.addObserver(this);
     _scheduleRosterRefresh();
     _watchLiveChanges();
+    final roster = _roster = widget.rosterRegistry ?? BotRosterRegistry.shared;
+    roster.hydrate(widget.connection);
+    _rosterStore = roster.store(widget.connection.id)
+      ..addListener(_onSharedRoster);
     _snapshotCache =
         widget.snapshotCache ??
         (widget.dataSource == null ? MissionSnapshotCache.shared : null);
     final cached = _snapshotCache?.read(widget.connection);
     if (cached != null) {
       // Paint what the user saw last time; the read below refreshes it.
-      _snapshot = cached;
+      _snapshot = _withSharedRoster(cached);
       _loading = false;
       final source = _dataSource;
       if (source is MissionControlRepository) {
@@ -398,8 +413,44 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     }
   }
 
+  /// The bot roster shown is the connection's shared one: a bot created,
+  /// renamed or deleted on another screen shows here at once, and a load
+  /// that started before that change cannot bring the old roster back.
+  /// Until a live read lands, the edits confirmed so far are replayed on
+  /// the roster this screen already shows (its cached snapshot).
+  MissionBackendSnapshot _withSharedRoster(MissionBackendSnapshot snapshot) {
+    final store = _rosterStore;
+    final profiles = store.isLive
+        ? store.profiles
+        : _roster.withPendingMutations(
+            widget.connection.id,
+            snapshot.profiles,
+          );
+    if (identical(profiles, snapshot.profiles)) return snapshot;
+    return MissionBackendSnapshot(
+      profiles: profiles,
+      sessions: snapshot.sessions,
+      board: snapshot.board,
+      profilesCapability: snapshot.profilesCapability,
+      sessionsCapability: snapshot.sessionsCapability,
+      kanbanCapability: snapshot.kanbanCapability,
+      hostedGroups: snapshot.hostedGroups,
+      hostedGroupsCapability: snapshot.hostedGroupsCapability,
+      failures: snapshot.failures,
+      loadedAt: snapshot.loadedAt,
+    );
+  }
+
+  void _onSharedRoster() {
+    final current = _snapshot;
+    if (_disposed || !mounted || current == null) return;
+    final next = _withSharedRoster(current);
+    if (!identical(next, current)) setState(() => _snapshot = next);
+  }
+
   @override
   void dispose() {
+    _rosterStore.removeListener(_onSharedRoster);
     _disposed = true;
     _live.remove(this);
     _rosterTimer?.cancel();
@@ -660,18 +711,20 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         ..remove('sessions');
       if (roster.profilesError case final error?) failures['profiles'] = error;
       if (roster.sessionsError case final error?) failures['sessions'] = error;
-      final snapshot = _retainLastGoodSources(
-        MissionBackendSnapshot(
-          profiles: roster.profiles,
-          sessions: roster.sessions,
-          board: previous.board,
-          profilesCapability: roster.profilesCapability,
-          sessionsCapability: roster.sessionsCapability,
-          kanbanCapability: previous.kanbanCapability,
-          hostedGroups: rooms as HostedGroupsSnapshot,
-          hostedGroupsCapability: previous.hostedGroupsCapability,
-          failures: failures,
-          loadedAt: DateTime.now(),
+      final snapshot = _withSharedRoster(
+        _retainLastGoodSources(
+          MissionBackendSnapshot(
+            profiles: roster.profiles,
+            sessions: roster.sessions,
+            board: previous.board,
+            profilesCapability: roster.profilesCapability,
+            sessionsCapability: roster.sessionsCapability,
+            kanbanCapability: previous.kanbanCapability,
+            hostedGroups: rooms as HostedGroupsSnapshot,
+            hostedGroupsCapability: previous.hostedGroupsCapability,
+            failures: failures,
+            loadedAt: DateTime.now(),
+          ),
         ),
       );
       setState(() => _snapshot = snapshot);
@@ -743,7 +796,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         // The prewarm read used its own repository: resume room logs here.
         source.seedHostedLogs(incoming.hostedGroups);
       }
-      final snapshot = _retainLastGoodSources(incoming);
+      final snapshot = _withSharedRoster(_retainLastGoodSources(incoming));
       setState(() {
         _snapshot = snapshot;
         _loading = false;
@@ -1748,8 +1801,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           onChat: () => unawaited(_openChat(_currentAgent(agent))),
           onRooms: () => unawaited(_manageBotRooms(_currentAgent(agent))),
           onRoutines: () => _openRoutines(profile: name),
+          // a7: without the advanced editor, still this bot's SOUL.
           onSoul: gateway == null || readOnly
-              ? _openSoul
+              ? () => _openSoul(profile: name)
               : () => _openAdvancedSettings(name),
           onSkills: () => _openSkills(profile: name),
           onMemory: () => _openMemory(profile: name),
@@ -1810,18 +1864,23 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     );
   }
 
+  /// Deleting a bot deletes its profile (Desktop: "Delete bot and
+  /// profile?"), with the same confirmation as Profiles and in place.
   Future<void> _deleteBot(String profile) async {
     if (widget.connection.readOnly || profile == 'default') return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ProfilesScreen(
-          connection: widget.connection,
-          connManager: widget.connManager,
-          initialDeleteProfile: profile,
-        ),
-      ),
+    final missionRoute = ModalRoute.of(context);
+    final deleted = await deleteProfileFlow(
+      context,
+      connection: widget.connection,
+      connManager: widget.connManager,
+      profile: profile,
+      rosterRegistry: _roster,
+      deleteRemote: widget.profileDeleteOverride,
     );
-    if (mounted) await _load(refresh: true);
+    if (!deleted || !mounted) return;
+    // Leave the deleted bot's card.
+    Navigator.of(context).popUntil((route) => route == missionRoute);
+    await _load(refresh: true);
   }
 
   /// Long-press actions on a roster row (spec 070 T402): pin, section,
@@ -2015,9 +2074,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     ),
   );
 
-  void _openSoul() => Navigator.of(context).push(
+  void _openSoul({required String profile}) => Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) => SoulScreen(connection: widget.connection),
+      builder: (_) =>
+          SoulScreen(connection: widget.connection, profileOverride: profile),
     ),
   );
 
@@ -2069,13 +2129,18 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         profiles = await remote.listProfiles();
       }
       if (!mounted) return;
-      final created = await Navigator.of(context).push<String>(MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => BotCreateScreen(connection: target,
-          existing: profiles.map((profile) => profile.name).toSet(),
-          gateway: target.id == widget.connection.id ? widget.botCreateGateway : null,
-          modelOptionsLoader: target.id == widget.connection.id ? widget.modelOptionsLoader : null),
-      ));
+      // Same create flow as Profiles: a bot is a profile.
+      final created = await openCreateProfile(
+        context,
+        connection: target,
+        existing: profiles.map((profile) => profile.name).toSet(),
+        gateway: target.id == widget.connection.id
+            ? widget.botCreateGateway
+            : null,
+        modelOptionsLoader: target.id == widget.connection.id
+            ? widget.modelOptionsLoader
+            : null,
+      );
       if (!mounted || created == null) return;
       if (remote != null) {
         final profile = (await remote.listProfiles()).where((p) => p.name == created).single;
@@ -4254,8 +4319,8 @@ final class _RoomsAreaCopy {
 
   String get removeMember => _english ? 'Remove' : 'Quitar';
   String get noMembersChosen => _english
-      ? 'Tap a bot to add it to the room.'
-      : 'Toca un bot para añadirlo a la sala.';
+      ? 'Tap a profile to add it to the room.'
+      : 'Toca un perfil para añadirlo a la sala.';
 }
 
 class _LoungeEmptyState extends StatelessWidget {

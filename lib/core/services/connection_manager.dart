@@ -1,4 +1,5 @@
 import 'bot_mention_roster.dart';
+import 'bot_roster_store.dart';
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
@@ -496,6 +497,9 @@ class ConnectionManager {
       clearCancelledTurns: clearCancelledTurns,
     );
     await manager._loadApiKeys();
+    // Cold start: every screen sees the last known bot roster until its
+    // first live read lands.
+    BotRosterRegistry.shared.attachPersistence(prefs, manager.getConnections());
     // Poda silenciosa de datos huérfanos de instancias borradas (no toca nada
     // de las conexiones vivas ni ajustes globales). Falla suave.
     try {

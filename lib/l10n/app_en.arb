@@ -85,7 +85,7 @@
   "drawerGroupRecent": "recent",
   "drawerGroupWorkspace": "main",
   "drawerSectionWork": "work",
-  "drawerSectionAgents": "agents",
+  "drawerSectionAgents": "profiles",
   "drawerHome": "Home",
   "drawerSessions": "Conversations",
   "drawerPersonalization": "Personalization",
@@ -104,9 +104,8 @@
   "drawerInstances": "Instances",
   "drawerModels": "Models",
   "drawerProjects": "Projects",
-  "drawerGroupAgent": "agent",
+  "drawerGroupAgent": "profile",
   "drawerProfiles": "Profiles",
-  "drawerAgents": "Agents",
   "drawerExtensions": "Extensions",
   "drawerMemory": "Memory",
   "drawerGroupSystem": "system",
@@ -917,7 +916,6 @@
   "soulRestorePrevBody": "The current content will be replaced with the last copy saved before applying a template.",
   "soulRestore": "Restore",
   "soulRestored": "Copy restored",
-  "soulProfileLabelFmt": "profile: {profile}",
   "soulDraftSaved": "draft saved",
   "soulLocalDoc": "local document",
   "soulConfigBridge": "Configure Mobile Bridge",
@@ -1997,14 +1995,6 @@
       }
     }
   },
-  "sklActiveProfile": "profile: {profile}",
-  "@sklActiveProfile": {
-    "placeholders": {
-      "profile": {
-        "type": "String"
-      }
-    }
-  },
   "sklStatsApi": "{enabled} active · {total} total · /api/skills",
   "@sklStatsApi": {
     "placeholders": {
@@ -2328,14 +2318,6 @@
     }
   },
   "mdlTitle": "Models",
-  "mdlProfile": "profile: {profile}",
-  "@mdlProfile": {
-    "placeholders": {
-      "profile": {
-        "type": "String"
-      }
-    }
-  },
   "mdlReload": "Reload",
   "mdlAgentOffline": "Hermes is not active",
   "mdlLoadError": "Could not load models",
@@ -3592,14 +3574,6 @@
       }
     }
   },
-  "prfCreateError": "Could not create profile: {error}",
-  "@prfCreateError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
   "prfLoadErrorVersion": "This version of Hermes doesn't expose profiles yet. Update the server.",
   "prfLoadError": "Could not load profiles: {error}",
   "@prfLoadError": {
@@ -3612,7 +3586,7 @@
   "prfUseAsActive": "Set as active",
   "prfInUse": "in use",
   "prfRenameTooltip": "Rename",
-  "prfEditBotTooltip": "Edit bot identity",
+  "prfEditBotTooltip": "Edit profile identity",
   "prfDeleteTooltip": "Delete",
   "prfDeleteDisabledTooltip": "The default profile cannot be deleted",
   "prfSkillCount": "{count} skills",
@@ -3624,15 +3598,10 @@
     }
   },
   "prfNameLabel": "Profile name",
-  "prfNameHint": "research-bot",
+  "prfNameHint": "research",
   "prfSave": "Save",
   "prfNameFormatHint": "Only lowercase letters, digits, hyphen and underscore.",
-  "prfNameExists": "A profile with this name already exists",
-  "prfNameInvalid": "Invalid name",
   "prfNameTaken": "Already exists",
-  "prfBuilderTitle": "new profile",
-  "prfCreatingMsg": "Creating profile…",
-  "prfWritingSoulMsg": "Writing SOUL…",
   "prfAssigningModelMsg": "Assigning model…",
   "prfSoulWarning": "Profile created, but SOUL was not saved: {error}",
   "@prfSoulWarning": {
@@ -3661,78 +3630,6 @@
   },
   "prfSkipModel": "Just create the profile",
   "prfApplyModel": "Apply anyway",
-  "prfStep1Title": "Identity",
-  "prfStep1Subtitle": "Name, description and initial personality",
-  "prfNameLabelRequired": "Profile name *",
-  "prfDescLabel": "Description (optional)",
-  "prfDescHint": "Research agent with web + vision",
-  "prfSoulTitle": "Initial personality (SOUL)",
-  "prfSoulSubtitle": "Choose a starting point. You can refine it later in SOUL.",
-  "prfSoulLabel": "SOUL.md (optional)",
-  "prfSoulHint": "# Identity\n\nDescribe the agent's personality…",
-  "prfStep2Title": "Main model",
-  "prfStep2Subtitle": "Which model this profile uses by default",
-  "prfInheritBase": "Inherit from base profile",
-  "prfInheritFromClone": "Uses the model from «{name}»",
-  "@prfInheritFromClone": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "prfInheritDefault": "Uses the agent's default model",
-  "prfRemoveModelTooltip": "Remove (revert to inherited)",
-  "prfChangeModel": "Change model",
-  "prfChooseModel": "Choose a specific model",
-  "prfStep3Title": "Starting point",
-  "prfStep3Subtitle": "Inherit skills, keys and config from another profile",
-  "prfCloneToggle": "Clone from an existing profile",
-  "prfCloneToggleDesc": "Inherits skills and settings from the base profile.",
-  "prfCloneFrom": "Clone from:",
-  "prfNoCloneInfo": "Without cloning: profile starts clean (no skills or keys). You'll need to configure it from scratch.",
-  "prfStep4Title": "Summary",
-  "prfStep4Subtitle": "Review and create the profile",
-  "prfSummaryName": "Name",
-  "prfSummaryDesc": "Description",
-  "prfSummaryModel": "Model",
-  "prfSummaryBase": "Base",
-  "prfSummarySoul": "SOUL",
-  "prfSummaryInheritModel": "Inherit from base",
-  "prfSummaryCloneFrom": "Clones from «{name}»",
-  "@prfSummaryCloneFrom": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "prfSummaryCleanBase": "Clean (no cloning)",
-  "prfSummarySoulEmpty": "Inherited / empty",
-  "prfSummarySoulContent": "{count} characters ({preset})",
-  "@prfSummarySoulContent": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      },
-      "preset": {
-        "type": "String"
-      }
-    }
-  },
-  "prfSummaryWithModel": "Hermes creates this profile, SOUL and model together through its profile-scoped Gateway contract. Other profiles and the running default model are not changed.",
-  "prfSummaryNoModel": "Hermes creates this profile through its profile-scoped Gateway contract. It inherits the selected base without changing other profiles.",
-  "prfBack": "Back",
-  "prfCreate": "Create profile",
-  "prfNext": "Next",
-  "prfModelsLoadError": "Could not load models: {error}",
-  "@prfModelsLoadError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
   "prfConnectedOnly": "connected only",
   "prfNotConnected": "not connected",
   "prfConnectInModels": "Connect it in Models to see its models.",
@@ -3740,12 +3637,6 @@
   "prfLoadErrorToken": "Dashboard requires a token. Configure it in the instance settings (port 9119).",
   "prfNameRequired": "Enter a name",
   "prfNamePatternError": "Lowercase letters, digits, _ and - only (max 64, must start with letter/digit)",
-  "prfPickerTitle": "Choose model",
-  "prfNoModelsHint": "No models available. Connect a provider (key or login) in Models, or disable «connected only» to see all providers.",
-  "prfPresetInherit": "Inherit from base",
-  "prfPresetTechnical": "Technical assistant",
-  "prfPresetHomelab": "Homelab operator",
-  "prfPresetMinimal": "Minimalist",
   "wlcScreenTitle": "set up Hermes Console",
   "wlcSubtitle": "First tell us where your Hermes runs. We'll guide you step by step.",
   "wlcLocalTitle": "Use Hermes on this phone",
@@ -5408,13 +5299,7 @@
       }
     }
   },
-  "subagentActivityRequested": "pending",
   "subagentActivityRunning": "working",
-  "subagentActivityThinking": "thinking",
-  "subagentActivityTool": "using a tool",
-  "subagentActivityCompleted": "completed",
-  "subagentActivityFailed": "failed",
-  "subagentActivityCancelled": "cancelled",
   "subagentActivityUnknown": "unknown state",
   "subagentActivityModel": "Model: {model}",
   "@subagentActivityModel": {
@@ -5798,28 +5683,6 @@
   "extensionsCenterMutationFailureUnavailable": "The connection was lost before the change completed.",
   "extensionsCenterMutationFailureRejected": "Hermes rejected the change.",
   "extensionsCenterMutationFailureUnknown": "Hermes could not complete the change.",
-  "agentCenterTitle": "Agents",
-  "agentCenterRefreshTooltip": "Refresh activity",
-  "agentCenterFailureUnsupported": "This Hermes version does not publish the agent center.",
-  "agentCenterFailureForbidden": "The instance does not allow agents to be viewed with this session.",
-  "agentCenterFailureInvalidResponse": "Hermes returned activity that is not safe to display.",
-  "agentCenterFailureUnavailable": "Could not connect to the instance.",
-  "agentCenterFailureRejected": "Hermes rejected the agents request.",
-  "agentCenterFailureUnknown": "Could not load agent activity.",
-  "agentCenterHistoryOpenFailed": "Could not open this history.",
-  "agentCenterWorkFallback": "Agent work",
-  "agentCenterHistoryEmpty": "Hermes did not save any nodes in this history.",
-  "agentCenterStopProcessTitle": "Stop process",
-  "agentCenterStopProcessBody": "Only “{process}” will be stopped.",
-  "@agentCenterStopProcessBody": {
-    "placeholders": {
-      "process": {
-        "type": "String"
-      }
-    }
-  },
-  "agentCenterStop": "Stop",
-  "agentCenterStopFailed": "Hermes could not stop that process.",
   "agentCenterStopAll": "Stop all",
   "agentCenterStopAllTitle": "Stop all active processes?",
   "agentCenterStopAllBody": "This stops {count} background processes for this conversation. Saved delegation history remains available.",
@@ -5831,66 +5694,7 @@
     }
   },
   "agentCenterStopAllFailed": "Some processes could not be stopped.",
-  "agentCenterNewTaskTitle": "New background task",
-  "agentCenterNewTaskHint": "Describe a specific task for this conversation",
-  "agentCenterStart": "Start",
-  "agentCenterTaskAccepted": "Task accepted by Hermes.",
-  "agentCenterTaskStartFailed": "Hermes could not start the task.",
-  "agentCenterNewTask": "New task",
-  "agentCenterIntroRuntime": "Processes for this conversation and saved delegations. Subagents are tasks Hermes delegated, not profiles.",
-  "agentCenterIntroInstance": "Delegations and subagents Hermes used in earlier conversations. They are not configurable profiles. Open a conversation to see its active processes.",
-  "agentCenterRunningSection": "Running",
-  "agentCenterNoProcesses": "No active processes for this conversation.",
-  "agentCenterProcessFallback": "Process {id}",
-  "@agentCenterProcessFallback": {
-    "placeholders": {
-      "id": {
-        "type": "String"
-      }
-    }
-  },
   "agentCenterActive": "active",
-  "agentCenterProcessStatus": "{status} · {seconds} s",
-  "@agentCenterProcessStatus": {
-    "placeholders": {
-      "status": {
-        "type": "String"
-      },
-      "seconds": {
-        "type": "int"
-      }
-    }
-  },
-  "agentCenterStopTooltip": "Stop this process",
-  "agentCenterHistorySection": "Saved delegations",
-  "agentCenterNoHistory": "Hermes has not saved any subagent delegations yet.",
-  "agentCenterSubagentCount": "{count, plural, one{1 subagent} other{{count} subagents}}",
-  "@agentCenterSubagentCount": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "agentCenterSubagentCountWithDate": "{count, plural, one{1 subagent · {date}} other{{count} subagents · {date}}}",
-  "@agentCenterSubagentCountWithDate": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      },
-      "date": {
-        "type": "String"
-      }
-    }
-  },
-  "agentCenterStaleView": "{error} The last view is still shown.",
-  "@agentCenterStaleView": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
   "projectsCenterTitle": "Projects",
   "projectsCenterRefreshTooltip": "Refresh projects",
   "projectsCenterFailureUnsupported": "This Hermes version does not publish Projects.",
@@ -6086,7 +5890,7 @@
   "missionTitle": "Bots",
   "missionBotsLabel": "Bots",
   "missionCreateLabel": "Create",
-  "missionCreateBotLabel": "New bot",
+  "missionCreateBotLabel": "New profile",
   "missionCreateRoomLabel": "New room",
   "missionTaskBoardLabel": "Task board",
   "missionOpenRoom": "Open room",
@@ -6103,7 +5907,7 @@
       }
     }
   },
-  "dockSettingsResetConfirmBody": "This resets items, Back behavior and style for the {profile} profile. Current settings for this profile will be lost.",
+  "dockSettingsResetConfirmBody": "This resets items, Back behavior and style for the {profile} dock. Its current settings will be lost.",
   "@dockSettingsResetConfirmBody": {
     "placeholders": {
       "profile": {
@@ -6113,7 +5917,7 @@
   },
   "dockProfileBots": "Bots",
   "dockProfileGeneral": "General",
-  "dockProfileBotsDescription": "Used inside Bots and in mission rooms.",
+  "dockProfileBotsDescription": "Used inside Bots and in rooms.",
   "dockProfileGeneralDescription": "Used in the rest of the app: home and conversations.",
   "dockPreviewSectionTitle": "Preview",
   "dockItemsSectionTitle": "Items",
@@ -6146,7 +5950,7 @@
   "dockHomeLabel": "Home",
   "dockSettingsLabel": "Settings",
   "dockCreateGeneralSubtitle": "New conversation",
-  "dockCreateBotsSubtitle": "New bot · New room",
+  "dockCreateBotsSubtitle": "New profile · New room",
   "dockItemsKeepOneVisible": "Keep at least one item visible",
   "dockItemDragHandleLabel": "Drag to reorder {item}",
   "@dockItemDragHandleLabel": {
@@ -6156,11 +5960,7 @@
       }
     }
   },
-  "missionSharedRooms": "Rooms",
   "missionCreateSharedRoom": "Create room",
-  "missionNoSharedRooms": "No official rooms are available.",
-  "missionSharedRoomsUnavailable": "Official rooms are unavailable.",
-  "missionSendSharedMessage": "Send message",
   "missionRenameSharedRoom": "Rename room",
   "missionStopSharedRoom": "Stop room?",
   "missionDisbandSharedRoom": "Disband room?",
@@ -6168,9 +5968,6 @@
   "missionDisbandSharedRoomAction": "Disband room",
   "missionConfirm": "Confirm",
   "missionHostedActionFailed": "Hermes could not update the room.",
-  "missionHostedRetryAvailable": "A room task can be retried.",
-  "missionHostedRetryAction": "Retry task",
-  "missionHostedRetryConfirm": "Retry this room task?",
   "missionHostedSave": "Save",
   "missionHostedCancel": "Cancel",
   "missionHostedMemberCount": "{count, plural, one{1 member} other{{count} members}}",
@@ -6189,17 +5986,6 @@
       }
     }
   },
-  "missionSharedRoomSemantics": "Room {name}, {count, plural, one{1 member} other{{count} members}}",
-  "@missionSharedRoomSemantics": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      },
-      "count": {
-        "type": "int"
-      }
-    }
-  },
   "roomAvatarMembers": "{count, plural, one{1 member, incomplete team} other{{count} members}}",
   "@roomAvatarMembers": {
     "placeholders": {
@@ -6213,9 +5999,8 @@
   "missionApprovalPending": "Approval pending",
   "missionApprovalDecisionHint": "Decide whether to continue",
   "missionBotChatMetadataUnavailable": "Bot Chat metadata could not be verified. Refresh Bots and try again.",
-  "missionOffline": "Hermes is unavailable. Existing team data remains visible.",
-  "missionStaleData": "Some team data may be out of date.",
-  "missionKanbanUnavailable": "The task board is not available on this Hermes installation.",
+  "missionOffline": "Hermes is unavailable. Existing profile data remains visible.",
+  "missionStaleData": "Some profile data may be out of date.",
   "roomEveryone": "Everyone",
   "roomRecipientsAll": "Everyone ({count})",
   "@roomRecipientsAll": {
@@ -6369,7 +6154,7 @@
   "dockToolsLabel": "Tools",
   "dockCronLabel": "Jobs",
   "missionBotsUnassigned": "Unassigned",
-  "chaMentionSuggestions": "Mention a bot",
+  "chaMentionSuggestions": "Mention a profile",
   "botSectionMove": "Move to section…",
   "botSectionNew": "New section…",
   "botSectionRename": "Rename section",
@@ -6377,8 +6162,8 @@
   "botSectionRemove": "Remove from section",
   "botSectionName": "Section name",
   "botSectionOrderHint": "Alphabetical order. Empty sections do not sync.",
-  "botSectionChooseMembers": "Choose the section’s bots",
-  "botSectionDeleted": "Section deleted. The bots are still available.",
+  "botSectionChooseMembers": "Choose the section’s profiles",
+  "botSectionDeleted": "Section deleted. The profiles are still available.",
   "botUndo": "Undo",
   "botRetry": "Retry",
   "botSave": "Save",
@@ -6393,7 +6178,7 @@
   },
   "botProfileFailed": "Could not save. Check your connection and try again.",
   "botRecentSession": "Recent session",
-  "botDuplicate": "Duplicate bot",
+  "botDuplicate": "Duplicate profile",
   "botDuplicated": "Copy created: {name}",
   "@botDuplicated": {
     "placeholders": {
@@ -6447,8 +6232,8 @@
   "botFaceLock": "Lock face",
   "botFaceUnlock": "Unlock face",
   "botFaceColor": "Color",
-  "botShowHidden": "Show hidden bots",
-  "botRoomLinkFailed": "Room created. These bots could not be linked: {names}. Retry their links before sending.",
+  "botShowHidden": "Show hidden profiles",
+  "botRoomLinkFailed": "Room created. These profiles could not be linked: {names}. Retry their links before sending.",
   "@botRoomLinkFailed": {
     "placeholders": {
       "names": {
@@ -6456,7 +6241,7 @@
       }
     }
   },
-  "botRoomLinkUnavailable": "No saved bots currently advertise a reachable RoomLink.",
+  "botRoomLinkUnavailable": "No saved profiles currently advertise a reachable RoomLink.",
   "botDuplicateIncomplete": "{name} was copied, but its chat and title could not be reset. Retry to finish this copy.",
   "@botDuplicateIncomplete": {
     "placeholders": {
@@ -6468,7 +6253,7 @@
   "botToolsetsInherit": "With no toolsets selected, Hermes inherits its default toolsets.",
   "botManageRooms": "Manage rooms",
   "botRoomMembersUnavailable": "Open a room to manage it. This server cannot change the members of an existing room.",
-  "botReconnectRoom": "Reconnect room bots",
+  "botReconnectRoom": "Reconnect the room's profiles",
   "botSectionsManage": "Manage sections",
   "botCloneCredentialsHint": "Cloning retains the source’s API keys. This switch controls additional keys copied from the gateway.",
   "ollamaDiagRunning": "Diagnosing the local agent…\nIf the bridge is out of date I will restart it.\nThis can take up to ~1 min.",
@@ -6861,7 +6646,7 @@
       }
     }
   },
-  "roomStripReplyingMany": "{count} bots are replying",
+  "roomStripReplyingMany": "{count} profiles are replying",
   "@roomStripReplyingMany": {
     "placeholders": {
       "count": {
@@ -6886,7 +6671,7 @@
     }
   },
   "roomNewPill": "{count, plural, =1{1 new} other{{count} new}}",
-  "roomStripDetail": "See what each bot is doing",
+  "roomStripDetail": "See what each profile is doing",
   "roomActionFailed": "Hermes rejected the action. Try again.",
   "roomActivityTitle": "Activity",
   "roomActivityEmpty": "No passes, failures or retries yet.",
@@ -6990,7 +6775,7 @@
       }
     }
   },
-  "roomEmpty": "No messages yet. Say hi and @mention a bot.",
+  "roomEmpty": "No messages yet. Say hi and @mention a profile.",
   "roomRefreshFailed": "Could not refresh the room.",
   "roomRefreshStale": "Reconnecting… the room may be out of date.",
   "roomYou": "You",
@@ -6998,7 +6783,7 @@
   "roomCannotSend": "This connection cannot write to the room.",
   "rosterTitle": "Bots",
   "rosterFilterAll": "All",
-  "rosterFilterBots": "Bots",
+  "rosterFilterBots": "Profiles",
   "rosterFilterRooms": "Rooms",
   "rosterNeedsYou": "Needs you",
   "rosterRecent": "Recent",
@@ -7012,7 +6797,7 @@
   "rosterDesktopLabel": "Desktop",
   "rosterDesktopReadOnly": "This room runs in Hermes Desktop. Console shows it read-only until Desktop hosts it on the server.",
   "rosterSearch": "Search",
-  "rosterSearchHint": "Search bots and rooms",
+  "rosterSearchHint": "Search profiles and rooms",
   "rosterNew": "New",
   "rosterEmpty": "Nothing here yet",
   "rosterNoMatches": "No matches",
@@ -7020,7 +6805,7 @@
   "rosterNoPreview": "No messages yet",
   "rosterRoomMembers": "{count, plural, =1{1 member} other{{count} members}}",
   "botChatComposerHint": "Message {name}",
-  "botProfileTitle": "Bot profile",
+  "botProfileTitle": "Profile",
   "botProfileChat": "Chat",
   "botProfileRooms": "Rooms · {count}",
   "botProfileRoutines": "Routines",
@@ -7057,18 +6842,18 @@
   "reasoningEffortXhigh": "Extra high",
   "reasoningEffortMax": "Max",
   "reasoningEffortUltra": "Ultra",
-  "rosterHideHidden": "Hide hidden bots",
-  "rosterShowHidden": "{count, plural, =1{Show 1 hidden bot} other{Show {count} hidden bots}}",
+  "rosterHideHidden": "Hide hidden profiles",
+  "rosterShowHidden": "{count, plural, =1{Show 1 hidden profile} other{Show {count} hidden profiles}}",
   "rosterPin": "Pin",
   "rosterUnpin": "Unpin",
   "rosterHide": "Hide",
   "rosterUnhide": "Show",
   "rosterMoveToSection": "Move to section…",
   "rosterUpdateFailed": "Could not update the roster. Try again.",
-  "notifBotModeListenerOn": "Bots and rooms can reach you here: approvals, @mentions, round summaries and live progress, with Approve, Deny, Reply and Stop right in the notification.",
-  "notifBotModeListenerOff": "Background listening is off, so Bot and room alerts and the home-screen widgets only update while Hermes is open.",
+  "notifBotModeListenerOn": "Profiles and rooms can reach you here: approvals, @mentions, round summaries and live progress, with Approve, Deny, Reply and Stop right in the notification.",
+  "notifBotModeListenerOff": "Background listening is off, so profile and room alerts and the home-screen widgets only update while Hermes is open.",
   "notifLiveUpdatesTitle": "Live Updates",
-  "notifLiveUpdatesSub": "Show working Bots and rooms in the status bar and lock screen (Android 16+)",
+  "notifLiveUpdatesSub": "Show working profiles and rooms in the status bar and lock screen (Android 16+)",
   "notifKanbanDoneTitle": "Also when a task is done",
   "notifKanbanDoneSub": "Default for tasks without their own choice",
   "designShowAll": "Show all",
@@ -7792,7 +7577,7 @@
   "rq1215OpenChat": "Open its chat",
   "rq1215CancelWait": "Cancel wait",
   "rq1215CancelWaitTitle": "Cancel {name}'s wait?",
-  "rq1215CancelWaitBody": "Only {name}'s turn in this room is interrupted. Its session stays open and the other bots keep working.",
+  "rq1215CancelWaitBody": "Only {name}'s turn in this room is interrupted. Its session stays open and the other profiles keep working.",
   "rq1215KeepWaiting": "Keep waiting",
   "rq1215CancelWaitFailed": "Couldn't cancel the wait. Try again.",
   "rr1215StallTitle": "{name} can't pick up its turn",
@@ -7800,7 +7585,7 @@
   "rr1215StallReadOnlyHint": "You need a connection with write access to resume it.",
   "rr1215Resume": "Resume",
   "rr1215ResumeTitle": "Resume {name}?",
-  "rr1215ResumeBody": "{name}'s session for this room is reopened on the server so it can pick up its pending turn. No new message is sent and the other bots are left alone.",
+  "rr1215ResumeBody": "{name}'s session for this room is reopened on the server so it can pick up its pending turn. No new message is sent and the other profiles are left alone.",
   "rr1215KeepAsIs": "Not now",
   "rr1215Resumed": "{name}'s session is open again",
   "rr1215ResumeFailed": "Couldn't resume {name}. Try again.",
@@ -7923,5 +7708,11 @@
   "hr1215CompactionOnlyAuthBody": "Only the automatic conversation summary failed: nothing was lost and you can keep writing. Sign in again so compaction works again.",
   "hr1215CheckingSignIn": "Checking the {provider} sign-in…",
   "hr1215SignInCheckFailed": "Could not check the {provider} sign-in: {error}",
-  "cs1215CachedTranscript": "Saved copy · updating"
+  "cs1215CachedTranscript": "Saved copy · updating",
+  "profileScopeDefault": "Default",
+  "profileSwitcherTitle": "Switch profile",
+  "profileSwitcherHint": "Switch profile",
+  "profileSwitcherBody": "Each profile has its own chats, memory, SOUL, skills and model.",
+  "profileSwitcherLoadFailed": "Couldn't load the profiles. Tap to retry.",
+  "profileSwitcherManage": "Manage profiles"
 }

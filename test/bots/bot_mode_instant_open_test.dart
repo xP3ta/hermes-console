@@ -206,18 +206,18 @@ void main() {
       // First visit ever: nothing known yet, the loading state is honest.
       await open();
       await tester.pump();
-      expect(find.text('Reading team state…'), findsOneWidget);
+      expect(find.text('Loading profiles…'), findsOneWidget);
       source.gate.complete();
       await tester.pump();
       await tester.pump();
-      expect(find.text('Reading team state…'), findsNothing);
+      expect(find.text('Loading profiles…'), findsNothing);
 
       // Leave and come back while the server is slow.
       await tester.pumpWidget(const SizedBox());
       source.gate = Completer<void>();
       await open();
       await tester.pump();
-      expect(find.text('Reading team state…'), findsNothing);
+      expect(find.text('Loading profiles…'), findsNothing);
       expect(
         find.byWidgetPredicate(
           (w) =>

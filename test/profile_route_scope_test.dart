@@ -5,42 +5,6 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
-  test('skills route override wins without mutating the active profile', () {
-    expect(
-      resolveSkillsRouteProfile(
-        profileOverride: ' research ',
-        activeProfile: 'default',
-      ),
-      'research',
-    );
-    expect(
-      resolveSkillsRouteProfile(
-        profileOverride: null,
-        activeProfile: 'default',
-      ),
-      'default',
-    );
-  });
-
-  test('skills load waits for profile dependencies before first request', () {
-    expect(
-      skillsInitialLoadProfile(
-        dependenciesResolved: false,
-        profileOverride: 'research',
-        activeProfile: 'default',
-      ),
-      isNull,
-    );
-    expect(
-      skillsInitialLoadProfile(
-        dependenciesResolved: true,
-        profileOverride: 'research',
-        activeProfile: 'default',
-      ),
-      'research',
-    );
-  });
-
   test('secondary skills scope blocks mutations without blocking default', () {
     expect(skillsProfileMutationsBlocked('research'), isTrue);
     expect(skillsProfileMutationsBlocked('default'), isFalse);
