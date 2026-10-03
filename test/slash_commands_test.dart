@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/capabilities/capabilities_screen.dart';
 import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/command_descriptor.dart';
+import 'package:hermes_android/core/models/composer_reference.dart';
 import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
 import 'package:hermes_android/core/models/desktop_model_catalog.dart';
 import 'package:hermes_android/core/models/desktop_session_config.dart';
@@ -239,6 +240,42 @@ class _SlashGateway
   @override
   Future<void> close() async {
     if (!_events.isClosed) await _events.close();
+  }
+}
+
+class _ReferenceGateway extends _SlashGateway
+    implements HermesDesktopComposerCompletionGateway {
+  final List<Map<String, String>> pathCalls = [];
+
+  @override
+  Future<SlashCompletionBatch> completeSlashInSession(
+    String text, {
+    String? runtimeSessionId,
+  }) => completeSlash(text);
+
+  @override
+  Future<PathCompletionBatch> completePath(
+    String word, {
+    required String runtimeSessionId,
+  }) async {
+    pathCalls.add({'word': word, 'session_id': runtimeSessionId});
+    if (word == '@') {
+      return PathCompletionBatch.fromJson({
+        'items': [
+          {'text': '@diff', 'meta': 'git diff'},
+          {'text': '@file:', 'meta': 'attach file'},
+          {'text': '@folder:', 'meta': 'attach folder'},
+          {'text': '@url:', 'meta': 'fetch url'},
+          {'text': '@alice', 'meta': 'agent profile'},
+        ],
+      });
+    }
+    return PathCompletionBatch.fromJson({
+      'items': [
+        {'text': '@folder:lib/core/', 'display': 'core/', 'meta': 'dir'},
+        {'text': '@file:lib/main.dart', 'display': 'main.dart', 'meta': 'lib'},
+      ],
+    });
   }
 }
 
@@ -597,6 +634,105 @@ void main() {
         );
       },
     );
+  });
+
+  group('Chat @ references', () {
+    testWidgets('@ lists Desktop starters and inserts the Desktop wire form', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway();
+      final chat = await _pumpSlashChat(tester, gateway);
+      expect(chat.desktopRuntimeSessionId, isNotNull);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.enterText(composer, 'mira @');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.pathCalls.single, {
+        'word': '@',
+        'session_id': chat.desktopRuntimeSessionId!,
+      });
+      expect(
+        find.byKey(const ValueKey('chat-reference-palette')),
+        findsOneWidget,
+      );
+      // Profiles belong to the mention palette; @diff is not offered.
+      expect(find.byKey(const ValueKey('chat-reference-@diff:')), findsNothing);
+      expect(find.text('@alice'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('chat-reference-@file:')));
+      await tester.pump();
+      final field = tester.widget<TextField>(composer);
+      expect(field.controller!.text, 'mira @file:');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.pathCalls.last['word'], '@file:');
+
+      await tester.tap(
+        find.byKey(const ValueKey('chat-reference-@file:lib/main.dart')),
+      );
+      await tester.pump();
+      expect(field.controller!.text, 'mira @file:`lib/main.dart` ');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('chat-reference-palette')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a folder opens in place and a fast burst sends one lookup', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      const typed = '@lib/mainx';
+      for (var index = 1; index <= typed.length; index++) {
+        await tester.enterText(composer, typed.substring(0, index));
+        await tester.pump(const Duration(milliseconds: 30));
+      }
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.pathCalls, hasLength(1));
+      expect(gateway.pathCalls.single['word'], typed);
+
+      await tester.tap(
+        find.byKey(const ValueKey('chat-reference-open-@folder:lib/core/')),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.widget<TextField>(composer).controller!.text, '@lib/core/');
+      expect(gateway.pathCalls.last['word'], '@lib/core/');
+
+      // Closing the palette (blur) cancels the pending lookup.
+      final calls = gateway.pathCalls.length;
+      await tester.enterText(composer, '@lib/core/x');
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(gateway.pathCalls, hasLength(calls));
+      expect(
+        find.byKey(const ValueKey('chat-reference-palette')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('a gateway without complete.path shows no @ palette', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '@lib/');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        find.byKey(const ValueKey('chat-reference-palette')),
+        findsNothing,
+      );
+    });
   });
 
   group('Chat slash palette', () {

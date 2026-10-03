@@ -37,6 +37,7 @@ import '../models/agent_task_list.dart';
 import '../models/attachment_draft.dart';
 import '../models/compaction_progress.dart' show parseCompactionChunks;
 import '../models/command_descriptor.dart';
+import '../models/composer_reference.dart';
 import '../models/core_read.dart';
 import '../models/desktop_compression_authority.dart';
 import '../models/desktop_active_session.dart';
@@ -16088,6 +16089,30 @@ class ActiveChat {
     } on TuiGatewayRpcError catch (error) {
       if (error.code == -32601) return null;
       rethrow;
+    }
+  }
+
+  /// The gateway can list `@` references (`complete.path`) and resolves the
+  /// context references a prompt carries. False on REST-only chats.
+  bool get supportsDesktopPathCompletion =>
+      _desktopGateway is HermesDesktopComposerCompletionGateway;
+
+  /// `@` completion against this chat's runtime cwd. Null when the gateway
+  /// lacks it, no runtime is bound yet (the listing would show another tree),
+  /// or the socket is down — completion never dials.
+  Future<PathCompletionBatch?> completeDesktopPath(String word) async {
+    final gateway = _desktopGateway;
+    final runtime = _desktopRuntimeSessionId;
+    if (gateway is! HermesDesktopComposerCompletionGateway ||
+        runtime == null ||
+        runtime.isEmpty) {
+      return null;
+    }
+    try {
+      return await (gateway as HermesDesktopComposerCompletionGateway)
+          .completePath(word, runtimeSessionId: runtime);
+    } on TuiGatewayRpcError {
+      return null;
     }
   }
 

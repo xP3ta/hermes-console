@@ -7,6 +7,8 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/command_descriptor.dart';
+import 'package:hermes_android/core/models/composer_reference.dart';
+import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/composer_completion_scheduler.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
@@ -46,11 +48,15 @@ Future<(TuiGatewayClient, List<Map<String, dynamic>>)> _recordingClient(
         continue;
       }
       requests.add(frame);
+      final result = answer(frame);
       socket.add(
         jsonEncode({
           'jsonrpc': '2.0',
           'id': frame['id'],
-          'result': answer(frame),
+          if (result['__error'] case final int code)
+            'error': {'code': code, 'message': 'Method not found'}
+          else
+            'result': result,
         }),
       );
     }
@@ -234,5 +240,164 @@ void main() {
       {'text': '/rev'},
     ]);
     expect(scoped.suggestions.single.isSkill, isTrue);
+  });
+
+  group('@ references', () {
+    TextEditingValue caretAtEnd(String text) => TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+
+    test('complete.path rows keep only file, folder and url references', () {
+      final batch = PathCompletionBatch.fromJson({
+        'items': [
+          {'text': '@diff', 'meta': 'git diff'},
+          {'text': '@file:', 'meta': 'attach file'},
+          {'text': '@git:', 'meta': 'git log'},
+          {'text': '@alice', 'meta': 'agent profile'},
+          {'text': '@folder:lib/', 'display': 'lib/', 'meta': 'dir'},
+          {'text': '@file:lib/main.dart', 'display': 'main.dart'},
+          {'text': '@url:', 'meta': 'fetch url'},
+          {'text': '@jira:ABC-1', 'meta': 'plugin'},
+        ],
+      });
+      expect(batch.items.map((item) => item.rawText), [
+        '@file:',
+        '@folder:lib/',
+        '@file:lib/main.dart',
+        '@url:',
+      ]);
+      expect(batch.items.first.isStarter, isTrue);
+    });
+
+    test('the token under the caret drives the query', () {
+      expect(composerReferenceQuery(caretAtEnd('@'))?.word, '@');
+      expect(
+        composerReferenceQuery(caretAtEnd('see @lib/ma'))?.query,
+        'lib/ma',
+      );
+      expect(composerReferenceQuery(caretAtEnd('@folder'))?.word, '@folder:');
+      expect(composerReferenceQuery(caretAtEnd('mail@host')), isNull);
+      expect(composerReferenceQuery(caretAtEnd('`@lib')), isNull);
+      expect(composerReferenceQuery(caretAtEnd('@file:`a.dart`')), isNull);
+      expect(composerReferenceQuery(caretAtEnd('@url:https://x.io')), isNull);
+      expect(
+        composerReferenceQuery(
+          const TextEditingValue(
+            text: '@libx',
+            selection: TextSelection.collapsed(offset: 3),
+          ),
+        ),
+        isNull,
+      );
+    });
+
+    test('picks serialize exactly like Desktop chips', () {
+      const file = PathCompletionItem(
+        kind: ComposerReferenceKind.file,
+        value: 'lib/main.dart',
+        display: 'main.dart',
+        meta: '',
+      );
+      const folder = PathCompletionItem(
+        kind: ComposerReferenceKind.folder,
+        value: 'lib/core/',
+        display: 'core/',
+        meta: 'dir',
+      );
+      const starter = PathCompletionItem(
+        kind: ComposerReferenceKind.url,
+        value: '',
+        display: '@url:',
+        meta: '',
+      );
+      final value = caretAtEnd('read @lib/ma');
+      final query = composerReferenceQuery(value)!;
+
+      expect(
+        applyReferencePick(value, query, file).text,
+        'read @file:`lib/main.dart` ',
+      );
+      expect(
+        applyReferencePick(value, query, folder).text,
+        'read @folder:`lib/core/` ',
+      );
+      expect(applyReferencePick(value, query, starter).text, 'read @url:');
+      expect(
+        applyReferenceDescend(value, query, folder).text,
+        'read @lib/core/',
+      );
+      final scoped = caretAtEnd('@folder:li');
+      expect(
+        applyReferenceDescend(
+          scoped,
+          composerReferenceQuery(scoped)!,
+          folder,
+        ).text,
+        '@folder:lib/core/',
+      );
+      expect(quoteRefValue('a`b'), '"a`b"');
+    });
+
+    test('a space commits typed paths and links like Desktop', () {
+      String? typeSpace(String before) => promoteTypedReferenceOnSpace(
+        caretAtEnd(before),
+        caretAtEnd('$before '),
+      )?.text;
+
+      expect(typeSpace('see @lib/a.dart'), 'see @file:`lib/a.dart` ');
+      expect(typeSpace('@src/'), '@folder:`src` ');
+      expect(typeSpace('@url:https://x.io/a'), '@url:`https://x.io/a` ');
+      expect(typeSpace('go https://x.io/a.'), 'go @url:`https://x.io/a`. ');
+      expect(typeSpace('@alice'), isNull);
+      expect(typeSpace('`https://x.io'), isNull);
+      expect(typeSpace('@file:`a.dart`'), isNull);
+      final formatter = ComposerReferenceFormatter(enabled: () => false);
+      expect(
+        formatter
+            .formatEditUpdate(caretAtEnd('@a/b'), caretAtEnd('@a/b '))
+            .text,
+        '@a/b ',
+      );
+    });
+
+    test('complete.path sends word + session and honours -32601', () async {
+      var answerUnsupported = false;
+      final (client, requests) = await _recordingClient((frame) {
+        if (answerUnsupported) return {'__error': -32601};
+        return {
+          'items': [
+            {'text': '@file:lib/main.dart', 'display': 'main.dart'},
+          ],
+        };
+      });
+      await client.connect();
+      final batch = await client.completePath(
+        '@lib/ma',
+        runtimeSessionId: 'runtime-t1215',
+      );
+      expect(requests.last['method'], 'complete.path');
+      expect(requests.last['params'], {
+        'word': '@lib/ma',
+        'session_id': 'runtime-t1215',
+      });
+      expect(batch.items.single.value, 'lib/main.dart');
+      expect(
+        DesktopGatewayCapability.values,
+        contains(DesktopGatewayCapability.composerPathCompletion),
+      );
+      answerUnsupported = true;
+      await expectLater(
+        client.completePath('@lib/x', runtimeSessionId: 'runtime-t1215'),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
+      final sent = requests.length;
+      // Known unsupported: no further frame reaches the server.
+      await expectLater(
+        client.completePath('@lib/y', runtimeSessionId: 'runtime-t1215'),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
+      expect(requests, hasLength(sent));
+    });
   });
 }

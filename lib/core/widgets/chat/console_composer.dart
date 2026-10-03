@@ -84,6 +84,7 @@ class ConsoleComposer extends StatelessWidget {
     this.onKeyboardSubmit,
     this.onContentInserted,
     this.reduceMotion = false,
+    this.inputFormatters,
   });
 
   final TextEditingController controller;
@@ -141,6 +142,9 @@ class ConsoleComposer extends StatelessWidget {
   /// Imágenes insertadas desde el teclado (GIF/sticker); `null` lo desactiva.
   final ValueChanged<KeyboardInsertedContent>? onContentInserted;
   final bool reduceMotion;
+
+  /// Composer-level input rules (typed `@` references, large pastes).
+  final List<TextInputFormatter>? inputFormatters;
 
   void _send() => onSend(controller.text, attachments);
 
@@ -499,6 +503,7 @@ class ConsoleComposer extends StatelessWidget {
               onContentInserted: onContentInserted,
             ),
       textInputAction: TextInputAction.newline,
+      inputFormatters: inputFormatters,
       readOnly: fieldReadOnly,
       enabled: fieldEnabled,
     );

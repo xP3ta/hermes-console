@@ -20,6 +20,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/command_descriptor.dart';
+import '../models/composer_reference.dart';
 import '../models/agent_profile.dart';
 import '../models/admin_integrations.dart';
 import '../models/bot_visual_identity.dart';
@@ -818,6 +819,13 @@ abstract class HermesDesktopComposerCompletionGateway {
   Future<SlashCompletionBatch> completeSlashInSession(
     String text, {
     String? runtimeSessionId,
+  });
+
+  /// `complete.path {word, session_id}`: `@` references listed against the
+  /// session's own cwd (Desktop `use-at-completions.ts`).
+  Future<PathCompletionBatch> completePath(
+    String word, {
+    required String runtimeSessionId,
   });
 }
 
@@ -5381,6 +5389,29 @@ class TuiGatewayClient
         'session_id': _validatedRuntimeId(method, runtimeSessionId),
     }, timeout: const Duration(seconds: 20));
     return SlashCompletionBatch.fromJson(result, input: input);
+  }
+
+  @override
+  Future<PathCompletionBatch> completePath(
+    String word, {
+    required String runtimeSessionId,
+  }) async {
+    const method = 'complete.path';
+    if (word.isEmpty ||
+        word.length > 1024 ||
+        word.contains(RegExp(r'[\x00-\x1F\x7F]'))) {
+      throw const TuiGatewayRpcError(method, 'Invalid path completion input');
+    }
+    final result = await _requestOptionalCapability(
+      DesktopGatewayCapability.composerPathCompletion,
+      method,
+      {
+        'word': word,
+        'session_id': _validatedRuntimeId(method, runtimeSessionId),
+      },
+      connectedOnly: true,
+    );
+    return PathCompletionBatch.fromJson(result);
   }
 
   @override

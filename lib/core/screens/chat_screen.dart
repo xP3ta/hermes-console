@@ -8,7 +8,9 @@ export '../widgets/chat/chat_markdown_body.dart'
 export '../widgets/chat/chat_message_selection_area.dart';
 
 import '../models/bot_mention.dart';
+import '../models/composer_reference.dart';
 import '../widgets/chat_mention_palette.dart';
+import '../widgets/chat/composer_reference_palette.dart';
 import '../widgets/chat/chat_markdown_body.dart';
 import '../widgets/chat/chat_message_frame.dart';
 import '../widgets/chat/console_composer.dart';
@@ -1646,6 +1648,19 @@ class _ChatScreenState extends State<ChatScreen>
   // palette is open; closing it (trigger gone, blur, dispose) cancels.
   late final ComposerCompletionScheduler<_SlashLookup> _slashCompletions =
       ComposerCompletionScheduler<_SlashLookup>(fetch: _fetchSlashLookup);
+  // `@` references (`complete.path`), same debounce/cancel contract. The key
+  // carries the runtime so another session's tree is never served from cache.
+  late final ComposerCompletionScheduler<PathCompletionBatch>
+  _referenceCompletions = ComposerCompletionScheduler<PathCompletionBatch>(
+    fetch: _fetchReferences,
+  );
+  List<PathCompletionItem> _referenceItems = const [];
+  String? _referenceKey;
+  late final List<TextInputFormatter> _composerInputFormatters = [
+    ComposerReferenceFormatter(
+      enabled: () => _chatBound && _chat.supportsDesktopPathCompletion,
+    ),
+  ];
   // Resolviendo una aprobación del agente (deshabilita los botones).
   bool _resolvingApproval = false;
   bool _resolvingInteractivePrompt = false;
@@ -2387,7 +2402,10 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _onComposerFocusChanged() {
-    if (!_textFocusNode.hasFocus) _slashCompletions.cancel();
+    if (!_textFocusNode.hasFocus) {
+      _slashCompletions.cancel();
+      _closeReferencePalette();
+    }
     if (mounted && !_disposed) setState(() {});
   }
 
@@ -3654,6 +3672,7 @@ class _ChatScreenState extends State<ChatScreen>
     } else {
       _slashCompletions.cancel();
     }
+    _refreshReferenceQuery();
     _maybeDiscardFailedTurnFromExplicitEmptyComposer();
     _scheduleDraftSave();
   }
@@ -3697,6 +3716,72 @@ class _ChatScreenState extends State<ChatScreen>
       return null;
     }
   }
+
+  void _refreshReferenceQuery() {
+    final runtime = _chatBound ? _chat.desktopRuntimeSessionId : null;
+    final query =
+        _textFocusNode.hasFocus &&
+            runtime != null &&
+            runtime.isNotEmpty &&
+            _chat.supportsDesktopPathCompletion
+        ? composerReferenceQuery(_textController.value)
+        : null;
+    if (query == null) {
+      _closeReferencePalette();
+      return;
+    }
+    final key = '$runtime\n${query.word}';
+    if (key == _referenceKey) return;
+    _referenceKey = key;
+    _referenceCompletions.schedule(key, _applyReferences);
+  }
+
+  void _closeReferencePalette() {
+    _referenceCompletions.cancel();
+    _referenceKey = null;
+    if (_referenceItems.isNotEmpty && mounted && !_disposed) {
+      setState(() => _referenceItems = const []);
+    }
+  }
+
+  Future<PathCompletionBatch?> _fetchReferences(String key) {
+    final word = key.substring(key.indexOf('\n') + 1);
+    return _chat.completeDesktopPath(word);
+  }
+
+  void _applyReferences(String key, PathCompletionBatch? batch) {
+    if (_disposed || !mounted || key != _referenceKey) return;
+    final items = batch?.items ?? const <PathCompletionItem>[];
+    if (items.isEmpty && _referenceItems.isEmpty) return;
+    setState(() => _referenceItems = items);
+  }
+
+  void _pickReference(PathCompletionItem item) {
+    final query = composerReferenceQuery(_textController.value);
+    if (query == null) return;
+    _textController.value = applyReferencePick(
+      _textController.value,
+      query,
+      item,
+    );
+  }
+
+  void _descendReference(PathCompletionItem item) {
+    final query = composerReferenceQuery(_textController.value);
+    if (query == null) return;
+    _textController.value = applyReferenceDescend(
+      _textController.value,
+      query,
+      item,
+    );
+  }
+
+  bool get _referencePaletteVisible =>
+      _referenceItems.isNotEmpty &&
+      _textFocusNode.hasFocus &&
+      !_isRecording &&
+      !_transcribing &&
+      !_navigationDrawerOpen;
 
   Future<_SlashLookup?> _fetchSlashLookup(String input) async {
     final catalog = await _loadDesktopCommandCatalog();
@@ -6943,6 +7028,7 @@ class _ChatScreenState extends State<ChatScreen>
     _voice?.voiceConsent.removeListener(_onVoicePreferenceChanged);
     _vcUnavailableSub?.cancel();
     _slashCompletions.dispose();
+    _referenceCompletions.dispose();
     _stopFallback?.cancel();
     _stopConfirmationDismissTimer?.cancel();
     // Detén SOLO el dictado del composer (el de esta pantalla), no el TTS del
@@ -15029,15 +15115,35 @@ class _ChatScreenState extends State<ChatScreen>
               onPick: _pickSlash,
             ),
           );
+    final mentionPalette =
+        _isRecording || _transcribing || _navigationDrawerOpen
+        ? null
+        : ChatMentionPalette(
+            controller: _textController,
+            focusNode: _textFocusNode,
+            connectionId: widget.connection.id,
+            profile: _effectiveSessionProfile,
+          );
+    final referencePalette = !_referencePaletteVisible
+        ? null
+        : TextFieldTapRegion(
+            child: ComposerReferencePalette(
+              items: _referenceItems,
+              onPick: _pickReference,
+              onDescend: _descendReference,
+            ),
+          );
     final floatingPalette =
         slashPalette ??
-        (_isRecording || _transcribing || _navigationDrawerOpen
-            ? null
-            : ChatMentionPalette(
-                controller: _textController,
-                focusNode: _textFocusNode,
-                connectionId: widget.connection.id,
-                profile: _effectiveSessionProfile,
+        (referencePalette == null
+            ? mentionPalette
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Flexible(child: referencePalette),
+                  ?mentionPalette,
+                ],
               ));
     final showStop = _chat.canStopSessionWork && _nothingToSend;
     // Composer premium compartido (ConsoleComposer): contenedor con borde
@@ -15046,6 +15152,7 @@ class _ChatScreenState extends State<ChatScreen>
       controller: _textController,
       focusNode: _textFocusNode,
       palette: floatingPalette,
+      inputFormatters: _composerInputFormatters,
       reduceMotion: _reduceMotion,
       attachments: _pendingAttachments,
       onRemoveAttachment: (localId) =>
@@ -16814,8 +16921,14 @@ class _SlashAccentTextEditingController extends TextEditingController {
     required bool withComposing,
   }) {
     final text = value.text;
-    final slashRange = slashCommandRange();
-    if (text.isEmpty || slashRange == null) {
+    final slashRange = text.isEmpty ? null : slashCommandRange();
+    // Complete `@file:`/`@folder:`/`@url:` references read as the same accent
+    // token Desktop renders as a chip.
+    final accentRanges = <TextRange>[
+      ?slashRange,
+      ...composerReferenceRanges(text),
+    ];
+    if (text.isEmpty || accentRanges.isEmpty) {
       return super.buildTextSpan(
         context: context,
         style: style,
@@ -16823,22 +16936,30 @@ class _SlashAccentTextEditingController extends TextEditingController {
       );
     }
     final composing = composingRange(value, withComposing);
-    final cuts = <int>{0, slashRange.start, slashRange.end, text.length};
+    final cuts = <int>{0, text.length};
+    for (final range in accentRanges) {
+      cuts
+        ..add(range.start)
+        ..add(range.end);
+    }
     if (!composing.isCollapsed) {
       cuts
         ..add(composing.start)
         ..add(composing.end);
     }
     final orderedCuts = cuts.toList()..sort();
+    final accent = Theme.of(context).hermes.accent;
     final spans = <InlineSpan>[];
     for (var index = 0; index < orderedCuts.length - 1; index++) {
       final start = orderedCuts[index];
       final end = orderedCuts[index + 1];
       if (start == end) continue;
       var segmentStyle = style;
-      if (start >= slashRange.start && end <= slashRange.end) {
+      if (accentRanges.any(
+        (range) => start >= range.start && end <= range.end,
+      )) {
         segmentStyle = (segmentStyle ?? const TextStyle()).copyWith(
-          color: Theme.of(context).hermes.accent,
+          color: accent,
         );
       }
       if (!composing.isCollapsed &&

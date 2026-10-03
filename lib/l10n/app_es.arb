@@ -9406,5 +9406,10 @@
   "profileSwitcherBody": "Cada perfil tiene sus propios chats, memoria, SOUL, skills y modelo.",
   "profileSwitcherLoadFailed": "No se pudieron cargar los perfiles. Toca para reintentar.",
   "profileSwitcherManage": "Gestionar perfiles",
-  "t1215SlashSkillsHeader": "Skills"
+  "t1215SlashSkillsHeader": "Skills",
+  "t1215RefPaletteLabel": "Referencias a archivos y enlaces",
+  "t1215RefStarterFile": "Referenciar un archivo",
+  "t1215RefStarterFolder": "Referenciar una carpeta",
+  "t1215RefStarterUrl": "Referenciar un enlace",
+  "t1215RefOpenFolder": "Abrir carpeta"
 }
