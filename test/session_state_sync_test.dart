@@ -434,6 +434,25 @@ void main() {
     });
   });
 
+  group('writers', () {
+    test('a closing screen detaches its writer and the earlier one takes '
+        'over', () async {
+      final home = _Server();
+      final list = _Server();
+      final prefs = await SharedPreferences.getInstance();
+      final archive = await SessionArchive.load(prefs, _conn);
+      archive.attachRemoteState(home.write);
+      archive.attachRemoteState(list.write);
+      await archive.setSessionUnread(_row('s1', unread: false), true);
+      archive.detachRemoteState(list.write);
+      await archive.setSessionUnread(_row('s2', unread: false), true);
+      archive.detachRemoteState(home.write);
+      expect(archive.canToggleUnread(_row('s3', unread: false)), isFalse);
+      expect(list.calls.map((c) => c.id), ['s1']);
+      expect(home.calls.map((c) => c.id), ['s2']);
+    });
+  });
+
   group('unread', () {
     test('opening an unread session marks it read on the server', () async {
       final server = _Server();

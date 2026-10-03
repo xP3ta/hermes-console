@@ -215,6 +215,10 @@ class _SessionListScreenState extends State<SessionListScreen>
 
   SessionArchive? _archive;
   SessionPinSync? _pinSync;
+
+  /// This screen's writer of hidden/title/read state on the shared store
+  /// (detached on dispose, when [_repository] may close).
+  SessionStateWriter? _stateWriter;
   bool _archiveReady = false;
 
   /// Servicio singleton de chats activos: observamos [ActiveChatService.activeIds]
@@ -335,6 +339,10 @@ class _SessionListScreenState extends State<SessionListScreen>
           error is DashboardHttpException &&
           (error.statusCode == 404 || error.statusCode == 405),
     );
+    if (repository != null && !widget.connection.readOnly) {
+      final writer = _stateWriter = repository.patchSessionState;
+      archive.attachRemoteState(writer, httpStatusOf: dashboardHttpStatusOf);
+    }
     setState(() {
       // Shared per-connection store: a rename, archive, pin or hide made on
       // another screen (Home, chat auto-title, detail) repaints this list.
@@ -481,6 +489,8 @@ class _SessionListScreenState extends State<SessionListScreen>
   @override
   void dispose() {
     _archive?.removeListener(_onArchiveChanged);
+    final stateWriter = _stateWriter;
+    if (stateWriter != null) _archive?.detachRemoteState(stateWriter);
     hermesRouteObserver.unsubscribe(this);
     unawaited(DrawerGestureExclusion.setEnabled(false));
     _retryTimer?.cancel();
@@ -1269,7 +1279,16 @@ class _SessionListScreenState extends State<SessionListScreen>
       return;
     }
 
-    await _archive!.setSessionTitle(session, trimmed);
+    try {
+      await _archive!.renameSession(session, trimmed);
+    } catch (_) {
+      if (!mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).slRenameFailed)),
+        kind: HermesNoticeKind.error,
+      );
+      return;
+    }
     if (!mounted) return;
     setState(() {});
     HermesNotice.of(context).showSnackBar(
@@ -1362,6 +1381,23 @@ class _SessionListScreenState extends State<SessionListScreen>
       await _archive!.pinSession(session);
     }
     if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleUnread(Session session) async {
+    final archive = _archive;
+    if (archive == null) return;
+    try {
+      await archive.setSessionUnread(
+        session,
+        !archive.isSessionUnread(session),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).slUnreadFailed)),
+        kind: HermesNoticeKind.error,
+      );
+    }
   }
 
   Future<void> _toggleHidden(Session session) async {
@@ -1650,6 +1686,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     final archived = _isArchived(session);
     final pinned = _isPinned(session);
     final hidden = _isHidden(session);
+    final unread = _archive?.isSessionUnread(session) ?? false;
     return showHermesFloatingSurface<void>(
       context: context,
       surfaceKey: const ValueKey('session-actions-surface'),
@@ -1709,6 +1746,21 @@ class _SessionListScreenState extends State<SessionListScreen>
                 await _showRenameSessionDialog(session);
               },
             ),
+            // Desktop's row toggle; only when the server keeps read state.
+            if (_archive?.canToggleUnread(session) ?? false)
+              ListTile(
+                key: const ValueKey('session-menu-unread'),
+                leading: Icon(
+                  unread
+                      ? Icons.mark_email_read_outlined
+                      : Icons.mark_email_unread_outlined,
+                ),
+                title: Text(unread ? s.slMenuMarkRead : s.slMenuMarkUnread),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _toggleUnread(session);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.info_outline),
               title: Text(s.slMenuDetails),
@@ -1723,7 +1775,13 @@ class _SessionListScreenState extends State<SessionListScreen>
                     ? Icons.visibility_outlined
                     : Icons.visibility_off_outlined,
               ),
-              title: Text(hidden ? s.slMenuShow : s.slMenuHide),
+              title: Text(
+                hidden
+                    ? s.slMenuShow
+                    : (_archive?.hidesOnServer(session) ?? false)
+                    ? s.slMenuHideSynced
+                    : s.slMenuHide,
+              ),
               subtitle: hidden
                   ? null
                   : Text(
@@ -2208,6 +2266,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         title: _titleFor(session),
         formattedTime: _relativeTime(session.lastActivityAt, s),
         pinned: pinned,
+        unread: _archive?.isSessionUnread(session) ?? false,
         status: status,
         streamActive: streamActive,
         onStop: stoppable ? () => _stopSession(session) : null,
@@ -2829,6 +2888,9 @@ class _SessionTile extends StatelessWidget {
   final String formattedTime;
   final bool pinned;
 
+  /// The server's read state (Desktop's unread dot).
+  final bool unread;
+
   /// Hay un stream del chat en curso en segundo plano para esta sesión: la
   /// respuesta/ejecución sigue aunque saliste. Cuenta como "viva".
   final bool streamActive;
@@ -2844,6 +2906,7 @@ class _SessionTile extends StatelessWidget {
     required this.title,
     required this.formattedTime,
     this.pinned = false,
+    this.unread = false,
     this.streamActive = false,
     this.status = SessionLiveStatus.idle,
     this.onStop,
@@ -2929,6 +2992,23 @@ class _SessionTile extends StatelessWidget {
                             decoration: BoxDecoration(
                               color: colors.warning,
                               shape: BoxShape.circle,
+                            ),
+                          ),
+                        ],
+                        if (unread &&
+                            !streamActive &&
+                            status.phase != SessionLivePhase.waitingForUser) ...[
+                          const SizedBox(width: 7),
+                          Semantics(
+                            label: strings.slUnreadDot,
+                            child: Container(
+                              key: ValueKey('session-unread-${session.id}'),
+                              width: 7,
+                              height: 7,
+                              decoration: BoxDecoration(
+                                color: colors.accent,
+                                shape: BoxShape.circle,
+                              ),
                             ),
                           ),
                         ],

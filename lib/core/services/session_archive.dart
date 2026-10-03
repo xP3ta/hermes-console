@@ -623,8 +623,16 @@ class SessionArchive extends ChangeNotifier {
   static const _titleField = 'title';
   static const _unreadField = 'unread';
 
-  SessionStateWriter? _remote;
-  int? Function(Object error) _httpStatusOf = _noHttpStatus;
+  /// Attached writers, newest last: a screen that closes detaches its own
+  /// and the one beneath (Home's) takes over.
+  final List<({SessionStateWriter write, int? Function(Object) statusOf})>
+  _remotes = [];
+
+  SessionStateWriter? get _remote =>
+      _remotes.isEmpty ? null : _remotes.last.write;
+
+  int? _httpStatusOf(Object error) =>
+      _remotes.isEmpty ? null : _remotes.last.statusOf(error);
 
   /// Fields this server's PATCH handler refused: written locally only from
   /// then on (this process).
@@ -665,15 +673,15 @@ class SessionArchive extends ChangeNotifier {
     SessionStateWriter writer, {
     int? Function(Object error)? httpStatusOf,
   }) {
-    _remote = writer;
-    _httpStatusOf = httpStatusOf ?? _noHttpStatus;
+    _remotes
+      ..removeWhere((remote) => remote.write == writer)
+      ..add((write: writer, statusOf: httpStatusOf ?? _noHttpStatus));
     _migrateHidden(_lastRows);
   }
 
-  /// Forgets [writer] if it is still the attached one (its owner closed).
-  void detachRemoteState(SessionStateWriter writer) {
-    if (identical(_remote, writer)) _remote = null;
-  }
+  /// Forgets [writer] (its owner closed); an earlier one takes over.
+  void detachRemoteState(SessionStateWriter writer) =>
+      _remotes.removeWhere((remote) => remote.write == writer);
 
   /// Completes once every server write started so far has ended.
   Future<void> get remoteStateSettled async {
@@ -690,6 +698,9 @@ class SessionArchive extends ChangeNotifier {
       _writable(_hiddenField) &&
       session.hidden != null &&
       !session.isUnpersistedMobileDraft;
+
+  /// A hide of [session] reaches the server (and so Desktop).
+  bool hidesOnServer(Session session) => _canWriteHidden(session);
 
   String _intentKey(String field, String id) => '$field\u0000$id';
 
