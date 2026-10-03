@@ -346,14 +346,28 @@ Future<List<AgentProfile>> loadSharedMissionProfiles({
 }) async {
   final ticket = registry.beginRead(connection.id);
   var withSessions = false;
-  final profiles = await loadMissionControlProfiles(
-    desktopLoader: () async {
-      final profiles = await desktopLoader();
-      withSessions = true;
-      return profiles;
-    },
-    legacyDashboardLoader: legacyDashboardLoader,
-  );
+  var legacy = false;
+  final List<AgentProfile> profiles;
+  try {
+    profiles = await loadMissionControlProfiles(
+      desktopLoader: () async {
+        final profiles = await desktopLoader();
+        withSessions = true;
+        return profiles;
+      },
+      legacyDashboardLoader: () {
+        legacy = true;
+        return legacyDashboardLoader();
+      },
+    );
+  } catch (error) {
+    // The Dashboard is asked only once `profiles.list` proved unsupported;
+    // if it lacks the list too, this server has no roster to show.
+    if (legacy && BotRosterRegistry.isUnsupportedRead(error)) {
+      registry.unsupported(connection.id, ticket: ticket);
+    }
+    rethrow;
+  }
   // Shared with every screen; dropped if a newer roster already landed.
   registry.publish(
     connection.id,

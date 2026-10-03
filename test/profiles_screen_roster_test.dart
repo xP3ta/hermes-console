@@ -7,6 +7,9 @@ import 'package:hermes_android/core/services/bot_roster_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'support/bot_roster_fakes.dart';
 
 Finder inScreen(String key, Finder matching) =>
@@ -153,5 +156,116 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('live'), findsOneWidget);
     expect(find.text('cached'), findsNothing);
+  });
+  testWidgets(
+    'a server with neither profile list retracts the cached roster everywhere',
+    (tester) async {
+      final manager0 = await manager();
+      final prefs = manager0.prefs;
+      await BotRosterCache(
+        prefs,
+      ).write(connection, const [AgentProfile(name: 'cached')]);
+      final registry = BotRosterRegistry()
+        ..attachPersistence(prefs, [connection]);
+      // Old Dashboard: no /api/profiles.
+      final dashboard = DashboardClient(
+        host: 'hermes.local',
+        manualToken: 'token',
+        httpClientOverride: MockClient((_) async => http.Response('{}', 404)),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: Strings.localizationsDelegates,
+          supportedLocales: Strings.supportedLocales,
+          theme: AppTheme.fromId('dark'),
+          home: ProfilesScreen(
+            connection: connection,
+            connManager: manager0,
+            rosterRegistry: registry,
+            clientOverride: dashboard,
+            // Old Gateway: no profiles.list.
+            gatewayProfilesOverride: () async => throw const TuiGatewayRpcError(
+              'profiles.list',
+              'Method not found',
+              code: -32601,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('cached'), findsNothing);
+      expect(registry.store(connection.id).snapshot, isNull);
+      expect(BotRosterCache(prefs).read(connection), isEmpty);
+    },
+  );
+
+  testWidgets('a Gateway failure that is not unsupported keeps the cache', (
+    tester,
+  ) async {
+    final manager0 = await manager();
+    final prefs = manager0.prefs;
+    await BotRosterCache(
+      prefs,
+    ).write(connection, const [AgentProfile(name: 'cached')]);
+    final registry = BotRosterRegistry()
+      ..attachPersistence(prefs, [connection]);
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        theme: AppTheme.fromId('dark'),
+        home: ProfilesScreen(
+          connection: connection,
+          connManager: manager0,
+          rosterRegistry: registry,
+          clientOverride: DashboardClient(
+            host: 'hermes.local',
+            manualToken: 'token',
+            httpClientOverride: MockClient(
+              (_) async => http.Response('{}', 404),
+            ),
+          ),
+          gatewayProfilesOverride: () async =>
+              throw const TuiGatewayRpcError('profiles.list', 'timeout'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(registry.store(connection.id).profiles.single.name, 'cached');
+    expect(BotRosterCache(prefs).read(connection).single.name, 'cached');
+  });
+
+  testWidgets('a supported Gateway keeps the cold-start roster flow', (
+    tester,
+  ) async {
+    final manager0 = await manager();
+    final prefs = manager0.prefs;
+    await BotRosterCache(
+      prefs,
+    ).write(connection, const [AgentProfile(name: 'cached')]);
+    final registry = BotRosterRegistry()
+      ..attachPersistence(prefs, [connection]);
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        theme: AppTheme.fromId('dark'),
+        home: ProfilesScreen(
+          connection: connection,
+          connManager: manager0,
+          rosterRegistry: registry,
+          clientOverride: FakeProfilesServer().client,
+          gatewayProfilesOverride: () async => const [
+            AgentProfile(name: 'live'),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('live'), findsOneWidget);
+    expect(registry.store(connection.id).isLive, isTrue);
   });
 }

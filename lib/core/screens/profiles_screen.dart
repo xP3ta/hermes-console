@@ -47,12 +47,16 @@ class ProfilesScreen extends StatefulWidget {
   /// default.
   final BotRosterRegistry? rosterRegistry;
   final DashboardClient? clientOverride;
+
+  /// Stands in for the Gateway's `profiles.list` in tests.
+  final Future<List<AgentProfile>> Function()? gatewayProfilesOverride;
   const ProfilesScreen({
     required this.connection,
     required this.connManager,
     this.initialDeleteProfile,
     this.rosterRegistry,
     @visibleForTesting this.clientOverride,
+    @visibleForTesting this.gatewayProfilesOverride,
     super.key,
   });
 
@@ -123,11 +127,26 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
       List<AgentProfile> list;
       try {
         final gateway = _gateway;
-        if (gateway == null) throw StateError('no gateway');
-        list = await gateway.listProfiles();
-      } catch (_) {
+        final override = widget.gatewayProfilesOverride;
+        if (override != null) {
+          list = await override();
+        } else if (gateway == null) {
+          throw StateError('no gateway');
+        } else {
+          list = await gateway.listProfiles();
+        }
+      } catch (gatewayError) {
         // Safe read-only fallback for Gateways that predate profiles.list.
-        list = await _client.getProfiles();
+        try {
+          list = await _client.getProfiles();
+        } catch (error) {
+          // Neither route exists: this server has no roster to show.
+          if (BotRosterRegistry.isUnsupportedRead(gatewayError) &&
+              BotRosterRegistry.isUnsupportedRead(error)) {
+            _roster.unsupported(widget.connection.id, ticket: ticket);
+          }
+          rethrow;
+        }
       }
       // The shared store keeps whichever roster is newest; this screen
       // renders the store, never a late response of its own.

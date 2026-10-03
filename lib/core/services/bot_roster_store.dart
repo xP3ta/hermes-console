@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/agent_profile.dart';
 import '../models/connection.dart';
 import 'bot_roster_cache.dart';
+import 'connection_manager.dart' show DashboardHttpException;
+import 'tui_gateway_client.dart' show TuiGatewayRpcError;
 
 /// One connection's bot roster as last accepted by [BotRosterRegistry].
 @immutable
@@ -263,6 +265,39 @@ final class BotRosterRegistry extends ChangeNotifier {
       next = mutation.edit(next) ?? next;
     }
     return next;
+  }
+
+  /// True when [error] proves the server has no such route or method
+  /// (`profiles.list` missing, Dashboard profile list missing), as opposed
+  /// to a network, auth or transient failure.
+  static bool isUnsupportedRead(Object? error) => switch (error) {
+    TuiGatewayRpcError(:final code) =>
+      code == -32601 || code == 404 || code == 405,
+    DashboardHttpException(:final statusCode) =>
+      statusCode == 404 || statusCode == 405,
+    _ => false,
+  };
+
+  /// The read stamped [ticket] proved the server cannot list profiles at
+  /// all. A cached roster was never confirmed by this server: it stops
+  /// showing and leaves the persisted cache (Desktop starts empty too). A
+  /// live roster, a newer accepted read or a later [forget] wins.
+  void unsupported(String connectionId, {required int ticket}) {
+    if (ticket <= (_forgotAt[connectionId] ?? 0) ||
+        ticket <= (_lastRead[connectionId] ?? 0)) {
+      return;
+    }
+    final store = _stores[connectionId];
+    if (store == null || store.snapshot == null || store.isLive) return;
+    store._set(null);
+    notifyListeners();
+    final prefs = _prefs;
+    final connection = _connections[connectionId];
+    if (prefs != null && connection != null) {
+      unawaited(
+        BotRosterCache(prefs).remove(connection).catchError((Object _) {}),
+      );
+    }
   }
 
   /// Drops the roster of a removed or re-pointed connection; reads that
