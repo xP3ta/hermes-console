@@ -59,9 +59,11 @@ final class BotRosterStore extends ChangeNotifier {
 /// Per-connection [BotRosterStore]s plus the ordering clock every reader
 /// uses. It never reads the network itself: readers call [beginRead] before
 /// their request and [publish] the result. A response is accepted only when
-/// it started after the last accepted read or confirmed mutation and after
-/// the connection was last forgotten, so a late, older response can never
-/// overwrite newer data (same rule as Desktop's profile list epoch).
+/// it started after the last accepted read and after the connection was last
+/// forgotten, so a late, older response can never overwrite newer data (same
+/// rule as Desktop's profile list epoch). Confirmed creations, renames and
+/// deletions newer than an accepted read are replayed on it, so a read that
+/// was on the wire during one can neither undo it nor be lost.
 final class BotRosterRegistry extends ChangeNotifier {
   BotRosterRegistry();
 
@@ -69,8 +71,13 @@ final class BotRosterRegistry extends ChangeNotifier {
 
   int _clock = 0;
   final Map<String, BotRosterStore> _stores = {};
-  final Map<String, int> _floor = {};
   final Map<String, int> _forgotAt = {};
+
+  /// Ticket of the last accepted read.
+  final Map<String, int> _lastRead = {};
+
+  /// Confirmed mutations not yet covered by an accepted read, oldest first.
+  final Map<String, List<_Mutation>> _pending = {};
 
   /// Ticket of the last read accepted for its session projections.
   final Map<String, int> _sessionsAt = {};
@@ -141,7 +148,8 @@ final class BotRosterRegistry extends ChangeNotifier {
   }) {
     final stamp = ticket ?? ++_clock;
     final store = this.store(connectionId);
-    if (stamp <= (_floor[connectionId] ?? 0) || stamp <= store.ticket) {
+    if (stamp <= (_forgotAt[connectionId] ?? 0) ||
+        stamp <= (_lastRead[connectionId] ?? 0)) {
       final current = store.snapshot;
       if (sessions &&
           current != null &&
@@ -154,16 +162,26 @@ final class BotRosterRegistry extends ChangeNotifier {
           _takeSessions(current.profiles, profiles),
           current.ticket,
           fromCache: current.fromCache,
+          persist: false,
         );
       }
       return false;
     }
+    _lastRead[connectionId] = stamp;
     if (sessions) _sessionsAt[connectionId] = stamp;
+    // Mutations confirmed before the read started are already in it.
+    final pending = _pending[connectionId]
+      ?..removeWhere((m) => m.stamp < stamp);
+    var next = profiles;
+    for (final mutation in pending ?? const <_Mutation>[]) {
+      next = mutation.edit(next) ?? next;
+    }
+    if (pending != null && pending.isEmpty) _pending.remove(connectionId);
     _commit(
       store,
       label,
-      sessions ? profiles : _keepSessions(store.profiles, profiles),
-      stamp,
+      sessions ? next : _keepSessions(store.profiles, next),
+      stamp > store.ticket ? stamp : store.ticket,
     );
     return true;
   }
@@ -236,7 +254,8 @@ final class BotRosterRegistry extends ChangeNotifier {
   /// Drops the roster of a removed or re-pointed connection; reads that
   /// started before this can no longer publish.
   void forget(String connectionId) {
-    _floor[connectionId] = _forgotAt[connectionId] = ++_clock;
+    _forgotAt[connectionId] = ++_clock;
+    _pending.remove(connectionId);
     // The endpoint may have changed: persist again only once a screen
     // registers the current connection through [hydrate].
     _connections.remove(connectionId);
@@ -252,25 +271,40 @@ final class BotRosterRegistry extends ChangeNotifier {
     for (final store in _stores.values) {
       store._set(null);
     }
-    _floor.clear();
     _forgotAt.clear();
+    _lastRead.clear();
+    _pending.clear();
     _sessionsAt.clear();
     _connections.clear();
     _prefs = null;
     notifyListeners();
   }
 
-  /// A confirmed mutation outranks every read that started before it, even
-  /// when nothing is loaded yet to edit.
+  /// A confirmed mutation shows at once and is replayed on every read that
+  /// started before it, even when nothing is loaded yet to edit.
   void _mutate(
     String connectionId,
     List<AgentProfile>? Function(List<AgentProfile>) edit,
   ) {
     final stamp = ++_clock;
-    _floor[connectionId] = stamp;
+    (_pending[connectionId] ??= []).add(_Mutation(stamp, edit));
     final store = this.store(connectionId);
     final current = store.snapshot;
-    if (current == null) return;
+    if (current == null) {
+      // Nothing loaded: show the new bot now. The partial roster is display
+      // only and never persisted; the read in flight completes it.
+      final seeded = edit(const []);
+      if (seeded == null || seeded.isEmpty) return;
+      _commit(
+        store,
+        _connections[connectionId]?.label ?? '',
+        seeded,
+        stamp,
+        fromCache: true,
+        persist: false,
+      );
+      return;
+    }
     final next = edit(current.profiles);
     if (next == null) return;
     _commit(store, current.label, next, stamp, fromCache: current.fromCache);
@@ -282,6 +316,7 @@ final class BotRosterRegistry extends ChangeNotifier {
     List<AgentProfile> profiles,
     int stamp, {
     bool fromCache = false,
+    bool persist = true,
   }) {
     final frozen = List<AgentProfile>.unmodifiable(profiles);
     store._set(
@@ -295,7 +330,7 @@ final class BotRosterRegistry extends ChangeNotifier {
     notifyListeners();
     final prefs = _prefs;
     final connection = _connections[store.connectionId];
-    if (prefs != null && connection != null) {
+    if (persist && prefs != null && connection != null) {
       // Storage failure must never hide a live roster.
       unawaited(
         BotRosterCache(
@@ -304,6 +339,14 @@ final class BotRosterRegistry extends ChangeNotifier {
       );
     }
   }
+}
+
+/// A confirmed create, rename or delete. [edit] returns null when it does
+/// not apply (already there, or already gone), so replaying it is safe.
+final class _Mutation {
+  const _Mutation(this.stamp, this.edit);
+  final int stamp;
+  final List<AgentProfile>? Function(List<AgentProfile>) edit;
 }
 
 AgentProfile _copy(AgentProfile p, {String? name, AgentProfile? sessionsFrom}) {

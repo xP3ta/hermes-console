@@ -4,7 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/data/bot_mode_repository.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/connection.dart';
+import 'package:hermes_android/core/services/bot_roster_cache.dart';
 import 'package:hermes_android/core/services/bot_roster_store.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 final connection = SavedConnection(
   id: 'bot-mode',
@@ -56,6 +58,31 @@ void main() {
     () async {
       final registry = BotRosterRegistry();
       registry.publish(connection.id, 'QA', const [AgentProfile(name: 'ops')]);
+      final gateway = HeldProfilesGateway();
+      final repo = BotModeRepository(
+        gateway: gateway,
+        connection: connection,
+        rosterRegistry: registry,
+      );
+      final load = repo.load();
+      await pumpEventQueue();
+      registry.profileRenamed(connection.id, 'ops', 'ops2');
+      gateway.reads.single.complete(const [AgentProfile(name: 'ops')]);
+      expect(rowNames(await load), ['ops2']);
+      expect(registry.store(connection.id).profiles.single.name, 'ops2');
+    },
+  );
+  test(
+    'a rename confirmed over the cached roster beats the late read',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      await BotRosterCache(
+        prefs,
+      ).write(connection, const [AgentProfile(name: 'ops')]);
+      // Cold start: only the cached roster is in the store.
+      final registry = BotRosterRegistry()
+        ..attachPersistence(prefs, [connection]);
       final gateway = HeldProfilesGateway();
       final repo = BotModeRepository(
         gateway: gateway,

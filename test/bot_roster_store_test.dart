@@ -58,14 +58,13 @@ void main() {
     registry.profileDeleted('c', 'gone');
     registry.profileCreated('c', const AgentProfile(name: 'fresh'));
     expect(names(registry.store('c')), ['ops2', 'fresh']);
-    expect(
-      registry.publish('c', 'C', const [
-        AgentProfile(name: 'ops'),
-        AgentProfile(name: 'gone'),
-      ], ticket: inFlight),
-      isFalse,
-    );
-    expect(names(registry.store('c')), ['ops2', 'fresh']);
+    // Accepted, with the confirmed mutations replayed on top of it.
+    registry.publish('c', 'C', const [
+      AgentProfile(name: 'ops'),
+      AgentProfile(name: 'gone'),
+      AgentProfile(name: 'other'),
+    ], ticket: inFlight);
+    expect(names(registry.store('c')), ['ops2', 'other', 'fresh']);
     // A read started afterwards is authoritative again.
     registry.publish('c', 'C', const [
       AgentProfile(name: 'ops2'),
@@ -77,12 +76,42 @@ void main() {
     final registry = BotRosterRegistry();
     final inFlight = registry.beginRead('c');
     registry.profileDeleted('c', 'ops');
-    expect(
-      registry.publish('c', 'C', const [
-        AgentProfile(name: 'ops'),
-      ], ticket: inFlight),
-      isFalse,
-    );
+    registry.publish('c', 'C', const [
+      AgentProfile(name: 'ops'),
+      AgentProfile(name: 'kept'),
+    ], ticket: inFlight);
+    expect(names(registry.store('c')), ['kept']);
+  });
+
+  test('a creation confirmed with nothing loaded shows at once', () {
+    final registry = BotRosterRegistry();
+    final inFlight = registry.beginRead('c');
+    registry.profileCreated('c', const AgentProfile(name: 'fresh'));
+    final store = registry.store('c');
+    expect(names(store), ['fresh']);
+    // Partial: display-only, never a routable live roster.
+    expect(store.isLive, isFalse);
+    // The read that was on the wire lands late, without the new bot.
+    registry.publish('c', 'C', const [
+      AgentProfile(name: 'ops'),
+    ], ticket: inFlight);
+    expect(names(store), ['ops', 'fresh']);
+    expect(store.isLive, isTrue);
+    // A read started after the creation is authoritative again.
+    registry.publish('c', 'C', const [
+      AgentProfile(name: 'ops'),
+    ], ticket: registry.beginRead('c'));
+    expect(names(store), ['ops']);
+  });
+
+  test('a partial roster from a creation is not persisted', () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final registry = BotRosterRegistry()
+      ..attachPersistence(prefs, [connection]);
+    registry.profileCreated('c', const AgentProfile(name: 'fresh'));
+    await pumpEventQueue();
+    expect(BotRosterCache(prefs).read(connection), isEmpty);
   });
 
   test('forget strands reads that started before it', () {

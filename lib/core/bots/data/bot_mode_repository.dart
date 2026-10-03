@@ -278,8 +278,11 @@ final class BotModeRepository {
         // [BotModeGateway.listProfiles] asks for session projections.
         sessions: true,
       );
+      // Accepted: the store holds this read with every confirmed mutation
+      // newer than it replayed (even over a cached roster). Rejected: a
+      // newer live read already landed there.
       final store = roster.store(connection.id);
-      if (!accepted && store.isLive) profiles = store.profiles;
+      if (accepted || store.isLive) profiles = store.profiles;
     }
     final snapshot = HostedGroupsSnapshot(
       capabilities: hosted.caps,
