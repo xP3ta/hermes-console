@@ -241,6 +241,14 @@ class SessionArchive extends ChangeNotifier {
     return _activitySeconds(session.lastActivityAt) <= watermark;
   }
 
+  /// True when the server confirmed [sessionId] deleted, whatever activity
+  /// arrives for it later.
+  ///
+  /// For surfaces that only hold an id (the home screen widget): a late
+  /// event from the deleted chat stamps fresh activity, so the watermark
+  /// rule of [isSessionDeleted] would let it back in.
+  bool isSessionIdDeleted(String sessionId) => _deleted.containsKey(sessionId);
+
   /// Records a deletion the server confirmed for [sessionIds] (the physical
   /// ids that were deleted). Notifies every screen synchronously.
   Future<void> markSessionDeleted(

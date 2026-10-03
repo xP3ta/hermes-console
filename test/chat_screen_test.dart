@@ -79,6 +79,7 @@ import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/core/screens/lock_screen.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
 import 'package:hermes_android/core/services/session_archive.dart';
+import 'package:hermes_android/core/models/home_widget_snapshot.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
 import 'package:hermes_android/core/navigation/chat_route.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -14457,9 +14458,9 @@ void main() {
     },
   );
 
-  testWidgets('a confirmed delete from the chat menu reaches the shared '
-      'store every list filters with', (tester) async {
-    await pumpChat(tester);
+  /// Deletes the open chat through the chat menu against a fake server that
+  /// confirms it. Returns the deleted ids the server received.
+  Future<List<String>> deleteFromChatMenu(WidgetTester tester) async {
     final deletes = <String>[];
     final server = MockClient((request) async {
       if (request.method == 'DELETE') {
@@ -14512,6 +14513,13 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
       }
     }, () => server);
+    return deletes;
+  }
+
+  testWidgets('a confirmed delete from the chat menu reaches the shared '
+      'store every list filters with', (tester) async {
+    await pumpChat(tester);
+    final deletes = await deleteFromChatMenu(tester);
 
     expect(deletes, ['sess-test']);
     final prefs = await SharedPreferences.getInstance();
@@ -14521,6 +14529,61 @@ void main() {
     expect(shared.isSessionDeleted(_session()), isTrue);
     await tester.pump(const Duration(seconds: 1));
     expect(find.byType(ChatScreen), findsNothing);
+  });
+
+  testWidgets('a confirmed delete from the chat menu leaves the home widget', (
+    tester,
+  ) async {
+    const widgetChannel = MethodChannel('home_widget');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      widgetChannel,
+      (call) async => call.method == 'getWidgetData' ? null : true,
+    );
+    addTearDown(() => messenger.setMockMethodCallHandler(widgetChannel, null));
+    await pumpChat(
+      tester,
+      initialPreferences: {
+        'saved_connections': [jsonEncode(_conn().toMap())],
+        'last_connection_id': 'conn-test',
+      },
+    );
+    final app = tester.state<HermesAppState>(find.byType(HermesApp));
+    // The widget points at this chat, as after its last turn.
+    unawaited(
+      app.homeWidgetPublisher
+          .publish(
+            const HermesHomeWidgetSnapshot(
+              configured: true,
+              instanceId: 'conn-test',
+              connectionState: HomeWidgetConnectionState.connected,
+              sessionId: 'sess-test',
+              sessionTitle: 'Conversación de prueba',
+              agentState: HomeWidgetAgentState.idle,
+            ),
+          )
+          .catchError((Object _) {}),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(app.homeWidgetPublisher.latest.sessionId, 'sess-test');
+
+    expect(await deleteFromChatMenu(tester), ['sess-test']);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(app.homeWidgetPublisher.latest.sessionId, isNull);
+    expect(app.homeWidgetPublisher.latest.sessionTitle, isNull);
+
+    // A late event from the deleted chat cannot put it back.
+    unawaited(
+      app.homeWidgetPublisher
+          .update(
+            (current) =>
+                current.copyWith(sessionId: 'sess-test', sessionTitle: 'Late'),
+          )
+          .catchError((Object _) {}),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(app.homeWidgetPublisher.latest.sessionId, isNull);
+    await tester.pump(const Duration(seconds: 1));
   });
 
   testWidgets('/compact queda local, explica /compress y no toca el agente', (
