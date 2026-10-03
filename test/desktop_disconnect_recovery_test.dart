@@ -5082,6 +5082,180 @@ void main() {
     });
   }
 
+  // Follow-up to 7d9d1b6: only a complete, inconclusive transcript read is a
+  // proof that the idle server cannot confirm the turn. A /messages read that
+  // throws or times out proved nothing, so transient failures must never
+  // spend the idle budget: the turn must still adopt its durable answer once
+  // a read succeeds, and must give up only after three complete reads.
+  for (final failure in const ['throws', 'times out']) {
+    test('rl1215 idle recovery counts only complete transcript reads '
+        '(read $failure)', () async {
+      const storedId = 'session-rl1215-idle-transient';
+      const prompt = 'mensaje con lecturas fallidas';
+      const answer = 'respuesta durable final';
+      final gateway = _NonIdempotentLifecycleGateway(storedId);
+      var loaderCalls = 0;
+      var failingReads = 0;
+      var completeReads = 0;
+      var answerStored = false;
+      var sent = false;
+      final chat = _recoverableChat(
+        'rl1215-idle-transient-$failure',
+        gateway,
+        desktopRecoveryAttemptTimeout: const Duration(milliseconds: 80),
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 1),
+        ],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async {
+          loaderCalls++;
+          if (failingReads > 0) {
+            failingReads--;
+            if (failure == 'throws') {
+              throw const SocketException('read failed');
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+            throw const SocketException('late read');
+          }
+          if (sent) completeReads++;
+          return [
+            const {'id': 301, 'role': 'user', 'content': 'turno anterior'},
+            const {'id': 302, 'role': 'assistant', 'content': 'hecho'},
+            if (sent) const {'id': 303, 'role': 'user', 'content': prompt},
+            if (answerStored)
+              const {'id': 304, 'role': 'assistant', 'content': answer},
+          ];
+        },
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+
+      await chat.send(
+        fullText: prompt,
+        model: 'hermes-agent',
+        history: const [],
+      );
+      gateway.recoverySnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-rl1215-idle-transient',
+        storedSessionId: storedId,
+        created: false,
+        messagesProvided: false,
+        running: false,
+        status: 'idle',
+      );
+      sent = true;
+      // The first read and the next three idle re-reads all fail; the fifth
+      // read is the first one that sees the durable answer.
+      failingReads = 4;
+      answerStored = true;
+      gateway.failWith(const SocketException('Connection attempt cancelled'));
+
+      await _waitUntil(
+        () =>
+            (!chat.isStreaming &&
+                chat.state != ChatPipelineState.connecting &&
+                chat.transportStatus.isConnected) ||
+            loaderCalls > 60,
+        timeout: const Duration(seconds: 6),
+      );
+      expect(
+        chat.awaitingDurableTurnRecovery,
+        isFalse,
+        reason: 'failed reads are not proofs; the durable answer is adopted',
+      );
+      expect(chat.state, ChatPipelineState.completed);
+      expect(
+        chat.messages.where(
+          (m) => m['role'] == 'assistant' && m['content'] == answer,
+        ),
+        hasLength(1),
+      );
+      expect(
+        chat.messages.where(
+          (m) => m['role'] == 'user' && m['content'] == prompt,
+        ),
+        hasLength(1),
+      );
+      expect(completeReads, 1);
+      expect(gateway.submitCalls, 1);
+    });
+  }
+
+  // Follow-up to 7d9d1b6: the idle budget is exactly three complete reads
+  // judged against an idle snapshot, after the first unconditional read.
+  test(
+    'rl1215 idle recovery gives up after exactly three idle proofs',
+    () async {
+      const storedId = 'session-rl1215-idle-budget';
+      const prompt = 'mensaje sin prueba durable';
+      final gateway = _NonIdempotentLifecycleGateway(storedId);
+      var loaderCalls = 0;
+      var failingReads = 0;
+      var sent = false;
+      final chat = _recoverableChat(
+        'rl1215-idle-budget',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 1),
+        ],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async {
+          loaderCalls++;
+          if (failingReads > 0) {
+            failingReads--;
+            throw const SocketException('read failed');
+          }
+          return [
+            const {'id': 401, 'role': 'user', 'content': 'turno anterior'},
+            const {'id': 402, 'role': 'assistant', 'content': 'hecho'},
+            if (sent) const {'id': 403, 'role': 'user', 'content': prompt},
+          ];
+        },
+      );
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      await chat.send(
+        fullText: prompt,
+        model: 'hermes-agent',
+        history: const [],
+      );
+      gateway.recoverySnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-rl1215-idle-budget',
+        storedSessionId: storedId,
+        created: false,
+        messagesProvided: false,
+        running: false,
+        status: 'idle',
+      );
+      sent = true;
+      failingReads = 2;
+      final readsBeforeLoss = loaderCalls;
+      gateway.failWith(const SocketException('Connection attempt cancelled'));
+
+      await _waitUntil(
+        () =>
+            (!chat.isStreaming &&
+                chat.state != ChatPipelineState.connecting &&
+                chat.transportStatus.isConnected) ||
+            loaderCalls - readsBeforeLoss > 40,
+      );
+      // The unconditional first read and the first idle re-read fail; only
+      // the three complete idle reads that follow spend the budget.
+      expect(loaderCalls - readsBeforeLoss, 5);
+      expect(chat.awaitingDurableTurnRecovery, isTrue);
+      expect(
+        chat.messages.where(
+          (m) => m['role'] == 'user' && m['content'] == prompt,
+        ),
+        hasLength(1),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(loaderCalls - readsBeforeLoss, 5);
+    },
+  );
+
   // rl1215: a Wi-Fi/cellular switch drops the socket with "Connection
   // attempt cancelled" while the turn keeps running on the server. The first
   // recovery attempt on the new path must re-adopt the live turn, so the

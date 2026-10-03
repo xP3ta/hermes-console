@@ -185,6 +185,19 @@ const _maxConcurrentSessionsReason = 'MAX_CONCURRENT_SESSIONS';
 const _sessionCoordinationUnavailableReason =
     'SESSION_COORDINATION_UNAVAILABLE';
 const _awaitingDurableTurnRecoveryKey = '_awaitingDurableTurnRecovery';
+
+/// Outcome of one durable transcript read during turn recovery.
+enum _RecoveryTranscriptRead {
+  /// The transcript proved the turn and was adopted.
+  adopted,
+
+  /// A complete transcript was read but did not prove the turn.
+  inconclusive,
+
+  /// No complete transcript was observed (error, timeout, fence, tail).
+  unread,
+}
+
 const _legacyRecoveryPartialProjectionKey = '_legacyRecoveryPartialProjection';
 
 bool _isRecoverablePromptSessionRejection(Object error) =>
@@ -19373,10 +19386,11 @@ class ActiveChat {
         final resultKind = _desktopSnapshotRecoveryResultKind(snapshot);
         debugPrint('[active-chat] snapshot recovery result kind=$resultKind');
         if (!snapshot.running && snapshot.inflight == null) {
-          if (await _tryAdoptDurableTranscriptForRecoveringTurn(
+          final idleRead = await _readDurableTranscriptForRecoveringTurn(
             turnEpoch,
             serverIdle: true,
-          )) {
+          );
+          if (idleRead == _RecoveryTranscriptRead.adopted) {
             debugPrint(
               '[active-chat] snapshot recovery converged kind=durable_transcript',
             );
@@ -19393,8 +19407,12 @@ class ActiveChat {
             // answer after a few re-reads, more reads cannot change that:
             // settle the turn as "not confirmed" (prompt kept once, retry
             // offered) instead of polling /messages forever while the chat
-            // says the connection is lost.
-            idleWithoutProof += 1;
+            // says the connection is lost. Only a complete read that could
+            // not prove the turn counts: a read that threw or timed out
+            // observed nothing and must not spend the budget.
+            if (idleRead == _RecoveryTranscriptRead.inconclusive) {
+              idleWithoutProof += 1;
+            }
             if (idleWithoutProof >= _desktopIdleRecoveryProofAttempts) {
               debugPrint(
                 '[active-chat] snapshot recovery gave up '
@@ -19876,26 +19894,48 @@ class ActiveChat {
   Future<bool> _tryAdoptDurableTranscriptForRecoveringTurn(
     int turnEpoch, {
     bool serverIdle = false,
+  }) async =>
+      await _readDurableTranscriptForRecoveringTurn(
+        turnEpoch,
+        serverIdle: serverIdle,
+      ) ==
+      _RecoveryTranscriptRead.adopted;
+
+  /// Like [_tryAdoptDurableTranscriptForRecoveringTurn], but tells a complete
+  /// transcript that does not prove the turn ([_RecoveryTranscriptRead
+  /// .inconclusive]) apart from a read that failed, timed out, was fenced or
+  /// did not cover the announced count ([_RecoveryTranscriptRead.unread]).
+  Future<_RecoveryTranscriptRead> _readDurableTranscriptForRecoveringTurn(
+    int turnEpoch, {
+    bool serverIdle = false,
   }) async {
-    if (!_canRecoverTurn(turnEpoch)) return false;
+    if (!_canRecoverTurn(turnEpoch)) return _RecoveryTranscriptRead.unread;
     final loadEpoch = _messageLoadEpoch;
     final storedId = serverSessionId;
     final profile = _storedSessionProfile;
     final expectedUsers = _messages.where(isRealUserTurn).length;
-    if (expectedUsers <= 0) return false;
+    if (expectedUsers <= 0) return _RecoveryTranscriptRead.inconclusive;
+    final List<Map<String, dynamic>> transcript;
     try {
-      final transcript = await _desktopRecoveryOperationBeforeDeadline(
+      final read = await _desktopRecoveryOperationBeforeDeadline(
         _loadRecoveryTranscript(storedId, profile),
         _turnEpochInvalidated.future,
       );
-      if (transcript == null ||
+      if (read == null ||
           !_canRecoverTurn(turnEpoch) ||
           loadEpoch != _messageLoadEpoch ||
           storedId != serverSessionId ||
           profile != _storedSessionProfile) {
-        return false;
+        return _RecoveryTranscriptRead.unread;
       }
-      if (!_restTranscriptCoversAnnouncedCount(transcript)) return false;
+      if (!_restTranscriptCoversAnnouncedCount(read)) {
+        return _RecoveryTranscriptRead.unread;
+      }
+      transcript = read;
+    } catch (_) {
+      return _RecoveryTranscriptRead.unread;
+    }
+    try {
       var authorityView = transcript;
       var authority = _terminalAuthority(transcript, expectedUsers);
       if (serverIdle &&
@@ -19912,13 +19952,13 @@ class ActiveChat {
         }
       }
       if (authority.reason != TerminalAuthorityReason.finalAssistant) {
-        return false;
+        return _RecoveryTranscriptRead.inconclusive;
       }
       if (!_terminalTranscriptCanReplaceVisibleProjection(
         authorityView,
         expectedUsers,
       )) {
-        return false;
+        return _RecoveryTranscriptRead.inconclusive;
       }
       await _completeRun(
         finalOutput: authority.assistantText,
@@ -19926,9 +19966,11 @@ class ActiveChat {
         authoritativeTranscriptAuthorityView:
             identical(authorityView, transcript) ? null : authorityView,
       );
-      return state == ChatPipelineState.completed;
+      return state == ChatPipelineState.completed
+          ? _RecoveryTranscriptRead.adopted
+          : _RecoveryTranscriptRead.inconclusive;
     } catch (_) {
-      return false;
+      return _RecoveryTranscriptRead.inconclusive;
     }
   }
 
