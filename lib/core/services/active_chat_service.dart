@@ -9319,6 +9319,12 @@ class ActiveChat {
     _sessionControlRefreshQueued = false;
     _lastNotifiedGoalStatus = null;
     final retiredRuntimeId = _desktopRuntimeSessionId;
+    // A deliberate retirement (released to Desktop, reclaimed, rotated,
+    // failed submit) gives the runtime back on a multiplexed socket, or the
+    // socket keeps its watermark and reader slot until this chat is
+    // disposed. A transport loss keeps it for the per-runtime replay of the
+    // reconnect; an adoption swaps it in [_holdMultiplexedRuntime].
+    if (reason == _RuntimeRetirement.explicit) _holdMultiplexedRuntime(null);
     if (retiredRuntimeId != null) {
       // The reducer emits callbacks synchronously. Fence and detach first so a
       // callback cannot register or submit new work for the retiring runtime.
