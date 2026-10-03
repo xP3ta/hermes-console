@@ -10862,6 +10862,20 @@ class _ChatScreenState extends State<ChatScreen>
       if (!mounted) return;
       switch (result.status) {
         case LinkedSessionDeleteStatus.deleted:
+          // Shared store first: Home, Conversations and the drawer drop the
+          // row at once, whichever screen opened this chat.
+          final prefs = await SharedPreferences.getInstance();
+          final archive = await SessionArchive.load(
+            prefs,
+            widget.connection.id,
+          );
+          unawaited(
+            archive.markSessionDeleted(
+              widget.session,
+              sessionIds: [_chat.serverSessionId],
+            ),
+          );
+          if (!mounted) return;
           app?.activeChats.globalActivity.clearSession(
             widget.connection.id,
             ownerProfile,

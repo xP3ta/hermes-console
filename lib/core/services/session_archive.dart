@@ -34,6 +34,10 @@ class SessionArchive extends ChangeNotifier {
   static const _pinnedPrefix = 'pinned_sessions_';
   static const _hiddenPrefix = 'hidden_sessions_';
   static const _titlePrefix = 'session_titles_';
+  static const _deletedPrefix = 'deleted_sessions_';
+
+  /// Bound on remembered server-confirmed deletions per connection.
+  static const maxDeletedTombstones = 200;
 
   final SharedPreferences _prefs;
   final String _connectionId;
@@ -43,6 +47,10 @@ class SessionArchive extends ChangeNotifier {
   Set<String> _pinned = {};
   Set<String> _hidden = {};
   Map<String, String> _titles = {};
+
+  /// Server-confirmed deletions: physical session id -> activity watermark
+  /// (seconds). See [markSessionDeleted].
+  Map<String, double> _deleted = {};
 
   int _revision = 0;
 
@@ -84,12 +92,14 @@ class SessionArchive extends ChangeNotifier {
   String get _pinnedKey => '$_pinnedPrefix$_connectionId';
   String get _hiddenKey => '$_hiddenPrefix$_connectionId';
   String get _titleKey => '$_titlePrefix$_connectionId';
+  String get _deletedKey => '$_deletedPrefix$_connectionId';
 
   void _read() {
     _archived = (_prefs.getStringList(_key) ?? []).toSet();
     _pinned = (_prefs.getStringList(_pinnedKey) ?? []).toSet();
     _hidden = (_prefs.getStringList(_hiddenKey) ?? []).toSet();
     _titles = _decodeTitles(_prefs.getStringList(_titleKey) ?? const []);
+    _deleted = _decodeDeleted(_prefs.getStringList(_deletedKey) ?? const []);
   }
 
   void _resync() {
@@ -97,11 +107,13 @@ class SessionArchive extends ChangeNotifier {
     final pinned = _pinned;
     final hidden = _hidden;
     final titles = _titles;
+    final deleted = _deleted;
     _read();
     if (setEquals(archived, _archived) &&
         setEquals(pinned, _pinned) &&
         setEquals(hidden, _hidden) &&
-        mapEquals(titles, _titles)) {
+        mapEquals(titles, _titles) &&
+        mapEquals(deleted, _deleted)) {
       return;
     }
     _revision++;
@@ -213,6 +225,63 @@ class SessionArchive extends ChangeNotifier {
     await _flush();
   }
 
+  // ── Borradas en el servidor ───────────────────────────────────────────────
+
+  /// True when [session] is a row the server already confirmed deleted.
+  ///
+  /// Every screen (Home recents, Conversations, drawer) filters with this, so
+  /// a delete made on any screen drops the row everywhere in the same frame
+  /// and a stale retained page, cached tail or slow refresh cannot bring it
+  /// back. Only the deleted physical id matches, and only up to the activity
+  /// watermark recorded at deletion: a row with newer activity is real data
+  /// (the server recreated it) and is shown.
+  bool isSessionDeleted(Session session) {
+    final watermark = _deleted[session.id];
+    if (watermark == null) return false;
+    return _activitySeconds(session.lastActivityAt) <= watermark;
+  }
+
+  /// Records a deletion the server confirmed for [sessionIds] (the physical
+  /// ids that were deleted). Notifies every screen synchronously.
+  Future<void> markSessionDeleted(
+    Session session, {
+    Iterable<String> sessionIds = const [],
+    DateTime? now,
+  }) {
+    final nowSeconds = (now ?? DateTime.now()).millisecondsSinceEpoch / 1000.0;
+    final activity = _activitySeconds(session.lastActivityAt);
+    final watermark = activity > nowSeconds ? activity : nowSeconds;
+    for (final id in {session.id, ...sessionIds}) {
+      if (id.isEmpty) continue;
+      final previous = _deleted[id];
+      if (previous == null || previous < watermark) _deleted[id] = watermark;
+    }
+    if (_deleted.length > maxDeletedTombstones) {
+      final oldest = _deleted.entries.toList()
+        ..sort((a, b) => a.value.compareTo(b.value));
+      for (final entry in oldest.take(_deleted.length - maxDeletedTombstones)) {
+        _deleted.remove(entry.key);
+      }
+    }
+    return _flush();
+  }
+
+  /// Session timestamps arrive in seconds or milliseconds.
+  static double _activitySeconds(double value) =>
+      value > 100000000000 ? value / 1000 : value;
+
+  static Map<String, double> _decodeDeleted(List<String> rows) {
+    final deleted = <String, double>{};
+    for (final row in rows) {
+      final tab = row.indexOf('\t');
+      if (tab <= 0) continue;
+      final watermark = double.tryParse(row.substring(tab + 1));
+      if (watermark == null || !watermark.isFinite) continue;
+      deleted[row.substring(0, tab)] = watermark;
+    }
+    return deleted;
+  }
+
   // ── Títulos locales ──────────────────────────────────────────────────────
 
   String titleFor(String sessionId, String serverTitle) {
@@ -312,6 +381,11 @@ class SessionArchive extends ChangeNotifier {
       _prefs.setStringList(_pinnedKey, _pinned.toList()),
       _prefs.setStringList(_hiddenKey, _hidden.toList()),
       _writeTitles(),
+      if (_deleted.isNotEmpty || _prefs.containsKey(_deletedKey))
+        _prefs.setStringList(
+          _deletedKey,
+          _deleted.entries.map((e) => '${e.key}\t${e.value}').toList(),
+        ),
     ]);
     notifyListeners();
     return writes;

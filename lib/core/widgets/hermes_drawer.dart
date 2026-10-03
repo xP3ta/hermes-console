@@ -723,6 +723,9 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
       );
       bool shown(Session session) =>
           !archive.isSessionArchived(session) &&
+          !archive.isSessionDeleted(session) &&
+          !archive.isSessionHidden(session) &&
+          !archive.isHidden(session.id) &&
           !session.isJob &&
           !session.isKanbanJob &&
           session.parentSessionId == null;

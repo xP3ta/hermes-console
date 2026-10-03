@@ -1356,6 +1356,8 @@ class _SessionListScreenState extends State<SessionListScreen>
     final result = await _deleteSessionAndLinkedCron(session, cronDeletion);
     switch (result.status) {
       case LinkedSessionDeleteStatus.deleted:
+        // Shared store first: Home, drawer and detail drop it in this frame.
+        unawaited(_archive?.markSessionDeleted(session));
         _globalActivity?.clearSession(
           widget.connection.id,
           Session.profileOwner(session.profile),
@@ -1737,6 +1739,8 @@ class _SessionListScreenState extends State<SessionListScreen>
     final list = source.where((s) {
       // Las ocultas localmente nunca aparecen (se restauran desde "limpiar").
       if (_isHidden(s)) return false;
+      // Deleted on the server (from any screen): never painted again.
+      if (_archive?.isSessionDeleted(s) ?? false) return false;
 
       final archived = _isArchived(s);
       if (_showArchived != archived) return false;

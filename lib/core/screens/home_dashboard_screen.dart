@@ -768,6 +768,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       if (!removed) return;
     }
     if (!mounted || !removed) return;
+    // Shared store first: every screen drops the row in this frame.
+    unawaited(_archive?.markSessionDeleted(session));
     final aggregate = _activeChats?.globalActivity;
     aggregate?.clearSession(conn.id, ownerProfile, session.id);
     await aggregate?.flushJournal();
@@ -1215,6 +1217,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
 
   bool _isHomeRecentCandidate(Session s, SessionArchive archive) =>
       _isHomeRecentKind(s) &&
+      !archive.isSessionDeleted(s) &&
       !archive.isSessionHidden(s) &&
       !archive.isSessionArchived(s) &&
       !archive.isHidden(s.id);
