@@ -14459,8 +14459,12 @@ void main() {
   );
 
   /// Deletes the open chat through the chat menu against a fake server that
-  /// confirms it. Returns the deleted ids the server received.
-  Future<List<String>> deleteFromChatMenu(WidgetTester tester) async {
+  /// confirms it. Returns the deleted ids the server received. [afterConfirm]
+  /// replaces the default wait once the delete is confirmed.
+  Future<List<String>> deleteFromChatMenu(
+    WidgetTester tester, {
+    Future<void> Function()? afterConfirm,
+  }) async {
     final deletes = <String>[];
     final server = MockClient((request) async {
       if (request.method == 'DELETE') {
@@ -14509,12 +14513,58 @@ void main() {
         matching: find.byType(TextButton),
       );
       await tester.tap(dialogActions.last);
+      if (afterConfirm != null) return afterConfirm();
       for (var i = 0; i < 20; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
     }, () => server);
     return deletes;
   }
+
+  testWidgets('a chat menu delete reaches the shared store before its local '
+      'cleanup and before any time passes', (tester) async {
+    Completer<void>? cleanup;
+    var cleanupStarted = false;
+    await pumpChat(
+      tester,
+      draftSecureStorage: _MemoryDraftSecureStorage(
+        secureStore,
+        beforeDelete: (_) {
+          final gate = cleanup;
+          if (gate == null) return Future<void>.value();
+          cleanupStarted = true;
+          return gate.future;
+        },
+      ),
+    );
+    final prefs = await SharedPreferences.getInstance();
+    final shared = await SessionArchive.load(prefs, 'conn-test');
+    var notified = 0;
+    shared.addListener(() => notified++);
+    // The local recovery cleanup after the server's 200 never finishes.
+    cleanup = Completer<void>();
+
+    final deletes = await deleteFromChatMenu(
+      tester,
+      afterConfirm: () async {
+        // Frames only: the clock does not move.
+        for (var i = 0; i < 10; i++) {
+          await tester.pump();
+        }
+        // What Home, Conversations and the drawer filter with already has
+        // it, while the cleanup is still blocked.
+        expect(shared.isSessionDeleted(_session()), isTrue);
+        expect(notified, greaterThan(0));
+      },
+    );
+    expect(deletes, ['sess-test']);
+    expect(cleanupStarted, isTrue, reason: 'the cleanup was held, not skipped');
+    cleanup.complete();
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.byType(ChatScreen), findsNothing);
+  });
 
   testWidgets('a confirmed delete from the chat menu reaches the shared '
       'store every list filters with', (tester) async {

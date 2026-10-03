@@ -1127,6 +1127,10 @@ class LinkedSessionDeleteResult {
 /// un fallo de red como resultado (nunca como Future rechazado de un widget),
 /// ofrece una salida honesta para cron legacy y limpia la recuperación local
 /// únicamente después de que todos los DELETE remotos hayan sido confirmados.
+///
+/// [onRemoteDeleted] runs synchronously as soon as the server confirmed every
+/// DELETE, before the local cleanup, so a caller can tell the other screens
+/// in that same turn instead of after the cleanup's awaits.
 Future<LinkedSessionDeleteResult> deleteSessionWithResolvedLineage(
   Session selected, {
   required LoadSessionsForDeletion loadSessions,
@@ -1136,6 +1140,7 @@ Future<LinkedSessionDeleteResult> deleteSessionWithResolvedLineage(
   String? remoteSessionId,
   String? localRecoverySessionId,
   ClearLocalSessionRecovery? clearLocalRecovery,
+  void Function()? onRemoteDeleted,
 }) async {
   late final SessionDeletionContext context;
   try {
@@ -1161,6 +1166,9 @@ Future<LinkedSessionDeleteResult> deleteSessionWithResolvedLineage(
     remoteSessionId: context.remoteSessionId,
     cronDeletion: cronDeletion,
   );
+  if (result.status == LinkedSessionDeleteStatus.deleted) {
+    onRemoteDeleted?.call();
+  }
   if (result.status == LinkedSessionDeleteStatus.deleted &&
       clearLocalRecovery != null) {
     try {
