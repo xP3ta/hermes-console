@@ -184,6 +184,43 @@ void main() {
     expect(registry.store('c').isLive, isFalse);
   });
 
+  test('a sessionless read keeps session projections of surviving bots', () {
+    final registry = BotRosterRegistry();
+    final worker = AgentProfile.fromJson({
+      'name': 'ops',
+      'worker_session': {
+        'id': 'w',
+        'source': 'kanban',
+        'title': 't',
+        'last_active': 1,
+      },
+    });
+    registry.publish('c', 'C', [worker, const AgentProfile(name: 'gone')]);
+    registry.publish('c', 'C', const [
+      AgentProfile(name: 'ops', displayName: 'Ops'),
+      AgentProfile(name: 'new'),
+    ]);
+    final store = registry.store('c');
+    expect(names(store), ['ops', 'new']);
+    expect(store.profile('ops')!.displayName, 'Ops');
+    expect(store.profile('ops')!.workerSession?.id, 'w');
+    expect(store.profile('new')!.workerSession, isNull);
+    // A read that carries projections is authoritative for them.
+    registry.publish('c', 'C', [
+      AgentProfile.fromJson({
+        'name': 'new',
+        'worker_session': {
+          'id': 'x',
+          'source': 'kanban',
+          'title': 't',
+          'last_active': 1,
+        },
+      }),
+      const AgentProfile(name: 'ops'),
+    ]);
+    expect(store.profile('ops')!.workerSession, isNull);
+  });
+
   test('BotMentionRoster.replace feeds the shared store with ordering', () {
     final registry = BotRosterRegistry();
     final mentions = BotMentionRoster(registry);

@@ -132,9 +132,37 @@ final class BotRosterRegistry extends ChangeNotifier {
     if (stamp <= (_floor[connectionId] ?? 0) || stamp <= store.ticket) {
       return false;
     }
-    _commit(store, label, profiles, stamp);
+    _commit(store, label, _keepSessions(store.profiles, profiles), stamp);
     return true;
   }
+
+  /// Some readers ask `profiles.list` without session projections (Profiles
+  /// screen, mention roster). Such a roster says nothing about sessions, so
+  /// each surviving profile keeps the projections of the previous snapshot
+  /// instead of looking idle until the next full read. A roster that carries
+  /// any projection is taken as is.
+  static List<AgentProfile> _keepSessions(
+    List<AgentProfile> previous,
+    List<AgentProfile> incoming,
+  ) {
+    if (incoming.any(_hasSessions) || !previous.any(_hasSessions)) {
+      return incoming;
+    }
+    final byName = {for (final p in previous) p.name: p};
+    return [
+      for (final p in incoming)
+        if (byName[p.name] case final old? when _hasSessions(old))
+          _copy(p, sessionsFrom: old)
+        else
+          p,
+    ];
+  }
+
+  static bool _hasSessions(AgentProfile p) =>
+      p.lastSession != null ||
+      p.preferredSession != null ||
+      p.canonicalSession != null ||
+      p.workerSession != null;
 
   /// Server confirmed a new profile: show it now, before the next read.
   void profileCreated(String connectionId, AgentProfile profile) =>
@@ -149,7 +177,7 @@ final class BotRosterRegistry extends ChangeNotifier {
         if (!profiles.any((p) => p.name == from)) return null;
         return [
           for (final p in profiles)
-            if (p.name == from) _renamed(p, to) else if (p.name != to) p,
+            if (p.name == from) _copy(p, name: to) else if (p.name != to) p,
         ];
       });
 
@@ -234,33 +262,37 @@ final class BotRosterRegistry extends ChangeNotifier {
   }
 }
 
-AgentProfile _renamed(AgentProfile p, String name) => AgentProfile(
-  name: name,
-  path: p.path,
-  isDefault: p.isDefault,
-  model: p.model,
-  provider: p.provider,
-  hasEnv: p.hasEnv,
-  skillCount: p.skillCount,
-  gatewayRunning: p.gatewayRunning,
-  description: p.description,
-  displayName: p.displayName,
-  // A handle equal to the old name was derived from it.
-  mentionHandle: p.mentionHandle == p.name ? '' : p.mentionHandle,
-  mentionTitle: p.mentionTitle,
-  botChatSessionId: p.botChatSessionId,
-  botModeUiMeta: p.botModeUiMeta,
-  botModeMetadataPublished: p.botModeMetadataPublished,
-  hasInvalidBotModeMetadata: p.hasInvalidBotModeMetadata,
-  hasAvatar: p.hasAvatar,
-  lastSession: p.lastSession,
-  preferredSession: p.preferredSession,
-  canonicalSession: p.canonicalSession,
-  workerSession: p.workerSession,
-  distributionName: p.distributionName,
-  distributionVersion: p.distributionVersion,
-  distributionSource: p.distributionSource,
-  hasAlias: p.hasAlias,
-  roomMirror: p.roomMirror,
-  groupsProjection: p.groupsProjection,
-);
+AgentProfile _copy(AgentProfile p, {String? name, AgentProfile? sessionsFrom}) {
+  final sessions = sessionsFrom ?? p;
+  final renamed = name != null && name != p.name;
+  return AgentProfile(
+    name: name ?? p.name,
+    path: p.path,
+    isDefault: p.isDefault,
+    model: p.model,
+    provider: p.provider,
+    hasEnv: p.hasEnv,
+    skillCount: p.skillCount,
+    gatewayRunning: p.gatewayRunning,
+    description: p.description,
+    displayName: p.displayName,
+    // A handle equal to the old name was derived from it.
+    mentionHandle: renamed && p.mentionHandle == p.name ? '' : p.mentionHandle,
+    mentionTitle: p.mentionTitle,
+    botChatSessionId: p.botChatSessionId,
+    botModeUiMeta: p.botModeUiMeta,
+    botModeMetadataPublished: p.botModeMetadataPublished,
+    hasInvalidBotModeMetadata: p.hasInvalidBotModeMetadata,
+    hasAvatar: p.hasAvatar,
+    lastSession: sessions.lastSession,
+    preferredSession: sessions.preferredSession,
+    canonicalSession: sessions.canonicalSession,
+    workerSession: sessions.workerSession,
+    distributionName: p.distributionName,
+    distributionVersion: p.distributionVersion,
+    distributionSource: p.distributionSource,
+    hasAlias: p.hasAlias,
+    roomMirror: p.roomMirror,
+    groupsProjection: p.groupsProjection,
+  );
+}
