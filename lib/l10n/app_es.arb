@@ -9418,5 +9418,7 @@
   "tc1215CopyOptionsHint": "más opciones de copia",
   "tc1215TerminalOutput": "Salida",
   "tc1215OutputShowAll": "Ver todo ({count} líneas)",
-  "@tc1215OutputShowAll": {"placeholders": {"count": {"type": "int"}}}
+  "@tc1215OutputShowAll": {"placeholders": {"count": {"type": "int"}}},
+  "tc1215FilesChanged": "{count, plural, =1{1 archivo cambiado} other{{count} archivos cambiados}}",
+  "@tc1215FilesChanged": {"placeholders": {"count": {"type": "int"}}}
 }

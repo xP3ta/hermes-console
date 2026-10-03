@@ -23365,6 +23365,50 @@ void main() {
       });
     }
 
+    final patchTurn = <Map<String, dynamic>>[
+      turn[0],
+      {
+        'role': 'tool',
+        'tool_call_id': 'rg-call-9',
+        'tool_name': 'patch',
+        'content': jsonEncode({
+          'success': true,
+          'diff': '--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b\n',
+        }),
+        'timestamp': 1700000300,
+      },
+      toolRow(9, 'patch', 'x.py'),
+      turn.last,
+    ];
+
+    testWidgets('pt1215: historial: el último turno resume sus archivos', (
+      tester,
+    ) async {
+      await pumpChat(tester, messages: patchTurn);
+      expect(find.byType(ChangedFilesCard), findsOneWidget);
+      expect(find.text('1 archivo cambiado'), findsOneWidget);
+    });
+
+    testWidgets('pt1215: un turno anterior no repite el resumen', (
+      tester,
+    ) async {
+      await pumpChat(
+        tester,
+        messages: [
+          {
+            'role': 'assistant',
+            'content': 'RG_LATER_ANSWER',
+            'id': 'rg-later',
+            'timestamp': 1700000900,
+          },
+          {'role': 'user', 'content': 'RG_LATER', 'id': 'rg-later-user'},
+          ...patchTurn,
+        ],
+      );
+      expect(find.text('RG_LATER_ANSWER'), findsOneWidget);
+      expect(find.byType(ChangedFilesCard), findsNothing);
+    });
+
     testWidgets('pt1215: un mensaje de texto plano no abre menú al mantener', (
       tester,
     ) async {
@@ -23847,6 +23891,72 @@ void main() {
         find.textContaining('two\nthree', findRichText: true),
         findsNothing,
       );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'pt1215: el último turno con ediciones cierra con «archivos cambiados»',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-pt1215-changed'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_CHANGED_PARENT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      for (final (id, path, diff) in const [
+        ('call-ch-1', 'lib/a.dart', '@@ -1 +1,2 @@\n-a\n+b\n+c'),
+        ('call-ch-2', 'README.md', '@@ -1 +1 @@\n-x\n+y'),
+        ('call-ch-3', 'lib/a.dart', '@@ -5 +5 @@\n-d\n+e'),
+      ]) {
+        gateway.emit('tool.start', {
+          'tool_id': id,
+          'name': 'patch',
+          'args': {'path': path},
+        });
+        gateway.emit('tool.complete', {
+          'tool_id': id,
+          'name': 'patch',
+          'args': {'path': path},
+          'inline_diff': diff,
+          'result': const {'success': true},
+        });
+      }
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      // Still working: no summary yet.
+      expect(find.byType(ChangedFilesCard), findsNothing);
+      gateway.emit('message.complete', const {'text': 'PUBLIC_CHANGED_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(ChangedFilesCard), findsOneWidget);
+      expect(find.text('2 archivos cambiados'), findsOneWidget);
+      // lib/a.dart +3 −2 across two edits, README.md +1 −1.
+      expect(find.text('+4'), findsOneWidget);
+      expect(find.text('−3'), findsOneWidget);
+      expect(find.byType(FileDiffCard), findsNothing);
+
+      final row = find.byKey(const ValueKey('changed-files-row'));
+      await tester.ensureVisible(row);
+      await tester.pump();
+      await tester.tap(row);
+      await tester.pump();
+      expect(find.byType(FileDiffCard), findsNWidgets(2));
+      expect(find.text('a.dart'), findsOneWidget);
+      expect(find.text('README.md'), findsOneWidget);
+      expect(find.byType(FileDiffBody), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

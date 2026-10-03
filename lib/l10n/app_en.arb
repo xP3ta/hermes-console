@@ -7733,5 +7733,7 @@
   "tc1215CopyOptionsHint": "more copy options",
   "tc1215TerminalOutput": "Output",
   "tc1215OutputShowAll": "Show all ({count} lines)",
-  "@tc1215OutputShowAll": {"placeholders": {"count": {"type": "int"}}}
+  "@tc1215OutputShowAll": {"placeholders": {"count": {"type": "int"}}},
+  "tc1215FilesChanged": "{count, plural, =1{1 file changed} other{{count} files changed}}",
+  "@tc1215FilesChanged": {"placeholders": {"count": {"type": "int"}}}
 }

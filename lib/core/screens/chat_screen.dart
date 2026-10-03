@@ -174,7 +174,9 @@ import '../widgets/generated_image_card.dart';
 import '../widgets/generated_video_card.dart';
 import '../widgets/generated_artifact_viewer.dart';
 import '../widgets/callout_card.dart';
+import '../utils/unified_diff.dart';
 import '../widgets/chat_event_cards.dart';
+import '../widgets/chat/tool_output_cards.dart';
 import '../widgets/chat_control_sheet.dart';
 import '../widgets/hermes_drawer.dart';
 import '../widgets/hermes_bot_face.dart';
@@ -16042,6 +16044,11 @@ class _ChatScreenState extends State<ChatScreen>
               splitReasoning(rawContent).answer,
             ).body
           : null,
+      showChangedFiles:
+          role == 'assistant' &&
+          !isStreaming &&
+          !isPipeline &&
+          _isLatestAssistant(msg),
     );
   }
 
@@ -17704,6 +17711,7 @@ class _MessageBubble extends StatelessWidget {
   final ChatPerformanceProbe? performanceProbe;
   final ToolOutputLookup? toolOutputs;
   final String Function()? latestReplyText;
+  final bool showChangedFiles;
 
   const _MessageBubble({
     required this.content,
@@ -17738,6 +17746,7 @@ class _MessageBubble extends StatelessWidget {
     this.performanceProbe,
     this.toolOutputs,
     this.latestReplyText,
+    this.showChangedFiles = false,
   });
 
   @override
@@ -17781,6 +17790,7 @@ class _MessageBubble extends StatelessWidget {
             performanceProbe: performanceProbe,
             toolOutputs: toolOutputs,
             latestReplyText: latestReplyText,
+            showChangedFiles: showChangedFiles,
           );
   }
 }
@@ -19163,6 +19173,10 @@ class _AssistantMessage extends StatelessWidget {
   /// (Desktop «copy message» vs «copy full response»). Read at copy time.
   final String Function()? latestReplyText;
 
+  /// Close the turn with its «N files changed» card (Desktop shows it only
+  /// on the newest settled reply).
+  final bool showChangedFiles;
+
   const _AssistantMessage({
     required this.content,
     required this.linkCache,
@@ -19187,6 +19201,7 @@ class _AssistantMessage extends StatelessWidget {
     this.performanceProbe,
     this.toolOutputs,
     this.latestReplyText,
+    this.showChangedFiles = false,
   });
 
   static final RegExp _markdownSyntax = RegExp(r'[`*#\[_|>~]');
@@ -19280,6 +19295,10 @@ class _AssistantMessage extends StatelessWidget {
           TraceOutcome.recovered => HermesSparkMood.success,
         };
     final headerAnimated = isStreaming || metadata['_pipeline'] == true;
+    final changedFiles =
+        showChangedFiles && showFooter && !headerAnimated && !stopped
+        ? aggregateChangedFiles(activityEvents.map((event) => event.output))
+        : const <FileDiff>[];
     final showTrace = showHeader && (activityEvents.isNotEmpty || stopped);
     final structuredImages = _structuredGeneratedImages(metadata);
     final structuredVideos = _structuredGeneratedVideos(metadata);
@@ -19575,6 +19594,7 @@ class _AssistantMessage extends StatelessWidget {
         if (showHeader && metaLines.isNotEmpty)
           _MetaBlock(lines: metaLines, onDark: false),
         if (answer.isNotEmpty) ...answerWidgets(),
+        if (changedFiles.isNotEmpty) ChangedFilesCard(files: changedFiles),
         if (showFooter && technicalDetails.isNotEmpty)
           _AssistantTechnicalDetails(details: technicalDetails),
         if (showFooter && suggestionProjection.hasSuggestions)
