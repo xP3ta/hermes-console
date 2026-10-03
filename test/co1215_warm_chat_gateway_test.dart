@@ -285,6 +285,29 @@ void main() {
     });
   });
 
+  // External review of 9a52af1: a revision that lands while the chat is
+  // still attached must also keep that socket from being parked on release,
+  // or the reopen reuses it with the old credentials.
+  test('a credential revision while attached keeps that client from being '
+      'parked and reused', () {
+    fakeAsync((async) {
+      openConnected('conn', 'chat-a');
+      async.flushMicrotasks();
+
+      credentials.value += 1;
+      async.flushMicrotasks();
+      expect(created.single.closeCalls, 0, reason: 'the attached chat owns it');
+
+      service.release('conn', 'chat-a');
+      async.flushMicrotasks();
+      expect(service.warmGatewayCountForTesting, 0);
+      expect(created.single.closeCalls, 1);
+
+      attach('conn', 'chat-a');
+      expect(created, hasLength(2), reason: 'the old socket is not reused');
+    });
+  });
+
   test('forgetting a connection closes its parked clients', () {
     fakeAsync((async) {
       openConnected('conn', 'chat-a');

@@ -28715,7 +28715,21 @@ class ActiveChatService {
     _restoreObservedFirstTokenLatencies();
     unawaited(_drainPendingCancelledTurnCleanup());
     this.globalActivity.addListener(_onGlobalActivityChanged);
-    _connectionCredentialsRevision?.addListener(closeWarmGateways);
+    _connectionCredentialsRevision?.addListener(_onCredentialsRevision);
+  }
+
+  /// co1215: counts [_connectionCredentialsRevision] bumps. Every client this
+  /// registry creates records the epoch it was authenticated in; one created
+  /// before a later bump is closed instead of being parked, so a socket still
+  /// attached while the credentials rotate never reaches a reopened chat.
+  int _credentialsEpoch = 0;
+  final Expando<int> _gatewayCredentialsEpoch = Expando<int>(
+    'co1215 chat gateway credentials epoch',
+  );
+
+  void _onCredentialsRevision() {
+    _credentialsEpoch += 1;
+    closeWarmGateways();
   }
 
   /// co1215: bumps on every material connection change, including Dashboard
@@ -28854,7 +28868,10 @@ class ActiveChatService {
                   connection.onDeviceLoopback)
         ? TuiGatewayClient(connection)
         : null;
-    if (gateway != null) _registryOwnedGateways[gateway] = true;
+    if (gateway != null) {
+      _registryOwnedGateways[gateway] = true;
+      _gatewayCredentialsEpoch[gateway] = _credentialsEpoch;
+    }
     return gateway;
   }
 
@@ -28862,6 +28879,8 @@ class ActiveChatService {
     if (_disposed) return;
     final current = chat._desktopGateway;
     if (current == null || _registryOwnedGateways[current] != true) return;
+    // Authenticated before a credential revision: the chat closes it.
+    if (_gatewayCredentialsEpoch[current] != _credentialsEpoch) return;
     final gateway = chat._handOffConnectedDesktopGateway();
     if (gateway == null) return;
     _warmGateways.remove(key)?.close();
@@ -30529,7 +30548,7 @@ class ActiveChatService {
       chat.dispose();
     }
     _chats.clear();
-    _connectionCredentialsRevision?.removeListener(closeWarmGateways);
+    _connectionCredentialsRevision?.removeListener(_onCredentialsRevision);
     closeWarmGateways();
     _reopenTranscriptCache.clear();
     _reopenTranscriptCacheBytes = 0;
