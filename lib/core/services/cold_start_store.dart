@@ -17,6 +17,10 @@ abstract interface class ColdStartStorage {
   Future<void> delete(String key);
 
   /// Every key in the store, so cleanup can sweep blobs the index lost.
+  ///
+  /// Expensive in production: `flutter_secure_storage` has no key-only
+  /// listing, so this decrypts every entry. Call it only from explicit
+  /// cleanup (forget/clear), never from load, save or startup paths.
   Future<Iterable<String>> keys();
 }
 
@@ -37,6 +41,8 @@ final class SecureColdStartStorage implements ColdStartStorage {
   @override
   Future<void> delete(String key) => _secure.delete(key: key);
 
+  /// `readAll()` is the only listing the plugin offers (it decrypts every
+  /// value); see [ColdStartStorage.keys] for where it may be called.
   @override
   Future<Iterable<String>> keys() async => (await _secure.readAll()).keys;
 }
@@ -437,12 +443,24 @@ class ColdStartStore {
     if (changed) await _saveIndex(index);
   }
 
-  /// Deletes every tail blob the index does not reference. Such a blob is
-  /// unreachable (corrupt index, older crash) and must not outlive a
-  /// cleanup.
-  Future<void> _sweepUnindexedTails(_ColdStartIndex index) async {
+  /// Deletes every tail blob of the cleaned scope that the index does not
+  /// reference. Such a blob is unreachable (corrupt index, older crash) and
+  /// must not outlive a cleanup. The scope comes from the key itself
+  /// ([tailKey] encodes connection and profile), never from the index: with
+  /// a corrupt index every tail looks unindexed, and forgetting one
+  /// connection must not delete another connection's tails. A null
+  /// [connectionId] sweeps every scope (only [clearAll]).
+  Future<void> _sweepUnindexedTails(
+    _ColdStartIndex index, {
+    String? connectionId,
+    String? owner,
+  }) async {
+    final scope = connectionId == null
+        ? _tailPrefix
+        : '$_tailPrefix${_hex(connectionId)}.'
+              '${owner == null ? '' : '${_hex(owner)}.'}';
     for (final key in (await _storage.keys()).toList()) {
-      if (!key.startsWith(_tailPrefix) || index.tails.containsKey(key)) {
+      if (!key.startsWith(scope) || index.tails.containsKey(key)) {
         continue;
       }
       _written.remove(key);
@@ -477,7 +495,7 @@ class ColdStartStore {
     if (routeGone) index.routes.remove(connectionId);
     await _deleteTails(index, keys);
     if (routeGone && keys.isEmpty) await _saveIndex(index);
-    await _sweepUnindexedTails(index);
+    await _sweepUnindexedTails(index, connectionId: connectionId, owner: owner);
   });
 
   /// Connection deleted, a profile's local history cleared, or credentials
@@ -498,7 +516,11 @@ class ColdStartStore {
         if (routeGone) index.routes.remove(connectionId);
         await _deleteTails(index, keys);
         if (routeGone && keys.isEmpty) await _saveIndex(index);
-        await _sweepUnindexedTails(index);
+        await _sweepUnindexedTails(
+          index,
+          connectionId: connectionId,
+          owner: owner,
+        );
       });
 
   /// Removes everything this store ever wrote.

@@ -339,16 +339,53 @@ void main() {
         expect(storage.values, isEmpty);
       });
 
+      // Tail keys encode connection and profile, so with the index gone the
+      // sweep still knows which blobs belong to the forgotten scope. Another
+      // connection's (or profile's) private tails must survive it.
+      Set<String> tailsOf(MemoryColdStartStorage storage, String conn) {
+        final probe = ColdStartStore.tailKey(conn, 'default', 'x');
+        final scope = probe.substring(0, probe.lastIndexOf('.') + 1);
+        return {
+          for (final key in storage.values.keys)
+            if (key.startsWith(scope)) key,
+        };
+      }
+
       test('forgetScope', () async {
         final storage = await corrupted();
         await ColdStartStore(storage: storage).forgetScope('c1');
-        expect(
-          storage.values.keys.where(
-            (k) => k.startsWith(ColdStartStore.tailKey('c1', 'default', 'a')),
-          ),
-          isEmpty,
+        expect(tailsOf(storage, 'c1'), isEmpty);
+        expect(tailsOf(storage, 'c2'), {
+          ColdStartStore.tailKey('c2', 'default', 'b'),
+        });
+      });
+
+      test('forgetScope of one profile keeps the other profile', () async {
+        final storage = MemoryColdStartStorage();
+        final store = ColdStartStore(storage: storage);
+        await save(store, 'a', conn: 'c1');
+        await store.saveTail(
+          connectionId: 'c1',
+          profile: 'work',
+          storedSessionId: 'w',
+          routeSessionId: 'route-w',
+          aliases: {'w', 'route-w'},
+          newestFirst: _rows('w', 2),
         );
-        expect(_unindexedTails(storage), isEmpty);
+        storage.values[ColdStartStore.indexKey] = '{corrupt';
+        await ColdStartStore(
+          storage: storage,
+        ).forgetScope('c1', profile: 'default');
+        expect(
+          storage.values.containsKey(
+            ColdStartStore.tailKey('c1', 'default', 'a'),
+          ),
+          isFalse,
+        );
+        expect(
+          storage.values.containsKey(ColdStartStore.tailKey('c1', 'work', 'w')),
+          isTrue,
+        );
       });
 
       test('forgetSession', () async {
@@ -358,13 +395,10 @@ void main() {
           profile: 'default',
           sessionId: 'route-a',
         );
-        expect(
-          storage.values.containsKey(
-            ColdStartStore.tailKey('c1', 'default', 'a'),
-          ),
-          isFalse,
-        );
-        expect(_unindexedTails(storage), isEmpty);
+        expect(tailsOf(storage, 'c1'), isEmpty);
+        expect(tailsOf(storage, 'c2'), {
+          ColdStartStore.tailKey('c2', 'default', 'b'),
+        });
       });
     });
   });
