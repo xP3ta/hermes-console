@@ -15,6 +15,10 @@ class ChatDraft {
   final String text;
   final List<AttachmentDraft> attachments;
   final String? preparedTurnClientTurnId;
+
+  /// Leading part of [text] that is the bound send's own text; the rest was
+  /// typed after it and is never part of that send. Null: all of [text].
+  final String? preparedTurnText;
   final String? replyThreadId;
 
   /// Turno ya persistido en la outbox cuyo lote es exactamente este borrador.
@@ -26,6 +30,7 @@ class ChatDraft {
     required this.text,
     required this.attachments,
     this.preparedTurnClientTurnId,
+    this.preparedTurnText,
     this.replyThreadId,
     this.submittedTurnClientTurnId,
   });
@@ -215,6 +220,9 @@ class ChatDraftStore {
         preparedTurnClientTurnId: _safeOpaqueIdentity(
           data['preparedTurnClientTurnId'],
         ),
+        preparedTurnText: data['preparedTurnText'] is String
+            ? data['preparedTurnText'] as String
+            : null,
         submittedTurnClientTurnId: _safeOpaqueIdentity(
           data['submittedTurnClientTurnId'],
         ),
@@ -317,6 +325,7 @@ class ChatDraftStore {
     List<AttachmentDraft> attachments, {
     String profile = 'default',
     String? preparedTurnClientTurnId,
+    String? preparedTurnText,
     String? replyThreadId,
     String? submittedTurnClientTurnId,
     LocalConversationLifecycle? lifecycle,
@@ -332,6 +341,7 @@ class ChatDraftStore {
       attachments,
       profile: owner,
       preparedTurnClientTurnId: preparedTurnClientTurnId,
+      preparedTurnText: preparedTurnText,
       replyThreadId: replyThreadId,
       submittedTurnClientTurnId: submittedTurnClientTurnId,
       lifecycle: lifecycle,
@@ -359,6 +369,7 @@ class ChatDraftStore {
     List<AttachmentDraft> attachments, {
     String profile = 'default',
     String? preparedTurnClientTurnId,
+    String? preparedTurnText,
     String? replyThreadId,
     String? submittedTurnClientTurnId,
     LocalConversationLifecycle? lifecycle,
@@ -455,6 +466,8 @@ class ChatDraftStore {
               'text': text,
               'replyThreadId': ?_safeOpaqueIdentity(replyThreadId),
               'preparedTurnClientTurnId': ?safePreparedTurnId,
+              if (safePreparedTurnId != null)
+                'preparedTurnText': ?preparedTurnText,
               'submittedTurnClientTurnId': ?_safeOpaqueIdentity(
                 submittedTurnClientTurnId,
               ),
@@ -553,6 +566,38 @@ class ChatDraftStore {
                 stored.submittedTurnClientTurnId !=
                     onlySubmittedTurnClientTurnId)) {
           return;
+        }
+        // Text typed after the bound send is not part of it: retire only
+        // the send's own text and keep the rest as an ordinary draft.
+        final sendText = stored.preparedTurnText;
+        if (onlyPreparedTurnClientTurnId != null &&
+            sendText != null &&
+            stored.text.length > sendText.length &&
+            stored.text.startsWith(sendText)) {
+          final rest = stored.text.substring(sendText.length);
+          final kept = rest.startsWith('\n') ? rest.substring(1) : rest;
+          if (kept.trim().isNotEmpty) {
+            final encoded = jsonEncode({
+              'savedAt': DateTime.now().millisecondsSinceEpoch,
+              'text': kept,
+              'attachments': stored.attachments
+                  .map((item) => item.toJson())
+                  .toList(),
+            });
+            final committed = await LocalConversationCleanupFence.commitEffect(
+              operation: journalOperation,
+              resource: resource,
+              mutation: () => _secure.write(key: key, value: encoded),
+            );
+            if (committed) {
+              _changes.add((
+                connectionId: connectionId,
+                profile: owner,
+                sessionId: sessionId,
+              ));
+            }
+            return;
+          }
         }
       }
       await _clearUnlocked(

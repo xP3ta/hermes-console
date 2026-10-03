@@ -31,11 +31,52 @@ import 'room_widgets.dart';
 /// encrypted `ChatDraftStore`).
 abstract interface class RoomDraftStore {
   /// [preparedId] is set while the stored text is a send still waiting for
-  /// the server's acknowledgement.
-  Future<({String text, String? threadId, String? preparedId})> load();
-  Future<void> save(String text, {String? threadId, String? preparedId});
+  /// the server's acknowledgement; [preparedText] is the leading part of the
+  /// text that is that send (null: all of it).
+  Future<RoomDraft> load();
+  Future<void> save(
+    String text, {
+    String? threadId,
+    String? preparedId,
+    String? preparedText,
+  });
+
+  /// Retires the send [preparedId]: only its own text, never what was typed
+  /// after it.
   Future<void> clear({required String preparedId});
 }
+
+typedef RoomDraft = ({
+  String text,
+  String? threadId,
+  String? preparedId,
+  String? preparedText,
+});
+
+/// A stored draft bound to a send: [sent] is that send's own text, the
+/// leading part of [text]; whatever follows it was typed later.
+typedef _HeldDraft = ({
+  String text,
+  String sent,
+  String? threadId,
+  String preparedId,
+});
+
+/// The part of [held] typed after its send, without the separator.
+String _typedAfterSend(_HeldDraft held) {
+  if (held.text.length <= held.sent.length ||
+      !held.text.startsWith(held.sent)) {
+    return '';
+  }
+  final rest = held.text.substring(held.sent.length);
+  return rest.startsWith('\n') ? rest.substring(1) : rest;
+}
+
+String _joinDraft(String a, String b) => a.trim().isEmpty
+    ? b
+    : b.trim().isEmpty
+    ? a
+    : '$a\n$b';
 
 /// The hosted Room screen (spec 070 S3): group-chat layout, round panel,
 /// approvals/retry/stop, activity, shared composer and attachments.
@@ -174,7 +215,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   /// A stored draft bound to a send attempt, kept out of the composer until
   /// the room proves whether that send landed: a sent text must never come
   /// back as a draft, and an unsent one must never be lost.
-  ({String text, String? threadId, String preparedId})? _heldDraft;
+  _HeldDraft? _heldDraft;
 
   /// Composer text typed while [_heldDraft] was unresolved and the screen
   /// closed; written once the held draft is settled.
@@ -382,6 +423,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       if (prepared != null && draft.text.isNotEmpty) {
         _heldDraft = (
           text: draft.text,
+          sent: draft.preparedText ?? draft.text,
           threadId: draft.threadId,
           preparedId: prepared,
         );
@@ -458,9 +500,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
 
   /// The room closed and could not be read: keep what was typed next to the
   /// still-unproven send, bound to it, so the next visit decides both.
-  void _keepTypedWithHeldDraft(
-    ({String text, String? threadId, String preparedId}) held,
-  ) {
+  void _keepTypedWithHeldDraft(_HeldDraft held) {
     final typed = _typedWhileHeld;
     final store = widget.drafts;
     if (!identical(_heldDraft, held) ||
@@ -470,12 +510,15 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       return;
     }
     _heldDraft = null;
+    // Still bound to the unproven send, which is only the leading part: if
+    // the send turns out to have landed, the text typed after it stays.
     unawaited(
       store
           .save(
             '${held.text}\n$typed',
             threadId: held.threadId,
             preparedId: held.preparedId,
+            preparedText: held.sent,
           )
           .then<void>((_) {}, onError: (Object _) {}),
     );
@@ -492,28 +535,38 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     );
   }
 
-  void _resolveHeldDraft(
-    ({String text, String? threadId, String preparedId}) held, {
-    required bool published,
-  }) {
+  void _resolveHeldDraft(_HeldDraft held, {required bool published}) {
     if (!identical(_heldDraft, held)) return;
     _heldDraft = null;
     final store = widget.drafts;
     if (store == null) return;
     if (published) {
+      // Only the send landed; text typed after it on an earlier visit is
+      // still unsent and stays a draft.
+      final earlier = _typedAfterSend(held);
       unawaited(
         store
             .clear(preparedId: held.preparedId)
             .then<void>((_) {}, onError: (Object _) {}),
       );
       if (mounted) {
+        if (earlier.trim().isNotEmpty) {
+          final typed = _draftDirty ? _composer.text : '';
+          _restoringDraft = true;
+          _composer.text = _joinDraft(earlier, typed);
+          _restoringDraft = false;
+          _draftDirty = true;
+        }
         _flushDraft();
-      } else if (_typedWhileHeld case final typed?) {
-        unawaited(
-          store
-              .save(typed, threadId: _threadId)
-              .then<void>((_) {}, onError: (Object _) {}),
-        );
+      } else {
+        final kept = _joinDraft(earlier, _typedWhileHeld ?? '');
+        if (kept.trim().isNotEmpty) {
+          unawaited(
+            store
+                .save(kept, threadId: _threadId)
+                .then<void>((_) {}, onError: (Object _) {}),
+          );
+        }
       }
       return;
     }

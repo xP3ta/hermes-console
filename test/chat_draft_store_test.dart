@@ -102,6 +102,30 @@ void main() {
     expect((await rooms.load()).text, 'newer');
   });
 
+  test('retiring a room send keeps the text typed after it', () async {
+    final rooms = ChatDraftRoomStore(
+      store: ChatDraftStore(await SharedPreferences.getInstance()),
+      connectionId: 'conn-room',
+      profile: 'default',
+      sessionId: 'mob-room-typed-after',
+    );
+    await rooms.save(
+      'sent text\ntyped later',
+      preparedId: 'attempt-1',
+      preparedText: 'sent text',
+    );
+    await rooms.clear(preparedId: 'attempt-1');
+    final draft = await rooms.load();
+    expect(draft.text, 'typed later');
+    expect(draft.preparedId, isNull);
+    expect(draft.preparedText, isNull);
+
+    // Control: a draft that is only the send is retired whole.
+    await rooms.save('only sent', preparedId: 'attempt-2');
+    await rooms.clear(preparedId: 'attempt-2');
+    expect((await rooms.load()).text, isEmpty);
+  });
+
   test(
     'load waits for a save admitted before its persistence dependency',
     () async {

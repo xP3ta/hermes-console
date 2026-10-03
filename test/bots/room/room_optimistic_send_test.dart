@@ -112,14 +112,19 @@ final class _RecordingDrafts implements RoomDraftStore {
   _RecordingDrafts({this.storedText = '', this.storedPreparedId});
 
   @override
-  Future<({String text, String? threadId, String? preparedId})> load() async =>
-      (text: storedText, threadId: null, preparedId: storedPreparedId);
+  Future<RoomDraft> load() async => (
+    text: storedText,
+    threadId: null,
+    preparedId: storedPreparedId,
+    preparedText: null,
+  );
 
   @override
   Future<void> save(
     String text, {
     String? threadId,
     String? preparedId,
+    String? preparedText,
   }) async => calls.add('save:$text:${preparedId ?? '-'}');
 
   @override
@@ -205,26 +210,39 @@ Future<void> _tapSend(WidgetTester tester) async {
 
 /// One stored room draft slot, like `ChatDraftStore` behind
 /// `ChatDraftRoomStore`: a save replaces it, a clear only retires the draft
-/// still bound to the acknowledged attempt.
+/// still bound to the acknowledged attempt. It retires the whole slot, so a
+/// test never relies on the store keeping text typed after the send.
 final class _MemoryDrafts implements RoomDraftStore {
   String text;
   String? threadId;
   String? preparedId;
+  String? preparedText;
 
   _MemoryDrafts({this.text = '', this.preparedId});
 
   @override
-  Future<({String text, String? threadId, String? preparedId})> load() async {
+  Future<RoomDraft> load() async {
     await Future<void>.value();
-    return (text: text, threadId: threadId, preparedId: preparedId);
+    return (
+      text: text,
+      threadId: threadId,
+      preparedId: preparedId,
+      preparedText: preparedText,
+    );
   }
 
   @override
-  Future<void> save(String text, {String? threadId, String? preparedId}) async {
+  Future<void> save(
+    String text, {
+    String? threadId,
+    String? preparedId,
+    String? preparedText,
+  }) async {
     await Future<void>.value();
     this.text = text;
     this.threadId = threadId;
     this.preparedId = preparedId;
+    this.preparedText = preparedId == null ? null : preparedText;
   }
 
   @override
@@ -234,6 +252,7 @@ final class _MemoryDrafts implements RoomDraftStore {
     text = '';
     threadId = null;
     this.preparedId = null;
+    preparedText = null;
   }
 }
 
@@ -763,6 +782,68 @@ void main() {
       expect(drafts.text, contains('unproven send'));
       expect(drafts.text, contains('typed offline'));
       expect(drafts.preparedId, 'prepared-offline');
+    });
+
+    testWidgets('text typed offline next to a send that did land survives '
+        'the next visit', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      const id = 'prepared-landed-offline';
+      final (:gateway, :snapshot) = _staleRoom();
+      gateway.failRead = true;
+      final drafts = _MemoryDrafts(text: 'landed send', preparedId: id);
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      await tester.enterText(_field, 'typed offline');
+      await _leaveRoom(tester);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      expect(drafts.preparedId, id, reason: 'still unproven, still bound');
+
+      // Back online: the room now shows that the held send did land.
+      gateway.failRead = false;
+      final ev = EventSeq()..seq = snapshot.latestSeq;
+      gateway.events.add(
+        ev.user('landed send')
+          ..['event_id'] = TuiGatewayClient.durableGroupEventId(id),
+      );
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      expect(_composerText(tester), 'typed offline');
+      await _leaveRoom(tester);
+      await tester.pump();
+      expect(drafts.text, 'typed offline');
+      expect(drafts.preparedId, isNull);
+    });
+
+    testWidgets('text typed offline next to a send that never landed comes '
+        'back with it on the next visit', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final (:gateway, :snapshot) = _staleRoom();
+      gateway.failRead = true;
+      final drafts = _MemoryDrafts(
+        text: 'lost send',
+        preparedId: 'prepared-lost-offline',
+      );
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      await tester.enterText(_field, 'typed offline');
+      await _leaveRoom(tester);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+
+      gateway.failRead = false;
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      expect(_composerText(tester), 'lost send\ntyped offline');
+      expect(gateway.sends, isEmpty);
     });
 
     testWidgets('a send readback settles a held draft the room refresh '
