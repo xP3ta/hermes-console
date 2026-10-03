@@ -1035,6 +1035,51 @@ void main() {
     expect(jsonDecode(pinRequest!.body), {'pinned': true, 'profile': 'coding'});
   });
 
+  test('session state PATCH carries the profile and reports the server '
+      'refusal status', () async {
+    final requests = <http.Request>[];
+    final dashboardHttp = MockClient((request) async {
+      requests.add(request);
+      if (requests.length == 2) return http.Response('{"detail":"x"}', 400);
+      return http.Response(
+        jsonEncode({'ok': true, 'title': 'T', 'hidden': true}),
+        200,
+      );
+    });
+    final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+    final dashboard = _dashboard(dashboardHttp);
+    final gateway = _gateway(gatewayHttp);
+    final repository = SessionRepository(dashboard, gateway);
+    addTearDown(() {
+      repository.close();
+      dashboard.close();
+      gateway.close();
+    });
+
+    final answer = await repository.patchSessionState('tip/branch', {
+      'hidden': true,
+    }, 'coding');
+    expect(answer['hidden'], isTrue);
+    expect(requests.single.method, 'PATCH');
+    expect(
+      requests.single.url.toString(),
+      contains('/api/sessions/tip%2Fbranch'),
+    );
+    expect(jsonDecode(requests.single.body), {
+      'hidden': true,
+      'profile': 'coding',
+    });
+
+    Object? failure;
+    try {
+      await repository.patchSessionState('s', {'unread': true}, null);
+    } catch (error) {
+      failure = error;
+    }
+    expect(dashboardHttpStatusOf(failure!), 400);
+    expect(jsonDecode(requests.last.body), {'unread': true});
+  });
+
   test(
     'Gateway limitado conserva filas observadas en refresh del mismo scope',
     () async {
