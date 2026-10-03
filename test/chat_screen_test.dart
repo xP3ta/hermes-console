@@ -78,6 +78,7 @@ import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/core/screens/lock_screen.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
+import 'package:hermes_android/core/services/session_archive.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
 import 'package:hermes_android/core/navigation/chat_route.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -14396,6 +14397,72 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('a confirmed delete from the chat menu reaches the shared '
+      'store every list filters with', (tester) async {
+    await pumpChat(tester);
+    final deletes = <String>[];
+    final server = MockClient((request) async {
+      if (request.method == 'DELETE') {
+        deletes.add(request.url.pathSegments.last);
+        return http.Response('{"deleted": true}', 200);
+      }
+      if (request.url.path.endsWith('/sessions')) {
+        return http.Response(
+          jsonEncode({
+            'object': 'list',
+            'data': [
+              {
+                'id': 'sess-test',
+                'title': 'Conversación de prueba',
+                'source': 'mobile',
+                'message_count': 2,
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      return http.Response('not found', 404);
+    });
+
+    await http.runWithClient(() async {
+      await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('chat-control-delete')),
+        260,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('chat-control-sheet')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.tap(find.byKey(const ValueKey('chat-control-delete')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      final dialogActions = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextButton),
+      );
+      await tester.tap(dialogActions.last);
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }, () => server);
+
+    expect(deletes, ['sess-test']);
+    final prefs = await SharedPreferences.getInstance();
+    final shared = await SessionArchive.load(prefs, 'conn-test');
+    // What Home, Conversations and the drawer filter with: the row is gone
+    // from every list without waiting for their next network read.
+    expect(shared.isSessionDeleted(_session()), isTrue);
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byType(ChatScreen), findsNothing);
+  });
 
   testWidgets('/compact queda local, explica /compress y no toca el agente', (
     tester,
