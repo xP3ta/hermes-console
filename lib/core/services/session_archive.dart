@@ -36,7 +36,11 @@ class SessionArchive extends ChangeNotifier {
   static const _titlePrefix = 'session_titles_';
   static const _deletedPrefix = 'deleted_sessions_';
 
-  /// Bound on remembered server-confirmed deletions per connection.
+  /// Soft bound on remembered server-confirmed deletions per connection.
+  ///
+  /// Above it only tombstones no list read can still need are dropped (see
+  /// [beginListRead]); one that a stale page could still carry is never
+  /// evicted, whatever the count.
   static const maxDeletedTombstones = 200;
 
   final SharedPreferences _prefs;
@@ -51,6 +55,14 @@ class SessionArchive extends ChangeNotifier {
   /// Server-confirmed deletions: physical session id -> activity watermark
   /// (seconds). See [markSessionDeleted].
   Map<String, double> _deleted = {};
+
+  /// List reads of this process that have not finished (see
+  /// [beginListRead]), and for each tombstone of this process the last read
+  /// that had started when it was recorded. Not persisted: no read of an
+  /// earlier process can still answer.
+  int _listReadSeq = 0;
+  final Set<int> _openListReads = {};
+  final Map<String, int> _deletedAfterRead = {};
 
   int _revision = 0;
 
@@ -263,15 +275,54 @@ class SessionArchive extends ChangeNotifier {
       if (id.isEmpty) continue;
       final previous = _deleted[id];
       if (previous == null || previous < watermark) _deleted[id] = watermark;
+      _deletedAfterRead[id] = _listReadSeq;
     }
-    if (_deleted.length > maxDeletedTombstones) {
-      final oldest = _deleted.entries.toList()
-        ..sort((a, b) => a.value.compareTo(b.value));
-      for (final entry in oldest.take(_deleted.length - maxDeletedTombstones)) {
-        _deleted.remove(entry.key);
-      }
-    }
+    _evictUnneededTombstones();
     return _flush();
+  }
+
+  /// Starts a session list read (a page or walk of `/api/sessions`) whose
+  /// rows will be stored or painted. Call [SessionListRead.end] once its
+  /// result has been applied, or abandoned.
+  ///
+  /// Screens drop a deleted row from what they retain at once and filter
+  /// every later result with the tombstones, so once every read that had
+  /// started before a deletion has ended, nothing can carry the row again:
+  /// later reads come from the server, which no longer has it. Only then
+  /// may the tombstone go. A plain oldest-first cap would let a read still
+  /// in flight (or a page it retained) resurrect the evicted row.
+  SessionListRead beginListRead() {
+    final id = ++_listReadSeq;
+    _openListReads.add(id);
+    return SessionListRead._(this, id);
+  }
+
+  void _endListRead(int id) {
+    if (!_openListReads.remove(id)) return;
+    if (_evictUnneededTombstones()) unawaited(_flush());
+  }
+
+  /// A tombstone is still needed while a list read that began before it was
+  /// recorded is open.
+  bool _tombstoneNeeded(String id) {
+    final lastReadBefore = _deletedAfterRead[id];
+    if (lastReadBefore == null) return false;
+    return _openListReads.any((read) => read <= lastReadBefore);
+  }
+
+  /// Keeps the store within [maxDeletedTombstones] by dropping, oldest
+  /// first, only tombstones no read can still need. Returns whether any went.
+  bool _evictUnneededTombstones() {
+    final excess = _deleted.length - maxDeletedTombstones;
+    if (excess <= 0) return false;
+    final evictable =
+        _deleted.entries.where((e) => !_tombstoneNeeded(e.key)).toList()
+          ..sort((a, b) => a.value.compareTo(b.value));
+    for (final entry in evictable.take(excess)) {
+      _deleted.remove(entry.key);
+      _deletedAfterRead.remove(entry.key);
+    }
+    return evictable.isNotEmpty;
   }
 
   /// Session timestamps arrive in seconds or milliseconds.
@@ -659,4 +710,15 @@ final class _AcknowledgedPinWrite {
 
   _AcknowledgedPinWrite confirmedCopy() =>
       _AcknowledgedPinWrite(revision, pinned, confirmed: true);
+}
+
+/// An open session list read; see [SessionArchive.beginListRead].
+final class SessionListRead {
+  SessionListRead._(this._archive, this._id);
+
+  final SessionArchive _archive;
+  final int _id;
+
+  /// Idempotent.
+  void end() => _archive._endListRead(_id);
 }

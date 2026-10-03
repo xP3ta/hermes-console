@@ -11,7 +11,9 @@ import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
 import 'package:hermes_android/core/screens/session_detail_screen.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/models/core_read.dart';
 import 'package:hermes_android/core/services/session_archive.dart';
+import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/session_repository.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_drawer.dart';
@@ -49,6 +51,7 @@ class _HomeClient extends ApiClient {
   List<Session> sessions;
   int sessionReads = 0;
   Completer<void>? hold;
+  bool fail = false;
 
   @override
   Future<bool> healthCheck() async => true;
@@ -68,6 +71,7 @@ class _HomeClient extends ApiClient {
     final snapshot = List<Session>.of(sessions);
     final gate = hold;
     if (gate != null) await gate.future;
+    if (fail) throw const CoreReadException(CoreReadErrorKind.malformed);
     return snapshot;
   }
 
@@ -188,36 +192,68 @@ void main() {
       );
     });
 
-    test('tombstones are bounded and survive a preference re-read', () async {
-      final prefs = await SharedPreferences.getInstance();
-      final store = await SessionArchive.load(prefs, 'conn-a');
-      for (var i = 0; i <= SessionArchive.maxDeletedTombstones; i++) {
+    test(
+      'eviction never drops a tombstone a read in flight still needs',
+      () async {
+        final prefs = await SharedPreferences.getInstance();
+        final store = await SessionArchive.load(prefs, 'conn-a');
+        const max = SessionArchive.maxDeletedTombstones;
+        Session row(int i) => _session('s$i', title: 'S', activity: 1000.0 + i);
+
+        // A page request leaves before the deletes and answers after them.
+        final late = store.beginListRead();
+        for (var i = 0; i <= max; i++) {
+          await store.markSessionDeleted(
+            row(i),
+            now: DateTime.fromMillisecondsSinceEpoch(0),
+          );
+        }
+        // Its page still carries the earliest deleted row: it stays hidden.
+        expect(store.isSessionDeleted(row(0)), isTrue);
+        expect(
+          prefs.getStringList('deleted_sessions_conn-a'),
+          hasLength(max + 1),
+        );
+        final reread = await SessionArchive.load(prefs, 'conn-a');
+        expect(reread.isSessionDeleted(row(0)), isTrue);
+
+        // Its result applied, no read can carry the rows any more: the store
+        // goes back within its bound, oldest first.
+        late.end();
+        await Future<void>.delayed(Duration.zero);
+        expect(prefs.getStringList('deleted_sessions_conn-a'), hasLength(max));
+        expect(store.isSessionDeleted(row(0)), isFalse);
+        expect(store.isSessionDeleted(row(max)), isTrue);
+        late.end(); // idempotent
+      },
+    );
+
+    test(
+      'a read that starts after a delete does not hold its tombstone',
+      () async {
+        final prefs = await SharedPreferences.getInstance();
+        final store = await SessionArchive.load(prefs, 'conn-a');
+        const max = SessionArchive.maxDeletedTombstones;
+        Session row(int i) => _session('s$i', title: 'S', activity: 1000.0 + i);
         await store.markSessionDeleted(
-          _session('s$i', title: 'S', activity: 1000.0 + i),
+          row(0),
           now: DateTime.fromMillisecondsSinceEpoch(0),
         );
-      }
-      expect(
-        prefs.getStringList('deleted_sessions_conn-a'),
-        hasLength(SessionArchive.maxDeletedTombstones),
-      );
-      // The oldest watermark was dropped, the newest kept.
-      expect(
-        store.isSessionDeleted(_session('s0', title: 'S', activity: 1000)),
-        isFalse,
-      );
-      final reread = await SessionArchive.load(prefs, 'conn-a');
-      expect(
-        reread.isSessionDeleted(
-          _session(
-            's${SessionArchive.maxDeletedTombstones}',
-            title: 'S',
-            activity: 1000.0 + SessionArchive.maxDeletedTombstones,
-          ),
-        ),
-        isTrue,
-      );
-    });
+        // Started after s0's delete: the server already answers without it.
+        final fresh = store.beginListRead();
+        for (var i = 1; i <= max; i++) {
+          await store.markSessionDeleted(
+            row(i),
+            now: DateTime.fromMillisecondsSinceEpoch(0),
+          );
+        }
+        expect(prefs.getStringList('deleted_sessions_conn-a'), hasLength(max));
+        expect(store.isSessionDeleted(row(0)), isFalse);
+        // The rows deleted while it was open are kept for it.
+        expect(store.isSessionDeleted(row(1)), isTrue);
+        fresh.end();
+      },
+    );
 
     test('a cold start reads the tombstone back from storage', () async {
       final prefs = await SharedPreferences.getInstance();
@@ -344,6 +380,93 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
       }
 
+      expect(find.text('Deleted in detail'), findsNothing);
+      expect(find.text('Kept row'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('a late page cannot bring back the earliest of many '
+        'deleted chats', (tester) async {
+      final (manager, connection) = await setUpManager();
+      final kept = _session('kept', title: 'Kept row');
+      final gone = _session('gone', title: 'Deleted in detail');
+      final client = _HomeClient([kept, gone]);
+      await pumpHome(tester, manager, client);
+
+      // A refresh leaves before the deletes and answers after them with the
+      // page it read then (still carrying the first deleted chat).
+      client.hold = Completer<void>();
+      historyCleanupInvalidations.publish(
+        connectionId: connection.id,
+        scope: HistoryCleanupScope.normalConversations,
+      );
+      await tester.pump();
+      final prefs = await SharedPreferences.getInstance();
+      final store = await SessionArchive.load(prefs, connection.id);
+      await tester.runAsync(() async {
+        await store.markSessionDeleted(gone);
+        // More confirmed deletes than the store's bound.
+        for (var i = 0; i < SessionArchive.maxDeletedTombstones; i++) {
+          await store.markSessionDeleted(_session('other-$i', title: 'O'));
+        }
+      });
+      await tester.pump();
+      expect(find.text('Deleted in detail'), findsNothing);
+
+      client.hold!.complete();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Deleted in detail'), findsNothing);
+      expect(find.text('Kept row'), findsOneWidget);
+
+      // A later refresh that fails keeps Home's retained page: the deleted
+      // chat is not in it either.
+      client
+        ..hold = null
+        ..fail = true;
+      historyCleanupInvalidations.publish(
+        connectionId: connection.id,
+        scope: HistoryCleanupScope.normalConversations,
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Deleted in detail'), findsNothing);
+      expect(find.text('Kept row'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('Home\'s retained page cannot bring back the earliest of '
+        'many deleted chats', (tester) async {
+      final (manager, connection) = await setUpManager();
+      final kept = _session('kept', title: 'Kept row');
+      final gone = _session('gone', title: 'Deleted in detail');
+      final client = _HomeClient([kept, gone]);
+      await pumpHome(tester, manager, client);
+
+      // No read is in flight: the bound may drop tombstones right away.
+      final prefs = await SharedPreferences.getInstance();
+      final store = await SessionArchive.load(prefs, connection.id);
+      await tester.runAsync(() async {
+        await store.markSessionDeleted(gone);
+        for (var i = 0; i < SessionArchive.maxDeletedTombstones; i++) {
+          await store.markSessionDeleted(_session('other-$i', title: 'O'));
+        }
+      });
+      await tester.pump();
+      expect(store.isSessionDeleted(gone), isFalse, reason: 'evicted');
+
+      // Offline now: Home keeps painting the page it retained.
+      client.fail = true;
+      historyCleanupInvalidations.publish(
+        connectionId: connection.id,
+        scope: HistoryCleanupScope.normalConversations,
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('Deleted in detail'), findsNothing);
       expect(find.text('Kept row'), findsOneWidget);
 

@@ -442,8 +442,9 @@ class _SessionListScreenState extends State<SessionListScreen>
             session.source != 'mobile-draft' &&
             Session.profileOwner(session.profile) == owner,
       );
-      _sessions = mergeRemoteSessionsWithDrafts(visibleRemote, drafts)
-        ..sort(compareSessionsByRecentActivity);
+      _sessions = _withoutDeleted(
+        mergeRemoteSessionsWithDrafts(visibleRemote, drafts),
+      )..sort(compareSessionsByRecentActivity);
       _loading = false;
       _error = null;
     });
@@ -451,6 +452,21 @@ class _SessionListScreenState extends State<SessionListScreen>
 
   void _onArchiveChanged() {
     if (!mounted) return;
+    // A delete made on another screen leaves what this screen keeps (the
+    // repository page and search results), not only what it paints.
+    final archive = _archive;
+    if (archive != null) {
+      final deleted = <Session>[
+        ..._sessions.where(archive.isSessionDeleted),
+        ...?_searchResults?.where(archive.isSessionDeleted),
+      ];
+      if (deleted.isNotEmpty) {
+        _repository?.evictSessions(deleted);
+        _sessions = _withoutDeleted(_sessions);
+        final results = _searchResults;
+        if (results != null) _searchResults = _withoutDeleted(results);
+      }
+    }
     final phase = SchedulerBinding.instance.schedulerPhase;
     if (phase == SchedulerPhase.idle ||
         phase == SchedulerPhase.postFrameCallbacks) {
@@ -826,7 +842,9 @@ class _SessionListScreenState extends State<SessionListScreen>
     unawaited(_loadNextPage());
   }
 
-  Future<void> _loadNextPage() async {
+  Future<void> _loadNextPage() => _underListRead(_loadNextPageRead);
+
+  Future<void> _loadNextPageRead() async {
     final repository = _repository;
     if (repository == null ||
         _loadingMore ||
@@ -847,7 +865,8 @@ class _SessionListScreenState extends State<SessionListScreen>
       await _migrateLineagePreferences(merged);
       await _pinSync?.updateSessions(merged, readFence: pinReadFence);
       if (!mounted) return;
-      final sorted = merged.toList()..sort(compareSessionsByRecentActivity);
+      final sorted = _withoutDeleted(merged)
+        ..sort(compareSessionsByRecentActivity);
       setState(() {
         _sessions = sorted;
         _librarySource = snapshot.source;
@@ -961,6 +980,12 @@ class _SessionListScreenState extends State<SessionListScreen>
     String query,
     int requestEpoch,
     SessionLibraryQuery scope,
+  ) => _underListRead(() => _runSearchRead(query, requestEpoch, scope));
+
+  Future<void> _runSearchRead(
+    String query,
+    int requestEpoch,
+    SessionLibraryQuery scope,
   ) async {
     final repository = _repository;
     if (repository == null) return;
@@ -986,7 +1011,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       await _migrateLineagePreferences(sessions);
       if (!mounted || requestEpoch != _searchRequestEpoch) return;
       setState(() {
-        _searchResults = sessions;
+        _searchResults = _withoutDeleted(sessions);
         _searchExhaustive = result.exhaustive;
         _searching = false;
       });
@@ -1012,7 +1037,40 @@ class _SessionListScreenState extends State<SessionListScreen>
     }
   }
 
-  Future<bool> _fetchSessions({bool showLoader = true}) async {
+  /// The shared store this screen filters with; loaded on demand so a read
+  /// started before [_loadPrefs] finishes is still registered.
+  Future<SessionArchive> _sharedArchive() async =>
+      _archive ??
+      (_listArchive ??= await SessionArchive.load(
+        await SharedPreferences.getInstance(),
+        widget.connection.id,
+      ));
+  SessionArchive? _listArchive;
+
+  /// Runs [read] as a session list read of the shared store (see
+  /// [SessionArchive.beginListRead]): a deletion recorded meanwhile keeps
+  /// its tombstone until this result has been stored or dropped.
+  Future<T> _underListRead<T>(Future<T> Function() read) async {
+    final listRead = (await _sharedArchive()).beginListRead();
+    try {
+      return await read();
+    } finally {
+      listRead.end();
+    }
+  }
+
+  /// Rows the server confirmed deleted never enter what this screen keeps.
+  List<Session> _withoutDeleted(Iterable<Session> rows) {
+    final archive = _archive ?? _listArchive;
+    return archive == null
+        ? rows.toList()
+        : rows.where((row) => !archive.isSessionDeleted(row)).toList();
+  }
+
+  Future<bool> _fetchSessions({bool showLoader = true}) =>
+      _underListRead(() => _fetchSessionsRead(showLoader: showLoader));
+
+  Future<bool> _fetchSessionsRead({bool showLoader = true}) async {
     // Puede invocarse desde un closure del drawer después de que la pantalla se
     // haya desmontado (HermesDrawer._go) → setState() after dispose(). Guard.
     if (!mounted) return false;
@@ -1069,7 +1127,8 @@ class _SessionListScreenState extends State<SessionListScreen>
       // still returns stay folded (the same rule as Home and the drawer).
       final visible = sessions.where((s) => s.listsAsOwnRow);
 
-      final sorted = visible.toList()..sort(compareSessionsByRecentActivity);
+      final sorted = _withoutDeleted(visible)
+        ..sort(compareSessionsByRecentActivity);
 
       if (!mounted || fetchEpoch != _sessionFetchEpoch) return false;
       setState(() {

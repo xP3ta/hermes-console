@@ -129,6 +129,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   DashboardAuthCheck _dashboardAuth = DashboardAuthCheck.unknown;
   List<Session> _recentSessions = [];
   SessionArchive? _archive;
+  SessionListRead? _statusListRead;
   StreamSubscription<HistoryCleanupInvalidation>? _historyCleanupSubscription;
   PageRoute<dynamic>? _route;
   bool _initialLoadComplete = false;
@@ -199,6 +200,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     _liveStatusGate.dispose();
     _listenedGlobalActivity?.removeListener(_onActivityChanged);
     _archive?.removeListener(_onActivityChanged);
+    _archive?.removeListener(_dropDeletedRecents);
+    _statusListRead?.end();
     _localStartPoll?.cancel();
     super.dispose();
   }
@@ -1007,6 +1010,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       widget.connManager.prefs,
       conn.id,
     );
+    // Open until this refresh stores its rows, or a newer refresh or
+    // dispose drops them (see SessionArchive.beginListRead).
+    _statusListRead?.end();
+    final listRead = _statusListRead = archive.beginListRead();
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     bool ok = false;
     // /health answered but the paged list did not (timeout, 5xx, reset).
@@ -1170,8 +1177,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       if (!ok) _dashboardAuth = DashboardAuthCheck.unknown;
       _checking = false;
       _listenArchive(archive);
-      if (!listReadUnavailable) _recentSessions = recentSessions;
+      if (!listReadUnavailable) {
+        _recentSessions = recentSessions
+            .where((s) => !archive.isSessionDeleted(s))
+            .toList();
+      }
     });
+    listRead.end();
     if (ok) _scheduleMissionPrewarm(conn);
     await _refreshRemoteActivity(conn, ownerProfile);
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
@@ -1228,8 +1240,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   void _listenArchive(SessionArchive archive) {
     if (identical(_archive, archive)) return;
     _archive?.removeListener(_onActivityChanged);
+    _archive?.removeListener(_dropDeletedRecents);
     _archive = archive;
+    archive.addListener(_dropDeletedRecents);
     archive.addListener(_onActivityChanged);
+  }
+
+  /// A delete made on any screen leaves the retained page itself, not only
+  /// the painted recents, so it cannot return once its tombstone goes.
+  void _dropDeletedRecents() {
+    final archive = _archive;
+    if (archive == null || !_recentSessions.any(archive.isSessionDeleted)) {
+      return;
+    }
+    _recentSessions = _recentSessions
+        .where((s) => !archive.isSessionDeleted(s))
+        .toList();
   }
 
   int _homeRecentLimit() {
