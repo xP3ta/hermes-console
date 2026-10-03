@@ -134,6 +134,33 @@ void main() {
     },
   );
 
+  // External review of a7bcba8: hiding the screen must not drop a tick
+  // received just before; reopening within the gap still reads it when the
+  // gap ends instead of waiting for the 30 s backstop.
+  testWidgets('re1215: a pending store-change tick survives hide and reopen '
+      'inside the gap', (tester) async {
+    final gateway = _FakeGateway();
+    final reader = _reader(gateway: gateway)..setVisible(true);
+
+    reader.notifyDurableStoreChanged();
+    await _pumpImmediate(tester);
+    expect(gateway.reads, 1);
+
+    await tester.pump(const Duration(seconds: 3));
+    reader.notifyDurableStoreChanged();
+    await tester.pump(const Duration(seconds: 1));
+    reader.setVisible(false);
+    await tester.pump(const Duration(seconds: 1));
+    reader.setVisible(true);
+    await tester.pump(const Duration(seconds: 4));
+    expect(gateway.reads, 1);
+    await tester.pump(const Duration(seconds: 1));
+    await _pumpImmediate(tester);
+    expect(gateway.reads, 2, reason: 'the tick before hiding is not lost');
+
+    reader.dispose();
+  });
+
   testWidgets('matching sessions.changed coalesces one immediate read', (
     tester,
   ) async {
