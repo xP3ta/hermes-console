@@ -844,7 +844,7 @@ class _SessionListScreenState extends State<SessionListScreen>
 
   Future<void> _loadNextPage() => _underListRead(_loadNextPageRead);
 
-  Future<void> _loadNextPageRead() async {
+  Future<void> _loadNextPageRead(SessionListRead listRead) async {
     final repository = _repository;
     if (repository == null ||
         _loadingMore ||
@@ -872,6 +872,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         _librarySource = snapshot.source;
         _libraryExhaustive = snapshot.exhaustive;
       });
+      listRead.end(rows: snapshot.sessions);
     } catch (_) {
       // Mantén la página visible y permite reintentar al volver a hacer scroll.
     } finally {
@@ -980,9 +981,12 @@ class _SessionListScreenState extends State<SessionListScreen>
     String query,
     int requestEpoch,
     SessionLibraryQuery scope,
-  ) => _underListRead(() => _runSearchRead(query, requestEpoch, scope));
+  ) => _underListRead(
+    (listRead) => _runSearchRead(listRead, query, requestEpoch, scope),
+  );
 
   Future<void> _runSearchRead(
+    SessionListRead listRead,
     String query,
     int requestEpoch,
     SessionLibraryQuery scope,
@@ -1015,6 +1019,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         _searchExhaustive = result.exhaustive;
         _searching = false;
       });
+      listRead.end(rows: result.sessions);
     } catch (_) {
       if (!mounted ||
           requestEpoch != _searchRequestEpoch ||
@@ -1049,11 +1054,14 @@ class _SessionListScreenState extends State<SessionListScreen>
 
   /// Runs [read] as a session list read of the shared store (see
   /// [SessionArchive.beginListRead]): a deletion recorded meanwhile keeps
-  /// its tombstone until this result has been stored or dropped.
-  Future<T> _underListRead<T>(Future<T> Function() read) async {
+  /// its tombstone until this result has been stored or dropped. [read]
+  /// ends it with the server rows once they are stored.
+  Future<T> _underListRead<T>(
+    Future<T> Function(SessionListRead listRead) read,
+  ) async {
     final listRead = (await _sharedArchive()).beginListRead();
     try {
-      return await read();
+      return await read(listRead);
     } finally {
       listRead.end();
     }
@@ -1067,10 +1075,14 @@ class _SessionListScreenState extends State<SessionListScreen>
         : rows.where((row) => !archive.isSessionDeleted(row)).toList();
   }
 
-  Future<bool> _fetchSessions({bool showLoader = true}) =>
-      _underListRead(() => _fetchSessionsRead(showLoader: showLoader));
+  Future<bool> _fetchSessions({bool showLoader = true}) => _underListRead(
+    (listRead) => _fetchSessionsRead(listRead, showLoader: showLoader),
+  );
 
-  Future<bool> _fetchSessionsRead({bool showLoader = true}) async {
+  Future<bool> _fetchSessionsRead(
+    SessionListRead listRead, {
+    bool showLoader = true,
+  }) async {
     // Puede invocarse desde un closure del drawer después de que la pantalla se
     // haya desmontado (HermesDrawer._go) → setState() after dispose(). Guard.
     if (!mounted) return false;
@@ -1137,6 +1149,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         _libraryExhaustive = library?.exhaustive ?? false;
         _loading = false;
       });
+      listRead.end(rows: remoteSessions);
       if (invalidationEpoch != null) {
         final activeChats = _activeChats;
         if (activeChats != null) {

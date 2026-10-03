@@ -131,6 +131,32 @@ void main() {
     expect(store.sessionId, 'gone');
   });
 
+  test('a session the server recreates under the deleted id is shown '
+      'again', () async {
+    final archive = await SessionArchive.load(prefs, 'c1');
+    final deletedAt = DateTime.fromMillisecondsSinceEpoch(1785312060000);
+    await archive.markSessionDeleted(_session('s1'), now: deletedAt);
+    await publisher.publish(_chat('s1'));
+    expect(store.sessionId, isNull);
+
+    // A list read returns s1 with activity after the delete: real data.
+    archive.beginListRead().end(
+      rows: [_session('s1').copyWith(updatedAt: 1785312120)],
+    );
+    await publisher.publish(_chat('s1'));
+    expect(publisher.latest.sessionId, 's1');
+    expect(store.sessionId, 's1');
+  });
+
+  test('a stale list row of the deleted session does not release it', () async {
+    final archive = await SessionArchive.load(prefs, 'c1');
+    final deletedAt = DateTime.fromMillisecondsSinceEpoch(1785312060000);
+    await archive.markSessionDeleted(_session('s1'), now: deletedAt);
+    archive.beginListRead().end(rows: [_session('s1')]);
+    await publisher.publish(_chat('s1'));
+    expect(store.sessionId, isNull);
+  });
+
   test('a snapshot restored at cold start leaves a deleted session', () async {
     final archive = await SessionArchive.load(prefs, 'c1');
     await archive.markSessionDeleted(_session('gone'));

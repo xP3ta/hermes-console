@@ -1183,7 +1183,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
             .toList();
       }
     });
-    listRead.end();
+    listRead.end(rows: listReadUnavailable ? const [] : sessions);
     if (ok) _scheduleMissionPrewarm(conn);
     await _refreshRemoteActivity(conn, ownerProfile);
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;

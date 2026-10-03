@@ -259,12 +259,14 @@ class SessionArchive extends ChangeNotifier {
     return false;
   }
 
-  /// True when the server confirmed [sessionId] deleted, whatever activity
-  /// arrives for it later.
+  /// True when the server confirmed [sessionId] deleted and no server list
+  /// row has shown it recreated since.
   ///
   /// For surfaces that only hold an id (the home screen widget): a late
   /// event from the deleted chat stamps fresh activity, so the watermark
-  /// rule of [isSessionDeleted] would let it back in.
+  /// rule of [isSessionDeleted] would let it back in. Only an authoritative
+  /// list row with activity after the delete releases it (see
+  /// [SessionListRead.end]).
   bool isSessionIdDeleted(String sessionId) => _deleted.containsKey(sessionId);
 
   /// Records a deletion the server confirmed for [session] (every id it
@@ -289,8 +291,9 @@ class SessionArchive extends ChangeNotifier {
   }
 
   /// Starts a session list read (a page or walk of `/api/sessions`) whose
-  /// rows will be stored or painted. Call [SessionListRead.end] once its
-  /// result has been applied, or abandoned.
+  /// rows will be stored or painted. Call [SessionListRead.end] with the
+  /// server rows once its result has been applied, or without rows when it
+  /// was abandoned.
   ///
   /// Screens drop a deleted row from what they retain at once and filter
   /// every later result with the tombstones, so once every read that had
@@ -304,9 +307,31 @@ class SessionArchive extends ChangeNotifier {
     return SessionListRead._(this, id);
   }
 
-  void _endListRead(int id) {
+  void _endListRead(int id, Iterable<Session> rows) {
     if (!_openListReads.remove(id)) return;
-    if (_evictUnneededTombstones()) unawaited(_flush());
+    final released = _releaseRecreated(rows);
+    if (_evictUnneededTombstones() || released) unawaited(_flush());
+  }
+
+  /// A server row with activity newer than a tombstone's watermark is the
+  /// session recreated (real data, as [isSessionDeleted] already shows it):
+  /// its tombstone goes, so readers that only hold an id (the home screen
+  /// widget, [isSessionIdDeleted]) show it again. An older copy of the
+  /// deleted row never releases it. Returns whether any went.
+  bool _releaseRecreated(Iterable<Session> rows) {
+    if (_deleted.isEmpty) return false;
+    var released = false;
+    for (final row in rows) {
+      final activity = _activitySeconds(row.lastActivityAt);
+      for (final id in row.identityIds) {
+        final watermark = _deleted[id];
+        if (watermark == null || activity <= watermark) continue;
+        _deleted.remove(id);
+        _deletedAfterRead.remove(id);
+        released = true;
+      }
+    }
+    return released;
   }
 
   /// A tombstone is still needed while a list read that began before it was
@@ -726,6 +751,9 @@ final class SessionListRead {
   final SessionArchive _archive;
   final int _id;
 
-  /// Idempotent.
-  void end() => _archive._endListRead(_id);
+  /// Ends this read; [rows] are the server rows it returned (any subset).
+  /// A row recreating a deleted session releases its tombstone. Only the
+  /// first call counts.
+  void end({Iterable<Session> rows = const []}) =>
+      _archive._endListRead(_id, rows);
 }

@@ -523,6 +523,41 @@ void main() {
       await tester.pumpAndSettle();
     });
 
+    testWidgets('a chat the server recreates under the deleted id is '
+        'released for the id-only readers', (tester) async {
+      final (manager, connection) = await setUpManager();
+      final gone = _session('gone', title: 'Deleted in detail');
+      final client = _HomeClient([gone]);
+      await pumpHome(tester, manager, client);
+      final prefs = await SharedPreferences.getInstance();
+      final store = await SessionArchive.load(prefs, connection.id);
+      await tester.runAsync(() => store.markSessionDeleted(gone));
+      await tester.pump();
+      expect(find.text('Deleted in detail'), findsNothing);
+      // What the home screen widget asks: it only holds an id.
+      expect(store.isSessionIdDeleted('gone'), isTrue);
+
+      // The server recreates the id with activity after the delete, and
+      // Home's next read returns it.
+      client.sessions = [
+        _session('gone', title: 'Recreated', activity: _nowSeconds() + 120),
+      ];
+      historyCleanupInvalidations.publish(
+        connectionId: connection.id,
+        scope: HistoryCleanupScope.normalConversations,
+      );
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(find.text('Recreated'), findsOneWidget);
+      expect(store.isSessionIdDeleted('gone'), isFalse);
+      // The old copy of the deleted chat stays gone.
+      expect(store.isSessionDeleted(gone), isFalse);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    });
+
     testWidgets('the row leaves Home before the slow refresh answers', (
       tester,
     ) async {
