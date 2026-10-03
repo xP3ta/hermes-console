@@ -19,6 +19,7 @@ import '../models/agent_profile.dart';
 import '../models/cron_job.dart';
 import '../models/dock_config.dart' show DockItemId;
 import '../navigation/chat_route.dart';
+import '../services/bot_roster_store.dart';
 import '../services/connection_manager.dart';
 import '../services/cron_repository.dart';
 import '../services/dock_preferences_store.dart';
@@ -67,9 +68,14 @@ class CronScreen extends StatefulWidget {
   /// funcionando igual, simplemente sin el dock.
   final ConnectionManager? connManager;
 
+  /// Roster shared with every other screen; [BotRosterRegistry.shared] by
+  /// default.
+  final BotRosterRegistry? rosterRegistry;
+
   const CronScreen({
     required this.connection,
     this.connManager,
+    this.rosterRegistry,
     @visibleForTesting this.clientOverride,
     @visibleForTesting this.eventStreamOverride,
     this.initialJobId,
@@ -98,7 +104,8 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   List<CronJob> _jobs = const [];
 
   /// Bot profiles by name (title, face) for owner lines and destinations.
-  Map<String, AgentProfile> _profiles = const {};
+  late final BotRosterRegistry _roster;
+  late final BotRosterStore _rosterStore;
   MissionProfileAvatarCache? _avatarCache;
   String _profile = '';
   String _query = '';
@@ -130,13 +137,21 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
         connectionId: widget.connection.id,
       );
     }
+    _roster = widget.rosterRegistry ?? BotRosterRegistry.shared;
+    _roster.hydrate(widget.connection);
+    _rosterStore = _roster.store(widget.connection.id)..addListener(_onRoster);
     unawaited(_loadProfiles());
+  }
+
+  void _onRoster() {
+    if (mounted) setState(() {});
   }
 
   /// Best effort: without profile metadata the owner line still shows the
   /// procedural face and a readable name. The gateway roster carries the
   /// Bot Mode title and face; the dashboard list is the fallback.
   Future<void> _loadProfiles() async {
+    final ticket = _roster.beginRead(widget.connection.id);
     try {
       final gateway = _ownedEventClient;
       List<AgentProfile> profiles;
@@ -147,12 +162,17 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       } catch (_) {
         profiles = await _client.getProfiles();
       }
-      if (!mounted) return;
-      setState(() => _profiles = {for (final p in profiles) p.name: p});
+      // Shared with every screen; a late older read never wins.
+      _roster.publish(
+        widget.connection.id,
+        widget.connection.label,
+        profiles,
+        ticket: ticket,
+      );
     } catch (_) {}
   }
 
-  AgentProfile? _profileInfo(String name) => _profiles[name];
+  AgentProfile? _profileInfo(String name) => _rosterStore.profile(name);
 
   /// Backstop refresh while the app is visible. It is cancelled in background
   /// (its ticks would only wake the isolate to find refresh disallowed) and
@@ -271,6 +291,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _rosterStore.removeListener(_onRoster);
     WidgetsBinding.instance.removeObserver(this);
     _refreshTimer?.cancel();
     _eventRefreshDebounce?.cancel();
@@ -748,7 +769,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
               cronDeliveryLabel(job.deliver, s, ownProfile: job.profile),
               job.profile,
               if (job.ownerBot != null)
-                cronBotName(job.ownerBot!, info: _profiles[job.ownerBot]),
+                cronBotName(job.ownerBot!, info: _profileInfo(job.ownerBot!)),
             ].any((value) => value.toLowerCase().contains(query));
           }).toList();
     rows.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
