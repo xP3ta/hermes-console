@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../utils/session_timestamp.dart';
 import 'connection_manager.dart';
+import 'session_archive.dart';
 
 enum SessionArchiveMode {
   exclude('exclude'),
@@ -425,6 +426,39 @@ final class SessionRepository {
     ]);
   }
 
+  /// PATCH /api/sessions/{id} with per-session state (`hidden`, `title`,
+  /// `unread`), as Desktop; see [SessionArchive.attachRemoteState]. Returns
+  /// the handler's answer and updates the retained rows it confirms.
+  Future<Map<String, Object?>> patchSessionState(
+    String sessionId,
+    Map<String, Object> fields,
+    String? profile,
+  ) async {
+    final response = await patchDashboardSessionState(
+      _dashboard,
+      sessionId,
+      fields,
+      profile,
+    );
+    final title = response['title'];
+    final hidden = response['hidden'];
+    final unread = response['unread'];
+    _sessions = List<Session>.unmodifiable([
+      for (final row in _sessions)
+        if (row.id == sessionId || row.logicalId == sessionId)
+          row.copyWith(
+            title: fields.containsKey('title') && title is String
+                ? title
+                : null,
+            hidden: hidden is bool ? hidden : null,
+            unread: unread is bool ? unread : null,
+          )
+        else
+          row,
+    ]);
+    return response;
+  }
+
   bool _isCurrent(int epoch, String fingerprint) =>
       epoch == _queryEpoch && _query?.fingerprint == fingerprint;
 
@@ -717,3 +751,41 @@ String _canonicalSourceFingerprint(Iterable<String> values) {
   final canonical = values.toList(growable: false)..sort();
   return canonical.join(',');
 }
+
+/// PATCH /api/sessions/{id} on the Dashboard with [fields] (Desktop's
+/// per-session flags); the owning profile rides in the body, as Desktop.
+Future<Map<String, Object?>> patchDashboardSessionState(
+  DashboardClient dashboard,
+  String sessionId,
+  Map<String, Object> fields,
+  String? profile,
+) => dashboard.apiPatch(
+  'sessions/${Uri.encodeComponent(sessionId)}',
+  body: {
+    ...fields,
+    if (profile?.trim().isNotEmpty == true) 'profile': profile!.trim(),
+  },
+);
+
+/// The HTTP status of a Dashboard failure, for
+/// [SessionArchive.attachRemoteState].
+int? dashboardHttpStatusOf(Object error) =>
+    error is DashboardHttpException ? error.statusCode : null;
+
+/// A [SessionStateWriter] for surfaces with no repository of their own
+/// (Home): each write opens and closes its own Dashboard client, so it
+/// outlives no screen.
+SessionStateWriter dashboardSessionStateWriter(SavedConnection connection) =>
+    (sessionId, fields, profile) async {
+      final dashboard = DashboardClient.lazy(connection);
+      try {
+        return await patchDashboardSessionState(
+          dashboard,
+          sessionId,
+          fields,
+          profile,
+        );
+      } finally {
+        dashboard.close();
+      }
+    };
