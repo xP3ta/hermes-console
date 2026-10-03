@@ -1209,7 +1209,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       !archive.isHidden(s.id);
 
   static bool _isHomeRecentKind(Session s) =>
-      !s.isJob && SessionCategory.chats.includesSource(s.source);
+      !s.isJob &&
+      SessionCategory.chats.includesSource(s.source) &&
+      s.listsAsOwnRow;
 
   /// Recents as painted: the retained page filtered by the shared local
   /// archive store (archive, hidden).

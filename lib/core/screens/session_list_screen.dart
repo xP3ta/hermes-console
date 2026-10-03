@@ -1064,12 +1064,10 @@ class _SessionListScreenState extends State<SessionListScreen>
       await _migrateLineagePreferences(sessions);
       await _pinSync?.updateSessions(sessions, readFence: pinReadFence);
 
-      // Hermes Agent no publica `include_children` en este endpoint. La
-      // biblioteca promete solo sesiones principales y filtra defensivamente
-      // cualquier hija que devuelva un servidor legacy o intermediario.
-      final visible = sessions.where(
-        (s) => s.parentSessionId == null || s.parentSessionId!.isEmpty,
-      );
+      // Real branches are their own rows, as in the Desktop sidebar; delegate
+      // runs and automation children that a legacy or intermediary server
+      // still returns stay folded (the same rule as Home and the drawer).
+      final visible = sessions.where((s) => s.listsAsOwnRow);
 
       final sorted = visible.toList()..sort(compareSessionsByRecentActivity);
 
