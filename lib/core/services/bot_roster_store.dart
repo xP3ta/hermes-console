@@ -167,6 +167,9 @@ final class BotRosterRegistry extends ChangeNotifier {
   /// started before this can no longer publish.
   void forget(String connectionId) {
     _floor[connectionId] = ++_clock;
+    // The endpoint may have changed: persist again only once a screen
+    // registers the current connection through [hydrate].
+    _connections.remove(connectionId);
     final store = _stores[connectionId];
     if (store?.snapshot != null) {
       store!._set(null);

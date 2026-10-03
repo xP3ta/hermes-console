@@ -155,6 +155,22 @@ void main() {
     mentions.dispose();
   });
 
+  test('a forgotten connection stops persisting until re-registered', () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final registry = BotRosterRegistry()
+      ..attachPersistence(prefs, [connection]);
+    registry.forget('c');
+    registry.publish('c', 'C', const [AgentProfile(name: 'a')]);
+    await pumpEventQueue();
+    expect(BotRosterCache(prefs).read(connection), isEmpty);
+    final moved = connection.copyWith(host: 'other.local');
+    registry.hydrate(moved);
+    registry.publish('c', 'C', const [AgentProfile(name: 'b')]);
+    await pumpEventQueue();
+    expect(BotRosterCache(prefs).read(moved).single.name, 'b');
+  });
+
   test('a mutation on a cached roster keeps it display-only', () async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
