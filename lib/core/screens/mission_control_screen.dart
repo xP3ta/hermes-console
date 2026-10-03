@@ -744,6 +744,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       }
     } catch (error) {
       if (!mounted || generation != _loadGeneration) return;
+      // The failed read reflects nothing: a change seen meanwhile is still
+      // owed to the roster, by the next tick or gap.
+      if (_changeDuringLoad) {
+        _changeDuringLoad = false;
+        _liveChangeDirty = true;
+      }
       setState(() {
         _loadFailure = error;
         _loading = false;

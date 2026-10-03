@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/agent_profile.dart';
+import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
@@ -36,6 +38,10 @@ final class _HeldServer {
 
   int count(String read) => calls.where((call) => call == read).length;
 
+  /// What `profiles.list` answers now; a read returns the list current when
+  /// it was asked, so a read on the wire before a change misses it.
+  List<AgentProfile> profiles = spec070Profiles();
+
   Future<T> _read<T>(String name, T value) async {
     calls.add(name);
     await network.future;
@@ -48,7 +54,7 @@ final class _HeldServer {
   );
 
   MissionControlRepository repository() => MissionControlRepository(
-    profilesLoader: () => _read('profiles.list', spec070Profiles()),
+    profilesLoader: () => _read('profiles.list', profiles),
     sessionsLoader: () => _read('sessions', const []),
     boardLoader: () =>
         _read('kanban.board', const KanbanBoard(columns: <KanbanColumn>[])),
@@ -60,6 +66,58 @@ final class _HeldServer {
 
   void close() => unawaited(_events.close());
 }
+
+/// [_HeldServer]'s repository whose full load can be made to fail, to reach
+/// the screen's failed-load path while the roster reads keep working.
+final class _FailingFullLoad
+    implements MissionControlDataSource, MissionLiveRefreshDataSource {
+  _FailingFullLoad(this.inner);
+
+  final MissionControlRepository inner;
+  bool failFullLoad = false;
+
+  @override
+  Future<MissionBackendSnapshot> load() async {
+    final snapshot = await inner.load();
+    if (failFullLoad) throw StateError('full load failed');
+    return snapshot;
+  }
+
+  @override
+  Stream<KanbanEvent>? watchKanban({required int since}) =>
+      inner.watchKanban(since: since);
+
+  @override
+  void close() => inner.close();
+
+  @override
+  Stream<TuiGatewayEvent>? watchLiveChanges() => inner.watchLiveChanges();
+
+  @override
+  bool get liveChangesHealthy => inner.liveChangesHealthy;
+
+  @override
+  Future<MissionRosterRead> loadRoster() => inner.loadRoster();
+
+  @override
+  Future<HostedGroupsSnapshot> refreshHostedGroups(
+    HostedGroupsSnapshot previous,
+  ) => inner.refreshHostedGroups(previous);
+}
+
+/// The roster after a change event: `astra` was replaced by `nova` (same
+/// slot, so it is on screen in the lazily built list).
+List<AgentProfile> _changedRoster() => [
+  for (final profile in spec070Profiles())
+    profile.name == 'astra'
+        ? AgentProfile.fromJson({
+            ...Map<String, dynamic>.from(
+              (spec070Result('profiles_list')['profiles'] as List)[1] as Map,
+            ),
+            'name': 'nova',
+          })
+        : profile,
+];
 
 MissionBackendSnapshot _lastSeen() => MissionBackendSnapshot(
   profiles: spec070Profiles(),
@@ -172,8 +230,9 @@ void main() {
       await tester.pumpWidget(_host(manager, server.repository(), cache));
       expect(server.count('profiles.list'), 1);
 
-      // A turn ends while the opening refresh is still on the wire: that
-      // read may predate the change, so it must not swallow the event.
+      // A bot appears while the opening refresh is still on the wire: that
+      // read predates the change, so it must not swallow the event.
+      server.profiles = _changedRoster();
       server.sessionsChanged();
       await tester.pump();
       server.network.complete();
@@ -185,9 +244,57 @@ void main() {
         reason: 'roster re-read now, not at the 120 s backstop',
       );
       expect(server.count('kanban.board'), 1, reason: 'only the roster');
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('roster-line-nova')),
+        findsOneWidget,
+        reason: 'the re-read roster must reach the screen',
+      );
       await tester.pumpWidget(const SizedBox());
     },
   );
+
+  testWidgets('sessions.changed during a full load that fails is still read', (
+    tester,
+  ) async {
+    final manager = await _manager();
+    final server = _HeldServer();
+    addTearDown(server.close);
+    server.network.complete();
+    final source = _FailingFullLoad(server.repository());
+    final cache = MissionSnapshotCache()..write(_connection, _lastSeen());
+    await tester.pumpWidget(_host(manager, source, cache));
+    await tester.pump();
+    await tester.pump();
+
+    // A user refresh over a healthy event stream fails, and a bot appeared
+    // while it was on the wire.
+    server.network = Completer<void>();
+    source.failFullLoad = true;
+    final pull = tester.state<RefreshIndicatorState>(
+      find.byType(RefreshIndicator).first,
+    );
+    unawaited(pull.show());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    server.profiles = _changedRoster();
+    server.sessionsChanged();
+    await tester.pump();
+    server.network.complete();
+    await tester.pump();
+    await tester.pump();
+    source.failFullLoad = false;
+    server.calls.clear();
+    expect(find.byKey(const ValueKey('roster-line-nova')), findsNothing);
+
+    // The next roster tick reads it, not the 120 s backstop.
+    await _idle(tester, const Duration(seconds: 31));
+    expect(server.count('profiles.list'), 1);
+    expect(server.count('kanban.board'), 0, reason: 'a roster read');
+    await tester.pump();
+    expect(find.byKey(const ValueKey('roster-line-nova')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
 
   testWidgets('a cold open still says it is reading the team', (tester) async {
     final manager = await _manager();
