@@ -4995,6 +4995,104 @@ void main() {
     });
   }
 
+  // Follow-up to b483d2d (external review residual): the idle relaxation
+  // must drop every runtime-event row after the phone's prompt, not only the
+  // first. Two runtime-event turns that both landed while the phone was away
+  // must still adopt the whole transcript in one read; dropping only the
+  // first editorial row leaves a foreign user role and recovery polls again.
+  for (final kinds in const [
+    ['process_complete', 'process_complete'],
+    ['process_complete', 'async_delegation_complete'],
+    ['async_delegation_complete', 'process_complete'],
+  ]) {
+    test('rl1215 idle recovery adopts a transcript ending in two runtime-event '
+        'turns (${kinds.join(' + ')})', () async {
+      const storedId = 'session-rl1215-two-runtime-events';
+      const prompt = 'lanza los dos procesos';
+      const firstAnswer = 'procesos lanzados';
+      const eventAnswers = ['primer proceso listo', 'segundo proceso listo'];
+      final gateway = _NonIdempotentLifecycleGateway(storedId);
+      var loaderCalls = 0;
+      var serverFinished = false;
+      final chat = _recoverableChat(
+        'rl1215-two-runtime-events-${kinds.join('-')}',
+        gateway,
+        desktopRecoveryBackoff: const [
+          Duration.zero,
+          Duration(milliseconds: 1),
+        ],
+        desktopRecoveryRandom: () => 1.0,
+        storedMessageLoader: (_, _) async {
+          loaderCalls++;
+          return [
+            const {'id': 101, 'role': 'user', 'content': prompt},
+            if (serverFinished) ...[
+              const {'id': 102, 'role': 'assistant', 'content': firstAnswer},
+              for (var index = 0; index < kinds.length; index++) ...[
+                {
+                  'id': 103 + index * 2,
+                  'role': 'user',
+                  'display_kind': kinds[index],
+                  'content': '[IMPORTANT: background work $index finished]',
+                },
+                {
+                  'id': 104 + index * 2,
+                  'role': 'assistant',
+                  'content': eventAnswers[index],
+                },
+              ],
+            ],
+          ];
+        },
+      );
+      addTearDown(chat.dispose);
+
+      await chat.send(
+        fullText: prompt,
+        model: 'hermes-agent',
+        history: const [],
+      );
+      serverFinished = true;
+      gateway.recoverySnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-rl1215-two-events-idle',
+        storedSessionId: storedId,
+        created: false,
+        messagesProvided: false,
+        running: false,
+        status: 'idle',
+      );
+      gateway.failWith(const SocketException('Connection attempt cancelled'));
+
+      await _waitUntil(
+        () =>
+            chat.state == ChatPipelineState.completed ||
+            chat.awaitingDurableTurnRecovery ||
+            loaderCalls > 25,
+      );
+      expect(chat.state, ChatPipelineState.completed);
+      expect(chat.awaitingDurableTurnRecovery, isFalse);
+      expect(
+        loaderCalls,
+        lessThanOrEqualTo(3),
+        reason: 'an idle server must converge without polling /messages',
+      );
+      for (final text in [prompt, firstAnswer, ...eventAnswers]) {
+        expect(
+          chat.messages.where((message) => message['content'] == text),
+          hasLength(1),
+          reason: '$text must be adopted exactly once',
+        );
+      }
+      // chat.messages is newest first: the chronological order must hold.
+      final order = [
+        for (final text in [prompt, firstAnswer, ...eventAnswers])
+          chat.messages.indexWhere((message) => message['content'] == text),
+      ];
+      expect(order, orderedEquals([...order]..sort((a, b) => b - a)));
+      expect(gateway.submitCalls, 1);
+    });
+  }
+
   // rl1215 (Pixel 02/10, 94 attempts, 265 GET /messages in 15 min): an idle
   // server whose transcript never proves this turn's final answer kept the
   // chat in "connection lost" + "working" and re-read the whole transcript
