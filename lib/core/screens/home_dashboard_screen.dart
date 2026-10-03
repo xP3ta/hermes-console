@@ -46,6 +46,8 @@ import '../widgets/dock.dart';
 import '../widgets/dock_shortcuts.dart';
 import '../widgets/dock_style.dart' show dockShowsBack;
 import '../widgets/hermes_drawer.dart';
+import '../widgets/profile_switcher.dart';
+import 'profiles_screen.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/home_prompt_composer.dart';
@@ -1860,6 +1862,23 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       appBar: HermesAppBar(
         centerTitle: false,
         titleSpacing: 0,
+        // Active profile, one tap from Home (Desktop's profile rail).
+        actions: [
+          if (_active != null)
+            ProfileSwitcherButton(
+              connection: _active!,
+              connManager: widget.connManager,
+              compact: true,
+              onManage: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ProfilesScreen(
+                    connection: _active!,
+                    connManager: widget.connManager,
+                  ),
+                ),
+              ),
+            ),
+        ],
         // Todo el bloque de título abre la hoja de estado: la línea de 16dp
         // sola quedaba lejísimos del target mínimo de 48dp, y el gesto no
         // tenía rol de botón ni pista de qué abre (spec 028 A-110).

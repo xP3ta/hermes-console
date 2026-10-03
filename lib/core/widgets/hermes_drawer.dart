@@ -36,6 +36,7 @@ import '../utils/session_title.dart';
 import '../../l10n/app_localizations.dart';
 import 'hermes_notice.dart';
 import 'owned_resource_host.dart';
+import 'profile_switcher.dart';
 
 /// Top-level app sections reachable from [HermesDrawer].
 enum DrawerSection {
@@ -447,6 +448,23 @@ class HermesDrawer extends StatelessWidget {
                         connManager.activeConnectionId.value ?? conn?.id,
                     onSelected: (id) => _selectInstance(context, id),
                   ),
+                  // Active profile, one tap from the drawer (Desktop rail).
+                  if (conn != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: ProfileSwitcherButton(
+                        connection: conn,
+                        connManager: connManager,
+                        onManage: () => _go(
+                          context,
+                          DrawerSection.profiles,
+                          () => ProfilesScreen(
+                            connection: conn,
+                            connManager: connManager,
+                          ),
+                        ),
+                      ),
+                    ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
                     child: Divider(

@@ -7911,5 +7911,10 @@
   "hr1215CheckingSignIn": "Checking the {provider} sign-in…",
   "hr1215SignInCheckFailed": "Could not check the {provider} sign-in: {error}",
   "cs1215CachedTranscript": "Saved copy · updating",
-  "profileScopeDefault": "Default"
+  "profileScopeDefault": "Default",
+  "profileSwitcherTitle": "Switch profile",
+  "profileSwitcherHint": "Switch profile",
+  "profileSwitcherBody": "Each profile has its own chats, memory, SOUL, skills and model.",
+  "profileSwitcherLoadFailed": "Couldn't load the profiles. Tap to retry.",
+  "profileSwitcherManage": "Manage profiles"
 }

@@ -9604,5 +9604,10 @@
   "hr1215SignInCheckFailed": "No se pudo comprobar la sesión de {provider}: {error}",
   "@hr1215SignInCheckFailed": {"placeholders": {"provider": {"type": "String"}, "error": {"type": "String"}}},
   "cs1215CachedTranscript": "Copia guardada · actualizando",
-  "profileScopeDefault": "Predeterminado"
+  "profileScopeDefault": "Predeterminado",
+  "profileSwitcherTitle": "Cambiar de perfil",
+  "profileSwitcherHint": "Cambiar de perfil",
+  "profileSwitcherBody": "Cada perfil tiene sus propios chats, memoria, SOUL, skills y modelo.",
+  "profileSwitcherLoadFailed": "No se pudieron cargar los perfiles. Toca para reintentar.",
+  "profileSwitcherManage": "Gestionar perfiles"
 }
