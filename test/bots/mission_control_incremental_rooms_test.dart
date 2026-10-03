@@ -14,8 +14,12 @@ final class _IncrementalGateway
   final sinceCalls = <int>[];
   var fullLogReads = 0;
 
+  /// Socket generation `groups.capabilities` reports (a reconnect bumps it).
+  var generation = 1;
+
   @override
-  Future<GroupsCapabilities> capabilities() async => spec070Capabilities();
+  Future<GroupsCapabilities> capabilities() async =>
+      spec070Capabilities(generation: generation);
   @override
   Future<List<HostedGroupRoom>> list({required int generation}) async => [
     spec070Room(),
@@ -409,6 +413,35 @@ void main() {
     expect(gateway.sinceCalls, [8]);
     repository.close();
   });
+
+  // A reconnect opens a new socket generation. The room log this client
+  // already holds is still the same server history (its authority is
+  // re-checked on every append), so the cursor resumes after it instead of
+  // paging the whole transcript again from seq 0.
+  test(
+    'a reconnect resumes the room log cursor under the new generation',
+    () async {
+      final gateway = _IncrementalGateway();
+      final repository = _repository(gateway);
+      final snapshot = await repository.load();
+      final room = snapshot.hostedGroups.rooms.single;
+      await repository.readHostedGroup(room, generation: 1);
+      gateway.sinceCalls.clear();
+      gateway.generation = 2;
+      gateway.stateRoom = () => _roomWith(latestSeq: 9);
+      expect((await repository.hostedGroupCapabilities()).generation, 2);
+      final read = await repository.readHostedGroup(room, generation: 2);
+      expect(gateway.sinceCalls, [8], reason: 'resumes, never pages from 0');
+      expect(read.log?.events, hasLength(8));
+      expect(read.capabilityGeneration, 2);
+      await expectLater(
+        repository.readHostedGroup(room, generation: 1),
+        throwsStateError,
+        reason: 'the previous socket generation is refused',
+      );
+      repository.close();
+    },
+  );
 
   test('a refresh reads the log when state omits latest_seq', () async {
     final gateway = _IncrementalGateway();

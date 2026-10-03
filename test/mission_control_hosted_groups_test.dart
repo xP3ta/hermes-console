@@ -1336,6 +1336,98 @@ void main() {
     expect(source.reads, reads);
   });
 
+  // The owner's room kept failing to refresh after the server closed the
+  // socket and accepted a new one: the room was bound to the capability
+  // generation it was opened with, which belongs to the old socket.
+  testWidgets('an open room resumes after a reconnect without reopening', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final source = _ReconnectingHostedSource(_workspaceSource().snapshot);
+    await _pumpHostedScreen(tester, manager, source);
+    await tester.tap(_roomRow());
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(source.reads, contains(3));
+    final opened = tester.state(find.byType(RoomScreen));
+    await tester.enterText(roomField(), 'still typing');
+
+    source.live = 4;
+    source.reply('After reconnect');
+    for (var i = 0; i < 2; i++) {
+      await tester.pump(const Duration(seconds: 16));
+      await tester.pumpAndSettle();
+    }
+
+    expect(source.reads, contains(4));
+    expect(find.text('After reconnect'), findsOneWidget);
+    expect(find.text('Before'), findsOneWidget);
+    expect(find.byKey(const ValueKey('room-refresh-stale')), findsNothing);
+    expect(
+      identical(tester.state(find.byType(RoomScreen)), opened),
+      isTrue,
+      reason: 'the same open room recovered; it was never reopened',
+    );
+    expect(
+      tester.widget<TextField>(roomField()).controller!.text,
+      'still typing',
+    );
+    await tapSend(tester);
+    expect(source.calls.where((call) => call.startsWith('send:')), [
+      'send:4:still typing',
+    ]);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a send never goes out under the previous socket generation', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final source = _ReconnectingHostedSource(_workspaceSource().snapshot);
+    await _pumpHostedScreen(tester, manager, source);
+    await tester.tap(_roomRow());
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(source.reads, contains(3));
+
+    // Reconnected: the first read under the new generation is on the wire.
+    source.live = 4;
+    source.reply('After reconnect');
+    source.holdGeneration = 4;
+    source.hold = Completer<void>();
+    await tester.pump(const Duration(seconds: 16));
+    expect(source.reads.last, 4);
+    await tester.enterText(roomField(), 'too early');
+    await tapSend(tester);
+    expect(
+      source.calls.where((call) => call.startsWith('send:')),
+      isEmpty,
+      reason: 'generation 3 belongs to a closed socket',
+    );
+
+    source.hold!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('After reconnect'), findsOneWidget);
+    await tester.enterText(roomField(), 'after the read');
+    await tapSend(tester);
+    expect(source.calls.where((call) => call.startsWith('send:')), [
+      'send:4:after the read',
+    ]);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('overflow rename, stop and disband converge then close', (
     tester,
   ) async {
@@ -1688,17 +1780,19 @@ Future<void> _openCreateRoom(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-GroupsCapabilities _capabilities(List<GroupMethod> methods) =>
-    GroupsCapabilities.tryParse(
-      {
-        'protocol_version': 2,
-        'driver': true,
-        'methods': methods.map((method) => method.wire).toList(),
-        'max_log_limit': 50,
-      },
-      connectionId: 'screen-connection',
-      generation: 3,
-    )!;
+GroupsCapabilities _capabilities(
+  List<GroupMethod> methods, {
+  int generation = 3,
+}) => GroupsCapabilities.tryParse(
+  {
+    'protocol_version': 2,
+    'driver': true,
+    'methods': methods.map((method) => method.wire).toList(),
+    'max_log_limit': 50,
+  },
+  connectionId: 'screen-connection',
+  generation: generation,
+)!;
 
 _HostedScreenSource _workspaceSource({
   int remainingSendFailures = 0,
@@ -1973,6 +2067,132 @@ final class _RefreshingHostedSource extends _HostedScreenSource
         expectedRoomId: 'room-private',
         sinceSeq: 0,
       ),
+      capabilityGeneration: generation,
+    );
+  }
+}
+
+/// A gateway whose socket can reconnect: `groups.capabilities` reports the
+/// live generation and, like the repository, every read or send bound to
+/// another generation is refused before reaching the server.
+final class _ReconnectingHostedSource extends _HostedScreenSource
+    implements
+        MissionHostedGroupsReadDataSource,
+        MissionHostedGroupsCapabilitySource {
+  _ReconnectingHostedSource(super.snapshot);
+
+  int live = 3;
+  final events = <Map<String, Object?>>[_event(text: 'Before')];
+  final reads = <int>[];
+
+  /// Holds the next read under this generation until completed.
+  int? holdGeneration;
+  Completer<void>? hold;
+
+  List<GroupMethod> get _methods => [
+    GroupMethod.capabilities,
+    GroupMethod.list,
+    GroupMethod.state,
+    GroupMethod.log,
+    GroupMethod.send,
+    GroupMethod.rename,
+    GroupMethod.stop,
+    GroupMethod.disband,
+  ];
+
+  @override
+  Future<MissionBackendSnapshot> load() async {
+    loadCount += 1;
+    final base = snapshot;
+    return MissionBackendSnapshot(
+      profiles: base.profiles,
+      board: base.board,
+      profilesCapability: base.profilesCapability,
+      sessionsCapability: base.sessionsCapability,
+      kanbanCapability: base.kanbanCapability,
+      hostedGroupsCapability: base.hostedGroupsCapability,
+      hostedGroups: HostedGroupsSnapshot(
+        capabilities: _capabilities(_methods, generation: live),
+        rooms: base.hostedGroups.rooms,
+        logs: base.hostedGroups.logs,
+      ),
+      loadedAt: base.loadedAt,
+    );
+  }
+
+  @override
+  Future<GroupsCapabilities> hostedGroupCapabilities() async =>
+      _capabilities(_methods, generation: live);
+
+  HostedGroupLogPage _logOf(List<Map<String, Object?>> events) =>
+      HostedGroupLogPage.fromJson(
+        {
+          'events': events,
+          'cursor': events.length,
+          'latest_seq': events.length,
+          'has_more': false,
+          'authority': {'gateway_id': 'gateway-private', 'epoch': 1},
+        },
+        expectedRoomId: 'room-private',
+        sinceSeq: 0,
+      );
+
+  Map<String, Object?> _message(String text) => {
+    ..._event(text: text),
+    'seq': events.length + 1,
+    'event_id': 'event-${events.length + 1}',
+    'payload': {'text': text, 'thread_id': 'thread-${events.length + 1}'},
+  };
+
+  void reply(String text) => events.add(_message(text));
+
+  @override
+  Future<HostedGroupWorkspaceReadback> readHostedGroup(
+    HostedGroupRoom room, {
+    required int generation,
+  }) async {
+    reads.add(generation);
+    final held = holdGeneration == generation ? hold : null;
+    if (held != null) {
+      holdGeneration = null;
+      // What the server answered when the read was sent; it lands later.
+      final answered = [...events];
+      await held.future;
+      return HostedGroupWorkspaceReadback(
+        room: room,
+        log: _logOf(answered),
+        capabilityGeneration: generation,
+      );
+    }
+    if (generation != live) {
+      throw StateError('hosted group capability unavailable');
+    }
+    return HostedGroupWorkspaceReadback(
+      room: room,
+      log: _logOf([...events]),
+      capabilityGeneration: generation,
+    );
+  }
+
+  @override
+  Future<HostedGroupWorkspaceReadback> sendHostedGroupText(
+    HostedGroupRoom room, {
+    required String text,
+    required HostedGroupSendAttempt attempt,
+    required int generation,
+  }) async {
+    calls.add('send:$generation:$text');
+    if (generation != live) {
+      throw StateError('hosted group capability unavailable');
+    }
+    events.add({
+      ..._message(text),
+      'event_id': attempt.durableEventId,
+      'kind': 'message.user',
+    });
+    return HostedGroupWorkspaceReadback(
+      room: room,
+      log: _logOf([...events]),
       capabilityGeneration: generation,
     );
   }
