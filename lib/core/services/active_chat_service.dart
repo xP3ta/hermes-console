@@ -3680,7 +3680,17 @@ Future<({Object? error, T? value})> _captureAsync<T>(
   }
 }
 
-typedef SteerProjection = ({int anchorUserOrdinal, String content});
+/// Proyección local de una corrección enviada a mitad de turno.
+///
+/// [anchorUserContent] es el texto del turno de usuario abierto cuando se
+/// envió (null en proyecciones antiguas sin ese dato). Ata la proyección a su
+/// turno: el ordinal se desplaza al ampliar la ventana, y sin el texto una
+/// corrección idéntica de un turno posterior podría reclamarla.
+typedef SteerProjection = ({
+  int anchorUserOrdinal,
+  String content,
+  String? anchorUserContent,
+});
 
 class _RewriteReservation {
   _RewriteReservation({
@@ -8399,6 +8409,10 @@ class ActiveChat {
   // anclada al ordinal del prompt user para reinsertarla en su posición correcta
   // tras cada refetch, incluso con prompts idénticos o más turnos posteriores.
   final List<SteerProjection> _steerRecords = [];
+
+  /// Filas durables que ya retiraron una proyección: en la siguiente recarga
+  /// no pueden retirar otra (una fila es una sola corrección).
+  final List<TranscriptMessageIdentity> _steerRetiringIdentities = [];
 
   // Silence is only a presentation signal. The server remains authoritative
   // over whether the turn is running or failed.
@@ -13693,9 +13707,8 @@ class ActiveChat {
   /// autoridad y reinsertar la proyección la duplicaría (y, si el ordinal del
   /// ancla se desplazó al paginar o reabrir, la colgaría de otra burbuja).
   ///
-  /// Cada fila durable satisface como mucho una proyección, en orden de envío,
-  /// y solo si está en el turno ancla o después: dos correcciones idénticas
-  /// reales siguen siendo dos.
+  /// Cada fila durable satisface como mucho una proyección de su propio turno:
+  /// dos correcciones idénticas reales siguen siendo dos.
   static bool _isDurableSteerEcho(Map<String, dynamic> message) =>
       message['role'] == 'user' &&
       message['_steer'] == true &&
@@ -13703,38 +13716,79 @@ class ActiveChat {
       canonicalTranscriptIdentity(message) != null;
 
   void _retireSteerRecordsWithDurableEcho() {
-    final durableSteers = <({int turnOrdinal, String content})>[];
+    final durableSteers =
+        <
+          ({
+            int turnOrdinal,
+            String turnContent,
+            String content,
+            TranscriptMessageIdentity identity,
+          })
+        >[];
     var turnOrdinal = -1;
+    var turnContent = '';
+    final visibleTurnContents = <String>{};
     for (var index = _messages.length - 1; index >= 0; index--) {
       final message = _messages[index];
       if (isRealUserTurn(message)) {
         turnOrdinal++;
+        turnContent = message['content']?.toString().trim() ?? '';
+        visibleTurnContents.add(turnContent);
         continue;
       }
       if (turnOrdinal < 0 || !_isDurableSteerEcho(message)) continue;
+      final identity = canonicalTranscriptIdentity(message)!;
+      if (_steerRetiringIdentities.any(identity.matches)) continue;
       durableSteers.add((
         turnOrdinal: turnOrdinal,
+        turnContent: turnContent,
         content: message['content']?.toString() ?? '',
+        identity: identity,
       ));
     }
     if (durableSteers.isEmpty) return;
-    final claimed = List<bool>.filled(durableSteers.length, false);
+    // Cada fila durable, de la más antigua a la más nueva, reclama como mucho
+    // una proyección de SU turno: mismo texto, ancla en ese turno o antes (el
+    // ordinal solo crece al ampliar la ventana) y, si la proyección recuerda el
+    // texto de su turno, ese mismo turno. Entre varias candidatas gana la de
+    // ancla más cercana y, a igualdad, la enviada antes. Sin eco propio una
+    // proyección sobrevive aunque otro turno traiga una corrección idéntica.
+    // Si ese texto no aparece en la ventana (turno fuera de ella o guardado
+    // con otro texto), solo queda el ordinal, como en proyecciones antiguas.
     final retired = <int>{};
-    for (var record = 0; record < _steerRecords.length; record++) {
-      final projection = _steerRecords[record];
-      for (var index = 0; index < durableSteers.length; index++) {
-        final durable = durableSteers[index];
-        if (claimed[index] ||
-            durable.turnOrdinal < projection.anchorUserOrdinal ||
-            durable.content != projection.content) {
+    for (final durable in durableSteers) {
+      var chosen = -1;
+      for (var record = 0; record < _steerRecords.length; record++) {
+        if (retired.contains(record)) continue;
+        final projection = _steerRecords[record];
+        final remembered = projection.anchorUserContent?.trim();
+        final anchorContent =
+            remembered != null && visibleTurnContents.contains(remembered)
+            ? remembered
+            : null;
+        if (durable.turnOrdinal < projection.anchorUserOrdinal ||
+            durable.content != projection.content ||
+            (anchorContent != null && anchorContent != durable.turnContent)) {
           continue;
         }
-        claimed[index] = true;
-        retired.add(record);
-        break;
+        if (chosen < 0 ||
+            projection.anchorUserOrdinal >
+                _steerRecords[chosen].anchorUserOrdinal) {
+          chosen = record;
+        }
       }
+      if (chosen < 0) continue;
+      retired.add(chosen);
+      _steerRetiringIdentities.add(durable.identity);
     }
     if (retired.isEmpty) return;
+    // Memoria acotada: solo protege las proyecciones vivas de esta sesión.
+    if (_steerRetiringIdentities.length > 64) {
+      _steerRetiringIdentities.removeRange(
+        0,
+        _steerRetiringIdentities.length - 64,
+      );
+    }
     final kept = [
       for (var record = 0; record < _steerRecords.length; record++)
         if (!retired.contains(record)) _steerRecords[record],
@@ -27964,6 +28018,9 @@ class ActiveChat {
     Future<({DesktopRedirectDisposition disposition, bool usedLegacySteer})>
     redirectOnce(String targetRuntimeId) async {
       final anchorUserOrdinal = _messages.where(isRealUserTurn).length - 1;
+      final anchorUserContent = _messages
+          .firstWhere(isRealUserTurn, orElse: () => const {})['content']
+          ?.toString();
       final optimisticMessage = <String, dynamic>{
         'role': 'user',
         'content': fullText,
@@ -28027,6 +28084,7 @@ class ActiveChat {
         _steerRecords.add((
           anchorUserOrdinal: anchorUserOrdinal,
           content: fullText,
+          anchorUserContent: anchorUserContent,
         ));
         return (disposition: disposition, usedLegacySteer: usedLegacySteer);
       } catch (_) {

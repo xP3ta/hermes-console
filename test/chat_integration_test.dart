@@ -1934,6 +1934,15 @@ void main() {
           ),
           hasLength(1),
         );
+        // La proyección recuerda su turno: solo el eco durable de ese turno la
+        // retira, no una corrección idéntica de un turno posterior.
+        expect(chat.steerProjections, const [
+          (
+            anchorUserOrdinal: 0,
+            content: 'corrige la fecha',
+            anchorUserContent: 'prepara el informe',
+          ),
+        ]);
         service.dispose();
       },
     );

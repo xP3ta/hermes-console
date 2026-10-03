@@ -1746,7 +1746,11 @@ void main() {
         'resume-corrections',
         gateway,
         initialSteerProjections: const [
-          (anchorUserOrdinal: 0, content: 'y documéntala'),
+          (
+            anchorUserOrdinal: 0,
+            content: 'y documéntala',
+            anchorUserContent: null,
+          ),
         ],
       );
       addTearDown(chat.dispose);
@@ -1792,7 +1796,11 @@ void main() {
         'resume-correction-offset-merge',
         gateway,
         initialSteerProjections: const [
-          (anchorUserOrdinal: 0, content: 'más rápido'),
+          (
+            anchorUserOrdinal: 0,
+            content: 'más rápido',
+            anchorUserContent: null,
+          ),
         ],
       );
       addTearDown(chat.dispose);
@@ -1842,8 +1850,8 @@ void main() {
         'resume-correction-scope',
         gateway,
         initialSteerProjections: const [
-          (anchorUserOrdinal: 0, content: 'igual'),
-          (anchorUserOrdinal: 1, content: 'igual'),
+          (anchorUserOrdinal: 0, content: 'igual', anchorUserContent: null),
+          (anchorUserOrdinal: 1, content: 'igual', anchorUserContent: null),
         ],
       );
       addTearDown(chat.dispose);
@@ -6446,7 +6454,7 @@ void main() {
             // Proyección local guardada al enviar la corrección: el ordinal 0
             // era «cambia el modelo» en la ventana de entonces.
             initialSteerProjections: const [
-              (anchorUserOrdinal: 0, content: steer),
+              (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
             ],
           );
           addTearDown(chat.dispose);
@@ -6488,8 +6496,8 @@ void main() {
         gateway,
         // La segunda corrección, idéntica, aún no se ha persistido.
         initialSteerProjections: const [
-          (anchorUserOrdinal: 0, content: steer),
-          (anchorUserOrdinal: 1, content: steer),
+          (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
+          (anchorUserOrdinal: 1, content: steer, anchorUserContent: null),
         ],
       );
       addTearDown(chat.dispose);
@@ -6498,7 +6506,9 @@ void main() {
 
       expect(visibleSteers(chat), [steer, steer]);
       expect(steerOwners(chat), ['primero', 'segundo']);
-      expect(chat.steerProjections, [(anchorUserOrdinal: 1, content: steer)]);
+      expect(chat.steerProjections, [
+        (anchorUserOrdinal: 1, content: steer, anchorUserContent: null),
+      ]);
     });
 
     test('la corrección en vuelo ya persistida no se repite', () async {
@@ -6717,22 +6727,147 @@ void main() {
       'una fila durable de un turno anterior no retira otra proyección',
       () async {
         final chat = await closedTurns('tg1215-steer-earlier', const [
-          (anchorUserOrdinal: 1, content: steer),
+          (anchorUserOrdinal: 1, content: steer, anchorUserContent: null),
         ]);
         expect(visibleSteers(chat), [steer, steer]);
         expect(steerOwners(chat), ['primero', 'segundo']);
-        expect(chat.steerProjections, [(anchorUserOrdinal: 1, content: steer)]);
+        expect(chat.steerProjections, [
+          (anchorUserOrdinal: 1, content: steer, anchorUserContent: null),
+        ]);
       },
     );
 
     test('una fila durable solo retira una proyección idéntica', () async {
       final chat = await closedTurns('tg1215-steer-one-claim', const [
-        (anchorUserOrdinal: 0, content: steer),
-        (anchorUserOrdinal: 0, content: steer),
+        (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
+        (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
       ]);
       expect(visibleSteers(chat), [steer, steer]);
       expect(steerOwners(chat), ['primero', 'primero']);
-      expect(chat.steerProjections, [(anchorUserOrdinal: 0, content: steer)]);
+      expect(chat.steerProjections, [
+        (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
+      ]);
     });
+
+    // Eco de A ausente: la corrección A del turno «primero» nunca llegó al
+    // transcript, y un turno posterior trae una corrección B real con el mismo
+    // texto. B pertenece a su turno; no puede reclamar la proyección A.
+    Future<ActiveChat> echoMissingThenLaterTwin(
+      String id,
+      List<SteerProjection> projections,
+    ) async {
+      final rows = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'primero', 'row_id': 70},
+        {'role': 'assistant', 'content': 'uno', 'row_id': 71},
+        {'role': 'user', 'content': 'segundo', 'row_id': 72},
+        {
+          'role': 'user',
+          'content': steer,
+          'display_kind': 'steer',
+          'row_id': 73,
+        },
+        {'role': 'assistant', 'content': 'dos', 'row_id': 74},
+      ];
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-$id',
+          'session_key': 'stored-chat',
+          'message_count': rows.length,
+          'messages': rows,
+        });
+      final chat = _chat(id, gateway, initialSteerProjections: projections);
+      addTearDown(chat.dispose);
+      await chat.loadMessages();
+      await chat.loadMessages();
+      return chat;
+    }
+
+    test(
+      'xr2 sin eco de A, una corrección idéntica posterior no la retira',
+      () async {
+        const projectionA = (
+          anchorUserOrdinal: 0,
+          content: steer,
+          anchorUserContent: 'primero',
+        );
+        final chat = await echoMissingThenLaterTwin('xr2-steer-a-only', const [
+          projectionA,
+        ]);
+        expect(visibleSteers(chat), [steer, steer]);
+        expect(steerOwners(chat), ['primero', 'segundo']);
+        expect(chat.steerProjections, [projectionA]);
+      },
+    );
+
+    test(
+      'xr2 sin eco de A, la fila de B retira solo la proyección de B',
+      () async {
+        const projectionA = (
+          anchorUserOrdinal: 0,
+          content: steer,
+          anchorUserContent: 'primero',
+        );
+        final chat = await echoMissingThenLaterTwin('xr2-steer-a-and-b', const [
+          projectionA,
+          (anchorUserOrdinal: 1, content: steer, anchorUserContent: 'segundo'),
+        ]);
+        expect(visibleSteers(chat), [steer, steer]);
+        expect(steerOwners(chat), ['primero', 'segundo']);
+        expect(chat.steerProjections, [projectionA]);
+      },
+    );
+
+    test(
+      'xr2 sin texto de ancla, la fila de B retira la proyección más cercana',
+      () async {
+        // Proyecciones anteriores a esta versión no recuerdan su turno: la
+        // fila de «segundo» retira la anclada en «segundo», no la de A.
+        final chat = await echoMissingThenLaterTwin('xr2-steer-legacy', const [
+          (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
+          (anchorUserOrdinal: 1, content: steer, anchorUserContent: null),
+        ]);
+        expect(visibleSteers(chat), [steer, steer]);
+        expect(steerOwners(chat), ['primero', 'segundo']);
+        expect(chat.steerProjections, const [
+          (anchorUserOrdinal: 0, content: steer, anchorUserContent: null),
+        ]);
+      },
+    );
+
+    test(
+      'xr2 un turno guardado con otro texto sigue retirando su eco',
+      () async {
+        // Si el prompt durable no coincide con el texto recordado, la
+        // proyección no se ancla a ningún turno visible y se retira por
+        // ordinal, como antes: nunca se pinta dos veces.
+        final chat = await echoMissingThenLaterTwin(
+          'xr2-steer-rewritten',
+          const [
+            (
+              anchorUserOrdinal: 1,
+              content: steer,
+              anchorUserContent: 'segundo con adjunto',
+            ),
+          ],
+        );
+        expect(visibleSteers(chat), [steer]);
+        expect(steerOwners(chat), ['segundo']);
+        expect(chat.steerProjections, isEmpty);
+      },
+    );
+
+    test(
+      'xr2 la ventana ampliada sigue retirando el eco del propio turno',
+      () async {
+        // Al enviar, «segundo» era el ordinal 0 de la ventana; tras ampliar
+        // es el 1 y su eco durable sigue retirando la proyección.
+        final chat = await echoMissingThenLaterTwin('xr2-steer-shifted', const [
+          (anchorUserOrdinal: 0, content: steer, anchorUserContent: 'segundo'),
+        ]);
+        expect(visibleSteers(chat), [steer]);
+        expect(steerOwners(chat), ['segundo']);
+        expect(chat.steerProjections, isEmpty);
+      },
+    );
   });
 }
