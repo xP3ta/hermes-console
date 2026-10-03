@@ -891,4 +891,127 @@ void main() {
       expect(find.textContaining('**'), findsNothing);
     },
   );
+
+  // Field report (hosted room, 4/4 bots up): "? could not reply" plus "A reply
+  // failed" while the server was only re-checking an interrupted attempt.
+  // Server shape: `pending_actions` lists a retry for every `indeterminate`
+  // task, and an indeterminate task has no room event at all until the
+  // driver settles or defers it (no `turn.started` is ever published).
+  group('interrupted reply the server is still checking', () {
+    testWidgets('is not a failure card and never names a bot "?"', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final u = seq.user('@builder look');
+      await _pump(
+        tester,
+        events: [u],
+        status: driver(
+          blocked: true,
+          counts: {'indeterminate': 1},
+          pending: [
+            {'kind': 'retry', 'task_id': 'dtask-int'},
+          ],
+        ),
+      );
+      expect(find.byKey(const ValueKey('room-retry-dtask-int')), findsNothing);
+      expect(find.textContaining('could not reply'), findsNothing);
+      expect(find.text('A reply failed'), findsNothing);
+      expect(find.text('Blocked — retry'), findsNothing);
+      expect(find.text('Checking an interrupted reply…'), findsOneWidget);
+    });
+
+    testWidgets('a deferral the server published names the real bot', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final u = seq.user('@builder look');
+      final disc = u['event_id'] as String;
+      await _pump(
+        tester,
+        events: [
+          u,
+          seq.deferred('m-builder', disc, task: 'dtask-def'),
+        ],
+        status: driver(
+          counts: {'deferred': 1},
+          pending: [
+            {'kind': 'retry', 'task_id': 'dtask-def'},
+          ],
+        ),
+      );
+      expect(
+        find.byKey(const ValueKey('room-retry-dtask-def')),
+        findsOneWidget,
+      );
+      expect(find.text('console-builder could not reply'), findsOneWidget);
+      expect(find.text('Checking an interrupted reply…'), findsNothing);
+    });
+
+    testWidgets('stays a failure when the driver is not running', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      await _pump(
+        tester,
+        events: [seq.user('@builder look')],
+        status: driver(
+          running: false,
+          counts: {'indeterminate': 1},
+          pending: [
+            {'kind': 'retry', 'task_id': 'dtask-int'},
+          ],
+        ),
+      );
+      expect(find.text('A bot could not reply'), findsOneWidget);
+      expect(find.textContaining('?'), findsNothing);
+      expect(find.text('Blocked — retry'), findsOneWidget);
+    });
+
+    testWidgets('an unexplained retry beyond the indeterminate count stays', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      await _pump(
+        tester,
+        events: [seq.user('@builder look')],
+        status: driver(
+          blocked: true,
+          counts: {'indeterminate': 1, 'deferred': 1},
+          pending: [
+            {'kind': 'retry', 'task_id': 'dtask-a'},
+            {'kind': 'retry', 'task_id': 'dtask-b'},
+          ],
+        ),
+      );
+      expect(find.text('A bot could not reply'), findsNWidgets(2));
+      expect(find.text('Checking an interrupted reply…'), findsNothing);
+    });
+
+    testWidgets('a deferral alongside an indeterminate retry shows only it', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final u = seq.user('@builder @review look');
+      final disc = u['event_id'] as String;
+      await _pump(
+        tester,
+        events: [
+          u,
+          seq.deferred('m-review', disc, task: 'dtask-def'),
+        ],
+        status: driver(
+          blocked: true,
+          counts: {'indeterminate': 1, 'deferred': 1},
+          pending: [
+            {'kind': 'retry', 'task_id': 'dtask-int'},
+            {'kind': 'retry', 'task_id': 'dtask-def'},
+          ],
+        ),
+      );
+      expect(find.text('console-review could not reply'), findsOneWidget);
+      expect(find.byKey(const ValueKey('room-retry-dtask-int')), findsNothing);
+      expect(find.text('Checking an interrupted reply…'), findsNothing);
+    });
+  });
 }

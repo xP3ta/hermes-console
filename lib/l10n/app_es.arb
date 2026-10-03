@@ -8005,6 +8005,10 @@
   "roomStatusNeedsApproval": "Necesita tu aprobación",
   "roomStatusBlocked": "Bloqueada — reintentar",
   "roomStatusFailed": "Falló una respuesta",
+  "roomStatusRecovering": "Comprobando una respuesta interrumpida…",
+  "@roomStatusRecovering": {
+    "description": "Room header while the server re-checks a reply interrupted by a restart or lost connection; not a failure"
+  },
   "roomStatusRoundFinished": "Ronda {round} terminada · {ago}",
   "@roomStatusRoundFinished": {
     "placeholders": {
@@ -8111,6 +8115,10 @@
   "roomRetryAction": "Reintentar",
   "roomRetryDismiss": "Descartar",
   "roomRetryUnavailable": "No se puede reintentar desde aquí",
+  "roomRetryUnknownMember": "Un bot",
+  "@roomRetryUnknownMember": {
+    "description": "Neutral name in the failure card when the server does not say which bot failed"
+  },
   "roomStripNeedsYou": "{name} te necesita",
   "@roomStripNeedsYou": {
     "placeholders": {
