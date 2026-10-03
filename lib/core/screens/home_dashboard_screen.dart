@@ -1946,42 +1946,45 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                         ),
                       ),
                       const SizedBox(width: 6),
-                      Text(
-                        _checking
-                            ? Strings.of(context).homeStatusChecking(
-                                _active?.label ??
-                                    Strings.of(context).homeStatusAgentConsole,
-                              )
-                            : _healthOk &&
-                                  _dashboardAuth ==
-                                      DashboardAuthCheck.invalidCredentials
-                            ? Strings.of(
-                                context,
-                              ).m1215HomeDashboardWrongPassword(
-                                _active?.label ?? '',
-                              )
-                            : _healthOk &&
-                                  _dashboardAuth ==
-                                      DashboardAuthCheck.loginRequired
-                            ? Strings.of(
-                                context,
-                              ).m1215HomeDashboardLoginRequired(
-                                _active?.label ?? '',
-                              )
-                            : _healthOk
-                            ? Strings.of(
-                                context,
-                              ).homeStatusOnline(_active?.label ?? '')
-                            : _active == null
-                            ? Strings.of(context).homeStatusAgentConsole
-                            : Strings.of(
-                                context,
-                              ).homeStatusOffline(_active!.label),
-                        style: TextStyle(
-                          // ≥11px: a 9.5px el estado era casi ilegible (A-110).
-                          fontSize: 11,
-                          letterSpacing: 0.6,
-                          color: colors.textSecondary,
+                      // Flexible: con el selector de perfil en la barra, la línea
+                      // de estado debe recortarse en vez de desbordar.
+                      Flexible(
+                        child: Text(
+                          _checking
+                              ? Strings.of(context).homeStatusChecking(
+                                  _active?.label ??
+                                      Strings.of(context)
+                                          .homeStatusAgentConsole,
+                                )
+                              : _healthOk &&
+                                    _dashboardAuth ==
+                                        DashboardAuthCheck.invalidCredentials
+                              ? Strings.of(context)
+                                    .m1215HomeDashboardWrongPassword(
+                                      _active?.label ?? '',
+                                    )
+                              : _healthOk &&
+                                    _dashboardAuth ==
+                                        DashboardAuthCheck.loginRequired
+                              ? Strings.of(context)
+                                    .m1215HomeDashboardLoginRequired(
+                                      _active?.label ?? '',
+                                    )
+                              : _healthOk
+                              ? Strings.of(context)
+                                    .homeStatusOnline(_active?.label ?? '')
+                              : _active == null
+                              ? Strings.of(context).homeStatusAgentConsole
+                              : Strings.of(context)
+                                    .homeStatusOffline(_active!.label),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            // ≥11px: a 9.5px el estado era casi ilegible (A-110).
+                            fontSize: 11,
+                            letterSpacing: 0.6,
+                            color: colors.textSecondary,
+                          ),
                         ),
                       ),
                       if (_active != null) ...[
