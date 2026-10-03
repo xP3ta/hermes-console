@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../models/attachment_draft.dart';
+import '../../utils/large_paste.dart';
 import '../../theme/app_theme.dart';
 import '../attachment_card.dart';
 import '../attachment_source_sheet.dart';
@@ -85,6 +86,7 @@ class ConsoleComposer extends StatelessWidget {
     this.onContentInserted,
     this.reduceMotion = false,
     this.inputFormatters,
+    this.onOpenPastedText,
   });
 
   final TextEditingController controller;
@@ -145,6 +147,9 @@ class ConsoleComposer extends StatelessWidget {
 
   /// Composer-level input rules (typed `@` references, large pastes).
   final List<TextInputFormatter>? inputFormatters;
+
+  /// Tap on a collapsed large paste (by local id): expand it to edit.
+  final ValueChanged<String>? onOpenPastedText;
 
   void _send() => onSend(controller.text, attachments);
 
@@ -355,6 +360,7 @@ class ConsoleComposer extends StatelessWidget {
                             attachments: attachments,
                             onRemove: onRemoveAttachment,
                             onRetry: onRetryAttachment,
+                            onOpenPastedText: onOpenPastedText,
                           ),
                         Row(
                           key: const ValueKey('composer-input-row'),
@@ -589,11 +595,13 @@ class ConsoleAttachmentPreviewStrip extends StatelessWidget {
   final List<AttachmentDraft> attachments;
   final ValueChanged<String>? onRemove;
   final ValueChanged<String>? onRetry;
+  final ValueChanged<String>? onOpenPastedText;
 
   const ConsoleAttachmentPreviewStrip({
     required this.attachments,
     required this.onRemove,
     required this.onRetry,
+    this.onOpenPastedText,
     super.key,
   });
 
@@ -633,13 +641,27 @@ class ConsoleAttachmentPreviewStrip extends StatelessWidget {
                               AttachmentUploadState.error);
                   final changing =
                       attachment.uploadState == AttachmentUploadState.uploading;
+                  final pasted =
+                      !attachment.isImage &&
+                      isPastedContentName(attachment.name);
+                  final editablePaste =
+                      pasted &&
+                      onOpenPastedText != null &&
+                      attachment.localId.isNotEmpty &&
+                      attachment.uploadState == AttachmentUploadState.pending;
+                  final displayName = pasted
+                      ? Strings.of(context).t1215PastedContent
+                      : attachment.name;
                   final openPreview = previewable
                       ? () =>
                             showImageViewer(context, File(attachment.localPath))
+                      : editablePaste
+                      ? () => onOpenPastedText!(attachment.localId)
                       : null;
                   return Semantics(
-                    container: changing || previewable,
-                    explicitChildNodes: changing || previewable,
+                    container: changing || previewable || editablePaste,
+                    explicitChildNodes:
+                        changing || previewable || editablePaste,
                     liveRegion:
                         changing ||
                         attachment.uploadState == AttachmentUploadState.error,
@@ -647,17 +669,15 @@ class ConsoleAttachmentPreviewStrip extends StatelessWidget {
                         ? Strings.of(
                             context,
                           ).chaAttachmentUploadInProgress(attachment.name)
-                        : previewable
-                        ? Strings.of(
-                            context,
-                          ).chaPreviewAttachment(attachment.name)
+                        : previewable || editablePaste
+                        ? Strings.of(context).chaPreviewAttachment(displayName)
                         : null,
-                    button: previewable,
+                    button: previewable || editablePaste,
                     onTap: openPreview,
                     child: AttachmentCard(
                       key: ValueKey('attachment-card-${attachment.localId}'),
                       compact: true,
-                      name: attachment.name,
+                      name: displayName,
                       mimeType: attachment.mimeType,
                       sizeLabel: attachment.formattedSize,
                       thumbnailFile: hasLocalImage

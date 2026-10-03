@@ -9,8 +9,10 @@ export '../widgets/chat/chat_message_selection_area.dart';
 
 import '../models/bot_mention.dart';
 import '../models/composer_reference.dart';
+import '../utils/large_paste.dart';
 import '../widgets/chat_mention_palette.dart';
 import '../widgets/chat/composer_reference_palette.dart';
+import '../widgets/chat/pasted_text_editor.dart';
 import '../widgets/chat/chat_markdown_body.dart';
 import '../widgets/chat/chat_message_frame.dart';
 import '../widgets/chat/console_composer.dart';
@@ -1657,6 +1659,10 @@ class _ChatScreenState extends State<ChatScreen>
   List<PathCompletionItem> _referenceItems = const [];
   String? _referenceKey;
   late final List<TextInputFormatter> _composerInputFormatters = [
+    LargePasteFormatter(
+      enabled: () => _largePasteAttachable,
+      onLargePaste: _onLargePaste,
+    ),
     ComposerReferenceFormatter(
       enabled: () => _chatBound && _chat.supportsDesktopPathCompletion,
     ),
@@ -11563,6 +11569,143 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// A large paste can become an attachment while the `+` could attach one.
+  bool get _largePasteAttachable =>
+      !widget.connection.readOnly &&
+      !_interactiveMessageRefreshPending &&
+      !_composerSubmissionInFlight &&
+      !_attachmentSubmitting &&
+      !_compressingSession;
+
+  void _onLargePaste(String text) {
+    // The field already kept its previous value; the paste lands as a chip,
+    // or inline if it cannot (never lost, like Desktop).
+    final selection = _textController.selection;
+    unawaited(
+      _serializeAttachmentMutation(() => _attachPastedText(text, selection)),
+    );
+  }
+
+  Future<void> _attachPastedText(String text, TextSelection selection) async {
+    final bytes = utf8.encode(text);
+    final batchBytes = _pendingAttachments.fold<int>(
+      0,
+      (sum, item) => sum + item.sizeBytes,
+    );
+    AttachmentDraft? persisted;
+    if (!_attachmentSubmitting &&
+        pendingAttachmentLimitViolation(
+              sizeBytes: bytes.length,
+              itemLimit: AttachmentUploader.maxTextBytes,
+              currentBatchBytes: batchBytes,
+            ) ==
+            null) {
+      final name = pastedContentFileName();
+      final source = File(
+        '${Directory.systemTemp.path}/hermes-paste-${const Uuid().v4()}.txt',
+      );
+      try {
+        await source.writeAsBytes(bytes, flush: true);
+        persisted = await _materializeAttachment(
+          AttachmentDraft(
+            localId: const Uuid().v4(),
+            type: AttachmentType.document,
+            name: name,
+            mimeType: 'text/plain',
+            sizeBytes: bytes.length,
+            localPath: source.path,
+          ),
+        );
+      } catch (_) {
+        persisted = null;
+      } finally {
+        if (persisted?.localPath != source.path) {
+          try {
+            if (await source.exists()) await source.delete();
+          } catch (_) {}
+        }
+      }
+    }
+    if (!mounted || _disposed) {
+      if (persisted != null) await _deletePrivateAttachmentCopy(persisted);
+      return;
+    }
+    if (persisted == null) {
+      _insertComposerText(text, selection);
+      return;
+    }
+    final attached = persisted;
+    setState(() => _pendingAttachments.add(attached));
+    _scheduleDraftSave();
+  }
+
+  void _insertComposerText(String text, TextSelection selection) {
+    final value = _textController.value;
+    final start = selection.isValid
+        ? selection.start.clamp(0, value.text.length)
+        : value.text.length;
+    final end = selection.isValid
+        ? selection.end.clamp(start, value.text.length)
+        : value.text.length;
+    _textController.value = TextEditingValue(
+      text: value.text.replaceRange(start, end, text),
+      selection: TextSelection.collapsed(offset: start + text.length),
+    );
+  }
+
+  /// Expands a collapsed paste to edit it; only while it is still a local
+  /// draft no delivery has taken.
+  Future<void> _openPastedText(String localId) async {
+    final index = _pendingAttachments.indexWhere(
+      (item) => item.localId == localId,
+    );
+    if (index < 0) return;
+    final attachment = _pendingAttachments[index];
+    final delivery = _chatBound ? _chat.activeTurnDelivery : null;
+    if (attachment.uploadState != AttachmentUploadState.pending ||
+        (delivery?.current.attachments.any((item) => item.localId == localId) ??
+            false)) {
+      return;
+    }
+    final String original;
+    try {
+      original = await File(attachment.localPath).readAsString();
+    } catch (_) {
+      return;
+    }
+    if (!mounted) return;
+    final edited = await showPastedTextEditor(context, original);
+    if (!mounted || _disposed || edited == null || edited == original) return;
+    if (edited.trim().isEmpty) {
+      await _removePendingAttachment(localId);
+      return;
+    }
+    await _serializeAttachmentMutation(() async {
+      final current = _pendingAttachments.indexWhere(
+        (item) => item.localId == localId,
+      );
+      if (current < 0 ||
+          _pendingAttachments[current].uploadState !=
+              AttachmentUploadState.pending) {
+        return;
+      }
+      final bytes = utf8.encode(edited);
+      if (bytes.length > AttachmentUploader.maxTextBytes) return;
+      try {
+        await File(attachment.localPath).writeAsBytes(bytes, flush: true);
+      } catch (_) {
+        return;
+      }
+      if (!mounted || _disposed) return;
+      setState(() {
+        _pendingAttachments[current] = _pendingAttachments[current].copyWith(
+          sizeBytes: bytes.length,
+        );
+      });
+      _scheduleDraftSave();
+    });
+  }
+
   Future<void> _pickDocument() =>
       _serializeAttachmentMutation(_pickDocumentNow);
 
@@ -15153,6 +15296,7 @@ class _ChatScreenState extends State<ChatScreen>
       focusNode: _textFocusNode,
       palette: floatingPalette,
       inputFormatters: _composerInputFormatters,
+      onOpenPastedText: (localId) => unawaited(_openPastedText(localId)),
       reduceMotion: _reduceMotion,
       attachments: _pendingAttachments,
       onRemoveAttachment: (localId) =>

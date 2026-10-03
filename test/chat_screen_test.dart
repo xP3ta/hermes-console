@@ -12286,6 +12286,110 @@ void main() {
     expect(find.byType(AttachmentCard), findsOneWidget);
   });
 
+  testWidgets(
+    'pegar texto grande lo colapsa en un adjunto editable (Desktop 3000)',
+    (tester) async {
+      final temp = Directory.systemTemp.createTempSync('chat-large-paste-');
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+      addTearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null),
+      );
+      await pumpChat(
+        tester,
+        attachmentMaterializer: (attachment) async => attachment,
+      );
+      final composer = find.byType(TextField).last;
+      await tester.enterText(composer, 'resume esto ');
+      await tester.pump();
+
+      // Under the threshold a paste stays inline.
+      final small = 'a' * 3000;
+      await tester.enterText(composer, 'resume esto $small');
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(composer).controller!.text,
+        'resume esto $small',
+      );
+      await tester.enterText(composer, 'resume esto ');
+      await tester.pump();
+
+      final big = List.filled(400, 'línea de log 0123456789').join('\n');
+      expect(big.length, greaterThan(3000));
+      tester.testTextInput.updateEditingValue(
+        TextEditingValue(
+          text: 'resume esto $big',
+          selection: TextSelection.collapsed(offset: 12 + big.length),
+        ),
+      );
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(composer).controller!.text,
+        'resume esto ',
+      );
+      await pumpUntilReal(
+        tester,
+        () => find.byType(AttachmentCard).evaluate().isNotEmpty,
+        timeoutMessage: 'large paste did not become an attachment',
+      );
+      final card = tester.widget<AttachmentCard>(find.byType(AttachmentCard));
+      expect(card.name, 'Texto pegado');
+      expect(card.mimeType, 'text/plain');
+      final draft = tester
+          .widget<ConsoleComposer>(find.byType(ConsoleComposer))
+          .attachments
+          .single;
+      expect(
+        RegExp(r'^pasted_content_[\w-]+\.txt$').hasMatch(draft.name),
+        isTrue,
+      );
+      final stored = await tester.runAsync(
+        () => File(draft.localPath).readAsString(),
+      );
+      expect(stored, big);
+      addTearDown(() {
+        final file = File(draft.localPath);
+        if (file.existsSync()) file.deleteSync();
+      });
+
+      // Tap expands it for editing; saving rewrites the attachment.
+      await tester.tap(find.byType(AttachmentCard));
+      await pumpUntilReal(
+        tester,
+        () => find
+            .byKey(const ValueKey('pasted-text-field'))
+            .evaluate()
+            .isNotEmpty,
+        timeoutMessage: 'paste editor did not open',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('pasted-text-field')),
+        'editado',
+      );
+      await tester.tap(find.byKey(const ValueKey('pasted-text-save')));
+      await pumpUntilReal(
+        tester,
+        () =>
+            tester
+                .widget<ConsoleComposer>(find.byType(ConsoleComposer))
+                .attachments
+                .single
+                .sizeBytes ==
+            'editado'.length,
+        timeoutMessage: 'edited paste was not saved',
+      );
+      expect(
+        await tester.runAsync(() => File(draft.localPath).readAsString()),
+        'editado',
+      );
+    },
+  );
+
   testWidgets('pegados IME concurrentes se serializan y deduplican', (
     tester,
   ) async {

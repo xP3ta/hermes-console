@@ -7726,5 +7726,7 @@
   "t1215RefStarterFile": "Reference a file",
   "t1215RefStarterFolder": "Reference a folder",
   "t1215RefStarterUrl": "Reference a link",
-  "t1215RefOpenFolder": "Open folder"
+  "t1215RefOpenFolder": "Open folder",
+  "t1215PastedContent": "Pasted content",
+  "t1215PastedContentSave": "Save"
 }

@@ -12,6 +12,7 @@ import 'package:hermes_android/core/services/desktop_gateway_capabilities.dart';
 import 'package:hermes_android/core/services/composer_completion_scheduler.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'package:hermes_android/core/utils/large_paste.dart';
 import 'package:hermes_android/core/utils/slash_commands.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
@@ -398,6 +399,49 @@ void main() {
         throwsA(isA<TuiGatewayRpcError>()),
       );
       expect(requests, hasLength(sent));
+    });
+  });
+
+  group('large paste', () {
+    TextEditingValue at(String text, [int? caret]) => TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: caret ?? text.length),
+    );
+
+    test('Desktop threshold, file name and size label', () {
+      expect(shouldConvertPasteToAttachment('x' * 3000), isFalse);
+      expect(shouldConvertPasteToAttachment('x' * 3001), isTrue);
+      final name = pastedContentFileName(now: DateTime.utc(2026, 10, 3, 9, 5));
+      expect(name, startsWith('pasted_content_2026-10-03_09-05-00-000_'));
+      expect(isPastedContentName(name), isTrue);
+      expect(isPastedContentName('notes.txt'), isFalse);
+      expect(pasteSizeLabel('a' * 2048), '2.0 KB');
+    });
+
+    test('the formatter keeps the field and hands over the paste', () {
+      final pasted = <String>[];
+      var enabled = true;
+      final formatter = LargePasteFormatter(
+        enabled: () => enabled,
+        onLargePaste: pasted.add,
+      );
+      final big = 'y' * 3500;
+      final before = at('hi there', 3);
+      final result = formatter.formatEditUpdate(
+        before,
+        at('hi ${big}there', 3 + big.length),
+      );
+      expect(result, before);
+      expect(pasted, [big]);
+
+      final small = at('hi ${'y' * 10}there');
+      expect(formatter.formatEditUpdate(before, small), small);
+
+      enabled = false;
+      final inline = at('hi ${big}there');
+      expect(formatter.formatEditUpdate(before, inline), inline);
+      expect(pasted, hasLength(1));
+      expect(insertedChunk(at('abc'), at('aXYbc')), 'XY');
     });
   });
 }
