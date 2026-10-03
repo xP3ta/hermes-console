@@ -1,6 +1,7 @@
 // One session state (#21): the home screen widget leaves a session the
 // server confirmed deleted, from the shared SessionArchive, and a late event
 // from the deleted chat cannot publish it again.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -33,6 +34,17 @@ class _Store implements HomeWidgetStore {
     final atomic = values[HermesHomeWidgetSnapshot.atomicStorageKey];
     if (atomic is! String) return null;
     return (jsonDecode(atomic) as Map)['session_id'] as String?;
+  }
+}
+
+/// A launcher store whose first read (cold start hydration) is slow.
+class _SlowStore extends _Store {
+  final gate = Completer<void>();
+
+  @override
+  Future<Object?> read(String key) async {
+    await gate.future;
+    return super.read(key);
   }
 }
 
@@ -102,7 +114,11 @@ void main() {
   test('a late event from the deleted chat cannot republish it', () async {
     final archive = await SessionArchive.load(prefs, 'c1');
     await archive.markSessionDeleted(_session('gone'));
+    // The chat service publishes whole snapshots...
     await publisher.publish(_chat('gone'));
+    expect(publisher.latest.sessionId, isNull);
+    expect(store.sessionId, isNull);
+    // ...and throttled metrics through update.
     await publisher.update((current) => _chat('gone'));
     expect(publisher.latest.sessionId, isNull);
     expect(store.sessionId, isNull);
@@ -118,14 +134,18 @@ void main() {
   test('a snapshot restored at cold start leaves a deleted session', () async {
     final archive = await SessionArchive.load(prefs, 'c1');
     await archive.markSessionDeleted(_session('gone'));
-    final restored = _Store()
+    final restored = _SlowStore()
       ..values[HermesHomeWidgetSnapshot.atomicStorageKey] = _chat(
         'gone',
       ).toAtomicStorageValue();
     final coldPublisher = HermesHomeWidgetPublisher(store: restored);
     final coldGuard = HomeWidgetDeletedSessionGuard(coldPublisher, prefs);
     addTearDown(coldGuard.dispose);
-    await coldGuard.follow('c1');
+    // The launcher store answers after the guard is already following.
+    final following = coldGuard.follow('c1');
+    await Future<void>.delayed(Duration.zero);
+    restored.gate.complete();
+    await following;
     await coldPublisher.flush();
     expect(coldPublisher.latest.sessionId, isNull);
     expect(restored.sessionId, isNull);
