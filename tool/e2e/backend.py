@@ -46,6 +46,11 @@ SEEDED_SESSION_ID = "e2e-seeded-300"
 SEEDED_ROWS = 300
 # Small independent sessions, one per scenario, so tests never share a runtime.
 CHAT_SESSIONS = tuple(f"e2e-chat-{i:02d}" for i in range(1, 13))
+# Exported by tool/e2e/run_local.sh and kept in the children's allowlisted
+# env: tool/e2e/reap.py finds every process of this lane by it.
+LANE_VAR = "HERMES_E2E_LANE"
+# Whole teardown of the children; run_local.sh waits longer than this.
+KILL_BUDGET_S = 8.0
 READY_RE = re.compile(r"HERMES_BACKEND_READY port=(\d+)")
 TAG_RE = re.compile(r"\[E2E:([A-Z_]+)(?::([A-Za-z0-9_-]+))?\]")
 
@@ -220,7 +225,8 @@ class Control:
 def _child_env(home: Path, hermes_home: Path, token: str, src: Path,
                user: str, password: str) -> dict[str, str]:
     """Allowlisted env: nothing provider- or Hermes-shaped leaks from the runner."""
-    env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL", "TERM") if k in os.environ}
+    env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL", "TERM", LANE_VAR)
+           if k in os.environ}
     tmp = home.parent / "tmp"
     tmp.mkdir(parents=True, exist_ok=True)
     env.update(
@@ -241,19 +247,39 @@ def _child_env(home: Path, hermes_home: Path, token: str, src: Path,
     return env
 
 
-def _kill_group(child: subprocess.Popen) -> None:
-    """SIGTERM the child's own process group, SIGKILL after 15 s."""
-    if child.poll() is not None:
-        return
-    try:
-        os.killpg(child.pid, signal.SIGTERM)
-        child.wait(timeout=15)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        try:
-            os.killpg(child.pid, signal.SIGKILL)
-            child.wait(timeout=10)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
-            pass
+def _record_group(root: Path, child: subprocess.Popen) -> None:
+    """Append the child's process group (its own session) to
+    ``children.pgid`` so tool/e2e/reap.py can find it after an abnormal exit."""
+    with open(root / "children.pgid", "a", encoding="utf-8") as f:
+        f.write(f"{child.pid}\n")
+
+
+def _kill_groups(children: list[subprocess.Popen], budget: float = KILL_BUDGET_S) -> None:
+    """SIGTERM every child's process group at once, SIGKILL whatever is left
+    at half of [budget], all within [budget] seconds in total. The runner
+    waits longer than this before its own reap, so a slow ``hermes serve``
+    shutdown cannot outlive the backend."""
+    live = [c for c in children if c.poll() is None]
+    deadline = time.monotonic() + budget
+
+    def signal_all(sig: int) -> None:
+        for child in live:
+            try:
+                os.killpg(child.pid, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    def wait_until(until: float) -> None:
+        for child in live:
+            try:
+                child.wait(timeout=max(0.0, until - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                pass
+
+    signal_all(signal.SIGTERM)
+    wait_until(time.monotonic() + budget / 2)
+    signal_all(signal.SIGKILL)  # also the group's stragglers, not only the leader
+    wait_until(deadline)
 
 
 def main() -> int:
@@ -302,6 +328,7 @@ def main() -> int:
         [sys.executable, "-m", "hermes_cli.main", "serve", "--host", args.host, "--port", "0"],
         cwd=str(root), env=_child_env(home, hermes_home, token, src, user, password),
         stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, start_new_session=True)
+    _record_group(root, proc)
 
     stopping = threading.Event()
     api_procs: list[subprocess.Popen] = []
@@ -326,6 +353,7 @@ def main() -> int:
                 stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                 start_new_session=True)
             api_procs.append(gw)
+            _record_group(root, gw)
             deadline = time.monotonic() + args.timeout
             while time.monotonic() < deadline and gw.poll() is None and not stopping.is_set():
                 try:
@@ -338,7 +366,7 @@ def main() -> int:
                 except (OSError, ValueError):
                     pass
                 time.sleep(0.2)
-            _kill_group(gw)
+            _kill_groups([gw])
         raise RuntimeError("gateway API server never became ready")
 
     def stop(*_a) -> None:
@@ -380,8 +408,7 @@ def main() -> int:
             stopping.wait(0.5)
         return 0 if proc.poll() is None else 1
     finally:
-        for child in (*api_procs, proc):
-            _kill_group(child)
+        _kill_groups([*api_procs, proc])
         control.server.shutdown()
         llm.stop()
         stdout.close()
