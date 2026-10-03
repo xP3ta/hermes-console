@@ -289,6 +289,7 @@
   "chaDiscardRecovered": "Discard recovered",
   "chaRestoreRecovered": "Restore to composer",
   "chaRecoveredKeepsDraft": "Your current draft is kept. Send it or clear the composer to recover the previous message.",
+  "chaRetryKeepsDraft": "Your current draft is kept and nothing was retried. Send it or clear the composer to retry the previous message.",
   "chaRecoveredDismiss": "Hide notice",
   "chaUploadTitle": "Upload attachment",
   "chaUploadError": "Couldn't upload the attachment: {err}",

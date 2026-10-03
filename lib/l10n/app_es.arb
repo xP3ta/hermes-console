@@ -560,6 +560,7 @@
   "chaDiscardRecovered": "Descartar recuperado",
   "chaRestoreRecovered": "Restaurar en el editor",
   "chaRecoveredKeepsDraft": "Tu borrador actual se conserva. Envíalo o vacía el editor para recuperar el mensaje anterior.",
+  "chaRetryKeepsDraft": "Tu borrador actual se conserva y no se ha reintentado nada. Envíalo o vacía el editor para reintentar el mensaje anterior.",
   "chaRecoveredDismiss": "Ocultar aviso",
   "chaUploadTitle": "Subir adjunto",
   "chaUploadError": "No se pudo subir el adjunto: {err}",

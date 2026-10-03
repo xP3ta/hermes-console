@@ -16601,6 +16601,9 @@ void main() {
       failureKind: TuiGatewayRpcFailureKind.connectionLost,
     );
 
+    String composerText(WidgetTester tester) =>
+        tester.widget<TextField>(find.byType(TextField)).controller!.text;
+
     Future<ActiveChat> pumpOffline(
       WidgetTester tester,
       _SubmissionGateway gateway,
@@ -16633,6 +16636,158 @@ void main() {
       await tester.pump(const Duration(milliseconds: 600));
       await tester.pump(const Duration(milliseconds: 600));
     }
+
+    Map<String, dynamic> storedOutboxTurn() {
+      final stored =
+          jsonDecode(secureStore['chat_turn_outbox_v1']!)
+              as Map<String, dynamic>;
+      return stored.values.single as Map<String, dynamic>;
+    }
+
+    testWidgets('reabrir conserva el borrador nuevo y ofrece el turno A', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway()..submitError = lost;
+      await pumpOffline(tester, gateway, 'conn-qa-f3-reopen');
+      await tester.enterText(find.byType(TextField), promptA);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(gateway.submissions, [promptA]);
+      expect(find.text('↺ reintentar'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), draftB);
+      await tester.pump(const Duration(milliseconds: 400));
+      await reopen(tester);
+
+      expect(composerText(tester), draftB);
+      expect(storedOutboxTurn()['text'], promptA);
+      expect(gateway.submissions, [promptA]);
+      expect(find.byKey(const ValueKey('recovered-turn-banner')), findsOne);
+      expect(
+        find.byKey(const ValueKey('recovered-turn-keeps-draft')),
+        findsOneWidget,
+      );
+      // Restaurar no puede sustituir el borrador del usuario.
+      final restore = find.byKey(const ValueKey('recovered-turn-restore'));
+      expect(tester.widget<TextButton>(restore).onPressed, isNull);
+
+      // Con el composer vacío por decisión del usuario, A vuelve al editor.
+      await tester.enterText(find.byType(TextField), '');
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(restore);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(composerText(tester), promptA);
+      expect(gateway.submissions, [promptA]);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('un borrador escrito con A en vuelo sobrevive al fallo', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway()
+        ..submitGate = Completer<void>()
+        ..submitError = lost;
+      await pumpOffline(tester, gateway, 'conn-qa-f3-inflight');
+      await tester.enterText(find.byType(TextField), promptA);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(composerText(tester), isEmpty);
+
+      // B se guarda ANTES de que llegue el fallo de A.
+      await tester.enterText(find.byType(TextField), draftB);
+      await tester.pump(const Duration(milliseconds: 400));
+      gateway.submitGate!.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(find.text('↺ reintentar'), findsOneWidget);
+      expect(composerText(tester), draftB);
+
+      // Lo durable (lo que sobrevive a un process death) es B, no A.
+      final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
+      final saved = await screen.draftStoreOverride!.load(
+        screen.connection.id,
+        screen.session.id,
+        profile: 'default',
+      );
+      expect(saved.text, draftB);
+      expect(saved.preparedTurnClientTurnId, isNull);
+      expect(storedOutboxTurn()['text'], promptA);
+
+      await reopen(tester);
+      expect(composerText(tester), draftB);
+      expect(gateway.submissions, [promptA]);
+      expect(find.byKey(const ValueKey('recovered-turn-banner')), findsOne);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Reintentar con otro borrador no lo envía ni lo pierde', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway()..submitError = lost;
+      final chat = await pumpOffline(tester, gateway, 'conn-qa-f3-retry');
+      await tester.enterText(find.byType(TextField), promptA);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(find.text('↺ reintentar'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), draftB);
+      await tester.pump(const Duration(milliseconds: 400));
+      gateway.submitError = null;
+      await tester.tap(find.text('↺ reintentar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+
+      expect(gateway.submissions, [promptA]);
+      expect(composerText(tester), draftB);
+      expect(find.text('↺ reintentar'), findsOneWidget);
+      expect(find.textContaining('Tu borrador actual se conserva'), findsOne);
+
+      // Con el editor vacío, Reintentar reenvía A una sola vez y B, ya
+      // enviado o descartado por el usuario, no reaparece.
+      await tester.enterText(find.byType(TextField), '');
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.text('↺ reintentar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(gateway.submissions, [promptA, promptA]);
+      expect(
+        chat.messages
+            .where((m) => m['role'] == 'user' && m['content'] == promptA)
+            .length,
+        1,
+      );
+      gateway.emitComplete('respuesta A');
+      // Agota el aviso transitorio antes del teardown.
+      await tester.pump(const Duration(seconds: 10));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('reabrir con A aceptado y en curso conserva el borrador B', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway();
+      await pumpOffline(tester, gateway, 'conn-qa-probe');
+      await tester.enterText(find.byType(TextField), promptA);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      await tester.enterText(find.byType(TextField), draftB);
+      await tester.pump(const Duration(milliseconds: 400));
+      await reopen(tester);
+      expect(composerText(tester), draftB);
+      expect(gateway.submissions, [promptA]);
+      gateway.emitComplete('ok');
+      await tester.pump(const Duration(seconds: 10));
+      expect(composerText(tester), draftB);
+      expect(tester.takeException(), isNull);
+    });
 
     testWidgets('el aviso no tapa la barra superior ni trunca a 412 dp', (
       tester,
@@ -18074,9 +18229,12 @@ void main() {
       'sess-test',
       profile: 'default',
     );
+    // El draft viejo es el lote ya aceptado (sin enlace, como en versiones
+    // anteriores). Un borrador con OTRO texto es trabajo nuevo del usuario y
+    // se conserva: lo cubre el grupo «QA físico 1.2.15».
     secureStore[acceptedDraftKey] = jsonEncode({
       'savedAt': now,
-      'text': 'draft viejo que no debe reaparecer',
+      'text': 'mensaje ya aceptado',
       'attachments': <Object>[],
     });
     final gateway = _SubmissionGateway();

@@ -2758,6 +2758,43 @@ class _ChatScreenState extends State<ChatScreen>
       draft.attachments,
     );
     if (!composerStillAtDraft || !attachmentsStillAtDraft) return;
+    // El borrador guardado puede ser trabajo NUEVO del usuario (escrito tras
+    // el fallo o mientras el turno seguía pendiente). Ese borrador manda: el
+    // turno recuperado se ofrece en el aviso y nunca sustituye al borrador.
+    final draftIsOtherWork =
+        _hasDraftContent(draft) &&
+        !prepared.matchesBatch(
+          text: draft.text.trim(),
+          attachments: draft.attachments,
+          model: prepared.model,
+          profile: prepared.profile,
+        );
+    if (draftIsOtherWork && recoverPrepared) {
+      // Un envío todavía en vuelo lo posee el servicio: sin aviso de descarte
+      // que pudiera retirar su outbox a mitad de vuelo. Si ya falló (ambiguo o
+      // rechazado), el aviso ofrece el turno sin tocar el borrador.
+      final stillInFlight =
+          liveDelivery != null &&
+          (prepared.state == PreparedTurnState.prepared ||
+              prepared.state == PreparedTurnState.submitting);
+      if (!stillInFlight) _showHiddenRecoveredTurn(prepared);
+      return;
+    }
+    if (draftIsOtherWork) {
+      // ACK ya persistido: solo se compacta el registro terminal; el borrador
+      // nuevo del usuario no se toca.
+      if (prepared.state == PreparedTurnState.terminal) {
+        try {
+          await outbox.delete(prepared);
+        } catch (error) {
+          debugPrint(
+            '[turn-outbox] reconciled cleanup failed (${error.runtimeType})',
+          );
+        }
+        if (identical(_preparedTurn, prepared)) _preparedTurn = null;
+      }
+      return;
+    }
     _restoringDraft = true;
     setState(() {
       if (recoverPrepared) {
@@ -8475,8 +8512,19 @@ class _ChatScreenState extends State<ChatScreen>
       // El transporte no confirmó el turno. Texto y lote permanecen tanto en
       // pantalla como en el borrador persistente; reintentar no pierde imágenes.
       _preparedTurn = delivery.current;
+      // Si el usuario escribió otro borrador mientras el turno estaba en vuelo,
+      // ese borrador es suyo: ni se enlaza al intento fallido (vaciarlo no
+      // debe descartar el turno) ni se sobrescribe con el lote fallido, que
+      // sigue a salvo en la outbox cifrada.
+      final composerHoldsOtherWork =
+          mounted &&
+          (_textController.text.isNotEmpty || _pendingAttachments.isNotEmpty) &&
+          !(_textController.text == composerTextAtSubmit &&
+              _sameAttachmentDrafts(_pendingAttachments, attachments));
       _composerPreparedTurnClientTurnId =
-          delivery.current.state == PreparedTurnState.failedBeforeAcceptance &&
+          !composerHoldsOtherWork &&
+              delivery.current.state ==
+                  PreparedTurnState.failedBeforeAcceptance &&
               delivery.current.restoresComposer
           ? delivery.current.clientTurnId
           : null;
@@ -8495,7 +8543,14 @@ class _ChatScreenState extends State<ChatScreen>
         });
         _restoringDraft = false;
       }
-      if (usesComposerState) {
+      if (usesComposerState && composerHoldsOtherWork) {
+        _draftTimer?.cancel();
+        await _saveDraftSnapshot(
+          _textController.text,
+          List<AttachmentDraft>.of(_pendingAttachments),
+          preparedTurnAuthorityCaptured: true,
+        );
+      } else if (usesComposerState) {
         await _saveDraftSnapshot(
           text,
           attachments,
@@ -8696,6 +8751,22 @@ class _ChatScreenState extends State<ChatScreen>
       // anything, so the retry the user asked for is a real resend.
     }
     if (prompt.isEmpty) return;
+    // Reintentar reenvía el composer. Si el usuario ya escribió OTRO borrador,
+    // reintentar mandaría ese borrador en lugar del turno fallido y lo
+    // retiraría del editor. Se conserva intacto y no se reintenta nada.
+    final retryTarget = _preparedTurn;
+    final composerText = _textController.text.trim();
+    if ((composerText.isNotEmpty || _pendingAttachments.isNotEmpty) &&
+        composerText != prompt.trim() &&
+        !(retryTarget != null &&
+            retryTarget.restoresComposer &&
+            !_composerHoldsOtherDraft(retryTarget))) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).chaRetryKeepsDraft)),
+        kind: HermesNoticeKind.warning,
+      );
+      return;
+    }
     // Un fallo de transporte antes del ACK deja el turno `ambiguous`. Hay que
     // resolverlo ANTES de retirar la proyección fallida: si no se puede
     // demostrar que el servidor no lo tiene, la burbuja y el error se quedan.
