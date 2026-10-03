@@ -343,6 +343,26 @@ void main() {
         )
         .length;
     expect(finals, 1, reason: 'the reply must not be painted twice');
+    // Every assistant row of this turn, not only the ones carrying the final
+    // marker: a truncated second copy of the reply must fail too.
+    final promptIndex = chat.messages.indexWhere(
+      (m) =>
+          m['role'] == 'user' && '${m['content']}'.contains(_tag('SLOW', 'k1')),
+    );
+    expect(promptIndex, greaterThanOrEqualTo(0));
+    final turnAssistants = chat.messages
+        .take(promptIndex)
+        .where((m) => m['role'] == 'assistant')
+        .toList();
+    expect(
+      turnAssistants,
+      hasLength(1),
+      reason: 'exactly one assistant row for the turn',
+    );
+    expect(
+      '${turnAssistants.single['content']}',
+      contains('slow reply k1$_run'),
+    );
     final prompts = chat.messages
         .where(
           (m) =>
