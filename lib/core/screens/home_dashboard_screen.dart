@@ -129,9 +129,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   DashboardAuthCheck _dashboardAuth = DashboardAuthCheck.unknown;
   List<Session> _recentSessions = [];
   SessionArchive? _archive;
-  final Map<String, ({double activityAt, String? user, String? assistant})>
-  _turnPreviews = {};
-  int _previewHydrationEpoch = 0;
   StreamSubscription<HistoryCleanupInvalidation>? _historyCleanupSubscription;
   PageRoute<dynamic>? _route;
   bool _initialLoadComplete = false;
@@ -187,7 +184,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     hermesRouteObserver.unsubscribe(this);
     unawaited(DrawerGestureExclusion.setEnabled(false));
     _refreshStatusEpoch++;
-    _previewHydrationEpoch++;
     _activityEventRefreshTimer?.cancel();
     _activityReconnectTimer?.cancel();
     _activityStableTimer?.cancel();
@@ -1156,7 +1152,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         // shared store, so a change made on another screen shows here at once.
         .where(_isHomeRecentKind)
         .toList();
-    final recentLimit = _homeRecentLimit();
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     // The login check can take seconds on a slow Dashboard: apply it when it
     // lands instead of holding the whole status refresh.
@@ -1204,15 +1199,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     _reportInitialLoadProgress(0.92);
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     if (listReadUnavailable) return;
-    unawaited(
-      _hydrateTurnPreviews(
-        conn,
-        recentSessions
-            .where((s) => _isHomeRecentCandidate(s, archive))
-            .take(recentLimit)
-            .toList(growable: false),
-      ),
-    );
   }
 
   bool _isHomeRecentCandidate(Session s, SessionArchive archive) =>
@@ -1251,52 +1237,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       viewportHeight: media.size.height,
       textScale: textScale,
     );
-  }
-
-  String _turnPreviewKey(SavedConnection connection, Session session) =>
-      '${connection.id}\u001f${session.id}';
-
-  Future<void> _hydrateTurnPreviews(
-    SavedConnection connection,
-    List<Session> sessions,
-  ) async {
-    final epoch = ++_previewHydrationEpoch;
-    final activeChats = _activeChats;
-    var changed = false;
-
-    for (final session in sessions) {
-      final key = _turnPreviewKey(connection, session);
-      final activityAt = session.lastActivityAt;
-      final inMemory = activeChats?.of(
-        connection.id,
-        session.id,
-        profile: session.profile,
-      );
-      final user = inMemory == null
-          ? session.lastUserPreview
-          : latestUserPreview(inMemory.messages, newestFirst: true) ??
-                session.lastUserPreview;
-      final assistant = inMemory == null
-          ? session.lastAssistantPreview
-          : latestAssistantPreview(inMemory.messages, newestFirst: true) ??
-                session.lastAssistantPreview;
-      final cached = _turnPreviews[key];
-      if (cached?.activityAt == activityAt &&
-          cached?.user == user &&
-          cached?.assistant == assistant) {
-        continue;
-      }
-      _turnPreviews[key] = (
-        activityAt: activityAt,
-        user: user,
-        assistant: assistant,
-      );
-      changed = true;
-    }
-
-    if (changed && mounted && epoch == _previewHydrationEpoch) {
-      setState(() {});
-    }
   }
 
   String _recentGroupLabel(HomeRecentDateGroup group) => switch (group) {
@@ -1345,17 +1285,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       final title =
           _archive?.titleForSession(session, strings: Strings.of(context)) ??
           localizedSessionTitle(Strings.of(context), session);
-      final cached = _turnPreviews[_turnPreviewKey(connection, session)];
-      final summary = homeRecentSummary(
-        title: title,
-        session: session,
-        userPreview: cached?.activityAt == session.lastActivityAt
-            ? cached?.user
-            : null,
-        assistantPreview: cached?.activityAt == session.lastActivityAt
-            ? cached?.assistant
-            : null,
-      );
+      // One preview rule for Home, Conversations and the Desktop sidebar:
+      // the session row's own preview ([sessionListPreview]). It is derived
+      // from the list response alone, so a cold start paints the same line
+      // as Conversations instead of an in-memory last turn that is gone.
+      final summary = HomeRecentSummary(user: sessionListPreview(session));
       final activeChat = activeChats?.of(
         connection.id,
         session.id,
