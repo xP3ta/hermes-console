@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
@@ -47,6 +48,45 @@ class CrashingColdStartStorage extends MemoryColdStartStorage {
       throw StateError('process killed');
     }
     await super.write(key, value);
+  }
+}
+
+/// Holds every tail read until [releaseTailReads] (and every delete until
+/// [releaseDeletes]), so a test can act while a restore or a cleanup is
+/// suspended on storage.
+class BlockingColdStartStorage extends MemoryColdStartStorage {
+  Completer<void>? _gate;
+  final tailReadStarted = Completer<void>();
+
+  void blockTailReads() => _gate = Completer<void>();
+
+  void releaseTailReads() => _gate?.complete();
+
+  Completer<void>? _deleteGate;
+  final deleteStarted = Completer<void>();
+
+  void blockDeletes() => _deleteGate = Completer<void>();
+
+  void releaseDeletes() => _deleteGate?.complete();
+
+  @override
+  Future<void> delete(String key) async {
+    final gate = _deleteGate;
+    if (gate != null) {
+      if (!deleteStarted.isCompleted) deleteStarted.complete();
+      await gate.future;
+    }
+    await super.delete(key);
+  }
+
+  @override
+  Future<String?> read(String key) async {
+    final gate = _gate;
+    if (gate != null && key.startsWith(_tailKeyPrefix)) {
+      if (!tailReadStarted.isCompleted) tailReadStarted.complete();
+      await gate.future;
+    }
+    return super.read(key);
   }
 }
 
@@ -548,6 +588,115 @@ void main() {
       );
       expect(reopened.messages, isEmpty);
       expect(await ColdStartStore(storage: storage).loadTails(), isEmpty);
+    });
+
+    group('a deletion during an in-flight restore never resurrects', () {
+      Future<
+        ({
+          BlockingColdStartStorage storage,
+          ActiveChatService service,
+          Future<int> restore,
+        })
+      >
+      restoreBlocked() async {
+        final storage = BlockingColdStartStorage();
+        final seed = ColdStartStore(storage: storage);
+        await seed.saveTail(
+          connectionId: _connection.id,
+          profile: 'default',
+          storedSessionId: 'gone',
+          routeSessionId: 'gone',
+          aliases: {'gone'},
+          newestFirst: _rows('gone', 2),
+        );
+        await seed.saveTail(
+          connectionId: _connection.id,
+          profile: 'default',
+          storedSessionId: 'kept',
+          routeSessionId: 'kept',
+          aliases: {'kept'},
+          newestFirst: _rows('kept', 2),
+        );
+        final service = ActiveChatService(
+          attachDesktopRuntimeOnLoad: false,
+          compressionRestoreStore: testCompressionRestoreStore(),
+          coldStartStore: ColdStartStore(storage: storage),
+        );
+        addTearDown(service.dispose);
+        storage.blockTailReads();
+        final restore = service.coldStartTailsReady;
+        await storage.tailReadStarted.future;
+        return (storage: storage, service: service, restore: restore);
+      }
+
+      List<Object?> painted(ActiveChatService service, String sessionId) {
+        final chat = service.attach(
+          connection: _connection,
+          sessionId: sessionId,
+          sessionTitle: 'Chat',
+          api: unusedApi(),
+          storedMessageLoader: (_, _) async => const [],
+          disableForegroundKeepAlive: true,
+        );
+        return chat.messages.map((m) => m['content']).toList();
+      }
+
+      test('session', () async {
+        final (:storage, :service, :restore) = await restoreBlocked();
+        final deleted = service.forgetColdStartSession(
+          connectionId: _connection.id,
+          profile: 'default',
+          sessionId: 'gone',
+        );
+        storage.releaseTailReads();
+        await restore;
+        // The restore settles before the storage cleanup does: nothing
+        // forgotten may be painted in that window either.
+        expect(painted(service, 'gone'), isEmpty);
+        await deleted;
+
+        expect(painted(service, 'gone'), isEmpty);
+        final onDisk = await ColdStartStore(storage: storage).loadTails();
+        expect(onDisk.map((t) => t.storedSessionId), ['kept']);
+        // Positive control: the untouched session still paints.
+        expect(painted(service, 'kept'), isNotEmpty);
+      });
+
+      test('nothing forgotten is painted while the storage cleanup is '
+          'still running', () async {
+        final (:storage, :service, :restore) = await restoreBlocked();
+        storage.releaseTailReads();
+        expect(await restore, 2);
+        storage.blockDeletes();
+        final deleted = service.forgetColdStartSession(
+          connectionId: _connection.id,
+          profile: 'default',
+          sessionId: 'gone',
+        );
+        await storage.deleteStarted.future;
+        expect(painted(service, 'gone'), isEmpty);
+        storage.releaseDeletes();
+        await deleted;
+        expect(painted(service, 'kept'), isNotEmpty);
+      });
+
+      test('connection', () async {
+        final (:storage, :service, :restore) = await restoreBlocked();
+        final deleted = service.forgetColdStartConnection(_connection.id);
+        storage.releaseTailReads();
+        await restore;
+        expect(painted(service, 'gone'), isEmpty);
+        expect(painted(service, 'kept'), isEmpty);
+        await deleted;
+
+        expect(painted(service, 'gone'), isEmpty);
+        expect(painted(service, 'kept'), isEmpty);
+        expect(await ColdStartStore(storage: storage).loadTails(), isEmpty);
+        expect(
+          storage.values.keys.where((k) => k.startsWith(_tailKeyPrefix)),
+          isEmpty,
+        );
+      });
     });
 
     test('a streaming or unloaded chat is never persisted', () async {
