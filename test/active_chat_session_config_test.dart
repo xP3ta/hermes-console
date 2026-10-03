@@ -837,6 +837,9 @@ void main() {
       expect(h.chat.effectiveSessionConfig.model, 'openai/gpt-5.5-codex');
       expect(_headerModel(h.chat), _newModel);
       expect(h.publisher.latest.model, _headerModel(h.chat));
+      // The widget keeps the model/provider pair together, like Desktop's
+      // optimistic paint of a deferred config.set.
+      expect(h.publisher.latest.provider, 'anthropic');
     });
 
     test('a late session.info with the old model does not win', () async {
