@@ -29979,6 +29979,24 @@ class ActiveChatService {
     }
     final current = publisher.latest;
     final usage = chat.desktopRuntimeInfo.usage;
+    // Same precedence as the chat header: the session-config pick (sent,
+    // accepted or deferred) and then the reconciled session config win over
+    // the raw runtime info, which keeps reporting the previous model until
+    // Hermes applies the switch.
+    final configChange = chat
+        .pendingSessionConfigChange(DesktopSessionConfigKey.model)
+        ?.displayValue;
+    final configPick = configChange is SessionModelConfigValue
+        ? configChange
+        : null;
+    final effectiveConfig = chat.effectiveSessionConfig;
+    final configModel =
+        _nonEmptyWidgetText(configPick?.modelId) ??
+        _nonEmptyWidgetText(effectiveConfig.model);
+    final configProvider = configModel == null
+        ? null
+        : _nonEmptyWidgetText(configPick?.providerSlug) ??
+              _nonEmptyWidgetText(effectiveConfig.provider);
     final runtimeModel = _nonEmptyWidgetText(chat.desktopRuntimeInfo.model);
     final turnModel = _nonEmptyWidgetText(chat._lastModel);
     final runtimeProvider = _nonEmptyWidgetText(
@@ -30040,10 +30058,11 @@ class ActiveChatService {
         _ => current.connectionState,
       },
       model:
+          configModel ??
           runtimeModel ??
           (turnModel == 'hermes-agent' ? null : turnModel) ??
           metadata.model,
-      provider: runtimeProvider ?? metadata.provider,
+      provider: configProvider ?? runtimeProvider ?? metadata.provider,
       sessionId: chat.serverSessionId,
       sessionTitle: sessionTitle,
       agentState: agentState,
