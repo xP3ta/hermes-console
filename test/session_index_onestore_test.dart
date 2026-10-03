@@ -140,7 +140,12 @@ void main() {
         );
         await list.setTitle('other', 'Renamed in list');
 
-        final titles = prefs.getStringList('session_titles_conn-a') ?? const [];
+        // The auto-title lives apart from overrides: it only stands in for
+        // a placeholder server title.
+        final titles = [
+          ...?prefs.getStringList('session_titles_conn-a'),
+          ...?prefs.getStringList('session_auto_titles_conn-a'),
+        ];
         expect(titles.map((row) => row.split('\t').first).toSet(), {
           'new-chat',
           'other',
