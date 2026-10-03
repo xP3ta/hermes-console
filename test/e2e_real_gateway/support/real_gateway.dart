@@ -62,6 +62,31 @@ final class E2eEnv {
   Future<int> compactedRows(String sessionId) =>
       _controlCount('/compacted-rows', {'session': sessionId});
 
+  /// The durable transcript of [sessionId] from the API server, oldest
+  /// first, read with a client of its own (never metered, never the
+  /// client under test).
+  Future<List<Map<String, dynamic>>> storedMessages(String sessionId) async {
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(
+        api.replace(path: '/api/sessions/$sessionId/messages'),
+      );
+      request.headers.set('Authorization', 'Bearer $apiKey');
+      final response = await request.close();
+      final body = await utf8.decodeStream(response);
+      if (response.statusCode != 200) {
+        throw StateError('stored messages: HTTP ${response.statusCode}');
+      }
+      final decoded = jsonDecode(body);
+      final rows = decoded is Map ? decoded['data'] : decoded;
+      return [
+        for (final row in rows as List) Map<String, dynamic>.from(row as Map),
+      ];
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   Future<int> _controlCount(String path, Map<String, String> query) async {
     final client = HttpClient();
     try {

@@ -17,6 +17,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
+import 'package:hermes_android/core/utils/chat_turn.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/real_gateway.dart';
@@ -41,7 +42,8 @@ const _openBytesBudget = 96 * 1024;
 /// JSON-RPC calls one cold open may send on its socket.
 const _openRpcBudget = 8;
 
-/// Transcript reads after one terminal `message.complete`.
+/// Transcript reads after one terminal `message.complete`: at least one
+/// (the durable confirmation of the reply) and at most two.
 const _terminalReadBudget = 2;
 
 /// Sockets one chat may hold at once.
@@ -170,7 +172,19 @@ void main() {
     expect(deltas, greaterThan(3), reason: 'the reply must stream');
     expect(tokens, greaterThan(0));
     expect(completes, 1);
-    expect(reads, lessThanOrEqualTo(_terminalReadBudget));
+    expect(
+      reads,
+      inInclusiveRange(1, _terminalReadBudget),
+      reason: 'the terminal reply must be confirmed against the transcript',
+    );
+    // Durable confirmation: the painted reply is the stored row, identity
+    // included, read independently of the client under test.
+    final durable = await _env.storedMessages('e2e-chat-01');
+    final stored = durable.lastWhere((m) => m['role'] == 'assistant');
+    expect('${stored['content']}', contains('streamed reply s1$_run'));
+    final painted = chat.messages.firstWhere((m) => m['role'] == 'assistant');
+    expect(painted['content'], stored['content']);
+    expect(canonicalTranscriptRowId(painted), stored['id']);
     expect(await _env.modelTurnsFor(_tag('STREAM', 's1')), 1);
     expect(phone.meter.openSockets, _socketsPerChat);
   }, skip: skip);
