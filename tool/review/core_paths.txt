@@ -23,6 +23,13 @@ lib/core/services/*draft*
 lib/core/services/cold_start_store.dart
 lib/core/services/session_archive.dart
 
+# Anything that persists state between launches, by name ("*" also
+# matches "/" in [[ == ]]). core_content.txt catches persistence in files
+# named otherwise.
+lib/*_store.dart
+lib/*_archive.dart
+lib/*_cache.dart
+
 # Wire parsing
 lib/core/models/interactive_prompt.dart
 lib/core/models/desktop_session_snapshot.dart
@@ -32,3 +39,6 @@ lib/core/services/app_lock.dart
 lib/core/services/secure_storage.dart
 android/app/src/main/AndroidManifest.xml
 .github/workflows/*
+
+# The classifier itself
+tool/review/*
