@@ -167,6 +167,14 @@ Future<void> _waitUntil(
   expect(condition(), isTrue);
 }
 
+/// Waits for [condition] on event-loop turns with no wall-clock budget: a
+/// slow host only delays it; the test timeout still bounds a real hang.
+Future<void> _eventually(bool Function() condition) async {
+  while (!condition()) {
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+}
+
 Map<String, dynamic> _openClarify(String id, {String question = 'Seguimos?'}) =>
     {
       'id': id,
@@ -475,6 +483,7 @@ void main() {
     final proxy = await _FlakyProxy.start(gateway.server.port);
     addTearDown(proxy.close);
     final uncaught = <Object>[];
+    const flips = 15;
     await runZonedGuarded(() async {
       final connection = _connectionFor(
         gateway,
@@ -497,13 +506,21 @@ void main() {
       await chat.loadMessages();
       await _waitUntil(() => chat.pendingInteractivePrompt != null);
 
-      for (var flip = 0; flip < 15; flip++) {
-        proxy.severAll();
-        unawaited(client.probeNow().then((_) {}, onError: (Object _) {}));
-        unawaited(pool.probeAll());
-        unawaited(lease.client.connect().then((_) {}, onError: (Object _) {}));
-        chat.probeTransportNow();
-        chat.requestImmediateTransportRecovery();
+      bool attached() =>
+          client.isConnected && chat.desktopRuntimeSessionId != null;
+
+      // Each flip cuts an attached chat (odd flips with a clarify answer in
+      // flight), waits until the cut is observed and then delivers the
+      // platform's network signal the way ActiveChatService does: void the
+      // backoff ladder, probe, wake recovery. The next flip starts once the
+      // chat has re-attached, so the number of live sessions really cut does
+      // not depend on how fast the host is. With a fixed 200 ms cadence the
+      // outcome depended on CPU load: a cut landing inside a reattach resume
+      // loses the automatic reattach until another network signal, and
+      // without a backoff reset the final settle waited on a jittered ladder
+      // of up to 15 s per retry, past the 30 s test budget.
+      for (var flip = 0; flip < flips; flip++) {
+        await _eventually(attached);
         final pending = chat.pendingInteractivePrompt;
         if (pending != null && flip.isOdd) {
           unawaited(
@@ -512,18 +529,26 @@ void main() {
                 .then((_) {}, onError: (Object _) {}),
           );
         }
-        await Future<void>.delayed(const Duration(milliseconds: 200));
+        proxy.severAll();
+        await _eventually(
+          () => !client.isConnected && chat.desktopRuntimeSessionId == null,
+        );
+        client.resetReconnectBackoffForNetworkChange();
+        unawaited(client.probeNow().then((_) {}, onError: (Object _) {}));
+        unawaited(pool.probeAll());
+        unawaited(lease.client.connect().then((_) {}, onError: (Object _) {}));
+        chat.probeTransportNow();
+        chat.requestImmediateTransportRecovery();
       }
       lease.release();
-      // The network settles; the open question must be back on screen.
-      await _waitUntil(
-        () => client.isConnected && chat.desktopRuntimeSessionId != null,
-        timeout: const Duration(seconds: 30),
-      );
+      // The network settles after the last signal: the chat must re-attach.
+      await _eventually(attached);
     }, (error, stack) => uncaught.add(error));
     expect(uncaught, isEmpty);
-    // The flips really cut sockets: many reconnects reached the gateway.
-    expect(gateway.sockets.length, greaterThan(8));
+    // The flips really cut sockets: every flip cut an attached session that
+    // then re-attached through a fresh socket and resume.
+    expect(gateway.rpcCalls('session.resume').length, greaterThan(flips));
+    expect(gateway.sockets.length, greaterThan(flips));
   });
 }
 

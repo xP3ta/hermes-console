@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -142,14 +143,32 @@ void main() {
     final f = File('${tmp.path}/bad.png')
       ..writeAsBytesSync(Uint8List.fromList([1, 2, 3]));
     // El decode de Image.file es I/O real: bajo el fake-async del tester el
-    // códec nunca llega a fallar. runAsync deja correr la I/O de verdad para
-    // que el errorBuilder se dispare; luego se consume el reporte interno de
-    // la excepción del códec (la garantía del test es la UI, no el reporte).
+    // códec nunca llega a fallar. runAsync deja correr la I/O de verdad y se
+    // espera al propio fallo del códec, no a una ventana de reloj fija (bajo
+    // carga 200 ms no bastaban). Se resuelve el mismo provider que usa la
+    // miniatura: comparte su completer en la caché, que avisa primero al
+    // listener del widget, así que al llegar el error el errorBuilder ya está
+    // programado. Luego se consume el reporte interno de la excepción del
+    // códec (la garantía del test es la UI, no el reporte).
     await tester.runAsync(() async {
       await tester.pumpWidget(
         _wrap(GeneratedImageCard(status: GeneratedImageStatus.ready, file: f)),
       );
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final image = tester.widget<Image>(find.byType(Image));
+      final failed = Completer<void>();
+      final stream = image.image.resolve(
+        createLocalImageConfiguration(tester.element(find.byType(Image))),
+      );
+      final listener = ImageStreamListener(
+        (_, _) => failed.completeError(StateError('decoded a corrupt file')),
+        onError: (_, _) => failed.complete(),
+      );
+      stream.addListener(listener);
+      try {
+        await failed.future;
+      } finally {
+        stream.removeListener(listener);
+      }
     });
     await tester.pump();
     tester.takeException();

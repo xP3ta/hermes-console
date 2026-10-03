@@ -1570,6 +1570,25 @@ Future<void> _waitUntil(
   }
 }
 
+/// Waits until the turn reaches a final pipeline state and returns it.
+///
+/// There is no wall-clock budget: a slow host only delays the answer, while a
+/// wrong final state still fails at once. The state is polled rather than
+/// observed through `changes` because an empty transport terminal flips
+/// `state` to completed before its change event, which waits for the
+/// canonical transcript.
+Future<ChatPipelineState> _settledPipelineState(ActiveChat chat) async {
+  const settled = {
+    ChatPipelineState.completed,
+    ChatPipelineState.failed,
+    ChatPipelineState.cancelled,
+  };
+  while (!settled.contains(chat.state)) {
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+  return chat.state;
+}
+
 SavedConnection _connection(String id) => SavedConnection(
   id: id,
   label: id,
@@ -10863,10 +10882,13 @@ void main() {
 
     await _waitUntil(() => gateway.statusCalls >= 1);
     await send;
-    await Future<void>.delayed(const Duration(milliseconds: 40));
+    // The retry runs on a real 10 ms backoff timer; wait for the turn to
+    // settle instead of a fixed 40 ms slice that a loaded host overruns.
+    final settled = await _settledPipelineState(chat);
 
     expect(gateway.recoveryResumeCalls, greaterThanOrEqualTo(2));
     expect(gateway.submitCalls, 1);
+    expect(settled, ChatPipelineState.completed);
     expect(chat.state, ChatPipelineState.completed);
   });
 
