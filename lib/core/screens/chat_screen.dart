@@ -118,6 +118,7 @@ import '../services/tui_gateway_client.dart'
 import '../widgets/chat_connection_recovery_row.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/inline_message_editor.dart';
+import '../widgets/recovered_turn_banner.dart';
 import '../widgets/stale_running_session_banner.dart';
 import '../widgets/user_server_attachment_card.dart';
 import 'foreground_conversation_reader.dart';
@@ -1681,6 +1682,9 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void>? _hiddenCanonicalBotFlight;
   TurnOutboxStore? _turnOutbox;
   PreparedTurn? _preparedTurn;
+  // Turno recuperado que se anuncia en el aviso en flujo sobre el composer.
+  // Solo se pinta mientras siga siendo el `_preparedTurn` vigente.
+  PreparedTurn? _recoveredTurnNotice;
   String? _composerPreparedTurnClientTurnId;
   String? _failedTurnDiscardInFlightId;
   final Completer<bool> _initialOutboxRead = Completer<bool>();
@@ -2899,34 +2903,108 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _showHiddenRecoveredTurn(PreparedTurn prepared) {
     if (!mounted || prepared.state == PreparedTurnState.terminal) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !identical(_preparedTurn, prepared)) return;
-      final ambiguous = prepared.state == PreparedTurnState.ambiguous;
-      final acknowledged =
-          prepared.state == PreparedTurnState.accepted ||
-          prepared.state == PreparedTurnState.running;
-      final english = Localizations.localeOf(context).languageCode == 'en';
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            ambiguous
-                ? Strings.of(context).chaAmbiguousRestored
-                : acknowledged
-                ? english
-                      ? 'Hermes could not reattach a turn that may still be running. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.'
-                      : 'Hermes no pudo reanexar un turno que aún podría seguir activo. Enviar repite la comprobación; descarta solo tras verificar Hermes porque esto no cancela el turno remoto.'
-                : english
-                ? 'A pending turn was recovered. Discard the recovery to continue.'
-                : 'Se recuperó un turno pendiente. Descarta la recuperación para continuar.',
-          ),
-          duration: const Duration(seconds: 8),
-          action: SnackBarAction(
-            label: Strings.of(context).chaDiscardRecovered,
-            onPressed: () => unawaited(_discardRecoveredTurn(prepared)),
-          ),
-        ),
+    // Aviso en flujo (encima del composer), no en el carril superior: allí
+    // tapaba el menú y el selector de modelo y truncaba el texto.
+    setState(() => _recoveredTurnNotice = prepared);
+  }
+
+  String _recoveredTurnMessage(PreparedTurn prepared) {
+    final ambiguous = prepared.state == PreparedTurnState.ambiguous;
+    final acknowledged =
+        prepared.state == PreparedTurnState.accepted ||
+        prepared.state == PreparedTurnState.running;
+    final english = Localizations.localeOf(context).languageCode == 'en';
+    return ambiguous
+        ? Strings.of(context).chaAmbiguousRestored
+        : acknowledged
+        ? english
+              ? 'Hermes could not reattach a turn that may still be running. Send retries the check; discard only after verifying Hermes because this does not cancel the remote turn.'
+              : 'Hermes no pudo reanexar un turno que aún podría seguir activo. Enviar repite la comprobación; descarta solo tras verificar Hermes porque esto no cancela el turno remoto.'
+        : english
+        ? 'A pending turn was recovered. Discard the recovery to continue.'
+        : 'Se recuperó un turno pendiente. Descarta la recuperación para continuar.';
+  }
+
+  /// True cuando el composer contiene trabajo del usuario distinto del lote
+  /// recuperado. Ese borrador manda: nunca se pisa con el turno recuperado.
+  bool _composerHoldsOtherDraft(PreparedTurn prepared) {
+    final text = _textController.text;
+    if (text.trim().isEmpty && _pendingAttachments.isEmpty) return false;
+    return !prepared.matchesBatch(
+      text: text.trim(),
+      attachments: List<AttachmentDraft>.of(_pendingAttachments),
+      model: prepared.model,
+      profile: prepared.profile,
+    );
+  }
+
+  /// Devuelve el turno recuperado al composer solo si está vacío: un borrador
+  /// distinto del usuario jamás se sustituye.
+  Future<void> _restoreRecoveredTurnIntoComposer(PreparedTurn prepared) async {
+    if (!mounted ||
+        !prepared.restoresComposer ||
+        _preparedTurn?.storageId != prepared.storageId ||
+        _textController.text.isNotEmpty ||
+        _pendingAttachments.isNotEmpty) {
+      return;
+    }
+    final link = prepared.state == PreparedTurnState.failedBeforeAcceptance
+        ? prepared.clientTurnId
+        : null;
+    _restoringDraft = true;
+    setState(() {
+      _composerPreparedTurnClientTurnId = link;
+      _textController.value = TextEditingValue(
+        text: prepared.text,
+        selection: TextSelection.collapsed(offset: prepared.text.length),
       );
+      _pendingAttachments
+        ..clear()
+        ..addAll(prepared.attachments);
     });
+    _restoringDraft = false;
+    _syncProducerAttachmentRetention();
+    _draftTimer?.cancel();
+    await _saveDraftSnapshot(
+      prepared.text,
+      prepared.attachments,
+      preparedTurnClientTurnId: link,
+      preparedTurnAuthorityCaptured: true,
+    );
+  }
+
+  Widget? _buildRecoveredTurnBanner() {
+    final notice = _recoveredTurnNotice;
+    final current = _preparedTurn;
+    if (notice == null ||
+        current == null ||
+        current.storageId != notice.storageId ||
+        current.state == PreparedTurnState.terminal) {
+      return null;
+    }
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: _textController,
+      builder: (context, _, _) {
+        final str = Strings.of(context);
+        final restorable = current.restoresComposer;
+        final composerEmpty =
+            _textController.text.isEmpty && _pendingAttachments.isEmpty;
+        return RecoveredTurnBanner(
+          message: _recoveredTurnMessage(current),
+          keepsDraftHint: restorable && _composerHoldsOtherDraft(current)
+              ? str.chaRecoveredKeepsDraft
+              : null,
+          restoreLabel: restorable ? str.chaRestoreRecovered : null,
+          onRestore: restorable && composerEmpty
+              ? () => unawaited(_restoreRecoveredTurnIntoComposer(current))
+              : null,
+          discardLabel: str.chaDiscardRecovered,
+          onDiscard: () => unawaited(_discardRecoveredTurn(current)),
+          dismissTooltip: str.chaRecoveredDismiss,
+          onDismiss: () => setState(() => _recoveredTurnNotice = null),
+        );
+      },
+    );
   }
 
   Future<void> _discardRecoveredTurn(PreparedTurn prepared) async {
@@ -2947,6 +3025,9 @@ class _ChatScreenState extends State<ChatScreen>
     if (identical(_preparedTurn, prepared)) {
       _preparedTurn = null;
       _composerPreparedTurnClientTurnId = null;
+    }
+    if (mounted && _recoveredTurnNotice?.storageId == prepared.storageId) {
+      setState(() => _recoveredTurnNotice = null);
     }
     if (!mounted || !composerStillMatches) return;
     _restoringDraft = true;
@@ -12093,6 +12174,7 @@ class _ChatScreenState extends State<ChatScreen>
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                ?_buildRecoveredTurnBanner(),
                                 if (_chat.compactionAuthFailure
                                     case final compactionAuth?)
                                   ProviderAuthBanner(

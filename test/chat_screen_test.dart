@@ -24,6 +24,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_markdown/flutter_markdown.dart' show MarkdownBody;
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
@@ -16463,7 +16464,7 @@ void main() {
       find.textContaining('No se pudo confirmar si este turno llegó'),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(const ValueKey('hermes-notice-action')));
+    await tester.tap(find.byKey(const ValueKey('recovered-turn-discard')));
     await tester.pump(const Duration(milliseconds: 300));
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller?.text,
@@ -16586,6 +16587,93 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  group('QA físico 1.2.15: turno fallido sin confirmar y borrador nuevo', () {
+    const promptA = 'QA offline: mensaje A';
+    const draftB = 'borrador B escrito después';
+    const durable = <Map<String, dynamic>>[
+      {'role': 'user', 'content': 'hola', 'message_id': 'u-1'},
+      {'role': 'assistant', 'content': 'hola!', 'message_id': 'a-1'},
+    ];
+    const lost = TuiGatewayRpcError(
+      'gateway.transport',
+      'Hermes Desktop connection lost',
+      failureKind: TuiGatewayRpcFailureKind.connectionLost,
+    );
+
+    Future<ActiveChat> pumpOffline(
+      WidgetTester tester,
+      _SubmissionGateway gateway,
+      String id,
+    ) => pumpChat(
+      tester,
+      connection: _remoteConn(id),
+      desktopGateway: gateway,
+      messages: [for (final message in durable.reversed) Map.of(message)],
+      storedMessageLoader: (_, _) async => [
+        for (final message in durable) Map.of(message),
+      ],
+    );
+
+    Future<void> reopen(WidgetTester tester) async {
+      final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
+      Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+      await tester.pump(const Duration(milliseconds: 400));
+      final ctx = tester.element(find.byType(Navigator).first);
+      Navigator.of(ctx).push(
+        MaterialPageRoute(
+          builder: (_) => ChatScreen(
+            connection: screen.connection,
+            session: screen.session,
+            draftStoreOverride: screen.draftStoreOverride,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 600));
+    }
+
+    testWidgets('el aviso no tapa la barra superior ni trunca a 412 dp', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(412, 915);
+      addTearDown(tester.view.reset);
+      final gateway = _SubmissionGateway()..submitError = lost;
+      await pumpOffline(tester, gateway, 'conn-qa-f4-layout');
+      await tester.enterText(find.byType(TextField), promptA);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 800));
+      await tester.enterText(find.byType(TextField), draftB);
+      await tester.pump(const Duration(milliseconds: 400));
+      await reopen(tester);
+
+      final message = find.textContaining(
+        'No se pudo confirmar si este turno llegó',
+      );
+      expect(message, findsOneWidget);
+      expect(find.byTooltip('Menú').hitTestable(), findsOneWidget);
+      final appBar = find.byType(AppBar);
+      expect(
+        tester.getTopLeft(message).dy,
+        greaterThanOrEqualTo(tester.getBottomLeft(appBar).dy),
+      );
+      final paragraph = tester.renderObject<RenderParagraph>(message);
+      expect(paragraph.didExceedMaxLines, isFalse);
+      expect(
+        paragraph.text.toPlainText(),
+        contains('Revisa la conversación antes de volver a enviarlo.'),
+      );
+      expect(
+        tester.getBottomLeft(message).dy,
+        lessThanOrEqualTo(tester.getTopLeft(find.byType(TextField)).dy),
+      );
+      expect(tester.takeException(), isNull);
+    });
+  });
 
   testWidgets('Reintentar no reenvía si el servidor sí persistió el turno', (
     tester,

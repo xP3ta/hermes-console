@@ -558,6 +558,9 @@
   "chaOutboxUnavailable": "No se pudo guardar el turno de forma segura. No se ha enviado; tu mensaje sigue aquí para reintentar.",
   "chaAmbiguousRestored": "No se pudo confirmar si este turno llegó al servidor. Revisa la conversación antes de volver a enviarlo.",
   "chaDiscardRecovered": "Descartar recuperado",
+  "chaRestoreRecovered": "Restaurar en el editor",
+  "chaRecoveredKeepsDraft": "Tu borrador actual se conserva. Envíalo o vacía el editor para recuperar el mensaje anterior.",
+  "chaRecoveredDismiss": "Ocultar aviso",
   "chaUploadTitle": "Subir adjunto",
   "chaUploadError": "No se pudo subir el adjunto: {err}",
   "@chaUploadError": {
