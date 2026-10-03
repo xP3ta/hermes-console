@@ -1,12 +1,16 @@
 // One session state (#21), previews: Home recents and Conversations paint the
 // same preview line for the same chat, from one helper over the session list
-// row (the rule Hermes Desktop's sidebar uses: the session's own preview).
-// After a cold start Home only has the list response; it must never claim
-// "no visible messages" for a chat Conversations can preview.
+// row (the rule Hermes Desktop's sidebar uses, session-row.tsx: the session's
+// own `preview`, and no line at all without one). After a cold start Home
+// only has the list response; it must never claim "no visible messages" for
+// a chat Conversations can preview.
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
+import 'package:hermes_android/core/screens/session_list_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/utils/home_recent_sessions.dart';
@@ -157,6 +161,118 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  /// A chat whose list row has no `preview` but does carry last-turn
+  /// previews. Desktop's sidebar paints only `session.preview`, so it shows
+  /// the title and no preview line.
+  Session noPreviewRow() => Session(
+    id: 'no-preview',
+    title: 'Untouched draft topic',
+    model: 'model-a',
+    source: 'desktop',
+    messageCount: 6,
+    isActive: false,
+    preview: '',
+    lastUserPreview: 'Last prompt',
+    lastAssistantPreview: 'Last answer',
+    startedAt: _minutesAgo(8),
+  );
+
+  Future<void> expectNoPreviewLine(WidgetTester tester, String surface) async {
+    final strings = await Strings.delegate.load(const Locale('en'));
+    expect(
+      find.text('Untouched draft topic'),
+      findsOneWidget,
+      reason: '$surface shows the chat',
+    );
+    for (final text in [
+      'Last answer',
+      'Last prompt',
+      strings.sessionPreviewUnavailable,
+    ]) {
+      expect(
+        find.textContaining(text),
+        findsNothing,
+        reason: '$surface paints no \'$text\' line, as Desktop',
+      );
+    }
+  }
+
+  testWidgets('Home paints no preview line where Desktop paints none', (
+    tester,
+  ) async {
+    await pumpColdHome(tester, [noPreviewRow()]);
+    await expectNoPreviewLine(tester, 'Home');
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('Conversations paints no preview line where Desktop paints '
+      'none', (tester) async {
+    final row = noPreviewRow();
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    final gateway = ApiClient(
+      baseUrl: 'http://127.0.0.1:8642',
+      apiKey: 'test-key',
+      connectionId: 'conn-onestore-preview',
+      httpClient: MockClient((request) async {
+        if (request.url.path == '/api/sessions') {
+          return http.Response(
+            jsonEncode({
+              'object': 'list',
+              'data': [
+                {
+                  'id': row.id,
+                  'title': row.title,
+                  'preview': '',
+                  'last_user_preview': 'Last prompt',
+                  'last_assistant_preview': 'Last answer',
+                  'model': 'model-a',
+                  'source': 'desktop',
+                  'message_count': 6,
+                  'started_at': row.startedAt,
+                  'last_active': row.startedAt,
+                },
+              ],
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/health') return http.Response('{}', 200);
+        return http.Response('{}', 404);
+      }),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        theme: AppTheme.fromId('dark'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        home: SessionListScreen(
+          connection: SavedConnection(
+            id: 'conn-onestore-preview',
+            label: 'QA',
+            host: '127.0.0.1',
+            port: 8642,
+            apiKey: 'test-key',
+            kind: InstanceKind.vps,
+          ),
+          connManager: manager,
+          clientOverride: gateway,
+        ),
+      ),
+    );
+    for (var i = 0; i < 80; i++) {
+      await tester.pump(const Duration(milliseconds: 25));
+      if (find.text(row.title).evaluate().isNotEmpty) break;
+    }
+    await tester.pump(const Duration(milliseconds: 200));
+    await expectNoPreviewLine(tester, 'Conversations');
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
   test('the shared rule is the session preview, as in Desktop', () {
     final row = Session(
       id: 's',
@@ -171,8 +287,9 @@ void main() {
       startedAt: 1,
     );
     expect(sessionListPreview(row), 'First prompt');
-    // Without a session preview the last turn still gives a line.
+    // Without a session preview Desktop paints no line: the last turn is
+    // never substituted.
     final noPreview = row.copyWith(preview: '');
-    expect(sessionListPreview(noPreview), 'Last answer');
+    expect(sessionListPreview(noPreview), isNull);
   });
 }

@@ -116,10 +116,9 @@ void main() {
 
     expect(summary.user, 'Revisa el despliegue de producción');
     expect(summary.assistant, isNull);
-    expect(
-      sessionListPreview(session),
-      'Revisa el despliegue de producción',
-    );
+    // The list row's own preview is tool JSON: Desktop paints no line, and
+    // neither does the list (no last-turn substitute).
+    expect(sessionListPreview(session), isNull);
   });
 
   test('omite filas tool, internas y de razonamiento al buscar texto humano', () {

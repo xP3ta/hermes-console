@@ -2755,7 +2755,9 @@ class _RecentSessionTile extends StatelessWidget {
             ?basePreview,
           ].join(' · ')
         : basePreview;
-    final visiblePreview = previewText ?? strings.sessionPreviewUnavailable;
+    // Desktop's sidebar paints the session's own preview or no line at all
+    // (session-row.tsx); no placeholder stands in for a missing preview.
+    final visiblePreview = previewText;
 
     // Fila ligera: jerarquía por texto y divisor, sin cards pesadas.
     // Semantics compone una descripción legible para TalkBack (título, turno
@@ -2768,8 +2770,6 @@ class _RecentSessionTile extends StatelessWidget {
         strings.homeSemanticChat(title, session.messageCount),
         ?userPreview,
         ?assistantOrActivity,
-        if (userPreview == null && assistantOrActivity == null)
-          strings.sessionPreviewUnavailable,
         if (session.hasLocalDraft) strings.slDraftBadge,
       ].join(', '),
       child: InkWell(
@@ -2827,6 +2827,10 @@ class _RecentSessionTile extends StatelessWidget {
                                     label: activityLabel!,
                                     tone: activityTone,
                                   ),
+                                )
+                              : visiblePreview == null
+                              ? const SizedBox.shrink(
+                                  key: ValueKey('preview-none'),
                                 )
                               : Padding(
                                   key: ValueKey('preview-$visiblePreview'),

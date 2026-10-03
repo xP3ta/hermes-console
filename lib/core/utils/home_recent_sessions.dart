@@ -88,17 +88,12 @@ HomeRecentSummary homeRecentSummary({
 String? humanReadableSessionPreview(String? value) =>
     value == null ? null : _compactPreview(value);
 
-String? sessionListPreview(Session session) {
-  for (final candidate in [
-    session.cleanPreview,
-    session.lastAssistantPreview ?? '',
-    session.lastUserPreview ?? '',
-  ]) {
-    final compact = _compactPreview(candidate);
-    if (compact != null) return compact;
-  }
-  return null;
-}
+/// The preview line of a session row on Home and Conversations: the row's
+/// own canonical `preview`, exactly what Desktop's sidebar paints
+/// (session-row.tsx). Without one there is no line; the last turn is never
+/// substituted, so both apps show the same thing for the same chat.
+String? sessionListPreview(Session session) =>
+    _compactPreview(session.cleanPreview);
 
 String? latestUserPreview(
   Iterable<Map<String, dynamic>> messages, {

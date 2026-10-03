@@ -2841,8 +2841,9 @@ class _SessionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
-    final preview =
-        sessionListPreview(session) ?? strings.sessionPreviewUnavailable;
+    // Desktop's sidebar paints the session's own preview or no line at all
+    // (session-row.tsx); no placeholder stands in for a missing preview.
+    final preview = sessionListPreview(session) ?? '';
     final activityLabel = status.isLive
         ? sessionLiveStatusLabel(strings, status)
         : strings.slRunningBadge;
