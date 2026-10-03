@@ -1,5 +1,5 @@
 import '../bots/data/room_log_cursor.dart';
-import 'bot_mention_roster.dart';
+import 'bot_roster_store.dart';
 import 'dart:async';
 import 'dart:math';
 
@@ -534,15 +534,21 @@ final class MissionControlRepository
     final desktop = lease.client;
     return MissionControlRepository(
       profilesLoader: () async {
-        final rosterGeneration = BotMentionRoster.shared.generation(connection.id);
+        final rosterTicket = BotRosterRegistry.shared.beginRead(connection.id);
         final profiles = await loadMissionControlProfiles(
-        // One profiles.list snapshot now carries Desktop's last/preferred
-        // session projections and hidden worker liveness. Older Gateways omit
-        // those optional fields and keep returning the same profile roster.
-        desktopLoader: () => desktop.listProfiles(includeSessions: true),
-        legacyDashboardLoader: dashboard.getProfiles,
+          // One profiles.list snapshot now carries Desktop's last/preferred
+          // session projections and hidden worker liveness. Older Gateways
+          // omit those optional fields and keep returning the same roster.
+          desktopLoader: () => desktop.listProfiles(includeSessions: true),
+          legacyDashboardLoader: dashboard.getProfiles,
         );
-        BotMentionRoster.shared.replace(connection.id, connection.label, profiles, expectedGeneration: rosterGeneration);
+        // Shared with every screen; dropped if a newer roster already landed.
+        BotRosterRegistry.shared.publish(
+          connection.id,
+          connection.label,
+          profiles,
+          ticket: rosterTicket,
+        );
         return profiles;
       },
       sessionsLoader: () => loadMissionControlSessions(
