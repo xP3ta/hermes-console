@@ -14,6 +14,7 @@ import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/models/profile_pet.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
+import 'package:hermes_android/core/screens/profiles_screen.dart';
 import 'package:hermes_android/core/screens/tasks_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -276,6 +277,7 @@ Widget _host({
   HermesDesktopProfileAssetsGateway? profileAssetsGateway,
   BotChatTitleLookup? botChatTitleLookup,
   BotProfileGateway? botProfileGateway,
+  Future<void> Function(String name)? profileDeleteOverride,
 }) => MaterialApp(
   locale: const Locale('es'),
   localizationsDelegates: Strings.localizationsDelegates,
@@ -308,6 +310,7 @@ Widget _host({
     botChatTitleLookup: botChatTitleLookup ?? FakeBotChatTitleLookup(),
     botProfileGateway: botProfileGateway,
     modelOptionsLoader: botCreateGateway == null ? null : (_) async => const [],
+    profileDeleteOverride: profileDeleteOverride,
   ),
 );
 
@@ -2956,5 +2959,40 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Perfil: infra'), findsOneWidget);
     expect(find.text('Perfil: ana'), findsNothing);
+  });
+
+  testWidgets('deleting a bot deletes its profile in place, with the same '
+      'confirmation as Profiles', (tester) async {
+    tester.view.physicalSize = const Size(800, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final manager = await _manager();
+    await manager.setActiveProfile(_connection.id, 'infra');
+    final deleted = <String>[];
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        snapshot: _snapshot(profiles: const [AgentProfile(name: 'infra')]),
+        profileDeleteOverride: (name) async => deleted.add(name),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openAgentDetail(tester, 'infra');
+    await tester.tap(find.byKey(const ValueKey('bot-profile-more')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('bot-profile-delete')));
+    await tester.pumpAndSettle();
+    // No jump to another screen: the confirmation opens over the card.
+    expect(find.byType(ProfilesScreen), findsNothing);
+    expect(
+      find.byKey(const ValueKey('profile-delete-confirm')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('profile-delete-confirm-yes')));
+    await tester.pumpAndSettle();
+    expect(deleted, ['infra']);
+    expect(find.byKey(const ValueKey('bot-profile')), findsNothing);
+    // It was the active profile: the app is back on the default one.
+    expect(manager.activeProfileFor(_connection.id), '');
   });
 }

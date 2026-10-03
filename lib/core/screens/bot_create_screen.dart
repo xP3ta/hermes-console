@@ -111,6 +111,10 @@ class BotCreateScreen extends StatefulWidget {
   @visibleForTesting
   final BotCreateImageNormalizer? imageNormalizer;
 
+  /// Dashboard used when the Gateway has no `profiles.create` (tests).
+  @visibleForTesting
+  final DashboardClient? dashboardForTesting;
+
   const BotCreateScreen({
     required this.connection,
     required this.existing,
@@ -121,6 +125,7 @@ class BotCreateScreen extends StatefulWidget {
     this.petVisualMaterializer,
     this.imagePicker,
     this.imageNormalizer,
+    this.dashboardForTesting,
     super.key,
   });
 
@@ -625,6 +630,55 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     setState(() => _model = picked);
   }
 
+  /// Older Gateways without `profiles.create`: the profile is created through
+  /// the Dashboard, as the former Profiles wizard did. Identity, skills and
+  /// Bot Mode metadata need the newer RPCs and stay as inherited; a chosen
+  /// model is not applied because legacy `model/set` moves the running
+  /// default Gateway.
+  Future<void> _createLegacy({
+    required String slug,
+    required String? cloneFrom,
+    required String description,
+    required String soul,
+    required bool wantsModel,
+  }) async {
+    final str = Strings.of(context);
+    final notice = HermesNotice.of(context);
+    final owned = widget.dashboardForTesting == null && _ownedDashboard == null;
+    final dashboard =
+        widget.dashboardForTesting ??
+        _ownedDashboard ??
+        DashboardClient.lazy(widget.connection);
+    try {
+      await dashboard.createProfile(
+        name: slug,
+        cloneFrom: cloneFrom,
+        description: description,
+      );
+      _profileCreated = true;
+      if (soul.trim().isNotEmpty) {
+        try {
+          await dashboard.setProfileSoul(slug, soul);
+        } catch (error) {
+          notice.show(
+            message: str.prfSoulWarning(humanizeApiError(error)),
+            kind: HermesNoticeKind.warning,
+          );
+        }
+      }
+      if (wantsModel) {
+        notice.show(
+          message: str.prfModelWarning(
+            'profiles.create is unavailable on this Hermes Gateway',
+          ),
+          kind: HermesNoticeKind.warning,
+        );
+      }
+    } finally {
+      if (owned) dashboard.close();
+    }
+  }
+
   /// Orden autoritativo: `profiles.create` primero y, solo después, identidad
   /// tipada (pet/asset/ui_meta). Si la identidad no queda confirmada la
   /// pantalla permanece abierta y no navega como si el bot estuviera listo.
@@ -654,22 +708,42 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
       }
       final identityPlan = _identityApplied ? null : await _selectedIdentity();
       if (!_profileCreated) {
-        await _gateway.createProfileNative(
-          name: slug,
-          cloneFrom: _noSkills || _cloneFrom == _freshClone ? null : _cloneFrom,
-          description: descriptionText,
-          soul: composeBotSoul(
-            slug: slug,
-            title: title,
-            description: description,
-            customSoul: _soulCtrl.text,
-          ),
-          model: model?.model ?? (wantsFallbackModel ? fallbackModel : ''),
-          provider:
-              model?.provider ?? (wantsFallbackModel ? fallbackProvider : ''),
-          noSkills: _noSkills,
-          shareAuth: _shareAuth,
+        final cloneFrom = _noSkills || _cloneFrom == _freshClone
+            ? null
+            : _cloneFrom;
+        final soul = composeBotSoul(
+          slug: slug,
+          title: title,
+          description: description,
+          customSoul: _soulCtrl.text,
         );
+        try {
+          await _gateway.createProfileNative(
+            name: slug,
+            cloneFrom: cloneFrom,
+            description: descriptionText,
+            soul: soul,
+            model: model?.model ?? (wantsFallbackModel ? fallbackModel : ''),
+            provider:
+                model?.provider ?? (wantsFallbackModel ? fallbackProvider : ''),
+            noSkills: _noSkills,
+            shareAuth: _shareAuth,
+          );
+        } on TuiGatewayRpcError catch (error) {
+          // -32601: this Gateway predates `profiles.create`.
+          if (error.code != -32601) rethrow;
+          await _createLegacy(
+            slug: slug,
+            cloneFrom: cloneFrom,
+            description: descriptionText,
+            soul: soul,
+            wantsModel: model != null || wantsFallbackModel,
+          );
+          if (!mounted) return;
+          _allowPop = true;
+          Navigator.of(context).pop(slug);
+          return;
+        }
         _profileCreated = true;
         _createdProfileSlug = slug;
         _createdAtMs = DateTime.now().millisecondsSinceEpoch;
