@@ -19574,6 +19574,15 @@ class ActiveChat {
             continue;
           }
         }
+        // ms1215: prove from the durable transcript, before binding the
+        // snapshot, that its inflight is still the turn streamed here.
+        final ownedTurnStillOpen =
+            await _desktopRecoveryOperationBeforeDeadline(
+              _durableTranscriptKeepsOwnedTurnOpen(snapshot),
+              epochInvalidated,
+            ).catchError((Object _) => false) ??
+            false;
+        if (!_canRecoverTurn(turnEpoch)) return;
         final committed = rosterRecovery != null
             ? (gateway as HermesDesktopRosterBoundRecoveryGateway)
                   .consumeRosterBoundRecovery(rosterRecovery)
@@ -19588,7 +19597,11 @@ class ActiveChat {
         debugPrint(
           '[active-chat] snapshot recovery converged kind=$resultKind',
         );
-        _applyDesktopRecoverySnapshot(snapshot, turnEpoch);
+        _applyDesktopRecoverySnapshot(
+          snapshot,
+          turnEpoch,
+          ownedTurnStillOpen: ownedTurnStillOpen,
+        );
         return;
       } catch (error) {
         if (!_canRecoverTurn(turnEpoch)) return;
@@ -19675,13 +19688,20 @@ class ActiveChat {
   /// into the live placeholder, so the inflight continues streaming into it
   /// without dropping a character (the snapshot holds the whole text so far)
   /// and keeps its reasoning/tool trace. Anything else is left untouched.
+  ///
+  /// Text alone is not turn identity: Hermes' `inflight` carries no turn or
+  /// row id, so turn A finished during the cut and a same-prompt turn B from
+  /// another surface look identical here. [turnStillOpen] is the causal proof
+  /// from [_durableTranscriptKeepsOwnedTurnOpen]; without it nothing changes.
   List<Map<String, dynamic>> _ownedStreamedReplyAsLivePlaceholder(
     List<Map<String, dynamic>> newestFirst,
-    DesktopSessionSnapshot snapshot,
-  ) {
+    DesktopSessionSnapshot snapshot, {
+    required bool turnStillOpen,
+  }) {
     final inflight = snapshot.inflight;
     final inflightUser = inflight?.user?.trim() ?? '';
-    if (inflight == null ||
+    if (!turnStillOpen ||
+        inflight == null ||
         !snapshot.running ||
         inflightUser.isEmpty ||
         inflight.corrections.isNotEmpty ||
@@ -19691,8 +19711,6 @@ class ActiveChat {
     }
     final reply = newestFirst[0];
     final prompt = newestFirst[1];
-    String normalized(Object? text) =>
-        (text?.toString() ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
     if (reply['role'] != 'assistant' ||
         reply['_pipeline'] == true ||
         reply['_interim'] == true ||
@@ -19703,7 +19721,8 @@ class ActiveChat {
         !isRealUserTurn(prompt) ||
         prompt['_optimistic'] != true ||
         _hasDurableTranscriptIdentity(prompt) ||
-        normalized(prompt['content']) != normalized(inflightUser)) {
+        _normalizedPromptText(prompt['content']) !=
+            _normalizedPromptText(inflightUser)) {
       return newestFirst;
     }
     final streamed = (reply['content']?.toString() ?? '').trim();
@@ -19721,14 +19740,94 @@ class ActiveChat {
     ];
   }
 
+  static String _normalizedPromptText(Object? text) =>
+      (text?.toString() ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
+
+  /// ms1215: causal proof that the running `inflight` is still the turn this
+  /// client streamed, read from the durable transcript after the resume.
+  ///
+  /// Hermes writes a turn's user row at `prompt.submit` and its final reply
+  /// when the turn ends. Past the newest durable user row the local window
+  /// holds before its open prompt, the transcript may therefore show at most
+  /// that one prompt (same text, nothing closing it). A second user row, or
+  /// a final reply after the prompt, means the turn was closed and another
+  /// one started: the inflight is not ours. Any read failure, a missing or
+  /// ambiguous anchor, or a shape that would not be reopened anyway answers
+  /// false, which keeps the local rows exactly as they are.
+  Future<bool> _durableTranscriptKeepsOwnedTurnOpen(
+    DesktopSessionSnapshot snapshot,
+  ) async {
+    final local = _messages;
+    if (identical(
+      _ownedStreamedReplyAsLivePlaceholder(
+        local,
+        snapshot,
+        turnStillOpen: true,
+      ),
+      local,
+    )) {
+      return false;
+    }
+    TranscriptMessageIdentity? anchor;
+    for (final message in local.skip(2)) {
+      if (!isRealUserTurn(message)) continue;
+      if (!transcriptIdentityAliasesAreConsistent(message)) return false;
+      anchor = _transcriptMessageIdentity(message);
+      if (anchor == null) return false;
+      break;
+    }
+    final List<Map<String, dynamic>> transcript;
+    try {
+      transcript = await _loadRecoveryTranscript(
+        serverSessionId,
+        _storedSessionProfile,
+      );
+    } catch (_) {
+      return false;
+    }
+    var start = 0;
+    if (anchor != null) {
+      final match = _uniqueTranscriptIdentityMatch(anchor, transcript);
+      if (match == null) return false;
+      final index = transcript.indexWhere((message) {
+        if (!transcriptIdentityAliasesAreConsistent(message)) return false;
+        return _transcriptMessageIdentity(message)?.matches(match) ?? false;
+      });
+      if (index < 0) return false;
+      start = index + 1;
+    }
+    final tail = transcript.sublist(start);
+    final users = [
+      for (var i = 0; i < tail.length; i++)
+        if (isRealUserTurn(tail[i])) i,
+    ];
+    if (users.isEmpty) return true;
+    if (users.length > 1) return false;
+    final inflightUser = snapshot.inflight?.user ?? '';
+    if (_normalizedPromptText(tail[users.single]['content']) !=
+        _normalizedPromptText(inflightUser)) {
+      return false;
+    }
+    for (final message in tail.skip(users.single + 1)) {
+      if (message['role'] != 'assistant') continue;
+      final toolCalls = message['tool_calls'];
+      final hasTools = toolCalls is List && toolCalls.isNotEmpty;
+      final text = message['content'];
+      if (!hasTools && text is String && text.trim().isNotEmpty) return false;
+    }
+    return true;
+  }
+
   void _applyDesktopRecoverySnapshot(
     DesktopSessionSnapshot snapshot,
-    int turnEpoch,
-  ) {
+    int turnEpoch, {
+    bool ownedTurnStillOpen = false,
+  }) {
     if (!_canRecoverTurn(turnEpoch)) return;
     _messages = _ownedStreamedReplyAsLivePlaceholder(
       _messages,
       snapshot,
+      turnStillOpen: ownedTurnStillOpen,
     ).toList(growable: true);
     final previousMessagesNewestFirst = List<Map<String, dynamic>>.unmodifiable(
       _messages.map(

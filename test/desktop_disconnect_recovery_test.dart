@@ -5602,6 +5602,84 @@ void main() {
     });
   }
 
+  // ms1215 race: turn A finished while the socket was cut, and another
+  // surface then started turn B with the same prompt. B's inflight has the
+  // same prompt text and a reply that still extends A's streamed prefix, so
+  // matching by content would pour B into A. The durable transcript read
+  // after the resume shows A closed (its final reply and B's own prompt row
+  // follow A's prompt): B is another turn and A's reply must stay as it was.
+  test('ms1215 a same-prompt turn B started after A finished during the cut '
+      'is not merged into A', () async {
+    const storedId = 'ms1215-race';
+    const prompt = '[E2E:SLOW:k1] please';
+    const aFinal = 'slow reply k1 dolor sit amet (turn A, complete)';
+    final gateway = _NonIdempotentLifecycleGateway(storedId);
+    var aSubmitted = false;
+    var aClosed = false;
+    final chat = _recoverableChat(
+      'ms1215-race',
+      gateway,
+      desktopRecoveryRandom: () => 1.0,
+      storedMessageLoader: (_, _) async => [
+        {'id': 309, 'role': 'user', 'content': 'hello'},
+        {'id': 310, 'role': 'assistant', 'content': 'hi'},
+        if (aSubmitted) {'id': 325, 'role': 'user', 'content': prompt},
+        if (aClosed) ...[
+          {'id': 326, 'role': 'assistant', 'content': aFinal},
+          {'id': 327, 'role': 'user', 'content': prompt},
+        ],
+      ],
+    );
+    addTearDown(chat.dispose);
+    SharedPreferences.setMockInitialValues({});
+    await chat.loadMessages();
+    await chat.send(fullText: prompt, model: 'hermes-agent', history: const []);
+    // Hermes writes the user row at prompt.submit.
+    aSubmitted = true;
+    gateway.emit(
+      'message.delta',
+      sessionId: chat.desktopRuntimeSessionId!,
+      payload: const {'text': 'slow reply'},
+    );
+    await _waitUntil(
+      () => chat.messages.any((m) => m['content'] == 'slow reply'),
+    );
+
+    aClosed = true;
+    gateway.recoverySnapshot = DesktopSessionSnapshot(
+      runtimeSessionId: 'runtime-ms1215-race',
+      storedSessionId: storedId,
+      created: false,
+      messagesProvided: false,
+      messageCount: 4,
+      inflight: DesktopInflightTurn(
+        user: prompt,
+        assistant: 'slow reply k1 (turn B)',
+        streaming: true,
+      ),
+      running: true,
+      status: 'working',
+    );
+    gateway.failWith(const SocketException('Connection reset by peer'));
+    await _waitUntil(
+      () => chat.desktopRuntimeSessionId == 'runtime-ms1215-race',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+
+    expect(
+      chat.messages.where(
+        (m) => m['role'] == 'assistant' && m['content'] == 'slow reply',
+      ),
+      hasLength(1),
+      reason: "A's streamed reply is not reopened for B",
+    );
+    expect(
+      chat.messages.where((m) => m['role'] == 'user' && m['content'] == prompt),
+      isNotEmpty,
+      reason: "A's prompt is never dropped",
+    );
+  });
+
   // rl1215: once the socket is back and the server answered, recovery is
   // only re-reading the transcript. The chat must not keep saying
   // "connection lost" for that sync.
