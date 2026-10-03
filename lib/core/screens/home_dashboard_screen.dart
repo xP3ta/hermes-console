@@ -98,6 +98,11 @@ class HomeDashboardScreen extends StatefulWidget {
   /// Bot Mode background first read (defaults to the shared one).
   final MissionSnapshotPrewarm? missionPrewarm;
 
+  /// Writer of hidden/title/read state (defaults to
+  /// [dashboardSessionStateWriter]).
+  final SessionStateWriter Function(SavedConnection connection)?
+  sessionStateWriterFactory;
+
   const HomeDashboardScreen({
     required this.connManager,
     this.clientFactory,
@@ -109,6 +114,7 @@ class HomeDashboardScreen extends StatefulWidget {
     @visibleForTesting this.eventStreamOverride,
     @visibleForTesting this.dashboardAuthProbe,
     @visibleForTesting this.missionPrewarm,
+    @visibleForTesting this.sessionStateWriterFactory,
     super.key,
   });
 
@@ -1265,7 +1271,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     _archive?.removeListener(_dropDeletedRecents);
     _detachStateWriter();
     if (!conn.readOnly) {
-      final writer = _stateWriter = dashboardSessionStateWriter(conn);
+      final writer = _stateWriter =
+          (widget.sessionStateWriterFactory ?? dashboardSessionStateWriter)(
+            conn,
+          );
       archive.attachRemoteState(writer, httpStatusOf: dashboardHttpStatusOf);
     }
     _archive = archive;
