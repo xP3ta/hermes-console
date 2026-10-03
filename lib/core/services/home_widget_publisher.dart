@@ -4,7 +4,10 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:home_widget/home_widget.dart';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/home_widget_snapshot.dart';
+import 'session_archive.dart';
 
 /// Applies app-level health/theme state without discarding the last known
 /// session for the same instance during a cold start. A different (or missing)
@@ -137,6 +140,33 @@ class HermesHomeWidgetPublisher {
 
   HermesHomeWidgetSnapshot get latest => _latest;
 
+  /// True for a snapshot naming a session the server confirmed deleted.
+  /// Checked on every write, so a late event from the deleted chat cannot
+  /// put it back on the widget. See [HomeWidgetDeletedSessionGuard].
+  bool Function(HermesHomeWidgetSnapshot snapshot)? sessionDeleted;
+
+  HermesHomeWidgetSnapshot _withoutDeletedSession(
+    HermesHomeWidgetSnapshot snapshot,
+  ) {
+    if (snapshot.sessionId == null || sessionDeleted?.call(snapshot) != true) {
+      return snapshot;
+    }
+    return HermesHomeWidgetSnapshot(
+      configured: snapshot.configured,
+      instanceId: snapshot.instanceId,
+      instanceLabel: snapshot.instanceLabel,
+      connectionState: snapshot.connectionState,
+      model: snapshot.model,
+      provider: snapshot.provider,
+      agentState: snapshot.agentState == HomeWidgetAgentState.disconnected
+          ? HomeWidgetAgentState.disconnected
+          : HomeWidgetAgentState.idle,
+      updatedAtMs: snapshot.updatedAtMs,
+      theme: snapshot.theme,
+      showAdvancedMetrics: snapshot.showAdvancedMetrics,
+    );
+  }
+
   /// Applies a small semantic change without forcing each screen to maintain a
   /// second copy of the complete widget contract.
   Future<void> update(
@@ -144,7 +174,9 @@ class HermesHomeWidgetPublisher {
     transform,
   ) {
     final operation = _tail.then((_) {
-      final stamped = transform(_latest).copyWith(updatedAtMs: _nowMs());
+      final stamped = _withoutDeletedSession(
+        transform(_latest).copyWith(updatedAtMs: _nowMs()),
+      );
       _latest = stamped;
       return _write(stamped);
     });
@@ -155,8 +187,9 @@ class HermesHomeWidgetPublisher {
   Future<void> publish(HermesHomeWidgetSnapshot snapshot) {
     final stamped = snapshot.copyWith(updatedAtMs: _nowMs());
     final operation = _tail.then((_) {
-      _latest = stamped;
-      return _write(stamped);
+      final kept = _withoutDeletedSession(stamped);
+      _latest = kept;
+      return _write(kept);
     });
     // A launcher/plugin failure must not poison every later update. The caller
     // still receives this operation's error, while the internal queue recovers
@@ -226,4 +259,69 @@ class HermesHomeWidgetPublisher {
   }
 
   Future<void> flush() => _tail;
+}
+
+/// Keeps the home screen widget off a session the server confirmed deleted.
+///
+/// Follows the active connection's shared [SessionArchive]: a delete made on
+/// any screen clears the widget's session at once (no network read), and the
+/// publisher keeps refusing that session, so a late event from the deleted
+/// chat cannot bring it back.
+class HomeWidgetDeletedSessionGuard {
+  HomeWidgetDeletedSessionGuard(this._publisher, this._prefs) {
+    _publisher.sessionDeleted = _isDeleted;
+  }
+
+  final HermesHomeWidgetPublisher _publisher;
+  final SharedPreferences _prefs;
+  SessionArchive? _archive;
+  String? _connectionId;
+  bool _disposed = false;
+
+  bool _isDeleted(HermesHomeWidgetSnapshot snapshot) {
+    final archive = _archive;
+    final sessionId = snapshot.sessionId;
+    return archive != null &&
+        sessionId != null &&
+        snapshot.instanceId == _connectionId &&
+        archive.isSessionIdDeleted(sessionId);
+  }
+
+  /// Watches [connectionId]'s archive (none when null).
+  Future<void> follow(String? connectionId) async {
+    if (_disposed || connectionId == _connectionId) return;
+    _archive?.removeListener(_onArchiveChanged);
+    _archive = null;
+    _connectionId = connectionId;
+    if (connectionId == null) return;
+    final archive = await SessionArchive.load(_prefs, connectionId);
+    if (_disposed || _connectionId != connectionId) return;
+    _archive = archive..addListener(_onArchiveChanged);
+    // A snapshot restored from disk at cold start can still name a session
+    // deleted before the app stopped.
+    await _publisher.flush();
+    if (_disposed || _connectionId != connectionId) return;
+    _onArchiveChanged();
+  }
+
+  void _onArchiveChanged() {
+    if (_disposed || !_isDeleted(_publisher.latest)) return;
+    // The publisher strips the deleted session from whatever it writes.
+    unawaited(
+      _publisher.update((current) => current).catchError((Object error) {
+        debugPrint(
+          '[home-widget] deleted session not cleared (${error.runtimeType})',
+        );
+      }),
+    );
+  }
+
+  void dispose() {
+    _disposed = true;
+    _archive?.removeListener(_onArchiveChanged);
+    _archive = null;
+    if (_publisher.sessionDeleted == _isDeleted) {
+      _publisher.sessionDeleted = null;
+    }
+  }
 }

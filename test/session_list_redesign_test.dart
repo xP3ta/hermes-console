@@ -503,7 +503,7 @@ void main() {
   );
 
   testWidgets(
-    'la lista nunca muestra JSON de tools y recupera el último texto humano',
+    'la lista nunca muestra JSON de tools ni inventa otra vista previa',
     (tester) async {
       tester.view.physicalSize = const Size(1170, 2532);
       tester.view.devicePixelRatio = 3;
@@ -531,8 +531,11 @@ void main() {
       await _pumpUntil(tester, find.text('Deploy a staging'));
 
       expect(find.text(rawToolCall), findsNothing);
-      expect(find.text('Comprueba el despliegue'), findsOneWidget);
-      expect(find.text('Sin mensajes visibles'), findsOneWidget);
+      // As the Desktop sidebar: only the row's own preview, never the last
+      // turn in its place, and no placeholder line when there is none.
+      expect(find.text('Comprueba el despliegue'), findsNothing);
+      expect(find.text('Sin mensajes visibles'), findsNothing);
+      expect(find.text('Tarea automatizada'), findsOneWidget);
     },
   );
 

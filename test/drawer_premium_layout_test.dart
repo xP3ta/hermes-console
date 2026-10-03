@@ -93,6 +93,9 @@ void main() {
                             'id': 'child',
                             'title': 'Subagente oculto',
                             'last_active': '2026-07-29T09:00:00Z',
+                            // A delegate run stays folded; a real branch
+                            // (any chat source) would be its own row.
+                            'source': 'subagent',
                             'parent_session_id': 'newest',
                           },
                         ],

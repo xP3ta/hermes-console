@@ -573,7 +573,9 @@ void main() {
       source: 'mobile',
       messageCount: 1,
       isActive: false,
-      preview: title,
+      // Distinct from the title: Home now paints the row's own preview (the
+      // rule Conversations uses), so an equal text would appear twice.
+      preview: '$title preview',
       startedAt: DateTime.now().millisecondsSinceEpoch / 1000,
     );
 

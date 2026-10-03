@@ -175,7 +175,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text(rawToolCall), findsNothing);
-      expect(find.text('Sin mensajes visibles'), findsOneWidget);
+      // 7a236c6: like the Desktop sidebar, no stand-in line when the row has
+      // no readable preview.
+      expect(find.text('Sin mensajes visibles'), findsNothing);
+      expect(find.text('Deploy a staging'), findsOneWidget);
     });
 
     testWidgets(
