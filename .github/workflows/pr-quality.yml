@@ -2,7 +2,8 @@ name: Code Quality Checks
 
 on:
   pull_request:
-    branches: [main]
+    # Also the 1.2.15 integration and review-only bases, so reviewers see CI.
+    branches: [main, 'feat/**', 'review/**']
   push:
     branches: [main]
 
