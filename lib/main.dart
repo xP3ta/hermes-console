@@ -308,7 +308,9 @@ Future<Widget> bootstrapHermesApp() async {
   );
   coldStartOwner = activeChats;
   // Decrypting the last chats' tails overlaps the splash; nothing waits here.
-  unawaited(activeChats.coldStartTailsReady);
+  // With App Lock on, nothing private is decrypted before unlock: the shell
+  // starts the restore when the lock opens (HermesAppState).
+  if (!appLock.locked.value) unawaited(activeChats.coldStartTailsReady);
   await activeChats.globalActivity.initialize();
   return HermesApp(
     connManager: connManager,
@@ -1283,6 +1285,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     );
     widget.appLock.locked.addListener(_retryPendingNewSessionLaunch);
     widget.appLock.locked.addListener(_onAppLockNoticeGateChanged);
+    widget.appLock.locked.addListener(_restoreColdStartTailsAfterUnlock);
     unawaited(_initNewSessionLaunchInbox());
     // Cableado del modo conversación. Con el kill-switch de compilación no se
     // instancia ningún orquestador; STT/TTS del chat siguen independientes.
@@ -2000,6 +2003,16 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// Removes the remembered-route unlock listener while it is waiting.
   VoidCallback? _releaseColdStartUnlockWait;
 
+  /// App Lock policy: cold-start tails are decrypted only after unlock. The
+  /// restore runs once per process (`coldStartTailsReady` is memoized), so
+  /// later unlocks do nothing.
+  void _restoreColdStartTailsAfterUnlock() {
+    if (widget.appLock.locked.value) return;
+    unawaited(
+      widget.activeChats.coldStartTailsReady.catchError((Object _) => 0),
+    );
+  }
+
   /// cs1215: like Desktop's remembered route, a cold start reopens the
   /// surface the user was on for the active connection. A notification,
   /// shortcut or deep link already in flight wins; App Lock defers it until
@@ -2017,9 +2030,13 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     final request = _appNavigationFence.begin(nav, intent: intent);
     ColdStartRoute? route;
     try {
+      // Identifiers only; no transcript content is read here.
       route = await store.routeFor(connection.id);
-      // The first frame of the chat paints its cached tail.
-      await widget.activeChats.coldStartTailsReady;
+      // The first frame of the chat paints its cached tail. Under App Lock
+      // the tails stay encrypted until unlock (see below).
+      if (!widget.appLock.locked.value) {
+        await widget.activeChats.coldStartTailsReady;
+      }
     } catch (error) {
       debugPrint('main: cold-start route unavailable (${error.runtimeType})');
       return false;
@@ -2065,6 +2082,14 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         await unlocked.future;
         _releaseColdStartUnlockWait?.call();
         _releaseColdStartUnlockWait = null;
+      }
+      if (!mounted) return true;
+      // Decrypted only now that the lock is open; the chat's first frame
+      // still paints the cached tail.
+      try {
+        await widget.activeChats.coldStartTailsReady;
+      } catch (error) {
+        debugPrint('main: cold-start tails unavailable (${error.runtimeType})');
       }
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted || nav.canPop() || externalEntryPending()) {
@@ -2605,6 +2630,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     );
     widget.appLock.locked.removeListener(_retryPendingNewSessionLaunch);
     widget.appLock.locked.removeListener(_onAppLockNoticeGateChanged);
+    widget.appLock.locked.removeListener(_restoreColdStartTailsAfterUnlock);
     _releaseColdStartUnlockWait?.call();
     _releaseColdStartUnlockWait = null;
     _newSessionLaunchSub?.cancel();

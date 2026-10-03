@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/app_error_log.dart';
+import 'package:hermes_android/core/services/cold_start_store.dart';
 import 'package:hermes_android/main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -12,12 +13,14 @@ void main() {
   const channel = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
   final secure = <String, String>{};
   final writes = <String>[];
+  final reads = <String>[];
   String? failReadKey;
 
   setUp(() {
     AppErrorLog.resetForTesting();
     secure.clear();
     writes.clear();
+    reads.clear();
     failReadKey = null;
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
@@ -25,6 +28,7 @@ void main() {
           final key = args['key'] as String?;
           switch (call.method) {
             case 'read':
+              reads.add(key!);
               if (key == failReadKey) {
                 throw PlatformException(code: 'storage-unavailable');
               }
@@ -113,4 +117,51 @@ void main() {
     expect(AppErrorLog.recent, isEmpty);
     expect(app, isA<Widget>());
   });
+
+  for (final locked in [true, false]) {
+    test('cold-start tails ${locked ? 'stay encrypted until unlock' : ''
+                  'are decrypted during the splash'} with App Lock '
+        '${locked ? 'on' : 'off'}', () async {
+      SharedPreferences.setMockInitialValues({
+        ...savedConnection(),
+        if (locked) 'app_lock_enabled': true,
+      });
+      secure['api_key_conn-a'] = 'key-a';
+      final key = ColdStartStore.tailKey('conn-a', 'default', 's');
+      secure[ColdStartStore.indexKey] = jsonEncode({
+        'v': 1,
+        'routes': {},
+        'tails': [
+          {
+            'k': key,
+            'c': 'conn-a',
+            'p': 'default',
+            's': 's',
+            'a': ['s'],
+            'b': 10,
+            't': DateTime.now().millisecondsSinceEpoch,
+          },
+        ],
+      });
+      secure[key] = jsonEncode({
+        'v': 1,
+        'c': 'conn-a',
+        'p': 'default',
+        's': 's',
+        'r': 's',
+        'a': ['s'],
+        'rows': [
+          {'role': 'assistant', 'content': 'privado'},
+        ],
+      });
+
+      final app = await bootstrapHermesApp() as HermesApp;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(reads.contains(key), !locked);
+      if (locked) {
+        expect(app.appLock.locked.value, isTrue);
+        expect(reads, isNot(contains(ColdStartStore.indexKey)));
+      }
+    });
+  }
 }
