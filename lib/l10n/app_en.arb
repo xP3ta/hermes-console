@@ -7720,5 +7720,6 @@
   "profileSwitcherHint": "Switch profile",
   "profileSwitcherBody": "Each profile has its own chats, memory, SOUL, skills and model.",
   "profileSwitcherLoadFailed": "Couldn't load the profiles. Tap to retry.",
-  "profileSwitcherManage": "Manage profiles"
+  "profileSwitcherManage": "Manage profiles",
+  "t1215SlashSkillsHeader": "Skills"
 }

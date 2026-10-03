@@ -810,6 +810,17 @@ abstract class HermesDesktopCommandGateway {
   });
 }
 
+/// Composer completions bound to the chat's runtime, as Desktop sends them
+/// (`use-slash-completions.ts`): `session_id` scopes skill lookups to that
+/// session's profile and workspace (project-local skills). Optional so older
+/// doubles of [HermesDesktopCommandGateway] stay valid.
+abstract class HermesDesktopComposerCompletionGateway {
+  Future<SlashCompletionBatch> completeSlashInSession(
+    String text, {
+    String? runtimeSessionId,
+  });
+}
+
 /// Read-only replay ring of one runtime (`session.events.since`,
 /// `last_seen: 0`). Lets a relaunched client learn whether a compression that
 /// runtime ran is still pinned, without resuming or stealing it.
@@ -1382,6 +1393,7 @@ class TuiGatewayClient
         HermesDesktopBotCreationGateway,
         HermesDesktopPetGateway,
         HermesDesktopCommandGateway,
+        HermesDesktopComposerCompletionGateway,
         HermesDesktopCompressionGateway,
         HermesDesktopApprovalResultGateway,
         HermesDesktopSubagentGateway,
@@ -5349,7 +5361,14 @@ class TuiGatewayClient
   }
 
   @override
-  Future<SlashCompletionBatch> completeSlash(String text) async {
+  Future<SlashCompletionBatch> completeSlash(String text) =>
+      completeSlashInSession(text);
+
+  @override
+  Future<SlashCompletionBatch> completeSlashInSession(
+    String text, {
+    String? runtimeSessionId,
+  }) async {
     const method = 'complete.slash';
     final input = text;
     if (input.length > 4096 ||
@@ -5358,6 +5377,8 @@ class TuiGatewayClient
     }
     final result = await _request(method, {
       'text': input,
+      if (runtimeSessionId != null && runtimeSessionId.isNotEmpty)
+        'session_id': _validatedRuntimeId(method, runtimeSessionId),
     }, timeout: const Duration(seconds: 20));
     return SlashCompletionBatch.fromJson(result, input: input);
   }

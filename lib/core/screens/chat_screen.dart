@@ -97,6 +97,7 @@ import '../services/chat_content_extractor.dart';
 import '../services/chat_draft_store.dart';
 import '../services/chat_preference_store.dart';
 import '../services/desktop_gateway_capabilities.dart';
+import '../services/composer_completion_scheduler.dart';
 import '../services/mission_bot_chat_store.dart';
 import '../services/notifications/notification_service.dart';
 import '../services/recent_interrupt_guard.dart';
@@ -1641,8 +1642,10 @@ class _ChatScreenState extends State<ChatScreen>
   // (slash palette, floating notices): they must hide while it is open.
   bool _navigationDrawerOpen = false;
   DesktopCommandCatalog? _desktopCommandCatalog;
-  Timer? _slashCompletionDebounce;
-  int _slashCompletionEpoch = 0;
+  // One debounced, cancellable lookup per keystroke burst while the slash
+  // palette is open; closing it (trigger gone, blur, dispose) cancels.
+  late final ComposerCompletionScheduler<_SlashLookup> _slashCompletions =
+      ComposerCompletionScheduler<_SlashLookup>(fetch: _fetchSlashLookup);
   // Resolviendo una aprobación del agente (deshabilita los botones).
   bool _resolvingApproval = false;
   bool _resolvingInteractivePrompt = false;
@@ -2384,6 +2387,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _onComposerFocusChanged() {
+    if (!_textFocusNode.hasFocus) _slashCompletions.cancel();
     if (mounted && !_disposed) setState(() {});
   }
 
@@ -3642,15 +3646,13 @@ class _ChatScreenState extends State<ChatScreen>
         _slashSuggestions = suggestions;
       });
     }
-    _slashCompletionDebounce?.cancel();
-    final completionEpoch = ++_slashCompletionEpoch;
-    if (text.startsWith('/') &&
+    if (_textFocusNode.hasFocus &&
+        text.startsWith('/') &&
         !text.contains(RegExp(r'\s')) &&
         text.length <= 65) {
-      _slashCompletionDebounce = Timer(
-        const Duration(milliseconds: 150),
-        () => unawaited(_refreshDesktopSlashSuggestions(text, completionEpoch)),
-      );
+      _slashCompletions.schedule(text, _applySlashLookup);
+    } else {
+      _slashCompletions.cancel();
     }
     _maybeDiscardFailedTurnFromExplicitEmptyComposer();
     _scheduleDraftSave();
@@ -3686,6 +3688,9 @@ class _ChatScreenState extends State<ChatScreen>
       final catalog = await _chat.loadDesktopCommandCatalog();
       if (!_disposed && mounted && catalog != null) {
         _desktopCommandCatalog = catalog;
+        _rememberRemoteSlashNames(
+          catalog.commands.map((entry) => entry.canonicalName),
+        );
       }
       return catalog;
     } catch (_) {
@@ -3693,10 +3698,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<void> _refreshDesktopSlashSuggestions(
-    String input,
-    int completionEpoch,
-  ) async {
+  Future<_SlashLookup?> _fetchSlashLookup(String input) async {
     final catalog = await _loadDesktopCommandCatalog();
     SlashCompletionBatch? completion;
     try {
@@ -3705,54 +3707,40 @@ class _ChatScreenState extends State<ChatScreen>
       // El catálogo sigue siendo un fallback válido para Gateway modernos que
       // no publiquen complete.slash.
     }
+    if (catalog == null && completion == null) return null;
+    return _SlashLookup(catalog: catalog, completion: completion);
+  }
+
+  void _applySlashLookup(String input, _SlashLookup? lookup) {
     if (_disposed ||
         !mounted ||
-        completionEpoch != _slashCompletionEpoch ||
+        lookup == null ||
         _textController.text != input) {
       return;
     }
+    final merged = mergeSlashSuggestions(
+      input: input,
+      local: slashSuggestionsFor(input, Strings.of(context)),
+      catalog: lookup.catalog,
+      completion: lookup.completion,
+    );
+    _rememberRemoteSlashNames(
+      merged
+          .where((command) => command.action == SlashAction.remote)
+          .map((command) => command.name),
+    );
+    setState(() => _slashSuggestions = merged);
+  }
 
-    final strings = Strings.of(context);
-    final local = slashSuggestionsFor(input, strings);
-    final byName = <String, SlashCommand>{
-      for (final item in local) item.name: item,
-    };
-    final prefix = input.substring(1).toLowerCase();
-    final catalogByName = <String, CommandCatalogEntry>{
-      for (final item in catalog?.commands ?? const <CommandCatalogEntry>[])
-        item.canonicalName: item,
-    };
-
-    final candidates = completion?.suggestions
-        .map((item) => item.replacement.trim().split(RegExp(r'\s+')).first)
-        .map(CommandDescriptor.tryNormalizeName)
-        .whereType<String>();
-    final names =
-        candidates ??
-        catalogByName.keys.where((name) => name.startsWith(prefix));
-    for (final name in names) {
-      if (isUnavailableSlashName(name) || byName.containsKey(name)) continue;
-      final entry = catalogByName[name];
-      // Una completion desconocida puede mostrarse, pero al enviar se vuelve a
-      // resolver contra el catálogo y no adquiere disponibilidad por aparecer.
-      String? meta;
-      for (final item
-          in completion?.suggestions ?? const <SlashCompletionSuggestion>[]) {
-        final suggestionName = CommandDescriptor.tryNormalizeName(
-          item.replacement.trim().split(RegExp(r'\s+')).first,
-        );
-        if (suggestionName == name) {
-          meta = item.meta;
-          break;
-        }
-      }
-      byName[name] = SlashCommand.remote(
-        name: name,
-        description: entry?.description ?? meta ?? '',
-      );
-      if (byName.length >= 20) break;
-    }
-    setState(() => _slashSuggestions = byName.values.toList(growable: false));
+  /// Lets the composer paint a server command or skill with the same accent as
+  /// a local one (owner preference), only once the server has named it.
+  void _rememberRemoteSlashNames(Iterable<String> names) {
+    final controller = _textController;
+    if (controller is! _SlashAccentTextEditingController) return;
+    final next = {...controller.remoteCommandNames, ...names};
+    if (next.length == controller.remoteCommandNames.length) return;
+    controller.remoteCommandNames = Set<String>.unmodifiable(next);
+    if (mounted && !_disposed) setState(() {});
   }
 
   /// No hay nada que enviar: ni texto ni adjunto en cola. Un adjunto solo (sin
@@ -6954,7 +6942,7 @@ class _ChatScreenState extends State<ChatScreen>
     _vc?.removeListener(_onVoiceState);
     _voice?.voiceConsent.removeListener(_onVoicePreferenceChanged);
     _vcUnavailableSub?.cancel();
-    _slashCompletionDebounce?.cancel();
+    _slashCompletions.dispose();
     _stopFallback?.cancel();
     _stopConfirmationDismissTimer?.cancel();
     // Detén SOLO el dictado del composer (el de esta pantalla), no el TTS del
@@ -16782,10 +16770,27 @@ class _BotChatAppBarTitle extends StatelessWidget {
   }
 }
 
+final class _SlashLookup {
+  final DesktopCommandCatalog? catalog;
+  final SlashCompletionBatch? completion;
+
+  const _SlashLookup({this.catalog, this.completion});
+}
+
 class _SlashAccentTextEditingController extends TextEditingController {
+  /// Server commands and skills this chat's gateway publishes; they get the
+  /// same accent as local commands once the catalog or a completion names
+  /// them.
+  Set<String> remoteCommandNames = const <String>{};
+
   TextRange? slashCommandRange() {
-    final parsed = parseSlashCommand(value.text);
-    if (parsed == null) return null;
+    final known =
+        parseSlashCommand(value.text) != null ||
+        switch (parseSlashInvocation(value.text)) {
+          final invocation? => remoteCommandNames.contains(invocation.name),
+          null => false,
+        };
+    if (!known) return null;
     final text = value.text;
     final start = text.length - text.trimLeft().length;
     final trimmed = text.trimLeft();
@@ -16862,6 +16867,7 @@ class _SlashPalette extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final firstSkill = commands.indexWhere((command) => command.isSkill);
     return Container(
       key: const ValueKey('chat-slash-palette'),
       margin: const EdgeInsets.fromLTRB(10, 0, 10, 9),
@@ -16893,88 +16899,115 @@ class _SlashPalette extends StatelessWidget {
             ),
             itemBuilder: (ctx, i) {
               final command = commands[i];
-              return InkWell(
-                key: ValueKey('chat-slash-command-${command.name}'),
-                onTap: () => onPick(command),
-                child: Padding(
-                  padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 14, 8),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: colors.accent.withValues(alpha: 0.11),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: colors.accent.withValues(alpha: 0.24),
-                          ),
-                        ),
-                        child: Text(
-                          '/',
-                          textScaler: TextScaler.noScaling,
-                          style: TextStyle(
-                            color: colors.accent,
-                            fontFamily: 'monospace',
-                            fontWeight: FontWeight.w800,
-                            fontSize: 17,
-                          ),
-                        ),
+              final row = _row(colors, command);
+              if (!command.isSkill || i != firstSkill) return row;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    key: const ValueKey('chat-slash-skills-header'),
+                    padding: const EdgeInsetsDirectional.fromSTEB(14, 8, 14, 2),
+                    child: Text(
+                      Strings.of(ctx).t1215SlashSkillsHeader,
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text.rich(
-                              TextSpan(
-                                children: [
-                                  TextSpan(
-                                    text: '/${command.name}',
-                                    style: TextStyle(
-                                      color: colors.accent,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                  if (command.argHint.isNotEmpty)
-                                    TextSpan(
-                                      text: '  ${command.argHint}',
-                                      style: TextStyle(
-                                        color: colors.textSecondary,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 13.5,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              command.description,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: colors.textSecondary,
-                                fontSize: 12.5,
-                                height: 1.2,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
+                  row,
+                ],
               );
             },
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _row(HermesThemeColors colors, SlashCommand command) {
+    return InkWell(
+      key: ValueKey('chat-slash-command-${command.name}'),
+      onTap: () => onPick(command),
+      child: Padding(
+        padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 14, 8),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: colors.accent.withValues(alpha: 0.11),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: colors.accent.withValues(alpha: 0.24),
+                ),
+              ),
+              child: command.isSkill
+                  ? Icon(Icons.bolt_rounded, size: 18, color: colors.accent)
+                  : Text(
+                      '/',
+                      textScaler: TextScaler.noScaling,
+                      style: TextStyle(
+                        color: colors.accent,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.w800,
+                        fontSize: 17,
+                      ),
+                    ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: '/${command.name}',
+                          style: TextStyle(
+                            color: colors.accent,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        if (command.argHint.isNotEmpty)
+                          TextSpan(
+                            text: '  ${command.argHint}',
+                            style: TextStyle(
+                              color: colors.textSecondary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                      ],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    command.description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 12.5,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

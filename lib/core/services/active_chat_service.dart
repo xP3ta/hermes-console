@@ -16076,6 +16076,14 @@ class ActiveChat {
     final gateway = _desktopGateway;
     if (gateway is! HermesDesktopCommandGateway) return null;
     try {
+      // Desktop parity: the runtime scopes project-local skills.
+      if (gateway is HermesDesktopComposerCompletionGateway) {
+        return await (gateway as HermesDesktopComposerCompletionGateway)
+            .completeSlashInSession(
+              text,
+              runtimeSessionId: _desktopRuntimeSessionId,
+            );
+      }
       return await (gateway as HermesDesktopCommandGateway).completeSlash(text);
     } on TuiGatewayRpcError catch (error) {
       if (error.code == -32601) return null;

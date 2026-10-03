@@ -62,6 +62,7 @@ class _SlashGateway
   final List<String> submissions = [];
   final List<String> slashCalls = [];
   Completer<SlashCompletionBatch>? slashCompletion;
+  SlashCompletionBatch Function(String text)? slashResponder;
   Completer<DesktopCommandRpcResult>? slashGate;
   int slashCompletionCalls = 0;
   Object? slashError;
@@ -166,6 +167,7 @@ class _SlashGateway
   @override
   Future<SlashCompletionBatch> completeSlash(String text) async {
     slashCompletionCalls++;
+    if (slashResponder case final respond?) return respond(text);
     return slashCompletion?.future ??
         SlashCompletionBatch.fromJson(const {'items': <Object>[]}, input: text);
   }
@@ -648,6 +650,75 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets('server skills appear grouped with their descriptions', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway()
+        ..slashResponder = (text) => SlashCompletionBatch.fromJson({
+          'replace_from': 1,
+          'items': [
+            {'text': '/goal', 'meta': 'Run a goal', 'kind': 'command'},
+            {'text': '/review-pr', 'meta': 'Review a PR', 'kind': 'skill'},
+          ],
+        }, input: text);
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/');
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(gateway.slashCompletionCalls, 1);
+      final skill = find.byKey(const ValueKey('chat-slash-command-review-pr'));
+      await tester.scrollUntilVisible(
+        skill,
+        80,
+        scrollable: find.descendant(
+          of: find.byKey(const ValueKey('chat-slash-palette')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      expect(skill, findsOneWidget);
+      expect(find.text('Review a PR'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chat-slash-skills-header')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-goal')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a fast keystroke burst sends one completion; blur cancels', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      final before = gateway.slashCompletionCalls;
+
+      const typed = '/abcdefghi';
+      for (var index = 1; index <= typed.length; index++) {
+        await tester.enterText(composer, typed.substring(0, index));
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(gateway.slashCompletionCalls - before, lessThanOrEqualTo(2));
+      expect(gateway.slashCompletionCalls - before, greaterThanOrEqualTo(1));
+
+      final afterBurst = gateway.slashCompletionCalls;
+      await tester.enterText(composer, '/zz');
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(gateway.slashCompletionCalls, afterBurst);
+      expect(find.byKey(const ValueKey('chat-slash-palette')), findsNothing);
+    });
 
     testWidgets('a no-argument slash executes immediately exactly once', (
       tester,
