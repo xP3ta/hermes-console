@@ -52,6 +52,15 @@ SavedConnection _conn({String id = 'conn-1'}) => SavedConnection(
   apiKey: 'test-key',
 );
 
+final class _OfflineWebSocketAuthDashboardClient extends DashboardClient {
+  _OfflineWebSocketAuthDashboardClient()
+    : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
+
+  @override
+  Future<DashboardWebSocketAuth> webSocketAuth() async =>
+      throw const SocketException('Connection attempt cancelled');
+}
+
 class _CapturingRunApi extends ApiClient {
   _CapturingRunApi()
     : super(
@@ -1935,6 +1944,51 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  // rl1215: a Wi-Fi/cellular switch kills every chat socket at once and each
+  // client climbs its backoff ladder on the dead path. The platform's
+  // new-network signal must clear every chat's stale backoff, so recovery
+  // redials on the new path at once instead of after up to 15 s each.
+  test(
+    'rl1215 network change clears every open chat gateway backoff',
+    () async {
+      final service = ActiveChatService(
+        compressionRestoreStore: testCompressionRestoreStore(),
+      );
+      addTearDown(service.dispose);
+      final clients = <TuiGatewayClient>[];
+      for (var i = 0; i < 3; i++) {
+        final connection = _conn(id: 'conn-rl1215-$i');
+        final client = TuiGatewayClient(
+          connection,
+          dashboard: _OfflineWebSocketAuthDashboardClient(),
+          heartbeatInterval: Duration.zero,
+          reconnectBackoff: GatewayReconnectBackoff(random: () => 1),
+        );
+        addTearDown(client.close);
+        clients.add(client);
+        service.attach(
+          connection: connection,
+          sessionId: 'session-rl1215-$i',
+          sessionTitle: 'rl1215 $i',
+          desktopGateway: client,
+          disableForegroundKeepAlive: true,
+        );
+        for (var attempt = 0; attempt < 5; attempt++) {
+          await client.connect().then((_) {}, onError: (Object _) {});
+        }
+      }
+      expect(clients.every((client) => client.isBackingOff), isTrue);
+
+      service.requestImmediateTransportRecovery();
+
+      expect(
+        clients.where((client) => client.isBackingOff),
+        isEmpty,
+        reason: 'no chat keeps the dead network path backoff',
+      );
+    },
+  );
 
   test('REST silence has no client-side terminal timeout', () async {
     final api = _CapturingRunApi();
@@ -3883,7 +3937,14 @@ void main() {
         expect(warning, contains('History changed'));
         expect(terminalCalls, 1);
         expect(requests, isNotEmpty);
-        expect(requests.first.queryParameters, containsPair('limit', '500'));
+        // re1215: the terminal reads the newest page, never the whole session.
+        expect(
+          requests.first.queryParameters,
+          containsPair(
+            'limit',
+            '${ActiveChat.authoritativeTranscriptPageSize}',
+          ),
+        );
         expect(
           requests.first.queryParameters,
           containsPair('include_compacted', 'true'),

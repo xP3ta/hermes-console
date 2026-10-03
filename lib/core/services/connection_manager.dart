@@ -1377,11 +1377,20 @@ class ApiClient {
   /// quedan ocultas y no se pueden borrar desde la app. [includeChildren] pide
   /// `?include_children=true` para ver TODAS (necesario para limpiar de verdad).
   /// `limit=200` evita el tope por defecto de 50 del servidor.
+  ///
+  /// [pageSize] and [enough] bound the walk for surfaces that only show the
+  /// newest rows (Home, drawer): the read stops after the first page for
+  /// which `enough(sessionsSoFar)` is true, or after [maxPages] pages. Without
+  /// them every page is read, as cleanup and lineage resolution require.
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async {
-    const pageLimit = 200;
+    final pageLimit = pageSize.clamp(1, 200);
+    var pagesRead = 0;
     final owner = validateCronProfile(profile);
     final endpoint = profileEndpoint('api/sessions', profile: owner);
     final sessions = <Session>[];
@@ -1459,6 +1468,9 @@ class ApiClient {
         }
       }
       if (!hasMore) return sessions;
+      pagesRead += 1;
+      if (enough != null && enough(sessions)) return sessions;
+      if (maxPages != null && pagesRead >= maxPages) return sessions;
       if (added == 0 || pageLimitPublished <= 0) {
         throw const CoreReadException(CoreReadErrorKind.paginationStalled);
       }
@@ -4234,12 +4246,40 @@ class DashboardClient {
       apiDelete('providers/oauth/$providerId');
 
   /// POST /api/providers/oauth/{id}/start — inicia el login OAuth (device_code).
-  Future<Map<String, dynamic>> startOAuth(String providerId) =>
-      apiPost('providers/oauth/$providerId/start');
+  /// [profile] renueva la credencial de ese perfil del gateway, no la del
+  /// perfil principal (Desktop `startManualProviderOAuth(provider, profile)`).
+  Future<Map<String, dynamic>> startOAuth(
+    String providerId, {
+    String? profile,
+  }) => apiPost(
+    'providers/oauth/${Uri.encodeComponent(providerId)}/start'
+    '${_profileQuery(profile)}',
+  );
 
   /// GET /api/providers/oauth/{id}/poll/{session} — estado del login OAuth.
-  Future<Map<String, dynamic>> pollOAuth(String providerId, String sessionId) =>
-      apiGet('providers/oauth/$providerId/poll/$sessionId');
+  Future<Map<String, dynamic>> pollOAuth(
+    String providerId,
+    String sessionId, {
+    String? profile,
+  }) => apiGet(
+    'providers/oauth/${Uri.encodeComponent(providerId)}/poll/'
+    '${Uri.encodeComponent(sessionId)}${_profileQuery(profile)}',
+  );
+
+  /// GET /api/providers/oauth — the Accounts catalog of [profile]: one row per
+  /// provider with `id`, `name`, `flow` (device_code / external),
+  /// `cli_command` and `status.logged_in`.
+  Future<List<Map<String, dynamic>>> getOAuthProviders({
+    String? profile,
+  }) async {
+    final res = await apiGet('providers/oauth${_profileQuery(profile)}');
+    final list = res['providers'];
+    if (list is! List) return const [];
+    return [
+      for (final row in list)
+        if (row is Map) Map<String, dynamic>.from(row),
+    ];
+  }
 
   Future<List<Map<String, dynamic>>> getSkills({String? profile}) async {
     final data = await apiGetList('skills${_profileQuery(profile)}');

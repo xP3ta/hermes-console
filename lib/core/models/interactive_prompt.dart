@@ -174,45 +174,43 @@ final class ClarifyPromptRequest extends InteractivePromptRequest {
     required Map<String, dynamic> payload,
   }) {
     final key = _requestKey(runtimeSessionId, payload);
-    final hasBatch = payload.containsKey('questions');
+    // Hermes writes absent optional fields as JSON null (`_clarify_block`
+    // sends `"choices": null` for an open-ended question; the wire contract
+    // types them `T | null`). Null means "not given", never malformed.
+    final hasBatch = payload['questions'] != null;
     final questions = hasBatch
         ? _normalizeClarifyQuestions(payload['questions'])
         : const <ClarifyQuestion>[];
-    final lockedAnswers = _parseLockedAnswers(payload);
+    // `answers` only rides a reconnect replay as a hint of locks the server
+    // already accepted. A lock this request cannot place is ignored rather
+    // than costing the user the whole question.
+    final replayedAnswers = _parseLockedAnswers(payload);
     if (hasBatch) {
       if (questions.isEmpty) {
         throw const FormatException('Empty clarify batch');
       }
       final qids = questions.map((question) => question.qid).toSet();
-      if (lockedAnswers.keys.any((qid) => !qids.contains(qid))) {
-        throw const FormatException('Clarify answer references unknown qid');
-      }
       return ClarifyPromptRequest(
         key: key,
         questions: questions,
-        lockedAnswers: lockedAnswers,
+        lockedAnswers: {
+          for (final entry in replayedAnswers.entries)
+            if (qids.contains(entry.key)) entry.key: entry.value,
+        },
       );
     }
     final question = _nonEmptyString(payload['question']) ?? '';
     if (question.isEmpty) {
       throw const FormatException('Missing or invalid clarify question');
     }
-    if (lockedAnswers.isNotEmpty) {
-      throw const FormatException(
-        'Legacy clarify cannot contain batch answers',
-      );
-    }
     final choices = _parseClarifyChoices(payload);
-    final multiSelect = _parseClarifyMultiSelect(payload, choices);
-    if (multiSelect) {
-      throw const FormatException('Legacy clarify cannot use multi_select');
-    }
+    // `clarify(question, choices, multi_select=True)` reaches the wire as a
+    // single question with `multi_select: true` (`_clarify_block`).
     return ClarifyPromptRequest(
       key: key,
       question: question,
       choices: choices,
-      multiSelect: false,
-      lockedAnswers: lockedAnswers,
+      multiSelect: _parseClarifyMultiSelect(payload, choices),
     );
   }
 
@@ -430,8 +428,8 @@ Map<String, dynamic>? _stringKeyedMap(Object? value) {
 }
 
 List<String> _parseClarifyChoices(Map<String, dynamic> json) {
-  if (!json.containsKey('choices')) return const [];
   final value = json['choices'];
+  if (value == null) return const [];
   if (value is! List) {
     throw const FormatException('Invalid clarify choices');
   }
@@ -453,15 +451,14 @@ List<String> _parseClarifyChoices(Map<String, dynamic> json) {
 }
 
 bool _parseClarifyMultiSelect(Map<String, dynamic> json, List<String> choices) {
-  if (!json.containsKey('multi_select')) return false;
   final value = json['multi_select'];
+  if (value == null) return false;
   if (value is! bool) {
     throw const FormatException('Invalid clarify multi_select');
   }
-  if (value && choices.isEmpty) {
-    throw const FormatException('multi_select requires choices');
-  }
-  return value;
+  // Without choices there is nothing to pick from: Hermes and Desktop treat
+  // it as an open question (`multi_select && choices`).
+  return value && choices.isNotEmpty;
 }
 
 List<ClarifyQuestion> _normalizeClarifyQuestions(Object? value) {
@@ -481,8 +478,8 @@ List<ClarifyQuestion> _normalizeClarifyQuestions(Object? value) {
 }
 
 Map<String, String> _parseLockedAnswers(Map<String, dynamic> payload) {
-  if (!payload.containsKey('answers')) return const {};
   final value = payload['answers'];
+  if (value == null) return const {};
   if (value is! Map) {
     throw const FormatException('Invalid clarify answers');
   }

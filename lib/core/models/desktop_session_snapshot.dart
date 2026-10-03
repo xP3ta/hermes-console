@@ -422,6 +422,10 @@ class DesktopInflightTurn {
   final String? error;
   final String? status;
   final bool? recoverable;
+
+  /// Structured failure descriptor of a retained failed turn
+  /// (agent/error_surface.py): only its short scalar fields are kept.
+  final Map<String, Object> errorSurface;
   final List<DesktopInflightCorrection> corrections;
   final List<int?> correctionOffsets;
   final DateTime? startedAt;
@@ -435,6 +439,7 @@ class DesktopInflightTurn {
     this.error,
     this.status,
     this.recoverable,
+    this.errorSurface = const {},
     List<DesktopInflightCorrection> corrections = const [],
     List<int?> correctionOffsets = const [],
     this.startedAt,
@@ -487,6 +492,7 @@ class DesktopInflightTurn {
       error: error,
       status: status,
       recoverable: recoverable,
+      errorSurface: _errorSurfaceScalars(json['error_surface']),
       corrections: corrections,
       correctionOffsets: correctionOffsets,
       startedAt: _epochSeconds(json['started_at']),
@@ -1011,6 +1017,29 @@ int _deepJsonHash(Object? value) {
   return value.hashCode;
 }
 
+/// The identity/recovery scalars of an `error_surface`; never free text
+/// beyond a short label.
+Map<String, Object> _errorSurfaceScalars(Object? value) {
+  if (value is! Map) return const {};
+  final out = <String, Object>{};
+  for (final key in const [
+    'layer',
+    'code',
+    'provider',
+    'provider_label',
+    'auth_kind',
+    'model',
+  ]) {
+    final item = value[key];
+    if (item is String && item.isNotEmpty && item.length <= 128) {
+      out[key] = item;
+    }
+  }
+  final retryable = value['retryable'];
+  if (retryable is bool) out['retryable'] = retryable;
+  return Map.unmodifiable(out);
+}
+
 Map<String, dynamic> _freezeExtras(
   Map<String, dynamic> value,
   Set<String> parsedKeys,
@@ -1110,6 +1139,7 @@ const _inflightParsedKeys = <String>{
   'assistant',
   'corrections',
   'error',
+  'error_surface',
   'recoverable',
   'status',
   'streaming',

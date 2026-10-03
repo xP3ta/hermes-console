@@ -269,7 +269,7 @@ void main() {
     ]);
   });
 
-  test('resume conserva el carrier durable pero no lo materializa en chat', () {
+  test('resume conserva el carrier durable y lo proyecta como aviso', () {
     const raw =
         '[IMPORTANT: Background process proc_0b5fab8a4839 exited (exit code 1).\n'
         'Command: claude -p private\n'
@@ -294,7 +294,8 @@ void main() {
     expect(result.messagesNewestFirst.single['content'], raw);
     expect(result.messagesNewestFirst.single['_desktopRowId'], 9004);
     final projection = ChatRenderProjection.build(result.messagesNewestFirst);
-    expect(projection.units, isEmpty);
+    // Aviso de proceso como Desktop, nunca turno ni burbuja de usuario.
+    expect(projection.units.single, isA<ChatMessageUnitPlan>());
     expect(projection.visibleUserCount, 0);
   });
 

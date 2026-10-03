@@ -194,6 +194,7 @@ class _SlashGateway
   Future<DesktopModelCatalog> modelOptions(
     String runtimeSessionId, {
     bool refresh = false,
+    bool connectedOnly = false,
   }) async => modelCatalog;
 
   @override

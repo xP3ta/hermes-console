@@ -551,7 +551,9 @@ void main() {
       final loading = chat.loadMessages(profile: 'builder');
       await Future<void>.delayed(Duration.zero);
       expect(gateway.historyRequests, isEmpty);
-      expect(restCalls, 0);
+      // co1215: the canonical tail is tried first, at t0; its 401 leaves
+      // native history as the display source.
+      expect(restCalls, 1);
       gateway.resumeGate!.complete(
         const DesktopSessionSnapshot(
           runtimeSessionId: 'resolved-runtime',
@@ -564,7 +566,7 @@ void main() {
       expect(gateway.historyRequests, [
         (sessionId: 'resolved-runtime', profile: 'builder'),
       ]);
-      expect(restCalls, 0);
+      expect(restCalls, 1);
       expect(
         chat.messages.map((row) => row['content']),
         rows.reversed.map((row) => row['content']),
@@ -616,7 +618,9 @@ void main() {
       for (var i = 0; i < 5; i++) {
         await Future<void>.delayed(Duration.zero);
       }
-      expect(gateway.historyRequests, hasLength(1));
+      // co1215: the usable REST tail is the display authority; the full
+      // native lineage is not read on open.
+      expect(gateway.historyRequests, isEmpty);
       historyGate.complete();
       await loading;
 
@@ -629,7 +633,7 @@ void main() {
   );
 
   test(
-    'overlapped REST tail is not issued when history exceeds the page',
+    'co1215 long chat opens from one REST page, not the native lineage',
     () async {
       final rows = _rows(300);
       final gateway = _HistoryGateway()
@@ -651,11 +655,300 @@ void main() {
 
       await chat.loadMessages(expectedMessageCount: 300);
 
-      // Native history alone covers more than one page: no speculative REST.
-      expect(server.requests, isEmpty);
-      expect(chat.messages, hasLength(300));
+      expect(gateway.historyRequests, isEmpty);
+      expect(server.requests, hasLength(1));
+      expect(chat.messages, hasLength(120));
+      expect(chat.hasEarlierMessages, isTrue);
     },
   );
+
+  for (final announced in <int?>[1000, null]) {
+    test(
+      'co1215 long chat paints the REST tail before resume settles and '
+      'never reads the full native history (announced: $announced)',
+      () async {
+        final rows = _rows(1000);
+        final gateway = _HistoryGateway()
+          ..resumeGate = Completer<DesktopSessionSnapshot>()
+          ..loader = () async => SessionMessagesPage.fromRaw(
+            rawMessages: rows,
+            pagination: null,
+            paginationProvided: false,
+          );
+        final server = _TranscriptServer(paginate: true)..rows.addAll(rows);
+        final chat = _chat(
+          'co1215-long-open',
+          server.client(),
+          gateway: gateway,
+        );
+        addTearDown(chat.dispose);
+
+        final loading = chat.loadMessages(expectedMessageCount: announced);
+        for (var i = 0; i < 20 && chat.messages.isEmpty; i++) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        // First paint comes from the canonical 120-row tail while
+        // session.resume is still on the wire, as Desktop does.
+        expect(gateway.resumeExistingCalls, 1);
+        expect(chat.messages, hasLength(120));
+        expect(chat.messages.first['content'], 'msg 1000');
+        expect(chat.messages.last['content'], 'msg 881');
+
+        gateway.resumeGate!.complete(
+          const DesktopSessionSnapshot(
+            runtimeSessionId: 'runtime-co1215',
+            storedSessionId: 'stored-chat',
+            created: false,
+            messagesProvided: false,
+            messageCount: 1000,
+          ),
+        );
+        await loading;
+
+        expect(gateway.historyRequests, isEmpty);
+        expect(server.requests, hasLength(1));
+        expect(server.requests.single.queryParameters['limit'], '120');
+        expect(server.requests.single.queryParameters['offset'], '0');
+        expect(chat.messages, hasLength(120));
+        expect(chat.hasEarlierMessages, isTrue);
+
+        // Older rows stay reachable on demand, in order and without duplicates
+        // (the first gesture may re-confirm the tail, as on REST-only opens).
+        var guard = 0;
+        while (chat.messages.length < 240 && guard++ < 3) {
+          expect(await chat.loadEarlierMessages(), isTrue);
+        }
+        expect(chat.messages, hasLength(240));
+        expect(chat.messages.map((row) => row['content']), [
+          for (var i = 1000; i > 760; i--) 'msg $i',
+        ]);
+        expect(gateway.historyRequests, isEmpty);
+      },
+    );
+  }
+
+  test('co1215 REST-painted open still upgrades editorial rows from the '
+      'durable history once', () async {
+    final rows = <Map<String, dynamic>>[
+      ..._rows(299),
+      {
+        'id': 300,
+        'message_id': 'msg-300',
+        'role': 'user',
+        'content': 'delegation finished',
+        'display_kind': 'async_delegation_complete',
+      },
+    ];
+    final gateway = _HistoryGateway()
+      ..snapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-co1215-editorial',
+        storedSessionId: 'stored-chat',
+        created: false,
+        messagesProvided: false,
+        messageCount: 300,
+      )
+      ..loader = () async => SessionMessagesPage.fromRaw(
+        rawMessages: [
+          ...rows.take(299),
+          {
+            ...rows.last,
+            'display_metadata': {'task_count': 2, 'completed_count': 2},
+          },
+        ],
+        pagination: null,
+        paginationProvided: false,
+      );
+    final server = _TranscriptServer(paginate: true)..rows.addAll(rows);
+    final chat = _chat(
+      'co1215-open-editorial',
+      server.client(),
+      gateway: gateway,
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages(expectedMessageCount: 300);
+    for (var i = 0; i < 10 && gateway.historyRequests.isEmpty; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    await Future<void>.delayed(Duration.zero);
+
+    expect(gateway.historyRequests, hasLength(1));
+    expect(chat.editorialMetadataHydrationReadsForTesting, 1);
+    expect(chat.messages, hasLength(120));
+    expect(
+      chat.internalMessagesForTesting.first['display_metadata'],
+      containsPair('completed_count', 2),
+    );
+  });
+
+  for (final shape in <String>['empty', 'malformed']) {
+    test(
+      'co1215 open keeps native history when the REST tail is $shape',
+      () async {
+        final rows = _rows(300);
+        final gateway = _HistoryGateway()
+          ..snapshot = const DesktopSessionSnapshot(
+            runtimeSessionId: 'runtime-co1215-shape',
+            storedSessionId: 'stored-chat',
+            created: false,
+            messagesProvided: false,
+            messageCount: 300,
+          )
+          ..loader = () async => SessionMessagesPage.fromRaw(
+            rawMessages: rows,
+            pagination: null,
+            paginationProvided: false,
+          );
+        final tail = rows.sublist(180);
+        final chat = _chat(
+          'co1215-open-$shape',
+          MockClient((request) async {
+            final data = shape == 'empty'
+                ? const <Object?>[]
+                : <Object?>['not a row', ...tail.skip(1)];
+            return http.Response(
+              jsonEncode({
+                'object': 'list',
+                'session_id': 'stored-chat',
+                'data': data,
+                'pagination': {
+                  'limit': 120,
+                  'offset': 0,
+                  'order': 'latest',
+                  'returned': data.length,
+                },
+              }),
+              200,
+              headers: {'content-type': 'application/json'},
+            );
+          }),
+          gateway: gateway,
+        );
+        addTearDown(chat.dispose);
+
+        await chat.loadMessages(expectedMessageCount: 300);
+
+        expect(gateway.historyRequests, hasLength(1));
+        expect(chat.messages, hasLength(300));
+        expect(chat.messages.first['content'], 'msg 300');
+        expect(chat.messages.last['content'], 'msg 1');
+      },
+    );
+  }
+
+  test('co1215 open falls back to native history when the REST tail is '
+      'unusable', () async {
+    final rows = _rows(300);
+    final gateway = _HistoryGateway()
+      ..snapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-co1215-fallback',
+        storedSessionId: 'stored-chat',
+        created: false,
+        messagesProvided: false,
+        messageCount: 300,
+      )
+      ..loader = () async => SessionMessagesPage.fromRaw(
+        rawMessages: rows,
+        pagination: null,
+        paginationProvided: false,
+      );
+    final server = _TranscriptServer(paginate: true)
+      ..rows.addAll(rows)
+      ..healthy = false;
+    final chat = _chat(
+      'co1215-open-fallback',
+      server.client(),
+      gateway: gateway,
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages(expectedMessageCount: 300);
+
+    expect(gateway.historyRequests, hasLength(1));
+    expect(chat.messages, hasLength(300));
+    expect(chat.messages.first['content'], 'msg 300');
+  });
+
+  test('co1215 a hung REST tail does not hold the open behind native '
+      'history on a healthy socket', () async {
+    final rows = _rows(300);
+    final gateway = _HistoryGateway()
+      ..snapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-co1215-hung',
+        storedSessionId: 'stored-chat',
+        created: false,
+        messagesProvided: false,
+        messageCount: 300,
+      )
+      ..loader = () async => SessionMessagesPage.fromRaw(
+        rawMessages: rows,
+        pagination: null,
+        paginationProvided: false,
+      );
+    final restRequests = <Uri>[];
+    final restReply = Completer<http.Response>();
+    final chat = _chat(
+      'co1215-open-hung-rest',
+      MockClient((request) {
+        restRequests.add(request.url);
+        // The REST read stays on the wire, as when the server or its proxy
+        // stalls; only the WebSocket is healthy.
+        return restReply.future;
+      }),
+      gateway: gateway,
+    );
+    addTearDown(() {
+      if (!restReply.isCompleted) {
+        restReply.complete(http.Response('unavailable', 503));
+      }
+      chat.dispose();
+    });
+
+    var settled = false;
+    final loading = chat
+        .loadMessages(expectedMessageCount: 300)
+        .whenComplete(() => settled = true);
+    // Far below the REST client timeout: the native history answer is
+    // already in hand, so the open must not wait for the stalled page.
+    for (var i = 0; i < 200 && !settled; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(restRequests, hasLength(1));
+    expect(gateway.historyRequests, hasLength(1));
+    expect(settled, isTrue);
+    expect(chat.messages, hasLength(300));
+    expect(chat.messages.first['content'], 'msg 300');
+    expect(chat.messages.last['content'], 'msg 1');
+
+    // The late REST answer after native painted adds nothing and reorders
+    // nothing.
+    restReply.complete(
+      http.Response(
+        jsonEncode({
+          'object': 'list',
+          'session_id': 'stored-chat',
+          'data': rows.sublist(180),
+          'pagination': {
+            'limit': 120,
+            'offset': 0,
+            'order': 'latest',
+            'returned': 120,
+          },
+        }),
+        200,
+        headers: {'content-type': 'application/json'},
+      ),
+    );
+    await loading;
+    for (var i = 0; i < 5; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(chat.messages, hasLength(300));
+    expect(chat.messages.map((row) => row['content']), [
+      for (var i = 300; i >= 1; i--) 'msg $i',
+    ]);
+  });
 
   for (final edited in <bool>[false, true]) {
     test(
@@ -685,7 +978,7 @@ void main() {
 
         await chat.loadMessages(expectedMessageCount: 4);
 
-        expect(gateway.historyRequests, hasLength(1));
+        expect(gateway.historyRequests, isEmpty);
         expect(server.requests, hasLength(1));
         expect(
           ChatRenderProjection.build(chat.internalMessagesForTesting).units,
@@ -793,6 +1086,8 @@ void main() {
 
       gateway.loader = () async =>
           SessionMessagesPage(messages: _rows(40, from: 261), pagination: null);
+      // REST down on reload: only native history can answer.
+      server.healthy = false;
       await chat.loadMessages();
 
       expect(chat.messages, hasLength(300));
@@ -830,14 +1125,17 @@ void main() {
       addTearDown(chat.dispose);
 
       await chat.loadMessages(expectedMessageCount: 40);
-      expect(chat.messages, hasLength(40));
-      expect(chat.hasEarlierMessages, isTrue);
-
-      expect(await chat.loadEarlierMessages(), isTrue);
+      // co1215: the compacted-aware REST tail paints the open directly, as
+      // in Hermes Desktop, instead of the 40 active native rows.
+      expect(gateway.historyRequests, isEmpty);
       expect(chat.messages, hasLength(120));
       expect(chat.messages.first['content'], 'msg 300');
       expect(chat.messages.last['content'], 'msg 181');
+      expect(chat.hasEarlierMessages, isTrue);
 
+      // The first gesture re-confirms the tail (same as REST-only opens).
+      expect(await chat.loadEarlierMessages(), isTrue);
+      expect(chat.messages, hasLength(120));
       expect(await chat.loadEarlierMessages(), isTrue);
       expect(chat.messages, hasLength(240));
       expect(chat.messages.last['content'], 'msg 61');
@@ -894,7 +1192,8 @@ void main() {
           _rows(4).reversed.map((row) => row['content']),
         );
         expect(chat.hasEarlierMessages, isFalse);
-        expect(gateway.historyRequests, hasLength(disconnected ? 0 : 1));
+        // co1215: the usable REST tail answers first; history is not read.
+        expect(gateway.historyRequests, isEmpty);
       },
     );
   }
@@ -966,7 +1265,8 @@ void main() {
       expect(chat.hasEarlierMessages, isTrue);
       expect(server.requests, hasLength(3));
       expect(server.requests.last.queryParameters['offset'], '120');
-      expect(gateway.historyRequests, hasLength(1));
+      // co1215: the REST tail answered the open; history was never needed.
+      expect(gateway.historyRequests, isEmpty);
     },
   );
 
@@ -1826,10 +2126,13 @@ void main() {
         chat.messages.any((row) => row['display_kind'] == 'hidden'),
         isFalse,
       );
-      expect(
-        ChatRenderProjection.build(chat.internalMessagesForTesting).units,
-        hasLength(121),
+      // The reasoning row joins the response group of the assistant after
+      // it: one bubble less, the same rendered rows.
+      final projection = ChatRenderProjection.build(
+        chat.internalMessagesForTesting,
       );
+      expect(projection.units, hasLength(120));
+      expect(projection.renderedMessageCount, 121);
       expect(chat.hasEarlierMessages, isTrue);
 
       expect(
@@ -9927,7 +10230,9 @@ void main() {
 // combined transcript must paint every Desktop-visible row once, in order.
 void lc1215NativeLongSessionTests() {
   Iterable<int> unitIndexes(ChatRenderUnitPlan unit) => switch (unit) {
-    ChatMessageUnitPlan(:final messageIndex) => [messageIndex],
+    // A response group renders every member row in one bubble.
+    ChatMessageUnitPlan(:final memberIndexesNewestFirst) =>
+      memberIndexesNewestFirst,
     ChatUserTurnUnitPlan(
       :final primaryMessageIndex,
       :final supplementMessageIndexes,

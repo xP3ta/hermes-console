@@ -634,9 +634,25 @@ abstract class HermesDesktopSessionActivityGateway {
 
 /// Authenticated provider/model catalog scoped to an existing live runtime.
 abstract class HermesDesktopModelCatalogGateway {
+  /// [connectedOnly] fails closed instead of (re)opening the socket, for
+  /// passive reads such as the AppBar badge.
   Future<DesktopModelCatalog> modelOptions(
     String runtimeSessionId, {
     bool refresh = false,
+    bool connectedOnly = false,
+  });
+}
+
+/// Profile-scoped catalog read without a live runtime, as Desktop's
+/// `requestModelOptions` does over its already-open gateway (mk1215). Kept
+/// separate so legacy fakes stay valid.
+abstract class HermesDesktopGlobalModelCatalogGateway {
+  /// [connectedOnly] fails closed instead of (re)opening the socket.
+  Future<DesktopModelCatalog> globalModelOptions({
+    String profile = '',
+    bool refresh = false,
+    Duration timeout = const Duration(seconds: 6),
+    bool connectedOnly = false,
   });
 }
 
@@ -837,14 +853,17 @@ final class DesktopSubagentInterruptResult {
 }
 
 final class DesktopSubagentSnapshot {
-  static const _liveStatuses = <String>{
-    'requested',
-    'queued',
-    'running',
-    'active',
-    'thinking',
-    'tool',
-    'using_tool',
+  /// `SubagentStatus` values the contract marks terminal. `subagent.list`
+  /// reads only the live registry, so these are defensive: a finished row
+  /// must not resurrect a card.
+  static const _terminalStatuses = <String>{
+    'completed',
+    'complete',
+    'failed',
+    'error',
+    'timeout',
+    'interrupted',
+    'cancelled',
   };
 
   final String subagentId;
@@ -880,10 +899,15 @@ final class DesktopSubagentSnapshot {
       if (entry.key is String) json[entry.key as String] = entry.value;
     }
     final subagentId = _subagentOpaqueId(json['subagent_id']);
+    if (subagentId == null) return null;
+    // `status` is `SubagentStatus | null`. A live record without one, or with
+    // a status newer than this build, is still a running child.
     final statusValue = json['status'];
-    if (subagentId == null || statusValue is! String) return null;
-    final status = statusValue.trim().toLowerCase();
-    if (!_liveStatuses.contains(status)) return null;
+    final reported = statusValue is String
+        ? statusValue.trim().toLowerCase()
+        : '';
+    if (_terminalStatuses.contains(reported)) return null;
+    final status = reported.isEmpty ? 'running' : reported;
     final toolCount = json['tool_count'];
     final acceptingSteer = json['accepting_steer'];
     final startedAt = _subagentTimestamp(json['started_at']);
@@ -918,8 +942,9 @@ final class DesktopSubagentTailResult {
   });
 
   factory DesktopSubagentTailResult.fromJson(Map<String, dynamic> json) {
-    final available = json['available'];
-    final serverTruncated = json['truncated'];
+    // SubagentTailResult defaults: available=false, text="", truncated=false.
+    final available = json['available'] ?? false;
+    final serverTruncated = json['truncated'] ?? false;
     if (available is! bool || serverTruncated is! bool) {
       throw const FormatException('invalid subagent tail result');
     }
@@ -930,7 +955,7 @@ final class DesktopSubagentTailResult {
         truncated: false,
       );
     }
-    final rawContent = json['text'] ?? json['content'];
+    final rawContent = json['text'] ?? json['content'] ?? '';
     if (rawContent is! String) {
       throw const FormatException('invalid subagent tail content');
     }
@@ -1351,6 +1376,7 @@ class TuiGatewayClient
         HermesDesktopSessionConfigGateway,
         HermesDesktopSessionActivityGateway,
         HermesDesktopModelCatalogGateway,
+        HermesDesktopGlobalModelCatalogGateway,
         HermesDesktopContextUsageGateway,
         HermesDesktopProfileAssetsGateway,
         HermesDesktopBotCreationGateway,
@@ -1457,12 +1483,95 @@ class TuiGatewayClient
   /// waits for it (see [_quiesceInFlight]).
   bool _heartbeatAwaitingReply = false;
   Timer? _heartbeatTimer;
-  String? _watchdogRuntimeId;
-  bool _watchdogRuntimeBusy = false;
-  DateTime? _lastWatchdogActivityAt;
-  int _watchdogRuntimeRevision = 0;
+  final Map<String, _WatchdogRuntime> _watchdogs = <String, _WatchdogRuntime>{};
   bool _fanoutWatchdogInFlight = false;
   Future<void>? _connecting;
+
+  /// Several chats ride this socket (Desktop's single `JsonRpcGatewayClient`
+  /// model): every chat filters events by its own runtime `session_id`, the
+  /// watchdog follows every attached runtime, and a released chat only drops
+  /// its runtime's bookkeeping. Set by [SharedGatewayPool] for pooled sockets.
+  bool _multiplexed = false;
+
+  bool get multiplexesSessions => _multiplexed;
+
+  /// Opts this socket into many-session use. Idempotent.
+  void enableSessionMultiplexing() => _multiplexed = true;
+
+  /// The connected server announced a `replay_epoch`: each session can be
+  /// re-attached from its own watermark after a drop. False while not
+  /// connected: nothing is proven yet.
+  bool get knownPerSessionReplayTransport =>
+      _connected && _connectionReplayCapable;
+
+  /// Runtimes released by every chat on this multiplexed socket, with the
+  /// socket generation they were released on. Hermes has no per-session
+  /// detach, so it keeps streaming them on that socket (as to Desktop's single
+  /// socket) until it closes; nobody reads them, so their frames are dropped
+  /// before replay bookkeeping until a chat retains the runtime again.
+  ///
+  /// Membership is exact, never evicted: a capped set forgot its oldest
+  /// entry, whose late frames then rebuilt a watermark nobody read and made
+  /// its revive dirty. It is bounded instead by what Hermes streams here: a
+  /// later socket only carries runtimes some chat resumed on it, so entries
+  /// of an older generation are stale and pruned on the next release.
+  final Map<String, int> _releasedRuntimes = <String, int>{};
+
+  /// Chats currently reading each runtime on this multiplexed socket.
+  final Map<String, int> _runtimeReaders = <String, int>{};
+
+  /// A chat bound [runtimeSessionId] on this multiplexed socket.
+  void retainSessionRuntime(String runtimeSessionId) {
+    final runtime = runtimeSessionId.trim();
+    if (runtime.isEmpty || _closed || !_multiplexed) return;
+    final readers = _runtimeReaders[runtime] ?? 0;
+    _runtimeReaders[runtime] = readers + 1;
+    if (readers == 0) _reviveReleasedRuntime(runtime);
+  }
+
+  /// A released runtime is bound again (resume/activate/create answered it):
+  /// its frames flow again from this response on. Frames were dropped while
+  /// nobody read it, so it starts from a clean replay slate, exactly as a
+  /// freshly dialled per-chat socket would.
+  void _reviveReleasedRuntime(String runtime) {
+    final releasedOn = _releasedRuntimes.remove(runtime);
+    if (releasedOn == _socketGeneration) _replayCoordinator.forget(runtime);
+  }
+
+  /// The last chat reading [runtimeSessionId] on this multiplexed socket let
+  /// it go (released or moved to another runtime): forget its watermark and
+  /// watchdog so a long-lived shared socket never accumulates runtimes (the
+  /// replay coordinator poisons every runtime past its bound). After a
+  /// reconnect nobody resumes it, so Hermes detaches and reaps it exactly as
+  /// when a per-chat socket closed.
+  void releaseSessionRuntime(String runtimeSessionId) {
+    final runtime = runtimeSessionId.trim();
+    if (runtime.isEmpty || _closed || !_multiplexed) return;
+    final readers = (_runtimeReaders[runtime] ?? 0) - 1;
+    if (readers > 0) {
+      _runtimeReaders[runtime] = readers;
+      return;
+    }
+    _runtimeReaders.remove(runtime);
+    _retireWatchdogRuntime(runtime);
+    _replayCoordinator.forget(runtime);
+    final generation = _socketGeneration;
+    _releasedRuntimes
+      ..removeWhere((_, releasedOn) => releasedOn != generation)
+      ..[runtime] = generation;
+  }
+
+  @visibleForTesting
+  Set<String> get releasedRuntimesForTesting =>
+      Set.unmodifiable(_releasedRuntimes.keys);
+
+  @visibleForTesting
+  Set<String> get watchedRuntimesForTesting =>
+      Set.unmodifiable(_watchdogs.keys);
+
+  @visibleForTesting
+  Map<String, int> get replayWatermarksForTesting =>
+      _replayCoordinator.watermarks;
 
   /// Single reconnect owner for this client (P0-2): every loss of the socket
   /// (failed connect, error, peer close, malformed frame) arms a backoff;
@@ -1550,6 +1659,17 @@ class TuiGatewayClient
   /// True while the owner is waiting out a reconnect backoff.
   bool get isBackingOff => reconnectBackoffRemaining > Duration.zero;
 
+  /// The platform reported a new default network (rl1215). The backoff ladder
+  /// measured the old path (a Wi-Fi/cellular switch kills every socket and
+  /// can push it to its ceiling); keeping it would make lazy RPCs fail fast
+  /// and the next dial wait up to 15 s on a network that already works.
+  /// It never closes or redials a socket; a half-open one is the probe's job.
+  void resetReconnectBackoffForNetworkChange() {
+    if (_closed) return;
+    _reconnectBackoff.markHealthy();
+    _backoffUntil = null;
+  }
+
   /// Explicit connect, used by owners that run their own reattach schedule
   /// (ActiveChat recovery, the Home/Library event subscriptions). Lazy RPC
   /// dials go through [_connectForRequest], which honours the backoff.
@@ -1566,6 +1686,18 @@ class TuiGatewayClient
     return future.whenComplete(() {
       if (identical(_connecting, future)) _connecting = null;
     });
+  }
+
+  /// Fail-closed guard for passive reads: throws `connectionLost` when the
+  /// socket is not connected right now, and never dials or arms a timer.
+  void _requireConnectedWithoutDialing(String method) {
+    if (_closed || !_connected || _channel == null) {
+      throw TuiGatewayRpcError(
+        method,
+        'Hermes Desktop WebSocket is not connected',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      );
+    }
   }
 
   /// Connect on behalf of an RPC: fails fast with `connectionLost` while the
@@ -1834,7 +1966,10 @@ class TuiGatewayClient
             (epoch is! String || epoch.isEmpty || epoch != epoch.trim())) {
           throw const JsonRpcWireFormatException('invalid replay epoch');
         }
-        if (payload.containsKey('heartbeat') && payload['heartbeat'] is! bool) {
+        // `heartbeat` is `bool | null` in GatewayReadyPayload: null means the
+        // capability is not offered, exactly like an absent key.
+        final heartbeat = payload['heartbeat'];
+        if (heartbeat != null && heartbeat is! bool) {
           throw const JsonRpcWireFormatException(
             'invalid heartbeat capability',
           );
@@ -1873,6 +2008,7 @@ class TuiGatewayClient
         return;
       }
       final sessionEvent = parsedEvent as SessionGatewayEvent;
+      if (_releasedRuntimes[sessionEvent.sessionId] == generation) return;
       final event = TuiGatewayEvent(
         type: sessionEvent.type,
         sessionId: sessionEvent.sessionId,
@@ -2549,30 +2685,61 @@ class TuiGatewayClient
     DateTime now,
   ) async {
     final epoch = _replayEpoch;
-    final runtime = _watchdogRuntimeId;
     if (_fanoutWatchdogInFlight ||
         epoch == null ||
         !_connectionReplayCapable ||
-        runtime == null ||
-        !_watchdogRuntimeBusy ||
         generation != _socketGeneration ||
         !identical(_channel, channel) ||
         !_connected) {
       return;
     }
-    final lastActivity = _lastWatchdogActivityAt;
-    if (lastActivity != null &&
-        now.difference(lastActivity) < _fanoutInactivityDeadline) {
-      return;
-    }
-
+    final due = <MapEntry<String, _WatchdogRuntime>>[
+      for (final entry in _watchdogs.entries)
+        if (entry.value.busy &&
+            (entry.value.lastActivityAt == null ||
+                now.difference(entry.value.lastActivityAt!) >=
+                    _fanoutInactivityDeadline))
+          entry,
+    ];
+    if (due.isEmpty) return;
     _fanoutWatchdogInFlight = true;
-    final registration = _watchdogRuntimeRevision;
+    try {
+      for (final entry in due) {
+        if (generation != _socketGeneration ||
+            !identical(_channel, channel) ||
+            _replayEpoch != epoch ||
+            !_connected) {
+          return;
+        }
+        await _probeSilentRuntime(
+          generation,
+          channel,
+          epoch,
+          entry.key,
+          entry.value,
+          now,
+        );
+      }
+    } finally {
+      _fanoutWatchdogInFlight = false;
+    }
+  }
+
+  Future<void> _probeSilentRuntime(
+    int generation,
+    WebSocketChannel channel,
+    String epoch,
+    String runtime,
+    _WatchdogRuntime watched,
+    DateTime now,
+  ) async {
+    if (!identical(_watchdogs[runtime], watched) || !watched.busy) return;
+    final registration = watched.revision;
     final lastSeen = _replayCoordinator.watermarks[runtime] ?? 0;
     // A completed no-gap probe also bounds traffic to one request per busy
     // inactivity window. Heartbeat responses deliberately do not update this
     // runtime-specific clock: a fanout-detached peer still answers ping.
-    _lastWatchdogActivityAt = now;
+    watched.lastActivityAt = now;
     try {
       final result = await _requestConnected(
         'session.events.since',
@@ -2582,9 +2749,9 @@ class TuiGatewayClient
       if (generation != _socketGeneration ||
           !identical(_channel, channel) ||
           _replayEpoch != epoch ||
-          _watchdogRuntimeId != runtime ||
-          !_watchdogRuntimeBusy ||
-          _watchdogRuntimeRevision != registration ||
+          !identical(_watchdogs[runtime], watched) ||
+          !watched.busy ||
+          watched.revision != registration ||
           !_connected) {
         return;
       }
@@ -2609,18 +2776,19 @@ class TuiGatewayClient
       _retireWatchdogRuntime(runtime);
       if (!_events.isClosed) {
         _events.addError(
-          const TuiGatewayRpcError(
+          TuiGatewayRpcError(
             'session.events.since',
             'Hermes Desktop live subscription requires rehydration',
             failureKind: TuiGatewayRpcFailureKind.connectionLost,
+            // A shared socket carries many chats: name the runtime so only
+            // its owner rehydrates (the socket itself is healthy).
+            data: {'session_id': runtime},
           ),
         );
       }
     } catch (_) {
       // A failed diagnostic read is not itself proof that the healthy socket or
       // fanout lease is lost. Retry only after another bounded idle window.
-    } finally {
-      _fanoutWatchdogInFlight = false;
     }
   }
 
@@ -2629,6 +2797,18 @@ class TuiGatewayClient
     final channel = _channel;
     if (channel == null) return;
     await _probeSilentFanout(_socketGeneration, channel, _now());
+  }
+
+  /// Runtime the watchdog follows next. A single-chat socket follows one
+  /// runtime at a time (the newest bind replaces the old); a multiplexed
+  /// socket follows every runtime a chat attached until it is released.
+  _WatchdogRuntime _watchRuntime(String runtime) {
+    if (!_multiplexed) {
+      _watchdogs.removeWhere((key, _) => key != runtime);
+    }
+    final watched = _watchdogs.putIfAbsent(runtime, _WatchdogRuntime.new);
+    watched.revision += 1;
+    return watched;
   }
 
   void _adoptWatchdogSnapshot(DesktopSessionSnapshot snapshot) {
@@ -2644,10 +2824,9 @@ class TuiGatewayClient
           'compacting',
           'waiting',
         }.contains(status);
-    _watchdogRuntimeId = snapshot.runtimeSessionId;
-    _watchdogRuntimeBusy = busy;
-    _lastWatchdogActivityAt = _now();
-    _watchdogRuntimeRevision += 1;
+    final watched = _watchRuntime(snapshot.runtimeSessionId);
+    watched.busy = busy;
+    watched.lastActivityAt = _now();
   }
 
   void _markWatchdogRuntimeBusy(Object? runtimeSessionId) {
@@ -2656,26 +2835,24 @@ class TuiGatewayClient
         runtimeSessionId != runtimeSessionId.trim()) {
       return;
     }
-    _watchdogRuntimeId = runtimeSessionId;
-    _watchdogRuntimeBusy = true;
-    _lastWatchdogActivityAt = _now();
-    _watchdogRuntimeRevision += 1;
+    final watched = _watchRuntime(runtimeSessionId);
+    watched.busy = true;
+    watched.lastActivityAt = _now();
   }
 
   void _retireWatchdogRuntime([String? runtimeSessionId]) {
-    if (runtimeSessionId != null && _watchdogRuntimeId != runtimeSessionId) {
+    if (runtimeSessionId == null) {
+      _watchdogs.clear();
       return;
     }
-    _watchdogRuntimeId = null;
-    _watchdogRuntimeBusy = false;
-    _lastWatchdogActivityAt = null;
-    _watchdogRuntimeRevision += 1;
+    _watchdogs.remove(runtimeSessionId);
   }
 
   void _observeWatchdogEvent(SessionGatewayEvent event, DateTime observedAt) {
-    if (event.sessionId != _watchdogRuntimeId) return;
-    _lastWatchdogActivityAt = observedAt;
-    _watchdogRuntimeRevision += 1;
+    final watched = _watchdogs[event.sessionId];
+    if (watched == null) return;
+    watched.lastActivityAt = observedAt;
+    watched.revision += 1;
 
     final status = event.payload['status']?.toString().trim().toLowerCase();
     final info = event.payload['info'];
@@ -2695,7 +2872,7 @@ class TuiGatewayClient
           'canceled',
           'stopped',
         }.contains(status)) {
-      _watchdogRuntimeBusy = false;
+      watched.busy = false;
       return;
     }
     if (running == true ||
@@ -2710,7 +2887,7 @@ class TuiGatewayClient
         event.type == 'message.delta' ||
         event.type == 'message.interim' ||
         event.type == 'tool.start') {
-      _watchdogRuntimeBusy = true;
+      watched.busy = true;
     }
   }
 
@@ -2907,8 +3084,9 @@ class TuiGatewayClient
   Future<Map<String, dynamic>> _requestOptionalCapability(
     DesktopGatewayCapability capability,
     String method,
-    Map<String, dynamic> params,
-  ) async {
+    Map<String, dynamic> params, {
+    bool connectedOnly = false,
+  }) async {
     if (!_capabilityCache.canAttempt(capability)) {
       throw TuiGatewayRpcError(
         method,
@@ -2917,7 +3095,15 @@ class TuiGatewayClient
       );
     }
     try {
-      final result = await _request(method, params);
+      final Map<String, dynamic> result;
+      if (connectedOnly) {
+        // Checked and sent in the same synchronous step: a socket that
+        // dropped after the caller's own check is never redialled.
+        _requireConnectedWithoutDialing(method);
+        result = await _requestConnected(method, params);
+      } else {
+        result = await _request(method, params);
+      }
       _capabilityCache.mark(
         capability,
         DesktopGatewayCapabilityState.supported,
@@ -4922,6 +5108,7 @@ class TuiGatewayClient
         created: created,
         method: method,
       );
+      _reviveReleasedRuntime(snapshot.runtimeSessionId);
       if (rememberLegacyRuntime) {
         _rememberLegacyEventRuntime(snapshot.runtimeSessionId);
         _adoptWatchdogSnapshot(snapshot);
@@ -4970,6 +5157,7 @@ class TuiGatewayClient
           snapshot.storedSessionId != stored) {
         throw const FormatException('session.activate identity mismatch');
       }
+      _reviveReleasedRuntime(snapshot.runtimeSessionId);
       _rememberLegacyEventRuntime(snapshot.runtimeSessionId);
       _adoptWatchdogSnapshot(snapshot);
       return snapshot;
@@ -5031,6 +5219,7 @@ class TuiGatewayClient
   Future<DesktopModelCatalog> modelOptions(
     String runtimeSessionId, {
     bool refresh = false,
+    bool connectedOnly = false,
   }) async {
     const method = 'model.options';
     final runtime = _validatedRuntimeId(method, runtimeSessionId);
@@ -5043,6 +5232,7 @@ class TuiGatewayClient
         'include_unconfigured': false,
         'refresh': refresh,
       },
+      connectedOnly: connectedOnly,
     );
     if (result['providers'] is! List) {
       _capabilityCache.mark(
@@ -5054,6 +5244,71 @@ class TuiGatewayClient
         'Hermes returned an invalid model catalog',
       );
     }
+    return DesktopModelCatalog.fromJson(result);
+  }
+
+  /// mk1215: `model.options` without `session_id`; the server resolves the
+  /// catalog from the profile's config (`_profile_scoped`, no live agent).
+  @override
+  Future<DesktopModelCatalog> globalModelOptions({
+    String profile = '',
+    bool refresh = false,
+    Duration timeout = const Duration(seconds: 6),
+    bool connectedOnly = false,
+  }) async {
+    const method = 'model.options';
+    final owner = profile.trim();
+    if (!_capabilityCache.canAttempt(DesktopGatewayCapability.modelOptions)) {
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes Desktop capability is unavailable',
+        code: -32601,
+      );
+    }
+    final Map<String, dynamic> result;
+    // One budget for the handshake and the RPC together: a slow connect
+    // leaves only what is left of [timeout] for the answer.
+    final deadline = _now().add(timeout);
+    try {
+      if (connectedOnly) {
+        _requireConnectedWithoutDialing(method);
+      } else {
+        await _connectForRequest(method).timeout(timeout);
+      }
+      final remaining = deadline.difference(_now());
+      if (remaining <= Duration.zero) {
+        throw const TuiGatewayRpcError(
+          method,
+          'Timeout waiting for JSON-RPC response',
+          failureKind: TuiGatewayRpcFailureKind.timeout,
+        );
+      }
+      result = await _requestConnected(method, {
+        if (owner.isNotEmpty && owner != 'default')
+          ..._petParams(owner, method: method),
+        'explicit_only': true,
+        'include_unconfigured': false,
+        'refresh': refresh,
+      }, timeout: remaining);
+    } on TuiGatewayRpcError catch (error) {
+      if (error.code == -32601) {
+        _capabilityCache.mark(
+          DesktopGatewayCapability.modelOptions,
+          DesktopGatewayCapabilityState.unsupported,
+        );
+      }
+      rethrow;
+    }
+    if (result['providers'] is! List) {
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid model catalog',
+      );
+    }
+    _capabilityCache.mark(
+      DesktopGatewayCapability.modelOptions,
+      DesktopGatewayCapabilityState.supported,
+    );
     return DesktopModelCatalog.fromJson(result);
   }
 
@@ -7372,6 +7627,13 @@ final class _OpenServerRequest {
     required this.generation,
     required this.channel,
   });
+}
+
+/// Busy/idle bookkeeping of one runtime the silent-fanout watchdog follows.
+final class _WatchdogRuntime {
+  bool busy = false;
+  DateTime? lastActivityAt;
+  int revision = 0;
 }
 
 class _PendingRpc {

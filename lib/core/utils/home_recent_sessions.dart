@@ -16,6 +16,14 @@ class HomeRecentSummary {
   bool get isEmpty => user == null && assistant == null;
 }
 
+/// Rows per Home session read: Desktop's sidebar page (`listSessions(limit =
+/// 40)`, apps/desktop/src/api/sessions.ts).
+const int homeSessionPageSize = 40;
+
+/// Upper bound of pages Home reads when automation rows (cron, Kanban…) fill
+/// the newest page. Older chats live in Conversations, which pages on scroll.
+const int homeSessionMaxPages = 3;
+
 int homeRecentSessionLimit({
   required double viewportHeight,
   required double textScale,

@@ -70,6 +70,97 @@ void main() {
     },
   );
 
+  testWidgets('re1215: store-change ticks read at most once per 10 s gap', (
+    tester,
+  ) async {
+    final gateway = _FakeGateway();
+    final reader = _reader(gateway: gateway)..setVisible(true);
+
+    reader.notifyDurableStoreChanged();
+    await _pumpImmediate(tester);
+    expect(gateway.reads, 1, reason: 'first tick after quiet reads at once');
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(seconds: 2));
+      reader.notifyDurableStoreChanged();
+    }
+    expect(gateway.reads, 1);
+    await tester.pump(const Duration(seconds: 2));
+    await _pumpImmediate(tester);
+    expect(gateway.reads, 2, reason: 'pending ticks collapse into one read');
+    await tester.pump(const Duration(seconds: 15));
+    expect(gateway.reads, 2, reason: 'no tick since: no extra read');
+    final before = gateway.reads;
+    reader.notifyDurableStoreChanged();
+    await _pumpImmediate(tester);
+    expect(gateway.reads, before + 1, reason: 'quiet gap: reads at once');
+
+    reader.dispose();
+  });
+
+  testWidgets(
+    're1215: a lone store-change tick inside any gap is delivered when that '
+    'gap ends, including the gap re-armed by a coalesced read',
+    (tester) async {
+      final gateway = _FakeGateway();
+      final reader = _reader(gateway: gateway)..setVisible(true);
+
+      reader.notifyDurableStoreChanged();
+      await _pumpImmediate(tester);
+      expect(gateway.reads, 1, reason: 'isolated tick reads at once');
+
+      // One single tick inside the first gap: not dropped, read at gap end.
+      await tester.pump(const Duration(seconds: 3));
+      reader.notifyDurableStoreChanged();
+      await tester.pump(const Duration(seconds: 6));
+      expect(gateway.reads, 1);
+      await tester.pump(const Duration(seconds: 1));
+      await _pumpImmediate(tester);
+      expect(gateway.reads, 2, reason: 'lone pending tick is not lost');
+
+      // That read re-armed the gap; a final tick inside it still lands.
+      await tester.pump(const Duration(seconds: 4));
+      reader.notifyDurableStoreChanged();
+      await tester.pump(const Duration(seconds: 5));
+      expect(gateway.reads, 2);
+      await tester.pump(const Duration(seconds: 1));
+      await _pumpImmediate(tester);
+      expect(gateway.reads, 3, reason: 'final pending in a re-armed gap');
+
+      // Nothing pending any more: the gap expires without an extra read.
+      await tester.pump(const Duration(seconds: 25));
+      expect(gateway.reads, 3);
+
+      reader.dispose();
+    },
+  );
+
+  // External review of a7bcba8: hiding the screen must not drop a tick
+  // received just before; reopening within the gap still reads it when the
+  // gap ends instead of waiting for the 30 s backstop.
+  testWidgets('re1215: a pending store-change tick survives hide and reopen '
+      'inside the gap', (tester) async {
+    final gateway = _FakeGateway();
+    final reader = _reader(gateway: gateway)..setVisible(true);
+
+    reader.notifyDurableStoreChanged();
+    await _pumpImmediate(tester);
+    expect(gateway.reads, 1);
+
+    await tester.pump(const Duration(seconds: 3));
+    reader.notifyDurableStoreChanged();
+    await tester.pump(const Duration(seconds: 1));
+    reader.setVisible(false);
+    await tester.pump(const Duration(seconds: 1));
+    reader.setVisible(true);
+    await tester.pump(const Duration(seconds: 4));
+    expect(gateway.reads, 1);
+    await tester.pump(const Duration(seconds: 1));
+    await _pumpImmediate(tester);
+    expect(gateway.reads, 2, reason: 'the tick before hiding is not lost');
+
+    reader.dispose();
+  });
+
   testWidgets('matching sessions.changed coalesces one immediate read', (
     tester,
   ) async {

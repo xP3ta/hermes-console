@@ -17,6 +17,19 @@ final class _Ticket extends DashboardClient {
       const DashboardWebSocketAuth(queryName: 'ticket', credential: 'storm');
 }
 
+final class _NetworkTicket extends DashboardClient {
+  _NetworkTicket(this.networkUp)
+    : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
+
+  final bool Function() networkUp;
+
+  @override
+  Future<DashboardWebSocketAuth> webSocketAuth() async {
+    if (!networkUp()) throw StateError('Connection attempt cancelled');
+    return const DashboardWebSocketAuth(queryName: 'ticket', credential: 's');
+  }
+}
+
 /// Emits `gateway.ready`, answers RPCs, then drops (onDone, no close frame)
 /// right after the [dropAfter]-th request.
 final class _DroppingChannel implements WebSocketChannel {
@@ -309,5 +322,58 @@ void main() {
     }
     expect(last, GatewayReconnectBackoff.foregroundCap);
     expect(GatewayReconnectBackoff.foregroundCap, const Duration(seconds: 15));
+  });
+
+  // rl1215: after a Wi-Fi/cellular switch every socket died together and the
+  // outage drove each client's backoff to its 15 s ceiling. When the platform
+  // reports the new default network, the stale ladder must not keep lazy RPC
+  // dials failing fast (nor make the next loss wait the ceiling again).
+  test('rl1215 a network change clears a stale reconnect backoff', () {
+    fakeAsync((async) {
+      final backoff = GatewayReconnectBackoff(random: () => 1);
+      var channels = 0;
+      var networkUp = true;
+      final client = TuiGatewayClient(
+        _connection('rl1215-network-change'),
+        dashboard: _NetworkTicket(() => networkUp),
+        heartbeatInterval: Duration.zero,
+        now: () => DateTime(2026).add(async.elapsed),
+        reconnectBackoff: backoff,
+        channelFactory: (_, _) {
+          channels++;
+          return _DroppingChannel(dropAfter: 99);
+        },
+      );
+      networkUp = false;
+      for (var i = 0; i < 6; i++) {
+        client.connect().then((_) {}, onError: (Object _) {});
+        async.flushMicrotasks();
+        async.elapse(client.reconnectBackoffRemaining);
+      }
+      client.connect().then((_) {}, onError: (Object _) {});
+      async.flushMicrotasks();
+      expect(client.isBackingOff, isTrue);
+      expect(
+        client.reconnectBackoffRemaining,
+        greaterThan(const Duration(seconds: 10)),
+      );
+
+      networkUp = true;
+      client.resetReconnectBackoffForNetworkChange();
+      expect(client.isBackingOff, isFalse);
+      expect(backoff.attempt, 0);
+      final before = channels;
+      client.listProfiles().then((_) {}, onError: (Object _) {});
+      async.flushMicrotasks();
+      async.elapse(const Duration(milliseconds: 10));
+      expect(channels, before + 1, reason: 'the next RPC dials at once');
+      expect(client.isConnected, isTrue);
+
+      // A reset never tears a connected socket down.
+      client.resetReconnectBackoffForNetworkChange();
+      expect(client.isConnected, isTrue);
+      unawaited(client.close());
+      async.elapse(const Duration(seconds: 2));
+    });
   });
 }

@@ -34,6 +34,9 @@ class _OfflineLineageApiClient extends ApiClient {
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async {
     if (includeChildren) {
       lineageRequests++;

@@ -249,6 +249,36 @@ final class GlobalActivityAggregate extends ChangeNotifier {
       if (terminalGeneration != null) {
         _terminalRosterGeneration.remove(scope.exactKey);
       }
+      final settled = _settledRosterGeneration[scope.durableKey];
+      final stamp = row.lastActiveAt?.toUtc();
+      if (settled != null) {
+        // The suppression keys on the finished turn. Hermes stamps
+        // `last_active` when a turn is submitted; a busy row stamped after
+        // the newest stamp seen up to the settle belongs to a newer turn
+        // (e.g. started from Desktop right after) and applies at once. When
+        // the roster never stamped the finished turn, its end is the floor.
+        final baseline = settled.lastActiveAt ?? settled.endedAt;
+        final newerTurn =
+            rosterStatusIsBusy(row.status) &&
+            requestGeneration > settled.generation &&
+            stamp != null &&
+            stamp.isAfter(baseline);
+        if (!newerTurn &&
+            (requestGeneration <= settled.generation ||
+                now.difference(settled.at) < ownTurnEndGrace)) {
+          continue;
+        }
+        _settledRosterGeneration.remove(scope.durableKey);
+      }
+      if (stamp != null) {
+        final seen = _rosterLastActive[scope.durableKey];
+        if (seen == null || stamp.isAfter(seen)) {
+          _rosterLastActive[scope.durableKey] = stamp;
+          while (_rosterLastActive.length > 256) {
+            _rosterLastActive.remove(_rosterLastActive.keys.first);
+          }
+        }
+      }
       final prior = _byDurable[scope.durableKey];
       final sameIncarnation = prior?.scope.exactKey == scope.exactKey;
       if (!rosterStatusIsBusy(row.status)) {
@@ -290,6 +320,60 @@ final class GlobalActivityAggregate extends ChangeNotifier {
     }
     _changed();
   }
+
+  /// re1215: an attached chat saw its own turn end (each chat has its own
+  /// socket, so that terminal never reaches this aggregate as an event).
+  /// A busy row observed before [endedAt] is older evidence: it goes, and a
+  /// roster read already in flight cannot bring it back. Hermes clears the
+  /// session's `running` flag only after the turn's post-processing, a few
+  /// seconds after `message.complete`, so a busy row read within
+  /// [ownTurnEndGrace] is that same turn and is ignored too. A later read
+  /// (another surface began a turn) is applied normally.
+  void settleTurnEnded({
+    required String connectionId,
+    required String profile,
+    required Iterable<String> durableSessionIds,
+    required DateTime endedAt,
+  }) {
+    final generation = _rosterGeneration[_ownerKey(connectionId, profile)] ?? 0;
+    var changed = false;
+    for (final id in durableSessionIds) {
+      if (id.isEmpty) continue;
+      final durableKey = GlobalActivityScope(
+        connectionId: connectionId,
+        profile: profile,
+        durableSessionId: id,
+        runtimeSessionId: '',
+        replayEpoch: '',
+      ).durableKey;
+      _settledRosterGeneration[durableKey] = (
+        generation: generation,
+        at: _now().toUtc(),
+        lastActiveAt: _rosterLastActive[durableKey],
+        endedAt: endedAt.toUtc(),
+      );
+      while (_settledRosterGeneration.length > 256) {
+        _settledRosterGeneration.remove(_settledRosterGeneration.keys.first);
+      }
+      final current = _byDurable[durableKey];
+      if (current == null || current.observedAt.isAfter(endedAt)) continue;
+      _byDurable.remove(durableKey);
+      _nonBusyRosterStreak.remove(durableKey);
+      changed = true;
+    }
+    if (changed) _changed();
+  }
+
+  final Map<
+    String,
+    ({int generation, DateTime at, DateTime? lastActiveAt, DateTime endedAt})
+  >
+  _settledRosterGeneration = {};
+
+  /// Newest server `last_active` stamp seen per durable session; the stamp
+  /// of the turn a settle suppresses.
+  final Map<String, DateTime> _rosterLastActive = {};
+  static const ownTurnEndGrace = Duration(seconds: 10);
 
   void _recordNonBusyRoster(String durableKey) {
     if (!_byDurable.containsKey(durableKey) &&

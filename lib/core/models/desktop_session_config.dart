@@ -180,13 +180,11 @@ final class DesktopConfigSetResult {
     }
     final confirmRequired = rawConfirm == true;
     final warning = _boundedOptionalText(json['warning'], 'warning');
-    final confirmMessage = _boundedOptionalText(
-      json['confirm_message'],
-      'confirmation message',
-    );
-    if (confirmRequired && confirmMessage == null) {
-      throw const FormatException('Missing session config confirmation text');
-    }
+    // `confirm_message` is `str | null`; the guard still holds without it
+    // (Desktop asks anyway), so fall back to the legacy `warning` text.
+    final confirmMessage =
+        _boundedOptionalText(json['confirm_message'], 'confirmation message') ??
+        (confirmRequired ? warning : null);
     return DesktopConfigSetResult(
       key: expectedKey,
       value: value,

@@ -162,11 +162,15 @@ void main() {
     late peer.PeerGateway gateway;
     late ActiveChat chat;
     late int revisions;
+    var clockSkew = Duration.zero;
 
     setUp(() async {
+      clockSkew = Duration.zero;
       service = ActiveChatService(
         compressionRestoreStore: testCompressionRestoreStore(),
-        globalActivity: GlobalActivityAggregate.inMemory(),
+        globalActivity: GlobalActivityAggregate.inMemory(
+          now: () => DateTime.now().add(clockSkew),
+        ),
       );
       addTearDown(service.dispose);
       gateway = peer.PeerGateway(_snapshot(running: true));
@@ -273,8 +277,9 @@ void main() {
           isFalse,
           reason: 'a roster row older than the turn end never revives it',
         );
-        // A newer roster read (another surface started a turn) still wins.
-        await Future<void>.delayed(const Duration(milliseconds: 5));
+        // A newer roster read (another surface started a turn) still wins
+        // once the server had time to clear the finished turn's flag.
+        clockSkew = GlobalActivityAggregate.ownTurnEndGrace;
         _roster(service, 'working');
         expect(_listStatus(service).phase, SessionLivePhase.working);
       },

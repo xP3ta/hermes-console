@@ -56,6 +56,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
   final TextEditingController _controller = TextEditingController();
   final Map<String, _StagedAnswer> _batchAnswers = {};
   final Map<String, TextEditingController> _batchControllers = {};
+  final List<String> _singleSelected = [];
   bool _obscure = true;
   bool _batchSubmissionStarted = false;
 
@@ -122,6 +123,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
     }
     final request = widget.entry.request;
     final oldRequest = oldWidget.entry.request;
+    if (oldRequest?.key != request?.key) _singleSelected.clear();
     if (request is! ClarifyPromptRequest || !request.isBatch) return;
     if (oldRequest is! ClarifyPromptRequest ||
         !oldRequest.isBatch ||
@@ -155,10 +157,38 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
 
   void _submit([String? explicitValue]) {
     if (widget.busy) return;
+    if (explicitValue == null && _isSingleMultiSelect) {
+      _submitSingleMultiSelect();
+      return;
+    }
     final value = explicitValue ?? _controller.text;
     if (!_isTerminalRead && value.trim().isEmpty) return;
     _controller.clear();
     widget.onSubmit(value);
+  }
+
+  /// A single `multi_select` clarify: Desktop answers with the JSON list of
+  /// picked choices plus any typed extra (`clarify-tool.tsx`), which Hermes
+  /// reads back through `_parse_multi_select_response`.
+  bool get _isSingleMultiSelect {
+    final request = _request;
+    return request is ClarifyPromptRequest &&
+        !request.isBatch &&
+        request.multiSelect;
+  }
+
+  void _toggleSingleChoice(String choice) => setState(() {
+    _singleSelected.contains(choice)
+        ? _singleSelected.remove(choice)
+        : _singleSelected.add(choice);
+  });
+
+  void _submitSingleMultiSelect() {
+    final draft = _controller.text.trim();
+    final answer = [..._singleSelected, if (draft.isNotEmpty) draft];
+    if (answer.isEmpty) return;
+    _controller.clear();
+    widget.onSubmit(jsonEncode(answer));
   }
 
   Future<void> _submitBatch() async {
@@ -362,7 +392,11 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
   ) {
     final strings = Strings.of(context);
     switch (request) {
-      case ClarifyPromptRequest(:final question, :final choices):
+      case ClarifyPromptRequest(
+        :final question,
+        :final choices,
+        :final multiSelect,
+      ):
         return [
           _questionText(question, colors),
           if (choices.isNotEmpty) ...[
@@ -371,10 +405,14 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
               _choiceRow(
                 context,
                 label: choice,
-                selected: false,
-                multiSelect: false,
-                trailingChevron: true,
-                onTap: widget.busy ? null : () => _submit(choice),
+                selected: multiSelect && _singleSelected.contains(choice),
+                multiSelect: multiSelect,
+                trailingChevron: !multiSelect,
+                onTap: widget.busy
+                    ? null
+                    : multiSelect
+                    ? () => _toggleSingleChoice(choice)
+                    : () => _submit(choice),
               ),
               const SizedBox(height: 6),
             ],

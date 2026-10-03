@@ -35,6 +35,9 @@ class _RecentHomeClient extends ApiClient {
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async => [session];
 
   @override
@@ -62,6 +65,9 @@ class _ProfileRowsHomeClient extends ApiClient {
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async {
     requestedProfile = profile;
     return List<Session>.of(sessions);
@@ -92,6 +98,9 @@ class _MutableRecentHomeClient extends ApiClient {
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) async {
     sessionReads++;
     return List<Session>.of(sessions);
@@ -121,6 +130,9 @@ class _DeferredRecentHomeClient extends ApiClient {
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
+    int pageSize = 200,
+    bool Function(List<Session> sessions)? enough,
+    int? maxPages,
   }) {
     final load = Completer<List<Session>>();
     sessionLoads.add(load);

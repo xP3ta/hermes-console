@@ -11,6 +11,7 @@ class ForegroundConversationReader {
     required this.successInterval,
     this.eventBackstopInterval = const Duration(seconds: 30),
     this.activeInterval = const Duration(seconds: 3),
+    this.storeChangeGap = const Duration(seconds: 10),
     required this.failureIntervals,
     this.changeEventsAvailable = false,
     String Function()? durableChatId,
@@ -26,6 +27,7 @@ class ForegroundConversationReader {
   final Duration successInterval;
   final Duration eventBackstopInterval;
   final Duration activeInterval;
+  final Duration storeChangeGap;
   final List<Duration> failureIntervals;
   bool changeEventsAvailable;
   final String Function() _durableChatId;
@@ -35,6 +37,8 @@ class ForegroundConversationReader {
   final Future<bool> Function() read;
 
   Timer? _timer;
+  Timer? _storeChangeGapTimer;
+  bool _storeChangePending = false;
   bool _visible = false;
   bool _disposed = false;
   bool _readInFlight = false;
@@ -74,6 +78,33 @@ class ForegroundConversationReader {
     final current = _durableChatId().trim();
     if (current.isEmpty || changedDurableChatId.trim() != current) return;
     notifyRelevantEvent(recoveryConverging: true);
+  }
+
+  /// re1215: `sessions.changed` without a session id. Any agent writing the
+  /// shared store fires it (floored to one per 2 s on the server), so while
+  /// another session works it arrives every couple of seconds and an
+  /// immediate read per tick polled the open idle chat every 2 s. Desktop
+  /// trails these ticks on a 10 s gap (`SESSIONS_LIST_TICK_GAP_MS`): the
+  /// first tick after a quiet gap reads at once, later ones collapse into one
+  /// read when the gap ends. Nothing is dropped, only coalesced.
+  void notifyDurableStoreChanged() {
+    if (_disposed) return;
+    if (_storeChangeGapTimer != null) {
+      _storeChangePending = true;
+      return;
+    }
+    _startStoreChangeGap();
+    notifyRelevantEvent();
+  }
+
+  void _startStoreChangeGap() {
+    _storeChangeGapTimer = Timer(storeChangeGap, () {
+      _storeChangeGapTimer = null;
+      if (_disposed || !_storeChangePending) return;
+      _storeChangePending = false;
+      _startStoreChangeGap();
+      notifyRelevantEvent();
+    });
   }
 
   void notifyRelevantEvent({
@@ -210,6 +241,9 @@ class ForegroundConversationReader {
     _generation += 1;
     _timer?.cancel();
     _timer = null;
+    _storeChangeGapTimer?.cancel();
+    _storeChangeGapTimer = null;
+    _storeChangePending = false;
     _immediateReadPending = false;
   }
 }

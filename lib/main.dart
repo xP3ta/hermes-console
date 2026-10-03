@@ -38,6 +38,7 @@ import 'core/services/pairing_link.dart';
 import 'core/services/pairing_link_delivery_gate.dart';
 import 'core/services/active_chat_service.dart';
 import 'core/services/compression_restore_store.dart';
+import 'core/services/cold_start_store.dart';
 import 'core/services/android_launch_action_inbox.dart';
 import 'core/services/android_share_inbox.dart';
 import 'core/services/app_lock.dart';
@@ -245,6 +246,8 @@ Future<Widget> bootstrapHermesApp() async {
   final themeProfileStore = ThemeProfileStore(prefs);
   final cancelledTurnStore = CancelledTurnTombstoneStore.secure();
   final compressionRestoreStore = CompressionRestoreStore();
+  final coldStartStore = ColdStartStore();
+  ActiveChatService? coldStartOwner;
   // The tombstone store and the connection list touch disjoint keys; the
   // store is only consulted by ConnectionManager when a connection is
   // deleted, which cannot happen during create().
@@ -266,6 +269,9 @@ Future<Widget> bootstrapHermesApp() async {
         firstStack = stackTrace;
       }
       await compressionRestoreStore.clearConnection(connectionId);
+      // cs1215: the connection's cached tails and remembered route go too.
+      await (coldStartOwner?.forgetColdStartConnection(connectionId) ??
+          coldStartStore.forgetScope(connectionId).catchError((_) {}));
       if (firstError != null) {
         Error.throwWithStackTrace(firstError, firstStack!);
       }
@@ -298,7 +304,14 @@ Future<Widget> bootstrapHermesApp() async {
     prefs: prefs,
     cancelledTurnStore: tombstonesReady ? cancelledTurnStore : null,
     compressionRestoreStore: compressionRestoreStore,
+    connectionCredentialsRevision: connManager.connectionsRevision,
+    coldStartStore: coldStartStore,
   );
+  coldStartOwner = activeChats;
+  // Decrypting the last chats' tails overlaps the splash; nothing waits here.
+  // With App Lock on, nothing private is decrypted before unlock: the shell
+  // starts the restore when the lock opens (HermesAppState).
+  if (!appLock.locked.value) unawaited(activeChats.coldStartTailsReady);
   await activeChats.globalActivity.initialize();
   return HermesApp(
     connManager: connManager,
@@ -1273,6 +1286,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     );
     widget.appLock.locked.addListener(_retryPendingNewSessionLaunch);
     widget.appLock.locked.addListener(_onAppLockNoticeGateChanged);
+    widget.appLock.locked.addListener(_restoreColdStartTailsAfterUnlock);
     unawaited(_initNewSessionLaunchInbox());
     // Cableado del modo conversación. Con el kill-switch de compilación no se
     // instancia ningún orquestador; STT/TTS del chat siguen independientes.
@@ -1326,6 +1340,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     final imageCache = PaintingBinding.instance.imageCache;
     imageCache.clear();
     imageCache.clearLiveImages();
+    // co1215: parked sockets of released chats are only a reopen shortcut.
+    widget.activeChats.closeWarmGateways();
     // La voz NO reacciona aquí: esta señal binaria también llega al pasar a
     // background y evacuaba Sherpa/Whisper/ONNX en cada ida (recarga de
     // varios segundos por turno). La evacuación la decide `onTrimMemory` con
@@ -1344,6 +1360,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         state == AppLifecycleState.detached) {
       unawaited(widget.activeChats.globalActivity.flushJournal());
       unawaited(updateHomeWidget((snapshot) => snapshot));
+      // cs1215: Android may kill the process from here; keep what is on
+      // screen for the next cold start (encrypted, bounded).
+      widget.activeChats.persistColdStartTails();
     }
     if (kVoiceRuntimeEnabled) {
       if (state == AppLifecycleState.resumed) {
@@ -1390,6 +1409,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         _gatewayIdleTimer = null;
         if (_appLifecycle != AppLifecycleState.resumed) {
           SharedGatewayPool.instance.disconnectIdle();
+          // co1215: released chats' parked sockets follow the same rule.
+          widget.activeChats.closeWarmGateways();
         }
       });
       // No cerramos el WebSocket por lifecycle. Android puede encadenar
@@ -1925,8 +1946,15 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     setState(() => _showSplash = false);
     _retryPendingNewSessionLaunch();
     unawaited(_openVoiceOwnerChatIfReady());
-    unawaited(_openConfiguredStartupDestination());
+    unawaited(_startupDestinationRun = _openConfiguredStartupDestination());
   }
+
+  Future<void>? _startupDestinationRun;
+
+  /// The startup-destination pass (remembered route included), so tests
+  /// can assert that a wait it parked (App Lock) really ends.
+  @visibleForTesting
+  Future<void>? get debugStartupDestinationRun => _startupDestinationRun;
 
   /// Aplica la pantalla de arranque elegida por el usuario (issue #47).
   ///
@@ -1939,7 +1967,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     _startupDestinationApplied = true;
 
     final nav = _navigatorKey.currentState;
-    if (nav == null || nav.canPop()) return;
+    if (nav == null) return;
+    // The App Lock route may already cover Home; it is not a destination.
+    if (nav.canPop() && !widget.appLock.locked.value) return;
+    if (await _reopenRememberedRoute(nav)) return;
+    if (!mounted || nav.canPop()) return;
 
     // El fence se abre ANTES de leer la preferencia: entre ese `await` y el
     // push puede llegar una notificación o un enlace de emparejamiento, y esa
@@ -1975,6 +2007,164 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   }
 
   bool _startupDestinationApplied = false;
+
+  /// Removes the remembered-route unlock listener while it is waiting.
+  VoidCallback? _releaseColdStartUnlockWait;
+
+  /// App Lock policy: cold-start tails are decrypted only after unlock. The
+  /// restore runs once per process (`coldStartTailsReady` is memoized), so
+  /// later unlocks do nothing.
+  void _restoreColdStartTailsAfterUnlock() {
+    if (widget.appLock.locked.value) return;
+    unawaited(
+      widget.activeChats.coldStartTailsReady.catchError((Object _) => 0),
+    );
+  }
+
+  /// cs1215: like Desktop's remembered route, a cold start reopens the
+  /// surface the user was on for the active connection. A notification,
+  /// shortcut or deep link already in flight wins; App Lock defers it until
+  /// unlock; a deleted session falls back to Home (see ChatScreen).
+  Future<bool> _reopenRememberedRoute(NavigatorState nav) async {
+    final store = widget.activeChats.coldStartStore;
+    final connectionId = widget.connManager.activeConnectionId.value;
+    if (store == null || connectionId == null) return false;
+    SavedConnection? connection;
+    for (final candidate in widget.connManager.getConnections()) {
+      if (candidate.id == connectionId) connection = candidate;
+    }
+    if (connection == null) return false;
+    const intent = 'cold-start-route';
+    final request = _appNavigationFence.begin(nav, intent: intent);
+    ColdStartRoute? route;
+    try {
+      // Identifiers only; no transcript content is read here.
+      route = await store.routeFor(connection.id);
+      // The first frame of the chat paints its cached tail. Under App Lock
+      // the tails stay encrypted until unlock (see below).
+      if (!widget.appLock.locked.value) {
+        await widget.activeChats.coldStartTailsReady;
+      }
+    } catch (error) {
+      debugPrint('main: cold-start route unavailable (${error.runtimeType})');
+      return false;
+    }
+    if (route == null || !mounted) return false;
+    // An explicit «open Bot Mode on start» keeps winning over a remembered
+    // normal chat; a remembered Bot Mode surface refines it.
+    if (route.kind == ColdStartRouteKind.chat &&
+        await StartupDestinationStore.load() == StartupDestination.bots) {
+      return false;
+    }
+    if (!mounted) return false;
+    bool externalEntryPending() =>
+        widget.notifications.hasPendingOpen ||
+        _newSessionLaunchCoordinator.hasPending;
+    if (externalEntryPending()) return true;
+    if (!widget.appLock.locked.value &&
+        !_appNavigationFence.canCommit(request, nav, intent: intent)) {
+      return true;
+    }
+    if (widget.appLock.locked.value) {
+      // Nothing of the chat is built before unlock. Any navigation in the
+      // meantime (a notification delivered on unlock) wins. Unlocking itself
+      // begins the post-unlock notification handoff, so the fence generation
+      // cannot tell; a pushed route or a pending open can.
+      while (mounted && widget.appLock.locked.value) {
+        final unlocked = Completer<void>();
+        void onChange() {
+          if (!widget.appLock.locked.value && !unlocked.isCompleted) {
+            unlocked.complete();
+          }
+        }
+
+        final lock = widget.appLock.locked;
+        lock.addListener(onChange);
+        // dispose() runs this if the shell unmounts while still locked: the
+        // listener goes and the wait ends (`mounted` is then false).
+        _releaseColdStartUnlockWait = () {
+          lock.removeListener(onChange);
+          if (!unlocked.isCompleted) unlocked.complete();
+        };
+        onChange();
+        await unlocked.future;
+        _releaseColdStartUnlockWait?.call();
+        _releaseColdStartUnlockWait = null;
+      }
+      if (!mounted) return true;
+      // Decrypted only now that the lock is open; the chat's first frame
+      // still paints the cached tail.
+      try {
+        await widget.activeChats.coldStartTailsReady;
+      } catch (error) {
+        debugPrint('main: cold-start tails unavailable (${error.runtimeType})');
+      }
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || nav.canPop() || externalEntryPending()) {
+        return true;
+      }
+    }
+    final target = connection;
+    switch (route.kind) {
+      case ColdStartRouteKind.chat:
+        final profile = _sessionProfileOwner(target, owner: route.profile);
+        final session = Session(
+          id: route.sessionId,
+          title: '',
+          model: '',
+          source: route.source,
+          // A remembered chat always had a durable transcript.
+          messageCount: 1,
+          isActive: false,
+          preview: '',
+          startedAt: 0,
+          profile: profile,
+          isDefaultProfile: profile == 'default',
+        );
+        unawaited(
+          openChatFromHomeNavigator<void>(
+            nav,
+            builder: (_) => ChatScreen(
+              connection: target,
+              session: session,
+              restoredFromColdStart: true,
+            ),
+          ),
+        );
+      case ColdStartRouteKind.bot:
+        await _openMissionControlFromNotification(
+          nav,
+          target,
+          MissionControlOpenTarget.bot(
+            sessionId: route.sessionId,
+            profile: route.profile,
+          ),
+        );
+      case ColdStartRouteKind.room:
+        await _openMissionControlFromNotification(
+          nav,
+          target,
+          MissionControlOpenTarget.room(
+            sessionId: route.sessionId,
+            roomId: route.roomId,
+            profile: route.profile,
+          ),
+        );
+      case ColdStartRouteKind.missionControl:
+        unawaited(
+          nav.push(
+            MaterialPageRoute<void>(
+              builder: (_) => MissionControlScreen(
+                connection: target,
+                connManager: widget.connManager,
+                activeChats: activeChats,
+              ),
+            ),
+          ),
+        );
+    }
+    return true;
+  }
 
   void _markHomeInitialLoadComplete() {
     if (!mounted ||
@@ -2448,6 +2638,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     );
     widget.appLock.locked.removeListener(_retryPendingNewSessionLaunch);
     widget.appLock.locked.removeListener(_onAppLockNoticeGateChanged);
+    widget.appLock.locked.removeListener(_restoreColdStartTailsAfterUnlock);
+    _releaseColdStartUnlockWait?.call();
+    _releaseColdStartUnlockWait = null;
     _newSessionLaunchSub?.cancel();
     unawaited(_newSessionLaunchInbox.dispose());
     _inAppSub?.cancel();

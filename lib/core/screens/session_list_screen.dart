@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -335,7 +336,11 @@ class _SessionListScreenState extends State<SessionListScreen>
           (error.statusCode == 404 || error.statusCode == 405),
     );
     setState(() {
+      // Shared per-connection store: a rename, archive, pin or hide made on
+      // another screen (Home, chat auto-title, detail) repaints this list.
+      _archive?.removeListener(_onArchiveChanged);
       _archive = archive;
+      archive.addListener(_onArchiveChanged);
       _pinSync = pinSync;
       _archiveReady = true;
     });
@@ -444,8 +449,22 @@ class _SessionListScreenState extends State<SessionListScreen>
     });
   }
 
+  void _onArchiveChanged() {
+    if (!mounted) return;
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.idle ||
+        phase == SchedulerPhase.postFrameCallbacks) {
+      setState(() {});
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
   @override
   void dispose() {
+    _archive?.removeListener(_onArchiveChanged);
     hermesRouteObserver.unsubscribe(this);
     unawaited(DrawerGestureExclusion.setEnabled(false));
     _retryTimer?.cancel();

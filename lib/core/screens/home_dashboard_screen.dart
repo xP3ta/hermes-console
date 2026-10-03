@@ -202,6 +202,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     _liveStatusGate.removeListener(_onActivityChanged);
     _liveStatusGate.dispose();
     _listenedGlobalActivity?.removeListener(_onActivityChanged);
+    _archive?.removeListener(_onActivityChanged);
     _localStartPoll?.cancel();
     super.dispose();
   }
@@ -238,6 +239,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   @override
   void didPopNext() {
     unawaited(DrawerGestureExclusion.setEnabled(true));
+    // cs1215: Home is on screen again; a cold start opens Home.
+    final connectionId = widget.connManager.activeConnectionId.value;
+    if (connectionId != null) {
+      unawaited(
+        _activeChats?.coldStartStore
+            ?.forgetRoute(connectionId)
+            .catchError((Object _) {}),
+      );
+    }
     // Volver de cualquier pantalla empujada (Conversaciones, un chat, Bots…)
     // no refrescaba los recientes de Inicio por sí solo — solo lo hacían los
     // sitios que encadenaban `.then(() => _refreshStatus())` a su propio
@@ -761,6 +771,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     final aggregate = _activeChats?.globalActivity;
     aggregate?.clearSession(conn.id, ownerProfile, session.id);
     await aggregate?.flushJournal();
+    await _activeChats?.forgetColdStartSession(
+      connectionId: conn.id,
+      profile: ownerProfile,
+      sessionId: session.id,
+    );
     if (!mounted) return;
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1054,7 +1069,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                       (c) => checkSavedDashboardLogin(widget.connManager, c))
                   .call(conn);
           try {
-            sessions = await client.getSessions(profile: ownerProfile);
+            // Home shows the newest chats only: one Desktop-sized page
+            // (`listSessions(limit = 40)`), plus a bounded follow-up when
+            // automation rows fill it. Deep links, notifications and Bot
+            // Mode resolve their session directly, never through this list.
+            final wanted = _homeRecentLimit();
+            sessions = await client.getSessions(
+              profile: ownerProfile,
+              pageSize: homeSessionPageSize,
+              maxPages: homeSessionMaxPages,
+              enough: (rows) =>
+                  rows
+                      .where((row) => _isHomeRecentCandidate(row, archive))
+                      .length >=
+                  wanted,
+            );
           } on CoreReadException catch (error) {
             // A rejected key is a real outage of this connection.
             if (error.kind == CoreReadErrorKind.auth ||
@@ -1121,14 +1150,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         // pestaña "Chats" de Conversaciones (la que abre "Ver todas" por
         // defecto) — el "aparece en Inicio y luego no está" reportado en
         // dispositivo real. Mismo criterio que `SessionCategory.chats`.
-        .where(
-          (s) =>
-              !s.isJob &&
-              !archive.isSessionHidden(s) &&
-              !archive.isSessionArchived(s) &&
-              !archive.isHidden(s.id) &&
-              SessionCategory.chats.includesSource(s.source),
-        )
+        // Local archive/hidden state is applied when painting, from the
+        // shared store, so a change made on another screen shows here at once.
+        .where(_isHomeRecentKind)
         .toList();
     final recentLimit = _homeRecentLimit();
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
@@ -1148,7 +1172,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _healthOk = ok;
       if (!ok) _dashboardAuth = DashboardAuthCheck.unknown;
       _checking = false;
-      _archive = archive;
+      _listenArchive(archive);
       if (!listReadUnavailable) _recentSessions = recentSessions;
     });
     if (ok) _scheduleMissionPrewarm(conn);
@@ -1181,9 +1205,40 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     unawaited(
       _hydrateTurnPreviews(
         conn,
-        recentSessions.take(recentLimit).toList(growable: false),
+        recentSessions
+            .where((s) => _isHomeRecentCandidate(s, archive))
+            .take(recentLimit)
+            .toList(growable: false),
       ),
     );
+  }
+
+  bool _isHomeRecentCandidate(Session s, SessionArchive archive) =>
+      _isHomeRecentKind(s) &&
+      !archive.isSessionHidden(s) &&
+      !archive.isSessionArchived(s) &&
+      !archive.isHidden(s.id);
+
+  static bool _isHomeRecentKind(Session s) =>
+      !s.isJob && SessionCategory.chats.includesSource(s.source);
+
+  /// Recents as painted: the retained page filtered by the shared local
+  /// archive store (archive, hidden).
+  List<Session> get _visibleRecentSessions {
+    final archive = _archive;
+    if (archive == null) return _recentSessions;
+    return _recentSessions
+        .where((s) => _isHomeRecentCandidate(s, archive))
+        .toList(growable: false);
+  }
+
+  /// Follows the connection's shared [SessionArchive]: a rename, archive or
+  /// hide made on any screen repaints the recents without a network read.
+  void _listenArchive(SessionArchive archive) {
+    if (identical(_archive, archive)) return;
+    _archive?.removeListener(_onActivityChanged);
+    _archive = archive;
+    archive.addListener(_onActivityChanged);
   }
 
   int _homeRecentLimit() {
@@ -1268,7 +1323,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final activeChats = _activeChats;
     HomeRecentDateGroup? previousGroup;
-    final visible = _recentSessions.take(limit).toList(growable: false);
+    final visible = _visibleRecentSessions.take(limit).toList(growable: false);
 
     for (var index = 0; index < visible.length; index++) {
       final session = visible[index];
@@ -2038,7 +2093,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                           dockBottomClearance,
                         ),
                         children: [
-                          if (_recentSessions.isNotEmpty) ...[
+                          if (_visibleRecentSessions.isNotEmpty) ...[
                             Padding(
                               padding: const EdgeInsets.only(
                                 left: 4,

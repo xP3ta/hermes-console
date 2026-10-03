@@ -17,6 +17,7 @@ import '../models/kanban.dart';
 import '../models/mission_control.dart';
 import '../navigation/chat_route.dart';
 import '../services/active_chat_service.dart';
+import '../services/cold_start_store.dart';
 import '../services/chat_draft_store.dart';
 import '../services/connection_manager.dart';
 import '../bots/data/desktop_projection_rooms.dart';
@@ -268,6 +269,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Object? _loadFailure;
   bool _loading = true;
   bool _refreshing = false;
+
+  /// The running refresh is a quiet revalidation (see [_load]).
+  bool _quietRefresh = false;
   ActiveChatService? _activeChats;
   final Map<ActiveChat, StreamSubscription<ActiveChatEvent>>
   _liveSubscriptions = {};
@@ -363,8 +367,14 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     // instead of asking the server twice. It is a fresh read, so no extra
     // refresh follows.
     final inFlight = prewarm?.claim(widget.connection);
+    // A warm open revalidates quietly, like Desktop: the snapshot is the
+    // first frame and no header spinner announces the background read.
     unawaited(
-      _load(refresh: cached != null, reuse: cached == null ? inFlight : null),
+      _load(
+        refresh: cached != null,
+        quiet: cached != null,
+        reuse: cached == null ? inFlight : null,
+      ),
     );
   }
 
@@ -382,6 +392,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _activeChats = service;
     _activeChats?.activeIds.addListener(_onActiveIdsChanged);
     _syncLiveSubscriptions();
+    if (_pendingTarget == null) {
+      _rememberColdStartRoute(ColdStartRouteKind.missionControl);
+    }
   }
 
   @override
@@ -479,6 +492,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   /// Roster ticks since the last full reload (the backstop counts these).
   int _ticksSinceFullLoad = 0;
 
+  /// A change event arrived while a full read was in flight.
+  bool _changeDuringLoad = false;
+
   /// Running for [liveEventRefreshGap] after each partial refresh.
   Timer? _eventRefreshTimer;
 
@@ -548,6 +564,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   void _onLiveChange(TuiGatewayEvent event) {
     if (event.type != 'sessions.changed') return;
+    if (_loading || _refreshing) {
+      // The full read on the wire may predate this change: read the roster
+      // again once it lands instead of waiting for the backstop.
+      _changeDuringLoad = true;
+      return;
+    }
     if (!_liveChangesOk) {
       // First event after a dropped socket: the stream is back but events
       // were lost meanwhile, so reload everything now. Without
@@ -664,11 +686,42 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     }
   }
 
+  /// The full read on the wire, if any (see [_pullRefresh]).
+  Future<void>? _inFlightLoad;
+
+  /// Pull-to-refresh joins a full read already on the wire instead of
+  /// starting a second one whose answer could land in either order. The
+  /// pull ends when that read lands; a change seen meanwhile is still read
+  /// once afterwards through [_changeDuringLoad].
+  Future<void> _pullRefresh() {
+    final inFlight = _inFlightLoad;
+    if (inFlight == null) return _load(refresh: true);
+    if (_quietRefresh && mounted) setState(() => _quietRefresh = false);
+    return inFlight;
+  }
+
+  /// [quiet] keeps the header spinner off for a background revalidation of
+  /// what is already on screen; [_refreshing] still blocks overlapping reads.
   Future<void> _load({
     bool refresh = false,
+    bool quiet = false,
+    Future<MissionBackendSnapshot>? reuse,
+  }) {
+    final run = _runLoad(refresh: refresh, quiet: quiet, reuse: reuse);
+    _inFlightLoad = run;
+    return run.whenComplete(() {
+      if (identical(_inFlightLoad, run)) _inFlightLoad = null;
+    });
+  }
+
+  Future<void> _runLoad({
+    required bool refresh,
+    required bool quiet,
     Future<MissionBackendSnapshot>? reuse,
   }) async {
     final generation = ++_loadGeneration;
+    _quietRefresh = quiet && refresh && _snapshot != null;
+    _changeDuringLoad = false;
     if (mounted) {
       setState(() {
         if (refresh && _snapshot != null) {
@@ -709,8 +762,24 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       _syncLiveSubscriptions();
       _subscribeKanban(incoming);
       _scheduleInitialOpen(snapshot);
+      if (_changeDuringLoad) {
+        _changeDuringLoad = false;
+        if (_liveChangesHealthy &&
+            _refreshAllowed &&
+            _eventRefreshTimer == null) {
+          unawaited(_refreshPartial());
+        } else {
+          _liveChangeDirty = true;
+        }
+      }
     } catch (error) {
       if (!mounted || generation != _loadGeneration) return;
+      // The failed read reflects nothing: a change seen meanwhile is still
+      // owed to the roster, by the next tick or gap.
+      if (_changeDuringLoad) {
+        _changeDuringLoad = false;
+        _liveChangeDirty = true;
+      }
       setState(() {
         _loadFailure = error;
         _loading = false;
@@ -743,6 +812,16 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   ) async {
     _targetRoute = route;
     _targetKey = MissionControlScreen._targetKeyOf(target);
+    final roomId = target.roomId;
+    if (target.surface == MissionControlOwnedSurface.room &&
+        roomId != null &&
+        roomId.isNotEmpty) {
+      _rememberColdStartRoute(
+        ColdStartRouteKind.room,
+        roomId: roomId,
+        profile: target.profile,
+      );
+    }
     try {
       await Navigator.of(context).push(route);
     } finally {
@@ -750,7 +829,35 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         _targetRoute = null;
         _targetKey = null;
       }
+      // Back on Bot Mode itself.
+      if (!_disposed) {
+        _rememberColdStartRoute(ColdStartRouteKind.missionControl);
+      }
     }
+  }
+
+  /// cs1215: Bot Mode (or the room opened in it) is the connection's last
+  /// foreground route; a cold start reopens it. Identifiers only.
+  void _rememberColdStartRoute(
+    ColdStartRouteKind kind, {
+    String? roomId,
+    String? profile,
+  }) {
+    final store = _activeChats?.coldStartStore;
+    if (store == null) return;
+    unawaited(
+      store
+          .rememberRoute(
+            ColdStartRoute(
+              kind: kind,
+              connectionId: widget.connection.id,
+              profile: profile ?? '',
+              sessionId: '',
+              roomId: roomId,
+            ),
+          )
+          .catchError((Object _) {}),
+    );
   }
 
   Future<void> _openInitialTarget(
@@ -2667,7 +2774,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       shape: const CircleBorder(),
     );
     return [
-      if (_refreshing)
+      if (_refreshing && !_quietRefresh)
         const Padding(
           padding: EdgeInsets.all(14),
           child: SizedBox.square(
@@ -2971,7 +3078,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
               projection.blockedCount,
             ),
             onCreateAgent: _canCreateBot ? _createAgentFromMission : null,
-            onRefresh: () => _load(refresh: true),
+            onRefresh: _pullRefresh,
           ),
         ),
       ],

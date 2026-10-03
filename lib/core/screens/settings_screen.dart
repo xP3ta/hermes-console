@@ -1628,6 +1628,16 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
         return;
       }
 
+      // cs1215: the encrypted cold-start tails and the remembered route of
+      // this profile may name chats just deleted; a cache is never worth
+      // keeping over a cleanup the user asked for.
+      if (remote.deleted > 0 || selection.clearsLocalProfileState) {
+        await context
+            .findAncestorStateOfType<HermesAppState>()
+            ?.activeChats
+            .forgetColdStartProfile(targetConnection.id, targetProfile);
+        if (!mounted) return;
+      }
       LocalConversationClearSummary? result;
       // Cancelado a mitad: NO se arrastra además el estado local del perfil.
       // Pedir parar tiene que parar todo lo que no se haya hecho ya.

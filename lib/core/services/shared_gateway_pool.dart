@@ -18,8 +18,14 @@ import 'tui_gateway_client.dart';
 /// cierra ya los que no tienen préstamo (app en segundo plano sin servicio
 /// que los necesite).
 ///
-/// Los chats conservan su cliente propio: su ciclo de vida (resume, turnos,
-/// liberación a Desktop) es por sesión y no se comparte.
+/// Los chats abiertos de una conexión comparten otro socket propio
+/// ([acquireChat]), multiplexado por `session_id` como el único
+/// `JsonRpcGatewayClient` de Desktop: un handshake, un heartbeat y una
+/// reconexión para todos, cada chat con su sesión, su watermark y su estado.
+/// Va aparte de los observadores para que estos sigan sin recibir los frames
+/// de los chats y para que, al soltar el último chat, el socket se cierre tras
+/// la gracia corta de un chat y Hermes recoja los runtimes que nadie lee
+/// (igual que al cerrar el socket propio de cada chat).
 class SharedGatewayPool {
   SharedGatewayPool._() : factory = null, linger = null;
 
@@ -55,15 +61,82 @@ class SharedGatewayPool {
   SharedGatewayLease acquire(
     SavedConnection connection, {
     TuiGatewayClient Function(SavedConnection connection)? factory,
+  }) => _acquire(_keyFor(connection), connection, factory: factory);
+
+  /// The chat socket of ([connection], [profile]): one WebSocket that every
+  /// open chat of that profile multiplexes its session over. After the last
+  /// chat lets go it lingers [chatLinger] (a reopen skips the handshake) and
+  /// then closes.
+  SharedGatewayLease acquireChat(
+    SavedConnection connection, {
+    required String profile,
+    required Duration chatLinger,
+    TuiGatewayClient Function(SavedConnection connection)? factory,
+  }) => _acquire(
+    _chatKeyFor(connection, profile),
+    connection,
+    factory: factory,
+    chatLinger: chatLinger,
+  );
+
+  static const String _chatLane = '|chat';
+
+  static String _chatKeyFor(SavedConnection connection, String profile) =>
+      '${_keyFor(connection)}|${profile.trim()}$_chatLane';
+
+  /// Another chat may not join the chat socket of ([connection], [profile]):
+  /// chats already ride it and it has not proven per-session replay (a
+  /// connected `gateway.ready` with `replay_epoch`). Before that frame the
+  /// transport is unknown (several chats opened at once would otherwise all
+  /// ride a socket that may turn out legacy), and a legacy server cannot
+  /// re-attach each chat from its own watermark after a drop. Such chats keep
+  /// their own socket; with no rider yet the chat may take it alone.
+  bool chatSocketRefusesAnotherChat(
+    SavedConnection connection,
+    String profile,
+  ) {
+    final entry = _entries[_chatKeyFor(connection, profile)];
+    return entry != null &&
+        !entry.client.isClosed &&
+        entry.refs > 0 &&
+        !entry.client.knownPerSessionReplayTransport;
+  }
+
+  /// Live chat sockets (diagnostics/tests).
+  @visibleForTesting
+  int get chatClientCount =>
+      _entries.keys.where((key) => key.endsWith(_chatLane)).length;
+
+  SharedGatewayLease _acquire(
+    String key,
+    SavedConnection connection, {
+    TuiGatewayClient Function(SavedConnection connection)? factory,
+    Duration? chatLinger,
   }) {
-    final key = _keyFor(connection);
     var entry = _entries[key];
     if (entry == null || entry.client.isClosed) {
       entry?.linger?.cancel();
-      entry = _PoolEntry(
-        (factory ?? this.factory ?? TuiGatewayClient.new)(connection),
+      final client = (factory ?? this.factory ?? TuiGatewayClient.new)(
+        connection,
       );
+      if (chatLinger != null) client.enableSessionMultiplexing();
+      entry = _PoolEntry(client, linger: chatLinger);
       _entries[key] = entry;
+    }
+    entry.linger?.cancel();
+    entry.linger = null;
+    entry.refs++;
+    return SharedGatewayLease._(this, key, entry);
+  }
+
+  /// Lends the shared socket only when it is already open and connected, so
+  /// a one-shot read (the chat model picker, mk1215) can ride a warm socket
+  /// without ever opening a new one. `null` otherwise; nothing is created.
+  SharedGatewayLease? acquireIfConnected(SavedConnection connection) {
+    final key = _keyFor(connection);
+    final entry = _entries[key];
+    if (entry == null || entry.client.isClosed || !entry.client.isConnected) {
+      return null;
     }
     entry.linger?.cancel();
     entry.linger = null;
@@ -79,7 +152,11 @@ class SharedGatewayPool {
       return;
     }
     entry.linger?.cancel();
-    final wait = _effectiveLinger;
+    // Widget suites pin [debugDefaultLinger] to zero so no timer outlives
+    // the tree; that applies to chat sockets too.
+    final wait = entry.ownLinger == null
+        ? _effectiveLinger
+        : debugDefaultLinger ?? entry.ownLinger!;
     if (wait <= Duration.zero) {
       _closeEntry(key, entry);
       return;
@@ -103,9 +180,40 @@ class SharedGatewayPool {
     }
   }
 
+  /// Cierra ya los sockets de chat sin préstamo (en su gracia tras soltar el
+  /// último chat): cambio de red, presión de memoria o segundo plano.
+  void disconnectIdleChats() {
+    for (final entry in _entries.entries.toList()) {
+      if (entry.key.endsWith(_chatLane) && entry.value.refs <= 0) {
+        _closeEntry(entry.key, entry.value);
+      }
+    }
+  }
+
+  /// Retires every chat socket after a credential change (Dashboard secret
+  /// or auth mode, which the pool key cannot see). A retired socket serves
+  /// no new chat: the next [acquireChat] dials with the new credentials.
+  /// Chats still riding it keep it until they let go; it then closes at
+  /// once instead of lingering for a reopen.
+  void retireChatSockets() {
+    for (final entry in _entries.entries.toList()) {
+      if (!entry.key.endsWith(_chatLane)) continue;
+      _entries.remove(entry.key);
+      entry.value.linger?.cancel();
+      entry.value.linger = null;
+      if (entry.value.refs <= 0) unawaited(entry.value.client.close());
+    }
+  }
+
   /// Sondea cada socket vivo del pool (cambio de red). Un socket medio
-  /// abierto cae por la ruta normal y su dueño aplica el backoff.
+  /// abierto cae por la ruta normal y su dueño aplica el backoff. Los ya
+  /// caídos olvidan el backoff de la red anterior (rl1215).
   Future<void> probeAll() async {
+    for (final entry in _entries.values) {
+      if (!entry.client.isClosed) {
+        entry.client.resetReconnectBackoffForNetworkChange();
+      }
+    }
     await Future.wait([
       for (final entry in _entries.values.toList())
         if (!entry.client.isClosed)
@@ -131,9 +239,13 @@ class SharedGatewayPool {
 }
 
 class _PoolEntry {
-  _PoolEntry(this.client);
+  _PoolEntry(this.client, {Duration? linger}) : ownLinger = linger;
 
   final TuiGatewayClient client;
+
+  /// Linger of this entry after its last release (chat sockets); null uses
+  /// the pool default.
+  final Duration? ownLinger;
   int refs = 0;
   Timer? linger;
 }

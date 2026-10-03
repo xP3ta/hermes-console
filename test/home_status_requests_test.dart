@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -19,10 +20,22 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// Counts every request Home's status refresh sends to the Gateway.
 final class _Server {
-  _Server({this.sessionsStatus = 200, this.healthStatus = 200});
+  _Server({
+    this.sessionsStatus = 200,
+    this.healthStatus = 200,
+    this.totalSessions,
+    this.leadingAutomation = 0,
+  });
 
   int sessionsStatus;
   final int healthStatus;
+
+  /// When set, /api/sessions serves this many rows newest first, paged like
+  /// the Gateway (`limit` capped at 200, `has_more`). The first
+  /// [leadingAutomation] rows are cron reports Home does not list.
+  final int? totalSessions;
+  final int leadingAutomation;
+  final sessionQueries = <Map<String, String>>[];
 
   /// Delay of the authenticated list read: a server busy serving other
   /// clients answers /health at once but the paged list late (#1215).
@@ -41,6 +54,9 @@ final class _Server {
           await Future<void>.delayed(sessionsDelay);
         }
         if (sessionsStatus != 200) return http.Response('{}', sessionsStatus);
+        sessionQueries.add(request.url.queryParameters);
+        final total = totalSessions;
+        if (total != null) return _page(request.url.queryParameters, total);
         return http.Response(
           '{"data":[{"id":"s-1","title":"Hola","source":"cli",'
           '"started_at":1790000000,"last_active":1790000100}],'
@@ -50,6 +66,31 @@ final class _Server {
     }
     return http.Response('{}', 404);
   });
+
+  http.Response _page(Map<String, String> query, int total) {
+    final limit = (int.tryParse(query['limit'] ?? '') ?? 50).clamp(1, 200);
+    final offset = int.tryParse(query['offset'] ?? '') ?? 0;
+    final rows = [
+      for (var i = offset; i < total && i < offset + limit; i++)
+        {
+          'id': 's-$i',
+          'title': i < leadingAutomation ? 'Cron $i' : 'Chat $i',
+          'source': i < leadingAutomation ? 'cron' : 'cli',
+          'started_at': 1790000000 - i * 60,
+          'last_active': 1790000100 - i * 60,
+        },
+    ];
+    return http.Response(
+      jsonEncode({
+        'object': 'list',
+        'data': rows,
+        'limit': limit,
+        'offset': offset,
+        'has_more': offset + rows.length < total,
+      }),
+      200,
+    );
+  }
 }
 
 void main() {
@@ -154,6 +195,59 @@ void main() {
     expect(find.text('Hola'), findsWidgets);
     expect(server.count('/health'), 1);
     expect(server.count('/api/sessions'), 1);
+    await unmount(tester);
+  });
+
+  // Audit item 7: Home walked every session in 200-row pages on each refresh
+  // (1000 sessions = 5 sequential reads) to show about eight recent chats.
+  // Desktop asks for one page (`listSessions(limit = 40)`).
+  testWidgets('a Home refresh with 1000 sessions reads one page', (
+    tester,
+  ) async {
+    final server = _Server(totalSessions: 1000);
+    await pumpHome(tester, server);
+    await settleHome(tester);
+    expect(find.text('agent online · QA'), findsOneWidget);
+    expect(find.text('Chat 0'), findsWidgets);
+    final first = server.count('/api/sessions');
+    final state = tester.state(find.byType(HomeDashboardScreen));
+    (state as WidgetsBindingObserver).didChangeAppLifecycleState(
+      AppLifecycleState.resumed,
+    );
+    await settleHome(tester);
+    final perRefresh = server.count('/api/sessions') - first;
+    // ignore: avoid_print
+    print(
+      '[audit-7] N=1000: /api/sessions per Home refresh first=$first '
+      'next=$perRefresh limits=${server.sessionQueries.map((q) => q['limit']).toSet()}',
+    );
+    expect(first, 1);
+    expect(perRefresh, 1);
+    expect(server.sessionQueries.every((q) => q['offset'] == '0'), isTrue);
+    expect(server.sessionQueries.every((q) => q['limit'] == '40'), isTrue);
+    await unmount(tester);
+  });
+
+  testWidgets('a first page of cron reports reads on until chats appear', (
+    tester,
+  ) async {
+    final server = _Server(totalSessions: 1000, leadingAutomation: 70);
+    await pumpHome(tester, server);
+    await settleHome(tester);
+    expect(find.text('Chat 70'), findsWidgets);
+    expect(find.text('Cron 0'), findsNothing);
+    expect(server.count('/api/sessions'), 2);
+    await unmount(tester);
+  });
+
+  testWidgets('a history of only cron reports stops after a bounded walk', (
+    tester,
+  ) async {
+    final server = _Server(totalSessions: 1000, leadingAutomation: 1000);
+    await pumpHome(tester, server);
+    await settleHome(tester);
+    expect(find.text('agent online · QA'), findsOneWidget);
+    expect(server.count('/api/sessions'), 3);
     await unmount(tester);
   });
 

@@ -142,7 +142,9 @@ ActiveChat _chat(http.Client client) => ActiveChat(
 );
 
 Iterable<int> _unitIndexes(ChatRenderUnitPlan unit) => switch (unit) {
-  ChatMessageUnitPlan(:final messageIndex) => [messageIndex],
+  // A response group renders every member row in one bubble.
+  ChatMessageUnitPlan(:final memberIndexesNewestFirst) =>
+    memberIndexesNewestFirst,
   ChatUserTurnUnitPlan(
     :final primaryMessageIndex,
     :final supplementMessageIndexes,

@@ -67,14 +67,28 @@ void main() {
         }, expectedKey: DesktopSessionConfigKey.reasoning),
         throwsFormatException,
       );
-      expect(
-        () => DesktopConfigSetResult.fromJson(const {
-          'key': 'model',
-          'value': 'gpt-5',
-          'confirm_required': true,
-        }, expectedKey: DesktopSessionConfigKey.model),
-        throwsFormatException,
-      );
+    });
+
+    test('a guard without its own text still asks, using the warning', () {
+      // ConfigSetResult types confirm_message `str | null`; Desktop opens the
+      // confirmation dialog whatever it carries (use-model-controls.ts).
+      final fromWarning = DesktopConfigSetResult.fromJson(const {
+        'key': 'model',
+        'value': 'gpt-5',
+        'confirm_required': true,
+        'warning': 'Expensive model',
+        'confirm_message': null,
+      }, expectedKey: DesktopSessionConfigKey.model);
+      expect(fromWarning.confirmRequired, isTrue);
+      expect(fromWarning.confirmMessage, 'Expensive model');
+
+      final bare = DesktopConfigSetResult.fromJson(const {
+        'key': 'model',
+        'value': 'gpt-5',
+        'confirm_required': true,
+      }, expectedKey: DesktopSessionConfigKey.model);
+      expect(bare.confirmRequired, isTrue);
+      expect(bare.confirmMessage, isNull);
     });
   });
 

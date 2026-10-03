@@ -11,6 +11,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -99,6 +100,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   @override
   void dispose() {
+    _archive?.removeListener(_onArchiveChanged);
     _repository.close();
     _client.close();
     super.dispose();
@@ -107,7 +109,25 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Future<void> _loadArchive() async {
     final prefs = await SharedPreferences.getInstance();
     final archive = await SessionArchive.load(prefs, widget.connection.id);
-    if (mounted) setState(() => _archive = archive);
+    if (!mounted) return;
+    setState(() {
+      _archive?.removeListener(_onArchiveChanged);
+      _archive = archive;
+      archive.addListener(_onArchiveChanged);
+    });
+  }
+
+  void _onArchiveChanged() {
+    if (!mounted) return;
+    final phase = SchedulerBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.idle ||
+        phase == SchedulerPhase.postFrameCallbacks) {
+      setState(() {});
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    }
   }
 
   Future<void> _refresh({bool refreshSession = true}) async {
@@ -355,6 +375,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             _session.id,
           );
           await app?.activeChats.globalActivity.flushJournal();
+          await app?.activeChats.forgetColdStartSession(
+            connectionId: widget.connection.id,
+            profile: ownerProfile,
+            sessionId: _session.id,
+          );
           if (!mounted) return;
           Navigator.pop(context, true);
           break;
@@ -423,8 +448,14 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   // ── Presentación ───────────────────────────────────────────────────────
 
-  String _titleText(Strings s) =>
-      _session.title.trim().isNotEmpty ? _session.title.trim() : s.sesNoTitle;
+  // A local rename lives in the shared archive, like Home and Conversations.
+  String _titleText(Strings s) {
+    final local = _archive?.titleFor(_session.logicalId, '').trim() ?? '';
+    if (local.isNotEmpty) return local;
+    return _session.title.trim().isNotEmpty
+        ? _session.title.trim()
+        : s.sesNoTitle;
+  }
 
   String _statusLabel(Strings s) => switch (_state) {
     SessionState.active => s.sesUiStatusActive,

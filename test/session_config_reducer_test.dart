@@ -590,4 +590,38 @@ void main() {
       SessionReasoningConfigValue.effective('medium'),
     );
   });
+  test('a guarded switch without confirmation text still asks the user', () {
+    // ConfigSetResult: confirm_message is `str | null`. The guard holds
+    // either way; the dialog supplies its own copy (Desktop parity).
+    final scope = _scope();
+    var state = _observe(
+      const SessionConfigReducerState.empty(),
+      scope,
+      infoEpoch: 0,
+      observedRequestEpoch: 0,
+      reasoning: 'medium',
+    );
+    state = _start(
+      state,
+      scope,
+      SessionReasoningConfigValue.requested(DesktopReasoningEffort.high),
+      1,
+    );
+    state = SessionConfigReducer.reduce(
+      state,
+      SessionConfigRpcAccepted(
+        scope: scope,
+        requestEpoch: 1,
+        result: const DesktopConfigSetResult(
+          key: DesktopSessionConfigKey.reasoning,
+          value: 'high',
+          confirmRequired: true,
+        ),
+      ),
+    );
+
+    final change = state.changeFor(scope, DesktopSessionConfigKey.reasoning)!;
+    expect(change.status, SessionConfigChangeStatus.confirmRequired);
+    expect(change.confirmMessage, isNull);
+  });
 }

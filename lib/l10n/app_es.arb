@@ -575,6 +575,7 @@
       }
     }
   },
+  "chaModelChangeConfirmBody": "Este cambio de modelo necesita confirmación.",
   "chaModelChangeTitle": "Cambiar modelo activo",
   "chaModelChangeBody": "El agente usará {model} ({provider}) en todas las sesiones a partir del próximo turno.",
   "@chaModelChangeBody": {
@@ -9550,6 +9551,57 @@
   "cr1215AwaitingUnseenInput": "Hermes espera tu respuesta a una pregunta que no se ha mostrado.",
   "cr1215ShowQuestion": "Mostrar pregunta",
 "ss1215StatusWorking": "Trabajando…",
-"ss1215StatusWorking": "Trabajando…",
-  "ps1215NoDetailsYet": "Sin detalles todavía: se actualizará con el siguiente evento."
+  "ps1215NoDetailsYet": "Sin detalles todavía: se actualizará con el siguiente evento.",
+  "cq1215QuestionNotRecovered": "No se ha podido recuperar la pregunta. Hermes sigue esperando tu respuesta.",
+  "cq1215RetryQuestion": "Reintentar",
+  "cq1215StopTurn": "Detener turno",
+"tg1215ProcessCompleted": "Proceso en segundo plano terminado",
+  "tg1215ProcessExited": "Proceso en segundo plano terminado con error",
+  "tg1215ProcessTerminated": "Proceso en segundo plano detenido",
+  "tg1215ProcessLost": "Proceso en segundo plano perdido",
+  "tg1215ProcessFailedToStart": "El proceso en segundo plano no pudo arrancar",
+  "tg1215ProcessExitCode": "exit {code}",
+  "@tg1215ProcessExitCode": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "tg1215ProcessShowOutput": "Ver salida",
+  "tg1215ProcessHideOutput": "Ocultar salida",
+  "tg1215ProcessNoOutput": "Sin salida",
+  "tg1215TurnCancelled": "Cancelado",
+"qr1215QueueRetryExhausted": "No se pudo enviar — Reintentar",
+  "hr1215AuthExpiredTitle": "La sesión de {provider} ha caducado",
+  "@hr1215AuthExpiredTitle": {"placeholders": {"provider": {"type": "String"}}},
+  "hr1215AuthExpiredTitleGeneric": "La sesión del proveedor ha caducado",
+  "hr1215AuthExpiredBody": "El proveedor ha rechazado el acceso porque la sesión ha caducado o se ha revocado. Vuelve a iniciar sesión y reintenta el mensaje.",
+  "hr1215KeyRejectedTitle": "Revisa la clave de {provider}",
+  "@hr1215KeyRejectedTitle": {"placeholders": {"provider": {"type": "String"}}},
+  "hr1215KeyRejectedTitleGeneric": "Revisa la clave del proveedor",
+  "hr1215KeyRejectedBody": "El proveedor ha rechazado la clave guardada. Cámbiala en Modelos y reintenta el mensaje.",
+  "hr1215SignInAgain": "Volver a iniciar sesión",
+  "hr1215CheckKey": "Revisar la clave",
+  "hr1215ExternalTitle": "Iniciar sesión en {provider}",
+  "@hr1215ExternalTitle": {"placeholders": {"provider": {"type": "String"}}},
+  "hr1215ExternalBody": "Hermes solo puede renovar esta sesión desde la terminal del servidor. Ejecuta allí:\n\n{command}\n\nDespués pulsa «Ya he iniciado sesión».",
+  "@hr1215ExternalBody": {"placeholders": {"command": {"type": "String"}}},
+  "hr1215ExternalBodyNoCommand": "Hermes solo puede renovar esta sesión desde la terminal del servidor. Cuando hayas iniciado sesión allí, pulsa «Ya he iniciado sesión».",
+  "hr1215CopyCommand": "Copiar comando",
+  "hr1215CommandCopied": "Comando copiado",
+  "hr1215SignedInCheck": "Ya he iniciado sesión",
+  "hr1215StillSignedOut": "{provider} sigue sin sesión en el servidor.",
+  "@hr1215StillSignedOut": {"placeholders": {"provider": {"type": "String"}}},
+  "hr1215SignedInAgain": "Sesión de {provider} renovada",
+  "@hr1215SignedInAgain": {"placeholders": {"provider": {"type": "String"}}},
+  "hr1215CompactionAuthTitle": "La compactación no puede usar {provider}; el chat sigue funcionando",
+  "@hr1215CompactionAuthTitle": {"placeholders": {"provider": {"type": "String"}}},
+  "hr1215CompactionAuthTitleGeneric": "La compactación no puede usar el proveedor; el chat sigue funcionando",
+  "hr1215CompactionOnlyAuthBody": "Solo ha fallado el resumen automático de la conversación: no se ha perdido nada y puedes seguir escribiendo. Vuelve a iniciar sesión para que la compactación funcione otra vez.",
+  "hr1215CheckingSignIn": "Comprobando la sesión de {provider}…",
+  "@hr1215CheckingSignIn": {"placeholders": {"provider": {"type": "String"}}},
+  "hr1215SignInCheckFailed": "No se pudo comprobar la sesión de {provider}: {error}",
+  "@hr1215SignInCheckFailed": {"placeholders": {"provider": {"type": "String"}, "error": {"type": "String"}}},
+  "cs1215CachedTranscript": "Copia guardada · actualizando"
 }

@@ -82,6 +82,7 @@ import '../navigation/chat_route.dart';
 import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
 import '../services/hermes_update_monitor.dart';
 import '../services/active_chat_service.dart';
+import '../services/cold_start_store.dart';
 import '../services/approval_policy.dart';
 import 'chat_content_screen.dart';
 import 'image_viewer_screen.dart';
@@ -109,6 +110,8 @@ import '../services/session_archive.dart';
 import '../services/session_artifact_download_service.dart';
 import '../services/session_config_reducer.dart';
 import '../services/session_deletion.dart';
+import '../services/model_picker_loader.dart';
+import '../services/shared_gateway_pool.dart';
 import '../services/subagent_transcript_projection.dart';
 import '../services/tui_gateway_client.dart'
     show TuiGatewayClient, TuiGatewayRpcError;
@@ -153,6 +156,8 @@ import 'cron_screen.dart';
 import 'extensions_center_screen.dart';
 import 'memory_screen.dart';
 import 'models_screen.dart';
+import '../models/provider_auth_failure.dart';
+import '../widgets/provider_reauth.dart';
 import 'recovery_center_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
@@ -1235,10 +1240,20 @@ class ChatScreen extends StatefulWidget {
   final bool requestComposerFocus;
   final String? initialStoredSessionId;
 
+  /// cs1215: reopened by the app on a cold start because it was the last
+  /// foreground route. A session that turned out deleted returns to Home.
+  final bool restoredFromColdStart;
+
   /// Carpeta del servidor donde debe arrancar un chat NUEVO abierto desde un
   /// proyecto o worktree. Viaja en `session.create` como `cwd` +
   /// `cwd_explicit`, igual que Desktop; null para un chat sin carpeta.
   final String? newChatWorkspace;
+
+  /// Dashboard client for the provider sign-in started from a credential
+  /// error; tests inject a fake Dashboard.
+  @visibleForTesting
+  final DashboardClient Function(SavedConnection connection)?
+  providerReauthClientFactory;
 
   /// Caché de identidad que Mission Control ya mantiene para Bot Chat.
   final MissionProfileAvatarCache? missionAvatarCache;
@@ -1267,6 +1282,11 @@ class ChatScreen extends StatefulWidget {
   final Future<void> Function(String path, File destination)?
   userServerMediaFetcher;
 
+  /// Replaces the HTTP fallbacks of the model picker (Mobile Bridge,
+  /// Dashboard, gateway model list) in widget tests.
+  @visibleForTesting
+  final Map<ModelPickerSource, ModelPickerFallback>? modelPickerFallbacks;
+
   const ChatScreen({
     required this.connection,
     required this.session,
@@ -1276,7 +1296,9 @@ class ChatScreen extends StatefulWidget {
     this.initialVoiceMode = false,
     this.requestComposerFocus = false,
     this.initialStoredSessionId,
+    this.restoredFromColdStart = false,
     this.newChatWorkspace,
+    this.providerReauthClientFactory,
     this.missionAvatarCache,
     this.missionBotProfile,
     this.performanceProbe,
@@ -1286,6 +1308,7 @@ class ChatScreen extends StatefulWidget {
     this.sendAttemptObserver,
     this.draftStoreOverride,
     this.userServerMediaFetcher,
+    this.modelPickerFallbacks,
     super.key,
   });
 
@@ -1322,7 +1345,7 @@ class _ChatScreenState extends State<ChatScreen>
   int? _desktopRuntimePresentationFingerprint;
   Object? _lastSessionConfigPresentation;
   (bool, int, int, int, int)? _activityPresentationFingerprint;
-  bool _lastAwaitsUnseenInput = false;
+  (bool, bool, bool) _lastAwaitsUnseenInput = (false, false, false);
   bool _lastDesktopCompacting = false;
   PendingSessionConfigChange? _pendingModelConfirmation;
   NavigatorState? _modelConfirmationNavigator;
@@ -3728,6 +3751,14 @@ class _ChatScreenState extends State<ChatScreen>
   Future<(ModelActiveInfo, List<ModelProvider>)>? _modelOptionsFuture;
   DesktopModelCatalog? _desktopModelCatalog;
 
+  /// mk1215: catalog painted from the picker cache while [_modelOptionsFuture]
+  /// revalidates it in the background (stale-while-revalidate).
+  (ModelActiveInfo, List<ModelProvider>)? _modelOptionsPainted;
+
+  ModelPickerCache get _modelPickerCache => _chatService.modelPickerCache;
+  String get _modelPickerKey =>
+      ModelPickerCache.key(widget.connection.id, _chat.sessionProfile);
+
   /// Modelo que debe pintar esta sesión mientras haya una elección del usuario
   /// registrada en el reducer de config.
   ///
@@ -4088,64 +4119,44 @@ class _ChatScreenState extends State<ChatScreen>
         info.installWarning,
       ]);
 
-  /// Lee el modelo activo para pintar el badge del AppBar. Intenta primero el
-  /// BRIDGE (un token, automático: no necesita login del Dashboard) — el mismo
-  /// camino que el selector de modelos — y solo si no hay bridge cae al
-  /// Dashboard. Así el modelo del servidor se muestra aunque el Dashboard no
-  /// esté configurado (antes solo miraba el Dashboard y salía vacío).
+  /// Lee el modelo activo para pintar el badge del AppBar. Con runtime vivo,
+  /// `session.info` es la fuente. Sin él (mk1215), el catálogo ya cacheado del
+  /// selector o `model.options` sin sesión por el socket del gateway, como
+  /// Desktop. Abrir, volver o reanudar el chat nunca llama al Mobile Bridge ni
+  /// al Dashboard: solo el selector abierto recurre a ellos.
   Future<void> _loadActiveModel() async {
-    if (_chatBound && _chat.hasDesktopRuntime) {
+    if (!_chatBound) {
+      // initState: el chat se enlaza en didChangeDependencies, justo después.
+      await null;
+      if (!mounted || !_chatBound) return;
+    }
+    if (_chat.hasDesktopRuntime) {
       _syncDesktopSessionConfig();
       if (_activeModel?.model.isNotEmpty == true) return;
     }
-    // 1) Bridge: mismo camino "un token" que la pantalla de Modelos.
-    try {
-      final viaBridge = await _bridgeModelOptions();
-      if (viaBridge != null) {
-        final (info, providers) = viaBridge;
-        // Punto 2 (spec 028): no mostrar como activo el model.default del
-        // servidor (p.ej. claude-opus-4.6 de fábrica) si NINGÚN proveedor
-        // tiene credencial detrás — en un servidor virgen sin key el modelo
-        // no es usable; el badge cae a "servidor" en vez de fingir uno activo.
-        final usable = providers.any((p) => p.authenticated);
-        if (info.model.isNotEmpty && usable) {
-          if (mounted) {
-            setState(() => _activeModel = info);
-            if (_chatBound) {
-              _chatService.updateHomeWidgetSessionMetadata(
-                _chat,
-                model: info.model,
-                provider: info.provider,
-              );
-            }
-          }
-          return;
-        }
-        if (!usable) return; // hay default declarado pero sin key: no fingir.
+    final key = _modelPickerKey;
+    var catalog = _modelPickerCache.peek(key)?.result;
+    if (catalog == null &&
+        !_modelPickerCache.isCoolingDown(key, ModelPickerSource.socket)) {
+      catalog = await _socketModelPickerResult(connectedOnly: true);
+      if (catalog != null && catalog.hasModels) {
+        _modelPickerCache.write(key, catalog);
       }
-    } catch (_) {
-      // Sigue con el Dashboard.
     }
-    // 2) Fallback: Dashboard (si está configurado/accesible).
-    final client = DashboardClient.lazy(widget.connection);
-    try {
-      final info = await client.getModelInfo();
-      if (mounted) {
-        setState(() => _activeModel = info);
-        if (_chatBound) {
-          _chatService.updateHomeWidgetSessionMetadata(
-            _chat,
-            model: info.model,
-            provider: info.provider,
-          );
-        }
-      }
-    } catch (_) {
-      // El Dashboard puede no estar configurado/accesible: el badge cae al
-      // texto neutro. No es fatal para el chat.
-    } finally {
-      client.close();
+    if (catalog == null || !mounted || _chat.hasDesktopRuntime) return;
+    final info = catalog.info;
+    // Punto 2 (spec 028): no mostrar como activo el model.default del
+    // servidor si NINGÚN proveedor tiene credencial detrás.
+    if (info.model.isEmpty || !catalog.providers.any((p) => p.authenticated)) {
+      return;
     }
+    if (catalog.source == ModelPickerSource.gateway) return;
+    setState(() => _activeModel = info);
+    _chatService.updateHomeWidgetSessionMetadata(
+      _chat,
+      model: info.model,
+      provider: info.provider,
+    );
   }
 
   /// Carga modelo activo + proveedores configurados (autenticados y con modelos)
@@ -4185,6 +4196,9 @@ class _ChatScreenState extends State<ChatScreen>
       _modelOptionsFuture = null;
     });
     if (_chatBound) {
+      // The cached catalog marks the old model as current: repaint it at
+      // once on the next open but revalidate it.
+      _modelPickerCache.invalidate(_modelPickerKey);
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
       _chatService.updateHomeWidgetSessionMetadata(
         _chat,
@@ -4384,13 +4398,28 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<(ModelActiveInfo, List<ModelProvider>)> _loadModelOptions() async {
-    final (info, providers) = await _loadModelOptionsRaw();
-    // Respeta lo que el usuario ocultó en la pantalla de Modelos (spec 028 U-05):
-    // esas mismas claves de SharedPreferences se aplican también aquí, para que
-    // el selector del chat no muestre proveedores/modelos que el usuario quitó
-    // de la vista. Proveedores = slugs; modelos = "slug/modelId".
+    final result = await _loadModelPickerResult();
+    SharedPreferences? prefs;
     try {
-      final prefs = await SharedPreferences.getInstance();
+      prefs = await SharedPreferences.getInstance();
+    } catch (_) {
+      prefs = null;
+    }
+    return _withoutHiddenModels(result, prefs);
+  }
+
+  /// Respeta lo que el usuario ocultó en la pantalla de Modelos (spec 028 U-05):
+  /// esas mismas claves de SharedPreferences se aplican también aquí, para que
+  /// el selector del chat no muestre proveedores/modelos que el usuario quitó
+  /// de la vista. Proveedores = slugs; modelos = "slug/modelId".
+  (ModelActiveInfo, List<ModelProvider>) _withoutHiddenModels(
+    ModelPickerResult result,
+    SharedPreferences? prefs,
+  ) {
+    final info = result.info;
+    final providers = result.providers;
+    if (prefs == null) return (info, providers);
+    try {
       final hiddenProviders =
           (prefs.getStringList('hidden_providers') ?? const []).toSet();
       final hiddenModels = (prefs.getStringList('hidden_models') ?? const [])
@@ -4414,25 +4443,67 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<(ModelActiveInfo, List<ModelProvider>)> _loadModelOptionsRaw() async {
-    // 1) RPC oficial 0.19 para una sesión viva. Nunca crea runtimes solo para
-    // listar: los borradores degradan a las superficies de lectura existentes.
-    final desktop = await _desktopSessionModelOptions();
-    if (desktop != null) {
-      _modelSource = _ModelSource.desktop;
-      return desktop;
-    }
-    _desktopModelCatalog = null;
+  /// Fuente de la que vino el catálogo: decide por dónde se persiste la
+  /// selección y qué filas son elegibles.
+  void _adoptModelPickerResult(ModelPickerResult result) {
+    _modelSource = switch (result.source) {
+      ModelPickerSource.socket => _ModelSource.desktop,
+      ModelPickerSource.bridge => _ModelSource.bridge,
+      ModelPickerSource.dashboard => _ModelSource.dashboard,
+      ModelPickerSource.gateway => _ModelSource.gateway,
+    };
+    _desktopModelCatalog = result.desktopCatalog;
+  }
 
-    // 2) BRIDGE: un SOLO token (auto-provisionado desde la API key del
-    // gateway) lista TODOS los modelos configurados, sin el login del Dashboard.
-    // Es el camino que recupera la experiencia "un token, automático".
-    final bridge = await _bridgeModelOptions();
-    if (bridge != null) {
-      _modelSource = _ModelSource.bridge;
-      return bridge;
-    }
-    // 3) DASHBOARD (con su propio login si lo exige).
+  /// mk1215: como Desktop, `model.options` por el socket del gateway primero
+  /// (con o sin runtime). Bridge y Dashboard solo como respaldo, en paralelo y
+  /// con un plazo corto; la lista del gateway al final. Gane quien gane, el
+  /// catálogo queda cacheado por conexión y perfil, y una fuente que falla se
+  /// recuerda un rato para no reintentarla en cada apertura.
+  Future<ModelPickerResult> _loadModelPickerResult() async {
+    ModelPickerSourceLoader fallback(
+      ModelPickerSource source,
+      Future<(ModelActiveInfo, List<ModelProvider>)?> Function() read,
+    ) => () async {
+      final result = await read();
+      if (result == null) return null;
+      return ModelPickerResult(
+        info: result.$1,
+        providers: result.$2,
+        source: source,
+      );
+    };
+
+    final result = await loadModelPickerCatalog(
+      cache: _modelPickerCache,
+      key: _modelPickerKey,
+      sources: {
+        ModelPickerSource.socket: _socketModelPickerResult,
+        ModelPickerSource.bridge: fallback(
+          ModelPickerSource.bridge,
+          _bridgeModelOptions,
+        ),
+        ModelPickerSource.dashboard: fallback(
+          ModelPickerSource.dashboard,
+          _dashboardModelOptions,
+        ),
+        ModelPickerSource.gateway: fallback(
+          ModelPickerSource.gateway,
+          _gatewayModelOptions,
+        ),
+      },
+    );
+    if (mounted) _adoptModelPickerResult(result);
+    return result;
+  }
+
+  /// Catálogo del Dashboard (con su propio login si lo exige): solo los
+  /// proveedores autenticados con modelos. Una lista vacía no gana a otra
+  /// fuente, pero se muestra como «sin modelos» si nadie más responde.
+  Future<(ModelActiveInfo, List<ModelProvider>)?>
+  _dashboardModelOptions() async {
+    final fake = widget.modelPickerFallbacks?[ModelPickerSource.dashboard];
+    if (fake != null) return fake();
     final client = DashboardClient.lazy(widget.connection);
     try {
       final info = await client.getModelInfo();
@@ -4440,36 +4511,39 @@ class _ChatScreenState extends State<ChatScreen>
       final usable = providers
           .where((p) => p.authenticated && p.models.isNotEmpty)
           .toList();
-      if (usable.isNotEmpty) {
-        _modelSource = _ModelSource.dashboard;
-        return (info, usable);
-      }
-      // El Dashboard respondió pero sin proveedores usables: prueba el gateway.
-      final gw = await _gatewayModelOptions();
-      if (gw != null) {
-        _modelSource = _ModelSource.gateway;
-        return gw;
-      }
-      _modelSource = _ModelSource.dashboard;
       return (info, usable);
-    } catch (_) {
-      // 4) GATEWAY como último recurso: /v1/models (alias hermes-agent) + tags
-      // Ollama; enruta el modelo por petición con el mismo token.
-      final fb = await _gatewayModelOptions();
-      if (fb != null) {
-        _modelSource = _ModelSource.gateway;
-        return fb;
-      }
-      rethrow;
     } finally {
       client.close();
     }
   }
 
-  Future<(ModelActiveInfo, List<ModelProvider>)?>
-  _desktopSessionModelOptions() async {
+  Future<ModelPickerResult?> _socketModelPickerResult({
+    bool connectedOnly = false,
+  }) async {
+    final catalog = await _desktopSessionModelOptions(
+      connectedOnly: connectedOnly,
+    );
+    if (catalog == null) return null;
+    return ModelPickerResult(
+      info: catalog.$1,
+      providers: catalog.$2,
+      source: ModelPickerSource.socket,
+      desktopCatalog: catalog.$3,
+    );
+  }
+
+  Future<(ModelActiveInfo, List<ModelProvider>, DesktopModelCatalog)?>
+  _desktopSessionModelOptions({bool connectedOnly = false}) async {
+    // mk1215: without a runtime the catalog is read sessionless; an already
+    // connected shared socket saves the chat's own handshake.
+    final warm = SharedGatewayPool.instance.acquireIfConnected(
+      widget.connection,
+    );
     try {
-      final catalog = await _chat.loadDesktopModelCatalog();
+      final catalog = await _chat.loadDesktopModelCatalog(
+        warmGateway: warm?.client,
+        connectedOnly: connectedOnly,
+      );
       if (catalog == null) return null;
       final providers = <ModelProvider>[
         for (final provider in catalog.providers)
@@ -4487,7 +4561,6 @@ class _ChatScreenState extends State<ChatScreen>
             ),
       ];
       if (providers.isEmpty) return null;
-      _desktopModelCatalog = catalog;
       return (
         ModelActiveInfo(
           model: catalog.currentModel ?? _selectedModel,
@@ -4495,9 +4568,12 @@ class _ChatScreenState extends State<ChatScreen>
           effectiveContextLength: 0,
         ),
         providers,
+        catalog,
       );
     } catch (_) {
       return null;
+    } finally {
+      warm?.release();
     }
   }
 
@@ -4506,6 +4582,8 @@ class _ChatScreenState extends State<ChatScreen>
   /// depende del login del Dashboard. Devuelve null si no hay bridge (el llamante
   /// cae al Dashboard). El bridge devuelve la misma forma que `/api/model/options`.
   Future<(ModelActiveInfo, List<ModelProvider>)?> _bridgeModelOptions() async {
+    final fake = widget.modelPickerFallbacks?[ModelPickerSource.bridge];
+    if (fake != null) return fake().then((r) => r, onError: (Object _) => null);
     final url = widget.connection.derivedBridgeUrl;
     if (url.isEmpty) return null;
     String? token;
@@ -4556,6 +4634,8 @@ class _ChatScreenState extends State<ChatScreen>
   /// Opciones de modelo a partir SOLO del gateway (con el token de la conexión).
   /// Devuelve null si el gateway tampoco da modelos.
   Future<(ModelActiveInfo, List<ModelProvider>)?> _gatewayModelOptions() async {
+    final fake = widget.modelPickerFallbacks?[ModelPickerSource.gateway];
+    if (fake != null) return fake().then((r) => r, onError: (Object _) => null);
     try {
       final api = ApiClient(
         baseUrl: widget.connection.gatewayUrl,
@@ -4649,9 +4729,17 @@ class _ChatScreenState extends State<ChatScreen>
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
       _chatSub = _chat.changes.listen(_onChatEvent);
       _chat.transportStatusListenable.addListener(_syncTransportVisibility);
+      _lastObservesRemoteTurnAfterReconnect =
+          _chat.observesRemoteTurnAfterReconnect;
       _syncTransportVisibility();
       _transportVisibility.addListener(_onTransportVisibilityChanged);
       _seenDurableSessionsChangeRevision = _chat.durableSessionsChangeRevision;
+      // The viewed mark only advances after a successful passive read (see
+      // _refreshPassiveTranscript): a screen that leaves before its read
+      // lands, or whose read fails, leaves the change unseen for the next.
+      final unseenDurableStoreChange =
+          _chat.durableSessionsChangeRevision !=
+          _chat.viewedDurableSessionsChangeRevision;
       _syncStopConfirmationVisibility();
       // Al entrar sobre un turno que ya venía corriendo (volver a la pantalla,
       // resume en frío) no llega ningún evento nuevo hasta el siguiente frame
@@ -4704,6 +4792,18 @@ class _ChatScreenState extends State<ChatScreen>
           _scrollToBottom(animate: false);
         });
         _resolveNewSinceYouLeft();
+        if (unseenDurableStoreChange && !_chat.isStreaming) {
+          // re1215: `sessions.changed` reached this chat while no screen
+          // watched it (the end of a turn the user walked away from, or
+          // Desktop going on). Nothing consumed those ticks, so the rows
+          // stayed unread until a tap on «load earlier» re-read the tail.
+          // Re-entry delivers them now, through the same tail-probe gate.
+          _durableTranscriptReadPending = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_disposed || !mounted) return;
+            _syncPassiveTranscriptRefresh(refreshNow: true);
+          });
+        }
       } else if (widget.session.isUnpersistedMobileDraft) {
         // Un chat recién creado todavía no existe en Hermes. Intentar
         // session.resume + REST aquí solo enseña un loader hasta recibir el
@@ -4853,6 +4953,7 @@ class _ChatScreenState extends State<ChatScreen>
       _cancelSessionContextBootstrapRetry();
     }
     _chatRouteVisible = visible;
+    if (visible) _rememberColdStartRoute();
     if (changed && mounted && !_disposed) setState(() {});
     _syncPassiveTranscriptRefresh();
     _syncSubagentPolling();
@@ -5195,6 +5296,9 @@ class _ChatScreenState extends State<ChatScreen>
     // without this bypass such a reply would sit unread until an unrelated
     // event happened to trigger a passive read.
     final durableChangeConfirmed = _durableTranscriptReadPending;
+    // Store changes up to this revision were broadcast before this read
+    // started, so a read that succeeds has reconciled them.
+    final durableRevisionAtStart = _chat.durableSessionsChangeRevision;
     final ownedLiveTurn = _chat.remoteSurfaceOwnsLiveTurn;
     await _chat.refreshPassiveRemoteActivity();
     if (!_canProbePassiveRemoteActivity) return true;
@@ -5223,6 +5327,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (!_canProbePassiveRemoteActivity) return true;
     if (probe != null && probe.unchanged && !_chat.isStreaming) {
       _durableTranscriptReadPending = false;
+      _markDurableRevisionViewed(durableRevisionAtStart);
       return true;
     }
     final fetched = await _fetchMessages(passiveOnly: true);
@@ -5231,8 +5336,22 @@ class _ChatScreenState extends State<ChatScreen>
     // failure (disconnect/network blip) must keep bypassing the runtime-
     // ownership gate on the reader's own retry, or the signal would be lost
     // the moment the first attempt fails.
-    if (fetched) _durableTranscriptReadPending = false;
+    if (fetched) {
+      _durableTranscriptReadPending = false;
+      _markDurableRevisionViewed(durableRevisionAtStart);
+    }
     return fetched;
+  }
+
+  /// re1215: record on the chat, which outlives this screen, that the
+  /// durable store has been reconciled up to [revision]. Only a successful
+  /// read calls this, so a change a screen never read stays pending for the
+  /// next screen that binds the chat.
+  void _markDurableRevisionViewed(int revision) {
+    if (_disposed || !_chatBound) return;
+    if (revision > _chat.viewedDurableSessionsChangeRevision) {
+      _chat.viewedDurableSessionsChangeRevision = revision;
+    }
   }
 
   void _invalidatePassiveMessageRefresh() {
@@ -5314,6 +5433,65 @@ class _ChatScreenState extends State<ChatScreen>
   void didPop() {
     _invalidateOwnedNativeVoicePreparation();
     _markChatVisible(false); // esta pantalla se va
+    _forgetColdStartRoute();
+  }
+
+  /// cs1215: remembers this chat as the connection's last foreground route,
+  /// so a cold start reopens it (identifiers only, encrypted). A chat that
+  /// does not exist on the server yet is not remembered.
+  void _rememberColdStartRoute() {
+    if (!_chatBound || _disposed) return;
+    final store = _chatService.coldStartStore;
+    if (store == null) return;
+    final storedId = _chat.storedSessionId;
+    final durable = storedId != null && storedId.isNotEmpty
+        ? storedId
+        : widget.session.isUnpersistedMobileDraft
+        ? null
+        : _chat.serverSessionId;
+    if (!_isBotChatSurface && (durable == null || durable.isEmpty)) return;
+    unawaited(
+      store
+          .rememberRoute(
+            ColdStartRoute(
+              kind: _isBotChatSurface
+                  ? ColdStartRouteKind.bot
+                  : ColdStartRouteKind.chat,
+              connectionId: widget.connection.id,
+              profile: _chat.sessionProfile,
+              sessionId: durable ?? '',
+              source: widget.session.source,
+            ),
+          )
+          .catchError((Object error) {
+            debugPrint('[cold-start] route not saved (${error.runtimeType})');
+          }),
+    );
+  }
+
+  /// This chat left the stack: forget it as the remembered route, so the
+  /// surface below (Home, Bot Mode) is what a cold start shows.
+  void _forgetColdStartRoute() {
+    if (!_chatBound) return;
+    final store = _chatService.coldStartStore;
+    if (store == null) return;
+    final ids = <String>{
+      widget.session.id,
+      _chat.sessionId,
+      _chat.serverSessionId,
+      if (_chat.storedSessionId != null) _chat.storedSessionId!,
+    };
+    unawaited(
+      store
+          .forgetRoute(
+            widget.connection.id,
+            when: (route) =>
+                (route.kind == ColdStartRouteKind.chat ||
+                    route.kind == ColdStartRouteKind.bot) &&
+                ids.contains(route.sessionId),
+          )
+          .catchError((Object _) {}),
+    );
   }
 
   /// ¿El modo voz global está activo y atado a ESTA sesión? La orquestación de
@@ -5802,7 +5980,17 @@ class _ChatScreenState extends State<ChatScreen>
       authRequired: _chat.dashboardAuthRequired,
       appForeground: _appInForeground,
     );
+    // cq1215: the pill headline of a post-cut viewer follows the transport
+    // (connecting vs. watching a running turn). A reconnect inside the grace
+    // window changes no visibility edge, so repaint on this edge too.
+    final observing = _chat.observesRemoteTurnAfterReconnect;
+    if (observing != _lastObservesRemoteTurnAfterReconnect) {
+      _lastObservesRemoteTurnAfterReconnect = observing;
+      if (mounted) setState(() {});
+    }
   }
+
+  bool _lastObservesRemoteTurnAfterReconnect = false;
 
   void _onTransportVisibilityChanged() {
     if (_disposed || !mounted) return;
@@ -5860,15 +6048,28 @@ class _ChatScreenState extends State<ChatScreen>
       _seenDurableSessionsChangeRevision = durableSessionsChangeRevision;
       _durableTranscriptReadPending = true;
     }
+    // re1215: the `sessionInfo` that only carries a `sessions.changed` tick
+    // goes through the reader's 10 s gap (see notifyDurableStoreChanged):
+    // another session writing every 2 s must not poll this chat every 2 s.
+    final storeChangeOnly =
+        sessionsChangedTick &&
+        event == ActiveChatEvent.sessionInfo &&
+        !passiveTerminalEvent &&
+        !passiveRuntimeEvent;
     _syncPassiveTranscriptRefresh(
       refreshNow:
-          sessionsChangedTick ||
-          passiveTerminalEvent ||
-          passiveRecoveryEvent ||
-          passiveRuntimeEvent,
-      recoveryConverging: passiveRecoveryEvent || sessionsChangedTick,
+          !storeChangeOnly &&
+          (sessionsChangedTick ||
+              passiveTerminalEvent ||
+              passiveRecoveryEvent ||
+              passiveRuntimeEvent),
+      recoveryConverging:
+          !storeChangeOnly && (passiveRecoveryEvent || sessionsChangedTick),
       terminal: passiveTerminalEvent,
     );
+    if (storeChangeOnly && _canProbePassiveRemoteActivity) {
+      _passiveConversationReader?.notifyDurableStoreChanged();
+    }
     if (_editingRewriteSubmitted &&
         ((event == ActiveChatEvent.started && _editingTranscriptChanged) ||
             event == ActiveChatEvent.done ||
@@ -5940,7 +6141,11 @@ class _ChatScreenState extends State<ChatScreen>
         passiveAggregate.completed,
         _chat.safeActiveSubagentCount,
       );
-      final awaitsUnseenInput = _chat.awaitsUnseenInput;
+      final awaitsUnseenInput = (
+        _chat.awaitsUnseenInput,
+        _chat.openRequestRecoveryFailed,
+        _chat.openRequestRecoveryInFlight,
+      );
       if (contextCompacting) {
         _sessionContextAwaitingPostCompactionMetrics = true;
       }
@@ -6696,6 +6901,8 @@ class _ChatScreenState extends State<ChatScreen>
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
       _persistLastRead();
+      // cs1215: a chat created during this visit has a durable id now.
+      if (_chatRouteVisible) _rememberColdStartRoute();
       // A setup that began while this route owned the foreground cannot regain
       // authority after an asynchronous dashboard response. This only revokes
       // the opaque preparation; an already-active opted-in conversation stays
@@ -7066,9 +7273,16 @@ class _ChatScreenState extends State<ChatScreen>
   ChatRenderProjection get _currentRenderProjection {
     final messages = _messages;
     final cached = _renderProjection;
-    if (cached != null && cached.canReuseFor(messages)) return cached;
+    final streamingHead = _chat.isStreaming;
+    if (cached != null &&
+        cached.canReuseFor(messages, streamingHead: streamingHead)) {
+      return cached;
+    }
     widget.performanceProbe?.renderProjectionBuilds++;
-    return _renderProjection = ChatRenderProjection.build(messages);
+    return _renderProjection = ChatRenderProjection.build(
+      messages,
+      streamingHead: streamingHead,
+    );
   }
 
   List<_ChatListEntry> get _currentListEntries {
@@ -7151,7 +7365,10 @@ class _ChatScreenState extends State<ChatScreen>
     if (message['role'] != 'assistant' || message['_pipeline'] == true) {
       return null;
     }
-    final content = (message['content'] as String?) ?? '';
+    final content = _joinResponseGroupText(
+      _responseGroupTextPrefix(_olderResponseGroupRows(message)),
+      (message['content'] as String?) ?? '',
+    );
     if (content.length <= _assistantChunkMaxChars ||
         _jobChipLabel(content, Strings.of(context)) != null ||
         _messageKeepsLiveHost(message) ||
@@ -7478,17 +7695,38 @@ class _ChatScreenState extends State<ChatScreen>
             widget.session.source == 'mobile' &&
             widget.session.messageCount == 0 &&
             _messages.isEmpty;
+        // cs1215: rows painted from the cold-start cache are not evidence
+        // that the session still exists.
+        final onlyCachedRows = _chat.showingCachedTranscript;
         // Hermes Desktop drops a verifiably gone id (its transcript AND its
         // row 404) to a fresh draft instead of an error; a 404 on the
         // transcript alone keeps the stable error with retry.
         final storedSessionGone =
             !isUnpersistedMobileChat &&
-            _messages.isEmpty &&
+            (_messages.isEmpty || onlyCachedRows) &&
             await _storedSessionIsGone();
         if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
           return false;
         }
         if (storedSessionGone) {
+          _chat.discardCachedTranscript();
+          unawaited(
+            _chatService.forgetColdStartSession(
+              connectionId: widget.connection.id,
+              profile: _chat.sessionProfile,
+              sessionId: _chat.serverSessionId,
+            ),
+          );
+          if (widget.restoredFromColdStart) {
+            // The remembered chat was deleted elsewhere: back to Home, never
+            // a draft that silently replaces it.
+            HermesNotice.of(context).showSnackBar(
+              SnackBar(content: Text(Strings.of(context).chaSessionGone)),
+              kind: HermesNoticeKind.warning,
+            );
+            unawaited(Navigator.of(context).maybePop());
+            return false;
+          }
           _chat.markStoredSessionGone();
           setState(() => _error = null);
           HermesNotice.of(context).showSnackBar(
@@ -8300,6 +8538,69 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
+  bool _providerReauthRunning = false;
+
+  /// "Volver a iniciar sesión" / "Revisar la clave" on a provider credential
+  /// failure. After a successful sign-in the turn can be retried in place.
+  Future<void> _reauthProvider(
+    ProviderAuthFailure failure, {
+    VoidCallback? onRetry,
+  }) async {
+    if (_providerReauthRunning) return;
+    setState(() => _providerReauthRunning = true);
+    // Identidad del fallo que se ofrece reintentar. El flujo de inicio de
+    // sesión y el aviso posterior duran minutos: si entretanto el turno se
+    // reconcilia, se reintenta o falla otro, ese Retry ya no le corresponde.
+    final retryChat = _chat;
+    final failedTurn = onRetry == null
+        ? null
+        : retryChat.currentFailedTurnToken;
+    var renewed = false;
+    try {
+      renewed = await runProviderReauth(
+        context: context,
+        connection: widget.connection,
+        failure: failure,
+        profile: Session.profileOwner(_chat.sessionProfile),
+        clientFactory: widget.providerReauthClientFactory,
+      );
+    } finally {
+      if (mounted) setState(() => _providerReauthRunning = false);
+    }
+    if (!renewed || !mounted) return;
+    if (failure.origin == ProviderAuthOrigin.compaction) {
+      _chat.dismissCompactionAuthFailure();
+    }
+    final s = Strings.of(context);
+    final label = failure.label.isEmpty ? failure.provider : failure.label;
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(
+        content: Text(s.hr1215SignedInAgain(label)),
+        duration: const Duration(seconds: 10),
+        action: onRetry == null || failedTurn == null
+            ? null
+            : SnackBarAction(
+                label: s.chaRetry,
+                onPressed: () {
+                  if (!mounted ||
+                      !identical(_chat, retryChat) ||
+                      !_isSameFailedTurn(
+                        retryChat.currentFailedTurnToken,
+                        failedTurn,
+                      )) {
+                    return;
+                  }
+                  onRetry();
+                },
+              ),
+      ),
+      kind: HermesNoticeKind.success,
+    );
+  }
+
+  static bool _isSameFailedTurn(Object? current, Object captured) =>
+      current is String ? current == captured : identical(current, captured);
+
   /// Retry the last failed send.
   Future<void> _retryLastPrompt([String? bubblePrompt]) async {
     // The error bubble remembers its own prompt; after a relaunch the screen's
@@ -8480,122 +8781,74 @@ class _ChatScreenState extends State<ChatScreen>
     return true;
   }
 
-  /// ¿Es una fila del asistente cuyo único contenido es traza (razonamiento /
-  /// herramientas), sin texto visible, medios ni desenlace parado/cancelado?
-  bool _isTraceOnlyAssistantRow(Map<String, dynamic> row) {
-    if (row['role'] != 'assistant' ||
-        (row['display_kind']?.toString().trim().isNotEmpty ?? false) ||
-        row['_pipeline'] == true ||
-        row['_cancelled'] == true ||
-        row['_stopped'] == true ||
-        ((row['content'] as String?) ?? '').trim().isNotEmpty ||
-        _structuredGeneratedImages(row).isNotEmpty ||
-        _structuredGeneratedVideos(row).isNotEmpty) {
-      return false;
-    }
-    return normalizeAssistantActivityTrace(
-          row[assistantActivityTraceKey],
-        ).isNotEmpty ||
-        (row['reasoning'] is String &&
-            (row['reasoning'] as String).trim().isNotEmpty);
+  /// Filas más antiguas (más antigua primero) que comparten burbuja con
+  /// [msg] en el mismo turno, o vacío si [msg] no ancla un grupo de respuesta.
+  List<Map<String, dynamic>> _olderResponseGroupRows(
+    Map<String, dynamic> msg, {
+    bool liveHead = false,
+  }) {
+    final projection = _currentRenderProjection;
+    // A live frame may still carry the map of a previous flush; while the turn
+    // streams it always stands for the head row.
+    final index = projection.messageIndexOf(msg) ?? (liveHead ? 0 : null);
+    if (index == null) return const [];
+    final members = projection.responseGroupMembers(index);
+    if (members == null) return const [];
+    final messages = _messages;
+    return [for (var i = members.length - 1; i > 0; i--) messages[members[i]]];
   }
 
-  /// ¿Es una respuesta con texto visible, terminada y sin parar/cancelar?
-  bool _isMergeTargetAnswer(Map<String, dynamic> row) =>
-      row['role'] == 'assistant' &&
-      !(row['display_kind']?.toString().trim().isNotEmpty ?? false) &&
-      row['_pipeline'] != true &&
-      row['_cancelled'] != true &&
-      row['_stopped'] != true &&
-      ((row['content'] as String?) ?? '').trim().isNotEmpty;
-
-  /// Fusión de filas solo-traza con la respuesta que las sigue en el MISMO turno
-  /// (adyacentes, sin mensaje de usuario entre ellas):
-  ///  * en la fila solo-traza, `hidden` (no se pinta);
-  ///  * en la respuesta, `merged` con los pasos de todas (más antiguos primero).
-  /// El turno en vivo no se fusiona, ni se cruza un mensaje de usuario ni un
-  /// desenlace parado/cancelado.
-  ({bool hidden, Map<String, dynamic>? merged})? _traceMergeFor(
-    Map<String, dynamic> msg,
-  ) {
-    final projection = _currentRenderProjection;
-    final index = projection.messageIndexOf(msg);
-    if (index == null) return null;
-    if (_isTraceOnlyAssistantRow(msg)) {
-      final newerIndex = index - 1;
-      if (newerIndex < 0) return null;
-      final newer = _messages[newerIndex];
-      // Una fila solo-traza seguida de otra solo-traza se funde con la cadena
-      // completa: la oculta es cada una salvo que la cadena acabe en respuesta.
-      var probe = newerIndex;
-      var row = newer;
-      while (_isTraceOnlyAssistantRow(row) && probe > 0) {
-        probe -= 1;
-        row = _messages[probe];
-      }
-      final liveHead = _chat.isStreaming && probe == 0;
-      if (!liveHead && _isMergeTargetAnswer(row)) {
-        return (hidden: true, merged: null);
-      }
-      return null;
-    }
-    if (!_isMergeTargetAnswer(msg)) return null;
-    final older = <Map<String, dynamic>>[];
-    var probe = index + 1;
-    while (probe < _messages.length &&
-        _isTraceOnlyAssistantRow(_messages[probe])) {
-      older.add(_messages[probe]);
-      probe += 1;
-    }
-    if (older.isEmpty) return null;
+  /// Metadatos de la burbuja única de un turno (Desktop `ResponseMessages`):
+  /// traza, texto y medios de todas las filas del grupo, más antiguas primero.
+  /// [head] sustituye a la fila más nueva (p. ej. el frame vivo recortado).
+  Map<String, dynamic> _responseGroupMetadata(
+    Map<String, dynamic> msg, {
+    Map<String, dynamic>? head,
+  }) {
+    final older = _olderResponseGroupRows(msg, liveHead: head != null);
+    if (older.isEmpty) return head ?? msg;
+    final newest = head ?? msg;
     // La copia fusionada se reutiliza mientras las filas de origen no cambien:
     // su identidad alimenta la selección de texto y no debe variar por frame.
-    final cached = _traceMergeCache[msg];
+    final cached = _responseGroupCache[msg];
     if (cached != null &&
+        identical(cached.head, newest) &&
         cached.sources.length == older.length &&
-        [
-          for (var i = 0; i < older.length; i++)
-            identical(cached.sources[i], older[i]),
-        ].every((same) => same)) {
-      return (hidden: false, merged: cached.merged);
+        Iterable<int>.generate(
+          older.length,
+        ).every((i) => identical(cached.sources[i], older[i]))) {
+      return cached.merged;
     }
-    // `older` va del más nuevo al más antiguo: se invierte para el orden real.
-    final chain = [...older.reversed, msg];
-    final steps = <Map<String, dynamic>>[
-      for (final row in chain)
-        ...normalizeAssistantActivityTrace(row[assistantActivityTraceKey]),
-    ];
-    final reasoning = [
-      for (final row in chain)
-        if (row['reasoning'] is String &&
-            (row['reasoning'] as String).trim().isNotEmpty)
-          (row['reasoning'] as String).trim(),
-    ].join('\n\n');
-    var seconds = 0.0;
-    var hasSeconds = false;
-    for (final row in chain) {
-      final value = row['_activity_duration_seconds'];
-      if (value is num && value.isFinite && value > 0) {
-        seconds += value;
-        hasSeconds = true;
-      }
-    }
-    final merged = <String, dynamic>{
-      ...msg,
-      if (steps.isNotEmpty) assistantActivityTraceKey: steps,
-      if (reasoning.isNotEmpty) 'reasoning': reasoning,
-      if (hasSeconds) '_activity_duration_seconds': seconds,
-    };
-    if (_traceMergeCache.length > 64) _traceMergeCache.clear();
-    _traceMergeCache[msg] = (sources: older, merged: merged);
-    return (hidden: false, merged: merged);
+    final merged = mergeAssistantResponseGroup([...older, newest]);
+    if (_responseGroupCache.length > 64) _responseGroupCache.clear();
+    _responseGroupCache[msg] = (sources: older, head: newest, merged: merged);
+    return merged;
   }
 
   final Map<
     Map<String, dynamic>,
-    ({List<Map<String, dynamic>> sources, Map<String, dynamic> merged})
+    ({
+      List<Map<String, dynamic>> sources,
+      Map<String, dynamic> head,
+      Map<String, dynamic> merged,
+    })
   >
-  _traceMergeCache = Map.identity();
+  _responseGroupCache = Map.identity();
+
+  /// Texto visible de las filas anteriores del grupo, en orden.
+  static String _responseGroupTextPrefix(List<Map<String, dynamic>> older) => [
+    for (final row in older)
+      if (row['content'] is String &&
+          (row['content'] as String).trim().isNotEmpty)
+        row['content'] as String,
+  ].join('\n\n');
+
+  static String _joinResponseGroupText(String prefix, String content) =>
+      prefix.isEmpty
+      ? content
+      : content.trim().isEmpty
+      ? prefix
+      : '$prefix\n\n$content';
 
   bool _isLatestAssistant(Map<String, dynamic> target) {
     final indexes = _currentRenderProjection.assistantMessageIndexesNewestFirst;
@@ -9464,7 +9717,9 @@ class _ChatScreenState extends State<ChatScreen>
             builder: (dctx) => AlertDialog(
               backgroundColor: Theme.of(dctx).hermes.surface,
               title: Text(str.chaModelChangeTitle),
-              content: Text(confirmation.confirmMessage ?? ''),
+              content: Text(
+                confirmation.confirmMessage ?? str.chaModelChangeConfirmBody,
+              ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dctx, false),
@@ -10681,6 +10936,11 @@ class _ChatScreenState extends State<ChatScreen>
     // as a pill out of sync with its own panel; between steps the agent is
     // thinking, as the list and Home say.
     final activityHeadline = switch (_pipelineState) {
+      // cq1215: a post-cut viewer stays `connecting` for the rest of the
+      // turn; with the socket back it is watching a running turn.
+      ChatPipelineState.connecting
+          when _chat.observesRemoteTurnAfterReconnect =>
+        s.ss1215StatusWorking,
       ChatPipelineState.connecting => s.chaPipelineConnecting,
       ChatPipelineState.streaming => s.chaPipelineStreaming,
       _ => s.chaPipelineThinking,
@@ -11503,10 +11763,19 @@ class _ChatScreenState extends State<ChatScreen>
                           ),
                           if (_chat.awaitsUnseenInput)
                             _AwaitingUnseenInputNotice(
-                              message: str.cr1215AwaitingUnseenInput,
-                              actionLabel: str.cr1215ShowQuestion,
+                              message: _chat.openRequestRecoveryFailed
+                                  ? str.cq1215QuestionNotRecovered
+                                  : str.cr1215AwaitingUnseenInput,
+                              actionLabel: _chat.openRequestRecoveryFailed
+                                  ? str.cq1215RetryQuestion
+                                  : str.cr1215ShowQuestion,
+                              busy: _chat.openRequestRecoveryInFlight,
                               onShow: () =>
                                   unawaited(_chat.rehydrateOpenRequests()),
+                              stopLabel: _chat.openRequestRecoveryFailed
+                                  ? str.cq1215StopTurn
+                                  : null,
+                              onStop: () => unawaited(_cancelStream()),
                             ),
                           if (_chat.localTranscriptTruncationNoticeVisible)
                             _LocalTranscriptTruncationNotice(
@@ -11824,6 +12093,18 @@ class _ChatScreenState extends State<ChatScreen>
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
+                                if (_chat.compactionAuthFailure
+                                    case final compactionAuth?)
+                                  ProviderAuthBanner(
+                                    failure: compactionAuth,
+                                    onAction: _providerReauthRunning
+                                        ? null
+                                        : () => unawaited(
+                                            _reauthProvider(compactionAuth),
+                                          ),
+                                    onDismiss:
+                                        _chat.dismissCompactionAuthFailure,
+                                  ),
                                 if (_chat.offerStaleResumedSessionStop)
                                   StaleRunningSessionBanner(
                                     enabled: _chat.gatewayConnected,
@@ -12083,7 +12364,15 @@ class _ChatScreenState extends State<ChatScreen>
       final catalog = await _bridgeModelOptions();
       if (!mounted) return;
       if (catalog != null) {
-        _modelSource = _ModelSource.bridge;
+        final result = ModelPickerResult(
+          info: catalog.$1,
+          providers: catalog.$2,
+          source: ModelPickerSource.bridge,
+        );
+        _modelPickerCache
+          ..noteSuccess(_modelPickerKey, ModelPickerSource.bridge)
+          ..write(_modelPickerKey, result);
+        _adoptModelPickerResult(result);
         _modelOptionsFuture = Future.value(catalog);
         HermesNotice.of(
           context,
@@ -12175,7 +12464,15 @@ class _ChatScreenState extends State<ChatScreen>
   /// este flujo ("Ya lo ejecuté — Verificar").
   Future<bool> _verifyBridge() async {
     try {
-      return await _bridgeModelOptions() != null;
+      final ok = await _bridgeModelOptions() != null;
+      if (ok && mounted) {
+        // A repaired Bridge must not wait out its failure cooldown.
+        _modelPickerCache.noteSuccess(
+          _modelPickerKey,
+          ModelPickerSource.bridge,
+        );
+      }
+      return ok;
     } catch (_) {
       return false;
     }
@@ -12186,8 +12483,20 @@ class _ChatScreenState extends State<ChatScreen>
       showReadOnlyNotice(context);
       return;
     }
-    // El catálogo se refresca al abrir; si ya hay runtime, `session.info` sigue
+    // mk1215: un catálogo cacheado se pinta al instante; si está caducado se
+    // revalida en segundo plano. Si ya hay runtime, `session.info` sigue
     // siendo la única fuente del badge efectivo.
+    final cached = _modelPickerCache.peek(_modelPickerKey);
+    if (cached != null) {
+      _adoptModelPickerResult(cached.result);
+      _modelOptionsPainted = _withoutHiddenModels(
+        cached.result,
+        _lastReadPrefs,
+      );
+      if (cached.fresh) {
+        _modelOptionsFuture ??= Future.value(_modelOptionsPainted!);
+      }
+    }
     _modelOptionsFuture ??= _loadModelOptions()
       ..then((res) {
         if (!mounted ||
@@ -12214,13 +12523,17 @@ class _ChatScreenState extends State<ChatScreen>
               builder: (ctx, setSheet) {
                 return FutureBuilder<(ModelActiveInfo, List<ModelProvider>)>(
                   future: _modelOptionsFuture ??= _loadModelOptions(),
+                  initialData: _modelOptionsPainted,
                   builder: (ctx, snap) {
+                    // A failed background refresh keeps the painted catalog.
+                    final data = snap.data ?? _modelOptionsPainted;
                     final loading =
+                        data == null &&
                         snap.connectionState == ConnectionState.waiting;
                     final active = _chat.hasDesktopRuntime
                         ? _activeModel
-                        : snap.data?.$1;
-                    final providers = snap.data?.$2 ?? const <ModelProvider>[];
+                        : data?.$1;
+                    final providers = data?.$2 ?? const <ModelProvider>[];
                     final visibleProviders = filterModelProviders(
                       providers,
                       modelQuery,
@@ -12459,7 +12772,7 @@ class _ChatScreenState extends State<ChatScreen>
                             padding: EdgeInsets.all(24),
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        else if (snap.hasError)
+                        else if (data == null && snap.hasError)
                           Padding(
                             padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                             child: Text(
@@ -12556,7 +12869,10 @@ class _ChatScreenState extends State<ChatScreen>
           ),
         );
       },
-    ).whenComplete(() => _modelOptionsFuture = null);
+    ).whenComplete(() {
+      _modelOptionsFuture = null;
+      _modelOptionsPainted = null;
+    });
   }
 
   Widget _modelTile(
@@ -14223,6 +14539,7 @@ class _ChatScreenState extends State<ChatScreen>
             for (var i = 0; i < queuedEntries.length; i++) ...[
               _QueuedRow(
                 entry: queuedEntries[i],
+                retryExhausted: _queuedRetryExhausted(queuedEntries[i]),
                 attachmentNames: queuedEntries[i].attachments
                     .map((item) => item.name)
                     .toList(growable: false),
@@ -14262,12 +14579,19 @@ class _ChatScreenState extends State<ChatScreen>
     if (_chat.isStreaming || entries.isEmpty) return false;
     final head = entries.first;
     if (head.kind == QueuedEntryKind.desktopAccepted) return false;
-    final retryKey = head.id.startsWith('prepared:')
-        ? head.id.substring('prepared:'.length)
-        : head.id;
     return head.stopWaitingAvailable ||
         head.missingAttachment ||
-        _chat.queuedRetriesExhausted.contains(retryKey);
+        _queuedRetryExhausted(head);
+  }
+
+  /// The entry used up its automatic retries on a healthy socket and will
+  /// not go on its own until the user retries it.
+  bool _queuedRetryExhausted(QueuedEntryView entry) {
+    if (entry.kind == QueuedEntryKind.desktopAccepted) return false;
+    final retryKey = entry.id.startsWith('prepared:')
+        ? entry.id.substring('prepared:'.length)
+        : entry.id;
+    return _chat.queuedRetriesExhausted.contains(retryKey);
   }
 
   Future<void> _abandonUncertainQueued(QueuedEntryView entry) async {
@@ -14899,7 +15223,14 @@ class _ChatScreenState extends State<ChatScreen>
               // se percibe como un pequeño tirón si el usuario empieza a leer o
               // arrastrar. La guarda sobrevive al terminal para que cancelación,
               // error o una reconciliación tardía tampoco animen de nuevo la fila.
-              final key = _entranceKey(unit);
+              // A response group grows at its newest row; its oldest row is
+              // the stable identity, so a joining row never replays the
+              // entrance nor remounts the bubble.
+              final groupStart =
+                  plan is ChatMessageUnitPlan && sourceMessages.length > 1
+                  ? sourceMessages.last
+                  : null;
+              final key = _entranceKey(groupStart ?? unit);
               final belongsToSurfaceTurn =
                   _surfaceTurnSerial == _assistantEntranceSerial &&
                   (_chat.isStreaming || _surfaceTurnTerminal);
@@ -14929,16 +15260,18 @@ class _ChatScreenState extends State<ChatScreen>
               if (!keepsLiveHost && !isLiveHead) {
                 result = RepaintBoundary(child: result);
               }
-              final durableEntryIds = sourceMessages
-                  .map((message) {
-                    final messageId = canonicalTranscriptMessageId(message);
-                    if (messageId != null) return 'message:$messageId';
-                    final rowId = canonicalTranscriptRowId(message);
-                    return rowId == null ? null : 'row:$rowId';
-                  })
-                  .whereType<String>()
-                  .toList(growable: false);
-              if (durableEntryIds.length == sourceMessages.length) {
+              final durableEntryIds =
+                  (groupStart == null ? sourceMessages : [groupStart])
+                      .map((message) {
+                        final messageId = canonicalTranscriptMessageId(message);
+                        if (messageId != null) return 'message:$messageId';
+                        final rowId = canonicalTranscriptRowId(message);
+                        return rowId == null ? null : 'row:$rowId';
+                      })
+                      .whereType<String>()
+                      .toList(growable: false);
+              if (durableEntryIds.length ==
+                  (groupStart == null ? sourceMessages.length : 1)) {
                 // This must remain the outermost list child. Sliver reconciliation
                 // can then retain the complete bubble subtree even when refresh
                 // replaces its source Map or runtime presentation wrappers change.
@@ -14959,6 +15292,9 @@ class _ChatScreenState extends State<ChatScreen>
     );
     return ChatRefreshStatusOverlay(
       loading: _interactiveMessageRefreshPending,
+      cachedLabel: _chat.showingCachedTranscript
+          ? Strings.of(context).cs1215CachedTranscript
+          : null,
       errorMessage: _error == null || _refreshErrorNoticeDismissed
           ? null
           : Strings.of(context).chaMessagesError,
@@ -15061,7 +15397,10 @@ class _ChatScreenState extends State<ChatScreen>
     ChatRenderUnitPlan plan,
   ) {
     final indexes = switch (plan) {
-      ChatMessageUnitPlan(:final messageIndex) => [messageIndex],
+      // Every row of a response group keeps its own anchor, find highlight
+      // and unread marker, newest first.
+      ChatMessageUnitPlan(:final memberIndexesNewestFirst) =>
+        memberIndexesNewestFirst,
       ChatUserTurnUnitPlan(
         :final primaryMessageIndex,
         :final supplementMessageIndexes,
@@ -15109,6 +15448,9 @@ class _ChatScreenState extends State<ChatScreen>
     }
     if (_turnWaitsForUser) return HermesSparkMood.waiting;
     return switch (_pipelineState) {
+      ChatPipelineState.connecting
+          when _chat.observesRemoteTurnAfterReconnect =>
+        HermesSparkMood.thinking,
       ChatPipelineState.connecting => HermesSparkMood.connecting,
       ChatPipelineState.waiting => HermesSparkMood.waiting,
       _ => HermesSparkMood.thinking,
@@ -15192,13 +15534,16 @@ class _ChatScreenState extends State<ChatScreen>
     final msg = unit as Map<String, dynamic>;
     final role = (msg['role'] as String?) ?? 'assistant';
     var content = (msg['content'] as String?) ?? '';
-    final sourceContent = content;
-    // Un turno que primero piensa/llama herramientas y luego responde llega en
-    // varias filas del servidor: la fila solo-traza se funde en el desplegable
-    // de la respuesta que la sigue (una cabecera, un «Completado ⌄»).
-    final traceMerge = role == 'assistant' ? _traceMergeFor(msg) : null;
-    if (traceMerge?.hidden ?? false) return const SizedBox.shrink();
-    final metadataMsg = traceMerge?.merged ?? msg;
+    // Un turno del agente llega en varias filas (herramientas, razonamiento,
+    // texto intermedio y final). Como Desktop, todas comparten UNA burbuja:
+    // una cabecera, un «Pensó ⌄» con todas las herramientas y el texto al
+    // final. [msg] es la fila más nueva y conserva acciones e identidad.
+    final groupRows = role == 'assistant'
+        ? _olderResponseGroupRows(msg)
+        : const <Map<String, dynamic>>[];
+    final metadataMsg = groupRows.isEmpty ? msg : _responseGroupMetadata(msg);
+    final groupPrefix = _responseGroupTextPrefix(groupRows);
+    final sourceContent = _joinResponseGroupText(groupPrefix, content);
 
     final historicalSubagents = historicalSubagentCompletionOf(msg);
     if (historicalSubagents != null) {
@@ -15209,6 +15554,16 @@ class _ChatScreenState extends State<ChatScreen>
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         child: SubagentCompletionCard(data: historicalSubagents),
       );
+    }
+
+    // Aviso de fin de proceso en segundo plano: Hermes lo guarda como
+    // `role=user`; igual que Desktop se pinta como aviso compacto con la salida
+    // plegada, nunca como burbuja de la persona.
+    if (role == 'user' && effectiveUserDisplayKind(msg) == 'process_complete') {
+      final carrier = parseBackgroundProcessCarrier(sourceContent.trimRight());
+      if (carrier != null) {
+        return _ProcessNotificationRow(carrier: carrier, raw: sourceContent);
+      }
     }
 
     final timelineEvent = _timelineSystemEventPresentation(context, msg);
@@ -15234,24 +15589,32 @@ class _ChatScreenState extends State<ChatScreen>
     // Error bubble with retry
     if (role == 'assistant_error') {
       final prompt = (msg['_prompt'] as String?) ?? _lastPrompt;
+      final authFailure = ProviderAuthFailure.fromJson(
+        msg[providerAuthFailureKey],
+      );
+      final onRetry = _chat.conflictReadOnly
+          ? null
+          : () => unawaited(_retryLastPrompt(prompt));
       return _ErrorBubble(
         error: activeChatStoredErrorUiMessage(content),
-        onRetry: _chat.conflictReadOnly
-            ? null
-            : () => unawaited(_retryLastPrompt(prompt)),
+        onRetry: onRetry,
         prompt: prompt,
         onRestartGateway: _restartGatewayFromChat,
         onNewSession: _chat.conflictReadOnly ? null : _newChat,
+        authFailure: authFailure,
+        onReauth: authFailure == null || _providerReauthRunning
+            ? null
+            : () => unawaited(_reauthProvider(authFailure, onRetry: onRetry)),
       );
     }
 
     final isPipeline = msg['_pipeline'] == true;
     final hasUnifiedActivity =
         normalizeAssistantActivityTrace(
-          msg[assistantActivityTraceKey],
+          metadataMsg[assistantActivityTraceKey],
         ).isNotEmpty ||
-        (msg['reasoning'] is String &&
-            (msg['reasoning'] as String).trim().isNotEmpty);
+        (metadataMsg['reasoning'] is String &&
+            (metadataMsg['reasoning'] as String).trim().isNotEmpty);
     final isCancelled = msg['_cancelled'] == true;
     // El mensaje en curso es el más nuevo (índice 0) mientras hay streaming.
     // Solo en él aplicamos el normalizador visual de Markdown incompleto.
@@ -15280,6 +15643,7 @@ class _ChatScreenState extends State<ChatScreen>
         _revealedChars < content.length) {
       content = content.substring(0, _revealedChars);
     }
+    content = _joinResponseGroupText(groupPrefix, content);
 
     // Placeholder del turno activo: la ThinkingTraceCard en vivo agrega el
     // progreso del turno en curso (los eventos reales se agruparán al
@@ -15366,15 +15730,15 @@ class _ChatScreenState extends State<ChatScreen>
         msg['_stopped'] != true &&
         displayContent.trim().isEmpty &&
         operationalProjection.technicalDetails.isEmpty &&
-        _structuredGeneratedImages(msg).isEmpty &&
-        _structuredGeneratedVideos(msg).isEmpty &&
-        !_assistantActivityEvents(context, msg, '').any(
+        _structuredGeneratedImages(metadataMsg).isEmpty &&
+        _structuredGeneratedVideos(metadataMsg).isEmpty &&
+        !_assistantActivityEvents(context, metadataMsg, '').any(
           (event) =>
               event.kind == ChatTraceEventKind.reasoning ||
               !isInternalActivityLabel(event.label),
         ) &&
-        !(msg['reasoning'] is String &&
-            (msg['reasoning'] as String).trim().isNotEmpty)) {
+        !(metadataMsg['reasoning'] is String &&
+            (metadataMsg['reasoning'] as String).trim().isNotEmpty)) {
       return const SizedBox.shrink();
     }
     if (role == 'assistant' && isCancelled && content.isNotEmpty) {
@@ -15382,7 +15746,7 @@ class _ChatScreenState extends State<ChatScreen>
       // slice pinta su parte y solo el cierre lleva la marca 'cancelled'.
       return _AssistantMessageWithMark(
         content: displayContent,
-        mark: 'cancelled',
+        mark: _AssistantMessageMark.cancelled,
         verbose: _devDiagnostics,
         metadata: msg,
         linkCache: _linkCache,
@@ -15472,13 +15836,29 @@ class _ChatScreenState extends State<ChatScreen>
     _LiveAssistantFrame frame, {
     required bool compact,
   }) {
-    final projection = _projectOperationalArtifacts(context, frame.content);
+    // El turno vivo es la fila más nueva de su grupo de respuesta: las filas
+    // ya cerradas del mismo turno siguen en ESTA burbuja, que crece en su
+    // sitio en lugar de apilar otra cabecera.
+    final groupRows = _olderResponseGroupRows(
+      frame.metadata,
+      liveHead: frame.isStreaming,
+    );
+    final metadata = groupRows.isEmpty
+        ? frame.metadata
+        : _responseGroupMetadata(frame.metadata, head: frame.metadata);
+    final projection = _projectOperationalArtifacts(
+      context,
+      _joinResponseGroupText(
+        _responseGroupTextPrefix(groupRows),
+        frame.content,
+      ),
+    );
     final hasUnifiedActivity =
         normalizeAssistantActivityTrace(
-          frame.metadata[assistantActivityTraceKey],
+          metadata[assistantActivityTraceKey],
         ).isNotEmpty ||
-        (frame.metadata['reasoning'] is String &&
-            (frame.metadata['reasoning'] as String).trim().isNotEmpty);
+        (metadata['reasoning'] is String &&
+            (metadata['reasoning'] as String).trim().isNotEmpty);
     if (frame.isStreaming &&
         projection.visibleMarkdown.trim().isEmpty &&
         !hasUnifiedActivity) {
@@ -15489,7 +15869,7 @@ class _ChatScreenState extends State<ChatScreen>
         projection.visibleMarkdown.trim().isNotEmpty) {
       return _AssistantMessageWithMark(
         content: projection.visibleMarkdown,
-        mark: 'cancelled',
+        mark: _AssistantMessageMark.cancelled,
         verbose: _devDiagnostics,
         metadata: frame.metadata,
         linkCache: _linkCache,
@@ -15506,7 +15886,7 @@ class _ChatScreenState extends State<ChatScreen>
       content: projection.visibleMarkdown,
       isUser: false,
       verbose: _devDiagnostics,
-      metadata: frame.metadata,
+      metadata: metadata,
       linkCache: _linkCache,
       fetchLinkPreview: _fetchLinkPreview,
       firstUrl: _firstUrl,
@@ -15821,15 +16201,35 @@ class _AwaitingUnseenInputNotice extends StatelessWidget {
     required this.message,
     required this.actionLabel,
     required this.onShow,
+    required this.onStop,
+    this.busy = false,
+    this.stopLabel,
   });
 
   final String message;
   final String actionLabel;
   final VoidCallback onShow;
+  final VoidCallback onStop;
+  final bool busy;
+
+  /// cq1215: set once a recovery came back empty, so the notice offers the
+  /// existing interrupt next to Retry instead of a button that does nothing.
+  final String? stopLabel;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final style = TextButton.styleFrom(
+      minimumSize: const Size(48, 48),
+      foregroundColor: colors.accentText,
+    );
+    final show = TextButton(
+      key: const ValueKey('chat-awaiting-unseen-input-show'),
+      onPressed: busy ? null : onShow,
+      style: style,
+      child: Text(actionLabel),
+    );
+    final stop = stopLabel;
     return Semantics(
       key: const ValueKey('chat-awaiting-unseen-input'),
       container: true,
@@ -15839,15 +16239,21 @@ class _AwaitingUnseenInputNotice extends StatelessWidget {
         icon: Icons.help_outline_rounded,
         iconColor: colors.warning,
         message: message,
-        trailing: TextButton(
-          key: const ValueKey('chat-awaiting-unseen-input-show'),
-          onPressed: onShow,
-          style: TextButton.styleFrom(
-            minimumSize: const Size(48, 48),
-            foregroundColor: colors.accentText,
-          ),
-          child: Text(actionLabel),
-        ),
+        trailing: stop == null
+            ? show
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  show,
+                  TextButton(
+                    key: const ValueKey('chat-awaiting-unseen-input-stop'),
+                    onPressed: busy ? null : onStop,
+                    style: style,
+                    child: Text(stop),
+                  ),
+                ],
+              ),
       ),
     );
   }
@@ -16611,12 +17017,19 @@ class _ErrorBubble extends StatefulWidget {
   /// contexto del modelo (reintentar repetiría el mismo fallo).
   final VoidCallback? onNewSession;
 
+  /// The provider rejected its credential: the card names it and offers the
+  /// fix (sign in again / check the key) before Retry, as Desktop does.
+  final ProviderAuthFailure? authFailure;
+  final VoidCallback? onReauth;
+
   const _ErrorBubble({
     required this.error,
     required this.prompt,
     required this.onRetry,
     this.onRestartGateway,
     this.onNewSession,
+    this.authFailure,
+    this.onReauth,
   });
 
   @override
@@ -16655,10 +17068,16 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
     final colors = Theme.of(context).hermes;
     final str = Strings.of(context);
     final kind = _classifyError(widget.error);
-    final summary = widget.error.length > 140
+    final authFailure = widget.authFailure;
+    final summary = authFailure != null
+        ? providerAuthBody(str, authFailure)
+        : widget.error.length > 140
         ? '${widget.error.substring(0, 140)}…'
         : widget.error;
-    final hasMore = widget.error.length > 140 || widget.error.contains('\n');
+    final hasMore =
+        authFailure != null ||
+        widget.error.length > 140 ||
+        widget.error.contains('\n');
 
     return Padding(
       padding: const EdgeInsets.only(left: 12, right: 56, top: 11, bottom: 3),
@@ -16700,14 +17119,22 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
               children: [
                 Row(
                   children: [
-                    Icon(kind.icon, size: 14, color: colors.error),
+                    Icon(
+                      authFailure != null ? Icons.key_off_rounded : kind.icon,
+                      size: 14,
+                      color: colors.error,
+                    ),
                     const SizedBox(width: 6),
-                    Text(
-                      _kindLabel(kind, str),
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: colors.error,
+                    Flexible(
+                      child: Text(
+                        authFailure != null
+                            ? providerAuthTitle(str, authFailure)
+                            : _kindLabel(kind, str),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: colors.error,
+                        ),
                       ),
                     ),
                   ],
@@ -16722,7 +17149,9 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                     fontFamily: _expanded ? 'monospace' : null,
                   ),
                 ),
-                if (_kindHint(kind, str) != null && !_expanded) ...[
+                if (authFailure == null &&
+                    _kindHint(kind, str) != null &&
+                    !_expanded) ...[
                   const SizedBox(height: 4),
                   Text(
                     _kindHint(kind, str)!,
@@ -16733,10 +17162,20 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                 // A-114 (spec 028): las acciones de recuperación pasan a
                 // targets ≥48dp con rol de botón (eran texto de 11px con
                 // ~25dp tocables); el visual compacto se conserva.
-                Row(
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
                   children: [
+                    if (authFailure != null)
+                      _ErrorBubbleAction(
+                        key: const ValueKey('hr1215-error-reauth'),
+                        label: providerAuthActionLabel(str, authFailure),
+                        color: colors.error,
+                        onTap: widget.onReauth,
+                      ),
                     if (kind == _ErrorKind.sessionTooLarge &&
-                        widget.onNewSession != null)
+                        widget.onNewSession != null &&
+                        authFailure == null)
                       _ErrorBubbleAction(
                         label: Strings.of(context).chaNewChatTooltip,
                         color: colors.error,
@@ -16751,17 +17190,15 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                     // En errores de "agente colgado"/conexión, ofrecer reiniciar
                     // el gateway del servidor (puede estar atascado).
                     if (widget.onRestartGateway != null &&
+                        authFailure == null &&
                         (kind == _ErrorKind.firstTokenTimeout ||
-                            kind == _ErrorKind.connection)) ...[
-                      const SizedBox(width: 8),
+                            kind == _ErrorKind.connection))
                       _ErrorBubbleAction(
                         label: Strings.of(context).chaRestartGateway,
                         color: colors.error,
                         onTap: widget.onRestartGateway,
                       ),
-                    ],
-                    if (hasMore) ...[
-                      const SizedBox(width: 8),
+                    if (hasMore)
                       _ErrorBubbleAction(
                         label: _expanded
                             ? Strings.of(context).chaErrHideDetails
@@ -16770,7 +17207,6 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                         outlined: false,
                         onTap: () => setState(() => _expanded = !_expanded),
                       ),
-                    ],
                   ],
                 ),
               ],
@@ -16792,6 +17228,7 @@ class _ErrorBubbleAction extends StatelessWidget {
   final bool outlined;
 
   const _ErrorBubbleAction({
+    super.key,
     required this.label,
     required this.onTap,
     required this.color,
@@ -16808,6 +17245,9 @@ class _ErrorBubbleAction extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           child: Center(
+            // Shrink to the pill: inside the card's Wrap an unbounded Center
+            // would take a whole line per action.
+            widthFactor: 1,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: outlined
@@ -16825,10 +17265,14 @@ class _ErrorBubbleAction extends StatelessWidget {
   }
 }
 
-/// Assistant message with a subtle status mark (e.g. "cancelled").
+/// Estado terminal que se marca bajo una respuesta. Se localiza al pintar;
+/// nunca se muestra el identificador interno.
+enum _AssistantMessageMark { cancelled }
+
+/// Assistant message with a subtle status mark (e.g. "Cancelado").
 class _AssistantMessageWithMark extends StatelessWidget {
   final String content;
-  final String mark;
+  final _AssistantMessageMark mark;
   final bool verbose;
   final Map<String, dynamic> metadata;
   final Map<String, _LinkPreviewData?> linkCache;
@@ -16858,6 +17302,10 @@ class _AssistantMessageWithMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    final markLabel = switch (mark) {
+      _AssistantMessageMark.cancelled => strings.tg1215TurnCancelled,
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -16881,7 +17329,7 @@ class _AssistantMessageWithMark extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(left: 14, bottom: 4),
             child: Text(
-              mark,
+              markLabel,
               style: TextStyle(fontSize: 10, color: colors.textDisabled),
             ),
           ),
@@ -17572,6 +18020,155 @@ class _SystemBlobChip extends StatelessWidget {
 /// Evento durable del transcript con tratamiento editorial, no una burbuja.
 /// El contenido interno solo queda accesible mediante pulsación larga para
 /// diagnóstico; rutas, roles y payloads nunca se vuelcan en el chat.
+/// Aviso compacto de un proceso en segundo plano terminado. La cabecera
+/// resume estado y código; la salida solo se muestra al desplegarla.
+class _ProcessNotificationRow extends StatefulWidget {
+  final BackgroundProcessCarrier carrier;
+  final String raw;
+
+  const _ProcessNotificationRow({required this.carrier, required this.raw});
+
+  @override
+  State<_ProcessNotificationRow> createState() =>
+      _ProcessNotificationRowState();
+}
+
+class _ProcessNotificationRowState extends State<_ProcessNotificationRow> {
+  bool _expanded = false;
+
+  String _statusLabel(Strings strings) => switch (widget.carrier.status) {
+    BackgroundProcessCarrierStatus.completed => strings.tg1215ProcessCompleted,
+    BackgroundProcessCarrierStatus.exited =>
+      widget.carrier.failed
+          ? strings.tg1215ProcessExited
+          : strings.tg1215ProcessCompleted,
+    BackgroundProcessCarrierStatus.terminated =>
+      strings.tg1215ProcessTerminated,
+    BackgroundProcessCarrierStatus.lost => strings.tg1215ProcessLost,
+    BackgroundProcessCarrierStatus.failedToStart =>
+      strings.tg1215ProcessFailedToStart,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.hermes;
+    final strings = Strings.of(context);
+    final carrier = widget.carrier;
+    final title = [
+      _statusLabel(strings),
+      if (carrier.exitCode != '?')
+        strings.tg1215ProcessExitCode(carrier.exitCode),
+    ].join(' · ');
+    // El comando y la salida pueden llevar rutas o prompts privados: solo se
+    // construyen cuando la persona despliega el aviso.
+    final output = carrier.output.trimRight();
+    final details = [
+      '\$ ${carrier.command}',
+      output.isEmpty ? strings.tg1215ProcessNoOutput : output,
+    ].join('\n\n');
+    final failed = carrier.failed;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Semantics(
+            button: true,
+            expanded: _expanded,
+            label: title,
+            hint: _expanded
+                ? strings.tg1215ProcessHideOutput
+                : strings.tg1215ProcessShowOutput,
+            excludeSemantics: true,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => setState(() => _expanded = !_expanded),
+              onLongPress: () {
+                Clipboard.setData(ClipboardData(text: widget.raw));
+                HermesNotice.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(strings.chaCopied),
+                    duration: const Duration(seconds: 1),
+                  ),
+                  kind: HermesNoticeKind.success,
+                );
+              },
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 28,
+                      child: Icon(
+                        Icons.terminal_rounded,
+                        size: 16,
+                        color: failed
+                            ? colors.error.withValues(alpha: 0.8)
+                            : colors.textSecondary.withValues(alpha: 0.72),
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colors.textSecondary,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      _expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      size: 18,
+                      color: colors.textSecondary.withValues(alpha: 0.72),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (_expanded)
+            Container(
+              margin: const EdgeInsets.only(left: 28, top: 2, bottom: 6),
+              padding: const EdgeInsets.all(10),
+              constraints: const BoxConstraints(maxHeight: 320),
+              decoration: BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: colors.divider.withValues(alpha: 0.5),
+                ),
+              ),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  details,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 11.5,
+                    height: 1.35,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TimelineSystemEventRow extends StatelessWidget {
   final String title;
   final String? detail;
@@ -19306,6 +19903,7 @@ class _MetaBlock extends StatelessWidget {
 /// no ocupa un turno visual y se puede retirar antes del envío automático.
 class _QueuedRow extends StatelessWidget {
   final QueuedEntryView entry;
+  final bool retryExhausted;
   final List<String> attachmentNames;
   final bool busy;
   final bool transportCanSteer;
@@ -19318,6 +19916,7 @@ class _QueuedRow extends StatelessWidget {
 
   const _QueuedRow({
     required this.entry,
+    this.retryExhausted = false,
     this.attachmentNames = const [],
     required this.busy,
     required this.transportCanSteer,
@@ -19420,6 +20019,27 @@ class _QueuedRow extends StatelessWidget {
                     strings.qp1215QueueNotStored,
                     key: ValueKey('chat-queue-not-stored-${entry.id}'),
                     style: TextStyle(fontSize: 10.5, color: colors.warning),
+                  )
+                else if (retryExhausted)
+                  // qr1215: never silently stuck. Retrying is the same
+                  // exactly-once send as the row's send action.
+                  Semantics(
+                    button: true,
+                    excludeSemantics: true,
+                    label: strings.qr1215QueueRetryExhausted,
+                    onTap: isEditing ? null : onSendNow,
+                    child: InkWell(
+                      key: ValueKey('chat-queue-retry-exhausted-${entry.id}'),
+                      onTap: isEditing ? null : onSendNow,
+                      child: Text(
+                        strings.qr1215QueueRetryExhausted,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: colors.warning,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                   )
                 else if (entry.blocked)
                   Text(
@@ -20424,11 +21044,16 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
     required this.child,
     this.errorTopInset = 8,
     this.onDismissError,
+    this.cachedLabel,
     super.key,
   });
 
   final bool loading;
   final String? errorMessage;
+
+  /// cs1215: the rows shown are the encrypted cold-start copy, not yet
+  /// confirmed by the server.
+  final String? cachedLabel;
   final Widget child;
 
   /// Con valor, el aviso de error muestra una X para cerrarlo.
@@ -20444,6 +21069,57 @@ class ChatRefreshStatusOverlay extends StatelessWidget {
     return Stack(
       children: [
         Positioned.fill(child: child),
+        if (cachedLabel != null)
+          Positioned(
+            // Below the error notice when both show: the copy is still the
+            // unconfirmed cache whatever the read did.
+            top: errorTopInset + (errorMessage == null ? 0 : 52),
+            left: 12,
+            right: 12,
+            child: Center(
+              child: Semantics(
+                key: const ValueKey('chat-cached-transcript'),
+                container: true,
+                liveRegion: true,
+                label: cachedLabel,
+                child: ExcludeSemantics(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colors.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: colors.divider.withValues(alpha: 0.78),
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.history,
+                            size: 14,
+                            color: colors.textSecondary,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            cachedLabel!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         if (loading)
           Positioned(
             top: 0,

@@ -29,6 +29,7 @@ import '../services/tui_gateway_client.dart';
 import '../navigation/chat_route.dart';
 import '../navigation/instance_route_guard.dart';
 import '../theme/app_theme.dart';
+import '../utils/home_recent_sessions.dart';
 import '../utils/session_timestamp.dart';
 import '../utils/session_title.dart';
 import '../../l10n/app_localizations.dart';
@@ -714,24 +715,26 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
           apiKey: widget.connection.apiKey,
         );
     try {
-      final sessions = await client.getSessions(profile: widget.profile);
       // Local-only archives (servers without a writable archived flag) must
       // leave the drawer too, as they leave Conversations.
       final archive = await SessionArchive.load(
         widget.prefs,
         requestedConnectionId,
       );
+      bool shown(Session session) =>
+          !archive.isSessionArchived(session) &&
+          !session.isJob &&
+          !session.isKanbanJob &&
+          session.parentSessionId == null;
+      // Four rows need one Desktop-sized page, not the whole history.
+      final sessions = await client.getSessions(
+        profile: widget.profile,
+        pageSize: homeSessionPageSize,
+        maxPages: homeSessionMaxPages,
+        enough: (rows) => rows.where(shown).length >= 4,
+      );
       sessions.sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
-      final visible = sessions
-          .where(
-            (session) =>
-                !archive.isSessionArchived(session) &&
-                !session.isJob &&
-                !session.isKanbanJob &&
-                session.parentSessionId == null,
-          )
-          .take(4)
-          .toList(growable: false);
+      final visible = sessions.where(shown).take(4).toList(growable: false);
       if (!mounted || widget.connection.id != requestedConnectionId) return;
       setState(() => _sessions = visible);
     } catch (_) {

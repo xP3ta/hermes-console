@@ -23,6 +23,7 @@ void main() {
   Future<void> pumpDrawer(
     WidgetTester tester, {
     required ConnectionManager connManager,
+    http.Client? sessionsClient,
   }) async {
     final scaffoldKey = GlobalKey<ScaffoldState>();
     final connection = SavedConnection(
@@ -48,53 +49,57 @@ void main() {
             recentSessionsClientFactory: (saved) => ApiClient(
               baseUrl: saved.baseUrl,
               apiKey: saved.apiKey,
-              httpClient: MockClient((request) async {
-                expect(request.url.path, '/api/sessions');
-                return http.Response(
-                  jsonEncode({
-                    'object': 'list',
-                    'data': [
-                      {
-                        'id': 'older',
-                        'title': 'Diseño anterior',
-                        'last_active': '2026-07-28T08:00:00Z',
-                        'message_count': 2,
-                      },
-                      {
-                        'id': 'newest',
-                        'title': 'Rediseño premium',
-                        'last_active': '2026-07-29T08:00:00Z',
-                        'message_count': 4,
-                      },
-                      {
-                        'id': 'third',
-                        'title': 'Composer flotante',
-                        'last_active': '2026-07-29T07:00:00Z',
-                        'message_count': 3,
-                      },
-                      {
-                        'id': 'fourth',
-                        'title': 'Ajustes de voz',
-                        'last_active': '2026-07-29T06:00:00Z',
-                        'message_count': 3,
-                      },
-                      {
-                        'id': 'fifth',
-                        'title': 'No debe aparecer',
-                        'last_active': '2026-07-27T06:00:00Z',
-                        'message_count': 3,
-                      },
-                      {
-                        'id': 'child',
-                        'title': 'Subagente oculto',
-                        'last_active': '2026-07-29T09:00:00Z',
-                        'parent_session_id': 'newest',
-                      },
-                    ],
+              httpClient:
+                  sessionsClient ??
+                  MockClient((request) async {
+                    expect(request.url.path, '/api/sessions');
+                    // Four rows need one Desktop-sized page (audit item 7).
+                    expect(request.url.queryParameters['limit'], '40');
+                    return http.Response(
+                      jsonEncode({
+                        'object': 'list',
+                        'data': [
+                          {
+                            'id': 'older',
+                            'title': 'Diseño anterior',
+                            'last_active': '2026-07-28T08:00:00Z',
+                            'message_count': 2,
+                          },
+                          {
+                            'id': 'newest',
+                            'title': 'Rediseño premium',
+                            'last_active': '2026-07-29T08:00:00Z',
+                            'message_count': 4,
+                          },
+                          {
+                            'id': 'third',
+                            'title': 'Composer flotante',
+                            'last_active': '2026-07-29T07:00:00Z',
+                            'message_count': 3,
+                          },
+                          {
+                            'id': 'fourth',
+                            'title': 'Ajustes de voz',
+                            'last_active': '2026-07-29T06:00:00Z',
+                            'message_count': 3,
+                          },
+                          {
+                            'id': 'fifth',
+                            'title': 'No debe aparecer',
+                            'last_active': '2026-07-27T06:00:00Z',
+                            'message_count': 3,
+                          },
+                          {
+                            'id': 'child',
+                            'title': 'Subagente oculto',
+                            'last_active': '2026-07-29T09:00:00Z',
+                            'parent_session_id': 'newest',
+                          },
+                        ],
+                      }),
+                      200,
+                    );
                   }),
-                  200,
-                );
-              }),
             ),
           ),
         ),
@@ -170,5 +175,107 @@ void main() {
 
     expect(find.text('Diseño anterior'), findsOneWidget);
     expect(find.text('Rediseño premium'), findsNothing);
+  });
+  // The drawer shows four recents. It reads 40-row pages, stops once four
+  // visible chats arrived and never reads more than three pages, even when
+  // automation rows fill the newest pages of a long history.
+  group('drawer recents read a bounded number of session pages', () {
+    MockClient pagedServer(
+      List<Map<String, String>> queries, {
+      required int total,
+      int leadingAutomation = 0,
+    }) => MockClient((request) async {
+      expect(request.url.path, '/api/sessions');
+      queries.add(request.url.queryParameters);
+      final query = request.url.queryParameters;
+      final limit = (int.tryParse(query['limit'] ?? '') ?? 50).clamp(1, 200);
+      final offset = int.tryParse(query['offset'] ?? '') ?? 0;
+      final rows = [
+        for (var i = offset; i < total && i < offset + limit; i++)
+          {
+            'id': 's-$i',
+            'title': i < leadingAutomation ? 'Cron $i' : 'Chat $i',
+            'source': i < leadingAutomation ? 'cron' : 'cli',
+            'started_at': 1790000000 - i * 60,
+            'last_active': 1790000100 - i * 60,
+          },
+      ];
+      return http.Response(
+        jsonEncode({
+          'object': 'list',
+          'data': rows,
+          'limit': limit,
+          'offset': offset,
+          'has_more': offset + rows.length < total,
+        }),
+        200,
+      );
+    });
+
+    List<String> recentIds() => [
+      for (final element
+          in find
+              .byWidgetPredicate(
+                (widget) =>
+                    widget.key is ValueKey<String> &&
+                    (widget.key! as ValueKey<String>).value.startsWith(
+                      'drawer-recent-',
+                    ),
+                skipOffstage: false,
+              )
+              .evaluate())
+        (element.widget.key! as ValueKey<String>).value.substring(
+          'drawer-recent-'.length,
+        ),
+    ];
+
+    testWidgets('a long history of chats reads one page', (tester) async {
+      final queries = <Map<String, String>>[];
+      await pumpDrawer(
+        tester,
+        connManager: await manager(),
+        sessionsClient: pagedServer(queries, total: 1000),
+      );
+      expect(recentIds(), ['s-0', 's-1', 's-2', 's-3']);
+      expect(queries, hasLength(1));
+      expect(queries.single['limit'], '40');
+      expect(queries.single['offset'], '0');
+    });
+
+    testWidgets('pages of automation rows read on until four chats', (
+      tester,
+    ) async {
+      final queries = <Map<String, String>>[];
+      await pumpDrawer(
+        tester,
+        connManager: await manager(),
+        // Three chats close the second page; the fourth opens the third.
+        sessionsClient: pagedServer(
+          queries,
+          total: 1000,
+          leadingAutomation: 77,
+        ),
+      );
+      expect(recentIds(), ['s-77', 's-78', 's-79', 's-80']);
+      expect([for (final q in queries) q['offset']], ['0', '40', '80']);
+      expect(queries.every((q) => q['limit'] == '40'), isTrue);
+    });
+
+    testWidgets('a history of only automation rows stops after three pages', (
+      tester,
+    ) async {
+      final queries = <Map<String, String>>[];
+      await pumpDrawer(
+        tester,
+        connManager: await manager(),
+        sessionsClient: pagedServer(
+          queries,
+          total: 1000,
+          leadingAutomation: 1000,
+        ),
+      );
+      expect(recentIds(), isEmpty);
+      expect([for (final q in queries) q['offset']], ['0', '40', '80']);
+    });
   });
 }

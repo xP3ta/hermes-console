@@ -949,6 +949,9 @@ class NotificationService
   @visibleForTesting
   bool get hasPendingOpenForTesting => _pendingOpen != null;
 
+  /// A tapped notification still waits for delivery (cold start, App Lock).
+  bool get hasPendingOpen => _pendingOpen != null;
+
   Future<NavigationDeliveryOutcome> _deliverOrQueue(NotificationOpen open) {
     final payload = open.toPayload();
     _pendingOpen = open;
