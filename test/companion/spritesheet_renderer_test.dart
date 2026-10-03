@@ -263,7 +263,7 @@ void main() {
     // por setState, que bajo el paseo repintaba la pantalla entera.
     final frames = <int>[];
     await tester.pumpWidget(_host(onFrameChanged: frames.add));
-    await _waitForImage(tester, frames);
+    _expectFirstFrame(frames);
     await tester.pump();
     frames.clear();
     final sprite = find.descendant(
