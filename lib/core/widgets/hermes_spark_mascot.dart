@@ -12,6 +12,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 @visibleForTesting
@@ -62,7 +63,12 @@ class HermesSparkMascot extends StatefulWidget {
 class _HermesSparkMascotState extends State<HermesSparkMascot>
     with WidgetsBindingObserver {
   Timer? _frameTimer;
-  double _phase = 0.12;
+
+  /// Fase de la animación. El painter la escucha directamente: cada paso solo
+  /// repinta la capa de la chispa, sin `setState`. Dentro de la pista del
+  /// paseo de Inicio (con su `LayoutBuilder`), un rebuild por frame
+  /// repintaba también el contenido del Home que queda debajo.
+  final ValueNotifier<double> _phase = ValueNotifier<double>(0.12);
   bool _tickerModeEnabled = true;
   bool _reduceMotion = false;
   bool _appActive = true;
@@ -94,20 +100,18 @@ class _HermesSparkMascotState extends State<HermesSparkMascot>
         _reduceMotion ||
         !_tickerModeEnabled ||
         !_appActive) {
-      _phase = 0.12; // fotograma estático representativo
+      _phase.value = 0.12; // fotograma estático representativo
       return;
     }
     _frameTimer = Timer.periodic(hermesSparkFrameInterval, (_) {
       if (!mounted) return;
-      setState(() {
-        _phase =
-            (_phase +
-                hermesSparkFrameInterval.inMicroseconds /
-                    Duration.microsecondsPerSecond /
-                    6) %
-            1;
-      });
-      widget.onFrameChanged?.call(_phase);
+      _phase.value =
+          (_phase.value +
+              hermesSparkFrameInterval.inMicroseconds /
+                  Duration.microsecondsPerSecond /
+                  6) %
+          1;
+      widget.onFrameChanged?.call(_phase.value);
     });
   }
 
@@ -125,6 +129,7 @@ class _HermesSparkMascotState extends State<HermesSparkMascot>
     WidgetsBinding.instance.removeObserver(this);
     _frameTimer?.cancel();
     _frameTimer = null;
+    _phase.dispose();
     super.dispose();
   }
 
@@ -134,7 +139,11 @@ class _HermesSparkMascotState extends State<HermesSparkMascot>
     return RepaintBoundary(
       child: CustomPaint(
         size: Size.square(widget.size),
-        painter: _SparkPainter(t: _phase, mood: widget.mood, accent: accent),
+        painter: _SparkPainter(
+          phase: _phase,
+          mood: widget.mood,
+          accent: accent,
+        ),
       ),
     );
   }
@@ -181,11 +190,14 @@ class _Spec {
 }
 
 class _SparkPainter extends CustomPainter {
-  final double t; // 0..1
+  final ValueListenable<double> phase;
   final HermesSparkMood mood;
   final Color accent;
 
-  _SparkPainter({required this.t, required this.mood, required this.accent});
+  _SparkPainter({required this.phase, required this.mood, required this.accent})
+    : super(repaint: phase);
+
+  double get t => phase.value; // 0..1
 
   static const _green = Color(0xFF4FD18B);
   static const _red = Color(0xFFFF6B5C);
@@ -529,5 +541,5 @@ class _SparkPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_SparkPainter old) =>
-      old.t != t || old.mood != mood || old.accent != accent;
+      old.phase != phase || old.mood != mood || old.accent != accent;
 }

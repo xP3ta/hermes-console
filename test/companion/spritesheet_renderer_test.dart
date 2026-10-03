@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -106,13 +107,25 @@ void main() {
     await tester.pumpWidget(_host(onFrameChanged: frames.add));
     await _waitForImage(tester, frames);
 
-    final first = tester.widget<RawImage>(find.byType(RawImage)).image!;
+    ui.Image currentFrame() =>
+        (tester
+                    .widget<CustomPaint>(
+                      find.descendant(
+                        of: find.byType(SpritesheetRenderer),
+                        matching: find.byType(CustomPaint),
+                      ),
+                    )
+                    .painter!
+                as SpriteFramePainter)
+            .currentFrameImage!;
+
+    final first = currentFrame();
     expect(first.width, 1);
     expect(first.height, 1);
     expect(first.width, lessThan(8));
 
     await tester.pump(const Duration(milliseconds: 125));
-    final second = tester.widget<RawImage>(find.byType(RawImage)).image!;
+    final second = currentFrame();
     expect(identical(second, first), isFalse);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -214,6 +227,37 @@ void main() {
     await tester.pump(const Duration(milliseconds: 125));
     expect(frames, [1]);
 
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('cada frame llega a la capa del sprite sin reconstruir widgets', (
+    tester,
+  ) async {
+    // El reloj notifica al painter; la animación del Home (8 fps) ya no pasa
+    // por setState, que bajo el paseo repintaba la pantalla entera.
+    final frames = <int>[];
+    await tester.pumpWidget(_host(onFrameChanged: frames.add));
+    await _waitForImage(tester, frames);
+    await tester.pump();
+    frames.clear();
+    final sprite = find.descendant(
+      of: find.byType(SpritesheetRenderer),
+      matching: find.byType(CustomPaint),
+    );
+    final painterBefore = tester.widget<CustomPaint>(sprite).painter;
+
+    await tester.pump(const Duration(milliseconds: 125), EnginePhase.build);
+    expect(frames, [1]);
+    expect(
+      tester.renderObject(sprite).debugNeedsPaint,
+      isTrue,
+      reason: 'el nuevo frame debe llegar a la capa del sprite',
+    );
+    expect(
+      identical(tester.widget<CustomPaint>(sprite).painter, painterBefore),
+      isTrue,
+      reason: 'avanzar un frame no debe reconstruir el renderer',
+    );
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }
