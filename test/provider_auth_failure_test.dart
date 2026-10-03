@@ -1,8 +1,12 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/models/provider_auth_failure.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/session_reconciler.dart';
+import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/provider_reauth.dart';
+import 'package:hermes_android/l10n/app_localizations.dart';
 
 /// hr1215: port of Desktop `lib/error-surface.ts` auth rules.
 void main() {
@@ -155,5 +159,134 @@ void main() {
       retainProjectionState: true,
     )!;
     expect(normalized[providerAuthFailureKey], error[providerAuthFailureKey]);
+  });
+
+  group('compaction banner wording', () {
+    // A refused compaction only stops the automatic summary; the owner must
+    // not read it as "the chat is broken".
+    Future<void> pumpBanner(
+      WidgetTester tester,
+      Locale locale,
+      ProviderAuthFailure failure,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: Strings.localizationsDelegates,
+          supportedLocales: Strings.supportedLocales,
+          locale: locale,
+          theme: AppTheme.hermesRedDark,
+          home: Scaffold(
+            body: ProviderAuthBanner(
+              failure: failure,
+              onAction: () {},
+              onDismiss: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+    }
+
+    const compaction = ProviderAuthFailure(
+      provider: 'anthropic',
+      label: 'Anthropic',
+      kind: ProviderAuthKind.oauth,
+      origin: ProviderAuthOrigin.compaction,
+    );
+
+    testWidgets('Spanish says only compaction is affected', (tester) async {
+      await pumpBanner(tester, const Locale('es'), compaction);
+      expect(
+        find.text(
+          'La compactación no puede usar Anthropic; el chat sigue funcionando',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('puedes seguir escribiendo'), findsOneWidget);
+      expect(find.textContaining('fallarán'), findsNothing);
+      expect(find.text('Volver a iniciar sesión'), findsOneWidget);
+    });
+
+    testWidgets('English says only compaction is affected', (tester) async {
+      await pumpBanner(tester, const Locale('en'), compaction);
+      expect(
+        find.text('Compaction cannot use Anthropic; the chat keeps working'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('you can keep writing'), findsOneWidget);
+      expect(find.textContaining('will fail'), findsNothing);
+    });
+
+    testWidgets('without a label it names no provider', (tester) async {
+      await pumpBanner(
+        tester,
+        const Locale('es'),
+        const ProviderAuthFailure(
+          provider: '',
+          label: '',
+          kind: ProviderAuthKind.oauth,
+          origin: ProviderAuthOrigin.compaction,
+        ),
+      );
+      expect(
+        find.text(
+          'La compactación no puede usar el proveedor; el chat sigue funcionando',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a failed turn keeps the sign-in expired title', (
+      tester,
+    ) async {
+      await pumpBanner(
+        tester,
+        const Locale('es'),
+        const ProviderAuthFailure(
+          provider: 'anthropic',
+          label: 'Anthropic',
+          kind: ProviderAuthKind.oauth,
+        ),
+      );
+      expect(find.text('La sesión de Anthropic ha caducado'), findsOneWidget);
+    });
+  });
+
+  group('providerSignedIn', () {
+    Map<String, dynamic> card(String id, bool loggedIn) => {
+      'id': id,
+      'status': {'logged_in': loggedIn},
+    };
+
+    test('a Claude Code login counts for the anthropic runtime', () {
+      expect(
+        providerSignedIn([
+          card('anthropic', false),
+          card('claude-code', true),
+        ], 'anthropic'),
+        isTrue,
+      );
+    });
+
+    test('both Anthropic cards signed out is signed out', () {
+      expect(
+        providerSignedIn([
+          card('anthropic', false),
+          card('claude-code', false),
+        ], 'anthropic'),
+        isFalse,
+      );
+    });
+
+    test('other providers only trust their own card', () {
+      expect(
+        providerSignedIn([
+          card('nous', false),
+          card('claude-code', true),
+        ], 'nous'),
+        isFalse,
+      );
+      expect(providerSignedIn([card('nous', true)], 'nous'), isTrue);
+    });
   });
 }

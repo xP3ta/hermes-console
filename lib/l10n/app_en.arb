@@ -7894,7 +7894,6 @@
   "hr1215KeyRejectedTitle": "Check your {provider} key",
   "hr1215KeyRejectedTitleGeneric": "Check your provider key",
   "hr1215KeyRejectedBody": "The provider rejected the saved key. Change it in Models and retry the message.",
-  "hr1215CompactionAuthBody": "The conversation could not be summarised because the provider rejected access. Nothing was lost, but the next messages will fail until you fix it.",
   "hr1215SignInAgain": "Sign in again",
   "hr1215CheckKey": "Check the key",
   "hr1215ExternalTitle": "Sign in to {provider}",
@@ -7904,5 +7903,10 @@
   "hr1215CommandCopied": "Command copied",
   "hr1215SignedInCheck": "I've signed in",
   "hr1215StillSignedOut": "{provider} is still signed out on the server.",
-  "hr1215SignedInAgain": "{provider} sign-in renewed"
+  "hr1215SignedInAgain": "{provider} sign-in renewed",
+  "hr1215CompactionAuthTitle": "Compaction cannot use {provider}; the chat keeps working",
+  "hr1215CompactionAuthTitleGeneric": "Compaction cannot use the provider; the chat keeps working",
+  "hr1215CompactionOnlyAuthBody": "Only the automatic conversation summary failed: nothing was lost and you can keep writing. Sign in again so compaction works again.",
+  "hr1215CheckingSignIn": "Checking the {provider} sign-in…",
+  "hr1215SignInCheckFailed": "Could not check the {provider} sign-in: {error}"
 }

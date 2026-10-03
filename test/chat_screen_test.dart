@@ -29946,6 +29946,220 @@ void main() {
       },
     );
 
+    group('«Ya he iniciado sesión» re-check', () {
+      // The owner renewed Anthropic with Claude Code on the server. Hermes'
+      // `anthropic` runtime reads ~/.claude/.credentials.json, but the
+      // `anthropic` Accounts card deliberately does not: Claude Code has its
+      // own `claude-code` card. The re-check must accept either card.
+      ({DashboardClient client, List<String> calls}) claudeDashboard({
+        required bool Function() anthropicCard,
+        required bool Function() claudeCodeCard,
+        bool Function()? listFails,
+        Completer<void>? Function()? gate,
+      }) {
+        final calls = <String>[];
+        final client = DashboardClient(
+          host: '127.0.0.1',
+          manualToken: 'dashboard-token',
+          httpClientOverride: MockClient((request) async {
+            calls.add('${request.method} ${request.url.path}');
+            if (request.url.path != '/api/providers/oauth') {
+              return http.Response('{}', 404);
+            }
+            final hold = gate?.call();
+            if (hold != null) await hold.future;
+            if (listFails?.call() ?? false) {
+              throw http.ClientException('Connection refused');
+            }
+            return http.Response(
+              jsonEncode({
+                'providers': [
+                  {
+                    'id': 'anthropic',
+                    'name': 'Anthropic Account',
+                    'flow': 'external',
+                    'cli_command': 'hermes auth add anthropic',
+                    'status': {'logged_in': anthropicCard()},
+                  },
+                  {
+                    'id': 'claude-code',
+                    'name': 'Claude Code',
+                    'flow': 'external',
+                    'cli_command': 'claude setup-token',
+                    'status': {
+                      'logged_in': claudeCodeCard(),
+                      if (claudeCodeCard()) 'source': 'claude_code_cli',
+                    },
+                  },
+                ],
+              }),
+              200,
+            );
+          }),
+        );
+        return (client: client, calls: calls);
+      }
+
+      const anthropicExpired = {
+        'text': 'x',
+        'status': 'error',
+        'error': revoked,
+        'error_surface': {
+          'layer': 'auth',
+          'code': 'auth',
+          'retryable': false,
+          'provider': 'anthropic',
+          'provider_label': 'Anthropic',
+          'auth_kind': 'oauth',
+        },
+      };
+
+      Future<void> openExternalDialog(WidgetTester tester) async {
+        await tester.tap(find.byKey(const ValueKey('hr1215-error-reauth')));
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        expect(
+          find.byKey(const ValueKey('hr1215-external-signin')),
+          findsOneWidget,
+        );
+      }
+
+      Future<void> settle(WidgetTester tester) async {
+        for (var i = 0; i < 10; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+      }
+
+      testWidgets(
+        'a Claude Code login renews Anthropic although its own card is out',
+        (tester) async {
+          var claudeCode = false;
+          Completer<void>? hold;
+          final dashboard = claudeDashboard(
+            anthropicCard: () => false,
+            claudeCodeCard: () => claudeCode,
+            gate: () => hold,
+          );
+          await failTurn(
+            tester,
+            dashboard: (_) => dashboard.client,
+            payload: anthropicExpired,
+          );
+          await openExternalDialog(tester);
+
+          claudeCode = true;
+          hold = Completer<void>();
+          await tester.tap(find.byKey(const ValueKey('hr1215-signed-in')));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 50));
+          // The tap is acknowledged while the server is being asked.
+          expect(
+            find.text('Comprobando la sesión de Anthropic…'),
+            findsOneWidget,
+          );
+          hold.complete();
+          hold = null;
+          await settle(tester);
+
+          expect(find.text('Sesión de Anthropic renovada'), findsOneWidget);
+          expect(
+            find.text('Anthropic sigue sin sesión en el servidor.'),
+            findsNothing,
+          );
+          expect(
+            find.byKey(const ValueKey('hr1215-external-signin')),
+            findsNothing,
+          );
+          expect(
+            find.descendant(
+              of: find.byType(HermesNoticeCard),
+              matching: find.text('↺ reintentar'),
+            ),
+            findsOneWidget,
+          );
+          expect(dashboard.calls.where((c) => c.contains('/start')), isEmpty);
+          expect(tester.takeException(), isNull);
+        },
+      );
+
+      testWidgets('with both cards signed out it stays signed out', (
+        tester,
+      ) async {
+        final dashboard = claudeDashboard(
+          anthropicCard: () => false,
+          claudeCodeCard: () => false,
+        );
+        await failTurn(
+          tester,
+          dashboard: (_) => dashboard.client,
+          payload: anthropicExpired,
+        );
+        await openExternalDialog(tester);
+        await tester.tap(find.byKey(const ValueKey('hr1215-signed-in')));
+        await settle(tester);
+
+        expect(
+          find.text('Anthropic sigue sin sesión en el servidor.'),
+          findsOneWidget,
+        );
+        expect(find.text('Sesión de Anthropic renovada'), findsNothing);
+        // The dialog comes back so the user can try again.
+        expect(
+          find.byKey(const ValueKey('hr1215-external-signin')),
+          findsOneWidget,
+        );
+        await tester.tap(find.text('Cancelar'));
+        await settle(tester);
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets('an unreachable server is not reported as signed out', (
+        tester,
+      ) async {
+        var fail = false;
+        final dashboard = claudeDashboard(
+          anthropicCard: () => false,
+          claudeCodeCard: () => true,
+          listFails: () => fail,
+        );
+        await failTurn(
+          tester,
+          dashboard: (_) => dashboard.client,
+          payload: anthropicExpired,
+        );
+        await openExternalDialog(tester);
+        fail = true;
+        await tester.tap(find.byKey(const ValueKey('hr1215-signed-in')));
+        await settle(tester);
+
+        expect(
+          find.text('Anthropic sigue sin sesión en el servidor.'),
+          findsNothing,
+        );
+        expect(
+          find.textContaining('No se pudo comprobar la sesión de Anthropic'),
+          findsOneWidget,
+        );
+        expect(find.text('Sesión de Anthropic renovada'), findsNothing);
+        expect(
+          find.byKey(const ValueKey('hr1215-external-signin')),
+          findsOneWidget,
+        );
+        // Nor later, once the error notice has gone.
+        for (var i = 0; i < 24; i++) {
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(
+            find.text('Anthropic sigue sin sesión en el servidor.'),
+            findsNothing,
+          );
+        }
+        await tester.tap(find.text('Cancelar'));
+        await settle(tester);
+        expect(tester.takeException(), isNull);
+      });
+    });
+
     testWidgets('a rejected API key points at the key, not a sign-in', (
       tester,
     ) async {
@@ -30071,7 +30285,13 @@ void main() {
         find.byKey(const ValueKey('hr1215-provider-auth-banner')),
         findsOneWidget,
       );
-      expect(find.text('La sesión del proveedor ha caducado'), findsOneWidget);
+      // Only compaction is affected: the banner must not read as a dead chat.
+      expect(
+        find.text(
+          'La compactación no puede usar el proveedor; el chat sigue funcionando',
+        ),
+        findsOneWidget,
+      );
       expect(find.text('Volver a iniciar sesión'), findsOneWidget);
       await tester.tap(
         find.byKey(const ValueKey('hr1215-provider-auth-dismiss')),

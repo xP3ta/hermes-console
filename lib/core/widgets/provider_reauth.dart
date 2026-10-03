@@ -14,6 +14,12 @@ import 'hermes_notice.dart';
 /// Card title for a provider credential failure.
 String providerAuthTitle(Strings s, ProviderAuthFailure failure) {
   final label = failure.label.trim();
+  if (failure.origin == ProviderAuthOrigin.compaction) {
+    // Only the summary step was refused; the chat itself keeps working.
+    return label.isEmpty
+        ? s.hr1215CompactionAuthTitleGeneric
+        : s.hr1215CompactionAuthTitle(label);
+  }
   if (failure.isOAuth) {
     return label.isEmpty
         ? s.hr1215AuthExpiredTitleGeneric
@@ -27,7 +33,7 @@ String providerAuthTitle(Strings s, ProviderAuthFailure failure) {
 /// One-line explanation under [providerAuthTitle].
 String providerAuthBody(Strings s, ProviderAuthFailure failure) {
   if (failure.origin == ProviderAuthOrigin.compaction) {
-    return s.hr1215CompactionAuthBody;
+    return s.hr1215CompactionOnlyAuthBody;
   }
   return failure.isOAuth ? s.hr1215AuthExpiredBody : s.hr1215KeyRejectedBody;
 }
@@ -37,6 +43,35 @@ String providerAuthActionLabel(Strings s, ProviderAuthFailure failure) =>
     failure.isOAuth ? s.hr1215SignInAgain : s.hr1215CheckKey;
 
 enum _ExternalSignInChoice { copy, done, cancel }
+
+/// Accounts cards (`GET /api/providers/oauth` ids) whose `logged_in` proves
+/// the credential a runtime provider actually uses, when that is not only
+/// the card with the provider's own id.
+///
+/// Hermes' `anthropic` runtime falls back to Claude Code's
+/// `~/.claude/.credentials.json` (agent/anthropic_credentials.py,
+/// `resolve_anthropic_token` → `_resolve_claude_code_token_from_credentials`),
+/// but the `anthropic` card deliberately ignores that file and reports it on
+/// its own `claude-code` card (hermes_cli/web_server_oauth.py,
+/// `_anthropic_oauth_status` / `_claude_code_only_status`). The catalog rows
+/// carry no field linking the two, so the relation is declared here.
+const Map<String, Set<String>> providerCredentialCards = {
+  'anthropic': {'anthropic', 'claude-code'},
+};
+
+/// True when [rows] report a usable sign-in for runtime [provider].
+bool providerSignedIn(List<Map<String, dynamic>> rows, String provider) {
+  final accepted = providerCredentialCards[provider] ?? {provider};
+  for (final row in rows) {
+    final status = row['status'];
+    if (accepted.contains(row['id']) &&
+        status is Map &&
+        status['logged_in'] == true) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /// Runs the recovery for [failure] and returns true when the provider is
 /// signed in again.
@@ -206,23 +241,35 @@ Future<bool> _externalSignIn({
         );
         continue;
       case _ExternalSignInChoice.done:
-        var signedIn = false;
+        // The tap is acknowledged at once: the dialog has closed and the
+        // server may take a while to answer.
+        final notices = HermesNotice.of(context);
+        final checking = notices.show(
+          message: s.hr1215CheckingSignIn(label),
+          sticky: true,
+        );
+        bool signedIn;
         try {
           final rows = await client.getOAuthProviders(profile: profile);
-          for (final row in rows) {
-            final status = row['status'];
-            if (row['id'] == provider &&
-                status is Map &&
-                status['logged_in'] == true) {
-              signedIn = true;
-            }
-          }
-        } catch (_) {
-          signedIn = false;
+          signedIn = providerSignedIn(rows, provider);
+        } catch (error) {
+          checking?.dismiss();
+          if (!context.mounted) return false;
+          // Not knowing is not "still signed out".
+          notices.showSnackBar(
+            SnackBar(
+              content: Text(
+                s.hr1215SignInCheckFailed(label, localizedApiError(s, error)),
+              ),
+            ),
+            kind: HermesNoticeKind.error,
+          );
+          continue;
         }
+        checking?.dismiss();
         if (!context.mounted) return false;
         if (signedIn) return true;
-        HermesNotice.of(context).showSnackBar(
+        notices.showSnackBar(
           SnackBar(content: Text(s.hr1215StillSignedOut(label))),
           kind: HermesNoticeKind.warning,
         );

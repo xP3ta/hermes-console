@@ -9580,7 +9580,6 @@
   "@hr1215KeyRejectedTitle": {"placeholders": {"provider": {"type": "String"}}},
   "hr1215KeyRejectedTitleGeneric": "Revisa la clave del proveedor",
   "hr1215KeyRejectedBody": "El proveedor ha rechazado la clave guardada. Cámbiala en Modelos y reintenta el mensaje.",
-  "hr1215CompactionAuthBody": "No se ha podido resumir la conversación porque el proveedor ha rechazado el acceso. No se ha perdido nada, pero los siguientes mensajes fallarán hasta que lo arregles.",
   "hr1215SignInAgain": "Volver a iniciar sesión",
   "hr1215CheckKey": "Revisar la clave",
   "hr1215ExternalTitle": "Iniciar sesión en {provider}",
@@ -9594,5 +9593,13 @@
   "hr1215StillSignedOut": "{provider} sigue sin sesión en el servidor.",
   "@hr1215StillSignedOut": {"placeholders": {"provider": {"type": "String"}}},
   "hr1215SignedInAgain": "Sesión de {provider} renovada",
-  "@hr1215SignedInAgain": {"placeholders": {"provider": {"type": "String"}}}
+  "@hr1215SignedInAgain": {"placeholders": {"provider": {"type": "String"}}},
+  "hr1215CompactionAuthTitle": "La compactación no puede usar {provider}; el chat sigue funcionando",
+  "@hr1215CompactionAuthTitle": {"placeholders": {"provider": {"type": "String"}}},
+  "hr1215CompactionAuthTitleGeneric": "La compactación no puede usar el proveedor; el chat sigue funcionando",
+  "hr1215CompactionOnlyAuthBody": "Solo ha fallado el resumen automático de la conversación: no se ha perdido nada y puedes seguir escribiendo. Vuelve a iniciar sesión para que la compactación funcione otra vez.",
+  "hr1215CheckingSignIn": "Comprobando la sesión de {provider}…",
+  "@hr1215CheckingSignIn": {"placeholders": {"provider": {"type": "String"}}},
+  "hr1215SignInCheckFailed": "No se pudo comprobar la sesión de {provider}: {error}",
+  "@hr1215SignInCheckFailed": {"placeholders": {"provider": {"type": "String"}, "error": {"type": "String"}}}
 }
