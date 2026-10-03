@@ -1149,7 +1149,16 @@ class _SessionListScreenState extends State<SessionListScreen>
         _libraryExhaustive = library?.exhaustive ?? false;
         _loading = false;
       });
-      listRead.end(rows: remoteSessions);
+      // Every page of the gateway's default listing for this profile: what
+      // a deletion tombstone may be confirmed against. A Dashboard page or
+      // filtered scope is not complete and only reports the rows it saw.
+      final complete = library == null
+          ? remoteSessions
+          : library.completeGatewayListing;
+      listRead.end(
+        rows: complete ?? remoteSessions,
+        completeProfile: complete == null ? null : requestedOwner,
+      );
       if (invalidationEpoch != null) {
         final activeChats = _activeChats;
         if (activeChats != null) {

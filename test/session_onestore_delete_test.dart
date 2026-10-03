@@ -192,68 +192,185 @@ void main() {
       );
     });
 
-    test(
-      'eviction never drops a tombstone a read in flight still needs',
-      () async {
-        final prefs = await SharedPreferences.getInstance();
-        final store = await SessionArchive.load(prefs, 'conn-a');
-        const max = SessionArchive.maxDeletedTombstones;
-        Session row(int i) => _session('s$i', title: 'S', activity: 1000.0 + i);
-
-        // A page request leaves before the deletes and answers after them.
-        final late = store.beginListRead();
-        for (var i = 0; i <= max; i++) {
-          await store.markSessionDeleted(
-            row(i),
-            now: DateTime.fromMillisecondsSinceEpoch(0),
-          );
-        }
-        // Its page still carries the earliest deleted row: it stays hidden.
-        expect(store.isSessionDeleted(row(0)), isTrue);
-        expect(
-          prefs.getStringList('deleted_sessions_conn-a'),
-          hasLength(max + 1),
-        );
-        final reread = await SessionArchive.load(prefs, 'conn-a');
-        expect(reread.isSessionDeleted(row(0)), isTrue);
-
-        // Its result applied, no read can carry the rows any more: the store
-        // goes back within its bound, oldest first.
-        late.end();
-        await Future<void>.delayed(Duration.zero);
-        expect(prefs.getStringList('deleted_sessions_conn-a'), hasLength(max));
-        expect(store.isSessionDeleted(row(0)), isFalse);
-        expect(store.isSessionDeleted(row(max)), isTrue);
-        late.end(); // idempotent
-      },
-    );
-
-    test(
-      'a read that starts after a delete does not hold its tombstone',
-      () async {
-        final prefs = await SharedPreferences.getInstance();
-        final store = await SessionArchive.load(prefs, 'conn-a');
-        const max = SessionArchive.maxDeletedTombstones;
-        Session row(int i) => _session('s$i', title: 'S', activity: 1000.0 + i);
-        await store.markSessionDeleted(
+    test('a read started after the delete that returns a cached page with '
+        'the row keeps it hidden, whatever the count', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final store = await SessionArchive.load(prefs, 'conn-a');
+      Session row(int i) => _session('s$i', title: 'S', activity: 1000.0 + i);
+      final epoch = DateTime.fromMillisecondsSinceEpoch(0);
+      await store.markSessionDeleted(row(0), now: epoch);
+      // Starts after s0's delete, yet a cache or proxy answers with the
+      // page from before it.
+      final cached = store.beginListRead();
+      for (var i = 1; i <= 250; i++) {
+        await store.markSessionDeleted(row(i), now: epoch);
+      }
+      cached.end(
+        rows: [
           row(0),
-          now: DateTime.fromMillisecondsSinceEpoch(0),
-        );
-        // Started after s0's delete: the server already answers without it.
-        final fresh = store.beginListRead();
-        for (var i = 1; i <= max; i++) {
-          await store.markSessionDeleted(
-            row(i),
-            now: DateTime.fromMillisecondsSinceEpoch(0),
-          );
-        }
-        expect(prefs.getStringList('deleted_sessions_conn-a'), hasLength(max));
-        expect(store.isSessionDeleted(row(0)), isFalse);
-        // The rows deleted while it was open are kept for it.
-        expect(store.isSessionDeleted(row(1)), isTrue);
-        fresh.end();
-      },
-    );
+          _session('kept', title: 'K'),
+        ],
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(store.isSessionDeleted(row(0)), isTrue);
+      expect(prefs.getStringList('deleted_sessions_conn-a'), hasLength(251));
+      // Even a complete listing still naming it keeps it.
+      store.beginListRead().end(rows: [row(0)], completeProfile: 'default');
+      expect(store.isSessionDeleted(row(0)), isTrue);
+      final reread = await SessionArchive.load(prefs, 'conn-a');
+      expect(reread.isSessionDeleted(row(0)), isTrue);
+    });
+
+    test('only a complete listing of its profile without the row lets a '
+        'tombstone go', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final store = await SessionArchive.load(prefs, 'conn-a');
+      final gone = _session('gone', title: 'Gone');
+      final kept = _session('kept', title: 'Kept');
+      await store.markSessionDeleted(gone);
+
+      // A page or a bounded walk proves nothing about rows it did not reach.
+      store.beginListRead().end(rows: [kept]);
+      expect(store.isSessionIdDeleted('gone'), isTrue);
+      // A complete listing of another profile does not cover it.
+      store.beginListRead().end(rows: [kept], completeProfile: 'work');
+      expect(store.isSessionIdDeleted('gone'), isTrue);
+
+      // The server's complete listing of its profile no longer has it.
+      store.beginListRead().end(rows: [kept], completeProfile: 'default');
+      await Future<void>.delayed(Duration.zero);
+      expect(store.isSessionIdDeleted('gone'), isFalse);
+      expect(prefs.getStringList('deleted_sessions_conn-a'), isEmpty);
+    });
+
+    test('a complete listing that names any lineage id keeps the '
+        'tombstone', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final store = await SessionArchive.load(prefs, 'conn-a');
+      final tip = Session.fromJson({
+        'id': 'tip-2',
+        '_lineage_root_id': 'root',
+        '_lineage_ids': ['root', 'tip-2'],
+        'title': 'Compacted',
+        'source': 'desktop',
+        'message_count': 4,
+        'started_at': 900,
+        'last_active': 1000,
+      });
+      await store.markSessionDeleted(
+        tip,
+        now: DateTime.fromMillisecondsSinceEpoch(2000000),
+      );
+      // The listing still projects the lineage, under its root.
+      store.beginListRead().end(
+        rows: [
+          Session.fromJson({
+            'id': 'root',
+            'title': 'Compacted',
+            'source': 'desktop',
+            'started_at': 900,
+            'last_active': 1000,
+          }),
+        ],
+        completeProfile: 'default',
+      );
+      expect(store.isSessionIdDeleted('root'), isTrue);
+      expect(store.isSessionDeleted(tip), isTrue);
+    });
+
+    test('a complete listing never drops a tombstone an older read still '
+        'needs, nor one it started before', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final store = await SessionArchive.load(prefs, 'conn-a');
+      final gone = _session('gone', title: 'Gone');
+      final kept = _session('kept', title: 'Kept');
+
+      // A page request leaves before the delete and answers after it.
+      final late = store.beginListRead();
+      await store.markSessionDeleted(gone);
+      // A listing begun before the delete cannot confirm it.
+      late.end(rows: [kept], completeProfile: 'default');
+      expect(store.isSessionIdDeleted('gone'), isTrue);
+
+      final slow = store.beginListRead();
+      final secondGone = _session('gone-2', title: 'Gone 2');
+      await store.markSessionDeleted(secondGone);
+      store.beginListRead().end(rows: [kept], completeProfile: 'default');
+      // Confirmed, but `slow` began before gone-2's delete and is open.
+      expect(store.isSessionIdDeleted('gone'), isFalse);
+      expect(store.isSessionIdDeleted('gone-2'), isTrue);
+      slow.end(rows: [secondGone]);
+      await Future<void>.delayed(Duration.zero);
+      expect(store.isSessionIdDeleted('gone-2'), isFalse);
+    });
+
+    test('a later read that still names a confirmed id keeps its '
+        'tombstone', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final store = await SessionArchive.load(prefs, 'conn-a');
+      final gone = _session('gone', title: 'Gone');
+      final kept = _session('kept', title: 'Kept');
+      // A read begun before the delete holds the tombstone for now.
+      final older = store.beginListRead();
+      await store.markSessionDeleted(gone);
+      final cached = store.beginListRead();
+      store.beginListRead().end(rows: [kept], completeProfile: 'default');
+      expect(store.isSessionIdDeleted('gone'), isTrue);
+      // A read begun after the delete still answers with the row (a cache):
+      // the confirmation does not stand once the older read ends.
+      cached.end(rows: [gone]);
+      older.end();
+      await Future<void>.delayed(Duration.zero);
+      expect(store.isSessionIdDeleted('gone'), isTrue);
+    });
+
+    test('a tombstone no complete listing can cover is kept', () async {
+      final prefs = await SharedPreferences.getInstance();
+      // Recorded by an older build: no profile scope.
+      SharedPreferences.setMockInitialValues({
+        'deleted_sessions_conn-a': ['legacy\t1000.0'],
+      });
+      final legacyPrefs = await SharedPreferences.getInstance();
+      expect(identical(legacyPrefs, prefs), isFalse);
+      final store = await SessionArchive.load(legacyPrefs, 'conn-a');
+      // The default listing omits archived rows and delegate children.
+      await store.markSessionDeleted(
+        _session('archived', title: 'A').copyWith(archived: true),
+      );
+      await store.markSessionDeleted(
+        Session.fromJson({
+          'id': 'delegate',
+          'parent_session_id': 'p',
+          'is_internal_child': true,
+          'source': 'desktop',
+          'started_at': 900,
+        }),
+      );
+      store.beginListRead().end(rows: const [], completeProfile: 'default');
+      for (final id in ['legacy', 'archived', 'delegate']) {
+        expect(store.isSessionIdDeleted(id), isTrue, reason: id);
+      }
+    });
+
+    test('the profile scope survives a cold start', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final store = await SessionArchive.load(prefs, 'conn-a');
+      await store.markSessionDeleted(
+        _session('gone', title: 'Gone').copyWith(profile: 'work'),
+      );
+      final persisted = prefs.getStringList('deleted_sessions_conn-a')!;
+      SharedPreferences.setMockInitialValues({
+        'deleted_sessions_conn-a': persisted,
+      });
+      final cold = await SessionArchive.load(
+        await SharedPreferences.getInstance(),
+        'conn-a',
+      );
+      cold.beginListRead().end(rows: const [], completeProfile: 'default');
+      expect(cold.isSessionIdDeleted('gone'), isTrue);
+      cold.beginListRead().end(rows: const [], completeProfile: 'work');
+      expect(cold.isSessionIdDeleted('gone'), isFalse);
+    });
 
     test(
       'a deleted compacted chat stays gone under any of its lineage ids',
@@ -456,8 +573,8 @@ void main() {
       final store = await SessionArchive.load(prefs, connection.id);
       await tester.runAsync(() async {
         await store.markSessionDeleted(gone);
-        // More confirmed deletes than the store's bound.
-        for (var i = 0; i < SessionArchive.maxDeletedTombstones; i++) {
+        // Many more confirmed deletes.
+        for (var i = 0; i < 250; i++) {
           await store.markSessionDeleted(_session('other-$i', title: 'O'));
         }
       });
@@ -496,17 +613,19 @@ void main() {
       final client = _HomeClient([kept, gone]);
       await pumpHome(tester, manager, client);
 
-      // No read is in flight: the bound may drop tombstones right away.
       final prefs = await SharedPreferences.getInstance();
       final store = await SessionArchive.load(prefs, connection.id);
       await tester.runAsync(() async {
         await store.markSessionDeleted(gone);
-        for (var i = 0; i < SessionArchive.maxDeletedTombstones; i++) {
+        for (var i = 0; i < 250; i++) {
           await store.markSessionDeleted(_session('other-$i', title: 'O'));
         }
       });
       await tester.pump();
-      expect(store.isSessionDeleted(gone), isFalse, reason: 'evicted');
+      // The server's complete listing confirms it gone: the tombstone goes.
+      store.beginListRead().end(rows: [kept], completeProfile: 'default');
+      await tester.pump();
+      expect(store.isSessionDeleted(gone), isFalse, reason: 'released');
 
       // Offline now: Home keeps painting the page it retained.
       client.fail = true;
@@ -694,6 +813,75 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
       return (deletes: deletes, reads: reads);
     }
+
+    testWidgets('the gateway\'s complete listing lets a tombstone go only '
+        'once the row is gone', (tester) async {
+      tester.view.physicalSize = const Size(1170, 2532);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final prefs = await SharedPreferences.getInstance();
+      final manager = await ConnectionManager.create(prefs);
+      final store = await SessionArchive.load(prefs, connectionId);
+      await store.markSessionDeleted(_session('gone', title: 'Deleted row'));
+      // The server still lists it at first (a cached or lagging answer).
+      var listed = [
+        row('kept', 'Kept row', now - 120),
+        row('gone', 'Deleted row', now - 60),
+      ];
+      final gateway = ApiClient(
+        baseUrl: 'http://127.0.0.1:8642',
+        apiKey: 'test-key',
+        connectionId: connectionId,
+        httpClient: MockClient((request) async {
+          if (request.url.path == '/api/sessions') {
+            return http.Response(
+              jsonEncode({'object': 'list', 'data': listed}),
+              200,
+            );
+          }
+          if (request.url.path == '/health') return http.Response('{}', 200);
+          return http.Response('{}', 404);
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          theme: AppTheme.fromId('dark'),
+          localizationsDelegates: Strings.localizationsDelegates,
+          supportedLocales: Strings.supportedLocales,
+          home: SessionListScreen(
+            connection: connection,
+            connManager: manager,
+            clientOverride: gateway,
+          ),
+        ),
+      );
+      for (var i = 0; i < 60; i++) {
+        await tester.pump(const Duration(milliseconds: 25));
+        if (find.text('Kept row').evaluate().isNotEmpty) break;
+      }
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('Kept row'), findsOneWidget);
+      expect(find.text('Deleted row'), findsNothing);
+      expect(store.isSessionIdDeleted('gone'), isTrue);
+
+      // Its complete listing no longer has the row: the tombstone goes.
+      listed = [row('kept', 'Kept row', now - 120)];
+      unawaited(
+        tester
+            .state<RefreshIndicatorState>(find.byType(RefreshIndicator))
+            .show(),
+      );
+      for (var i = 0; i < 40; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(store.isSessionIdDeleted('gone'), isFalse);
+      expect(find.text('Kept row'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    });
 
     testWidgets('a delete made on another screen drops the row at once', (
       tester,

@@ -887,6 +887,55 @@ void main() {
     );
   });
 
+  test('only the gateway fallback hands over its complete listing', () async {
+    var dashboardUp = false;
+    final dashboardHttp = MockClient((_) async {
+      if (!dashboardUp) return http.Response('{}', 404);
+      return http.Response(
+        jsonEncode({
+          'sessions': [_row(0)],
+          'total': 1,
+        }),
+        200,
+      );
+    });
+    final gatewayHttp = MockClient(
+      (_) async => http.Response(
+        jsonEncode({
+          'data': [_row(0), _row(1, source: 'cron')],
+        }),
+        200,
+      ),
+    );
+    final dashboard = _dashboard(dashboardHttp);
+    final gateway = _gateway(gatewayHttp);
+    final repository = SessionRepository(dashboard, gateway);
+    addTearDown(() {
+      repository.close();
+      dashboard.close();
+      gateway.close();
+    });
+
+    // Filtered for the screen, but the raw default listing travels apart:
+    // every row the server listed, what a delete tombstone is checked
+    // against.
+    final fallback = await repository.refresh(
+      const SessionLibraryQuery(sources: ['mobile']),
+    );
+    expect(fallback.source, SessionLibrarySource.gateway);
+    expect(fallback.sessions.map((s) => s.id), ['session-0']);
+    expect(fallback.completeGatewayListing?.map((s) => s.id), [
+      'session-0',
+      'session-1',
+    ]);
+
+    // A Dashboard page is never presented as complete.
+    dashboardUp = true;
+    final page = await repository.refresh(const SessionLibraryQuery());
+    expect(page.source, SessionLibrarySource.dashboard);
+    expect(page.completeGatewayListing, isNull);
+  });
+
   test('Gateway legacy vuelve a cargar al cambiar de categoría', () async {
     final dashboardHttp = MockClient((_) async => http.Response('{}', 404));
     var gatewayRequests = 0;
