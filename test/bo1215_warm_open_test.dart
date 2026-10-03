@@ -325,6 +325,75 @@ void main() {
     },
   );
 
+  testWidgets(
+    'a pull during the quiet revalidation joins it: one read, the pull ends '
+    'with it, and a change seen meanwhile is read once afterwards',
+    (tester) async {
+      final manager = await _manager();
+      final server = _HeldServer();
+      addTearDown(server.close);
+      final cache = MissionSnapshotCache()..write(_connection, _lastSeen());
+      await tester.pumpWidget(_host(manager, server.repository(), cache));
+      expect(server.count('profiles.list'), 1);
+      expect(server.count('kanban.board'), 1);
+
+      // The user pulls while the opening revalidation is still held.
+      final pull = tester.state<RefreshIndicatorState>(
+        find.byType(RefreshIndicator).first,
+      );
+      var pullDone = false;
+      unawaited(pull.show().then((_) => pullDone = true));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        server.count('kanban.board'),
+        1,
+        reason: 'the pull must not start a second full read',
+      );
+      expect(server.count('profiles.list'), 1);
+      expect(pullDone, isFalse, reason: 'the pull waits for the read');
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsOneWidget,
+        reason: 'the user asked, so the joined read is no longer quiet',
+      );
+
+      // A bot appears while that single read is on the wire.
+      server.profiles = _changedRoster();
+      server.sessionsChanged();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+      expect(server.count('kanban.board'), 1);
+      expect(pullDone, isFalse);
+
+      server.network.complete();
+      await tester.pumpAndSettle();
+      expect(pullDone, isTrue, reason: 'the pull ends with the joined read');
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(server.count('kanban.board'), 1, reason: 'still one full read');
+      expect(
+        server.count('profiles.list'),
+        2,
+        reason: 'exactly one follow-up roster read for the change',
+      );
+      expect(find.byKey(const ValueKey('roster-line-nova')), findsOneWidget);
+
+      // Nothing else trails behind it.
+      await tester.pump(const Duration(seconds: 5));
+      expect(server.count('profiles.list'), 2);
+      expect(server.count('kanban.board'), 1);
+
+      // With nothing on the wire, the next pull reads the server again.
+      unawaited(pull.show());
+      await tester.pumpAndSettle();
+      expect(server.count('kanban.board'), 2, reason: 'a later pull reads');
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('a cold open still says it is reading the team', (tester) async {
     final manager = await _manager();
     final server = _HeldServer();

@@ -686,11 +686,37 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     }
   }
 
+  /// The full read on the wire, if any (see [_pullRefresh]).
+  Future<void>? _inFlightLoad;
+
+  /// Pull-to-refresh joins a full read already on the wire instead of
+  /// starting a second one whose answer could land in either order. The
+  /// pull ends when that read lands; a change seen meanwhile is still read
+  /// once afterwards through [_changeDuringLoad].
+  Future<void> _pullRefresh() {
+    final inFlight = _inFlightLoad;
+    if (inFlight == null) return _load(refresh: true);
+    if (_quietRefresh && mounted) setState(() => _quietRefresh = false);
+    return inFlight;
+  }
+
   /// [quiet] keeps the header spinner off for a background revalidation of
   /// what is already on screen; [_refreshing] still blocks overlapping reads.
   Future<void> _load({
     bool refresh = false,
     bool quiet = false,
+    Future<MissionBackendSnapshot>? reuse,
+  }) {
+    final run = _runLoad(refresh: refresh, quiet: quiet, reuse: reuse);
+    _inFlightLoad = run;
+    return run.whenComplete(() {
+      if (identical(_inFlightLoad, run)) _inFlightLoad = null;
+    });
+  }
+
+  Future<void> _runLoad({
+    required bool refresh,
+    required bool quiet,
     Future<MissionBackendSnapshot>? reuse,
   }) async {
     final generation = ++_loadGeneration;
@@ -3052,7 +3078,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
               projection.blockedCount,
             ),
             onCreateAgent: _canCreateBot ? _createAgentFromMission : null,
-            onRefresh: () => _load(refresh: true),
+            onRefresh: _pullRefresh,
           ),
         ),
       ],
