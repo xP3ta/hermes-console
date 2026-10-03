@@ -255,6 +255,55 @@ void main() {
       },
     );
 
+    test(
+      'a deleted compacted chat stays gone under any of its lineage ids',
+      () async {
+        final prefs = await SharedPreferences.getInstance();
+        final store = await SessionArchive.load(prefs, 'conn-a');
+        Session row(Map<String, dynamic> lineage, {double activity = 1000}) =>
+            Session.fromJson({
+              'title': 'Compacted',
+              'source': 'desktop',
+              'message_count': 40,
+              'started_at': 900,
+              'last_active': activity,
+              ...lineage,
+            });
+        // The list projects a compression chain onto its live tip.
+        final tip = row({
+          'id': 'tip-2',
+          '_lineage_root_id': 'root',
+          '_lineage_ids': ['root', 'mid-1', 'tip-2'],
+        });
+        await store.markSessionDeleted(
+          tip,
+          now: DateTime.fromMillisecondsSinceEpoch(2000000),
+        );
+
+        // A late page returns the same conversation under another id.
+        for (final alias in <Map<String, dynamic>>[
+          {'id': 'root'},
+          {'id': 'mid-1'},
+          {'id': 'tip-3', '_lineage_root_id': 'root'},
+          {
+            'id': 'tip-3',
+            '_lineage_ids': ['mid-1', 'tip-3'],
+          },
+        ]) {
+          expect(store.isSessionDeleted(row(alias)), isTrue, reason: '$alias');
+        }
+        for (final id in ['root', 'mid-1', 'tip-2']) {
+          expect(store.isSessionIdDeleted(id), isTrue, reason: id);
+        }
+        // An unrelated chat, and the lineage with newer activity, are shown.
+        expect(store.isSessionDeleted(row({'id': 'other'})), isFalse);
+        expect(
+          store.isSessionDeleted(row({'id': 'root'}, activity: 2100)),
+          isFalse,
+        );
+      },
+    );
+
     test('a cold start reads the tombstone back from storage', () async {
       final prefs = await SharedPreferences.getInstance();
       final store = await SessionArchive.load(prefs, 'conn-a');

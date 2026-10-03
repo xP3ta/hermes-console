@@ -488,8 +488,8 @@ final class SessionRepository {
   }
 
   static Set<String> _sessionIdentityAliases(Session session) => {
-    session.id,
     session.logicalId,
+    ...session.identityIds,
   };
 
   static bool _matchesAliases(Session session, Set<String> aliases) =>

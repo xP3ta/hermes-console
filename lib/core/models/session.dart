@@ -69,6 +69,11 @@ class Session implements SessionSortKey {
 
   /// Stable compression lineage identity advertised by Dashboard 0.19.
   final String? lineageRootId;
+
+  /// Every session id of the compression chain projected onto this row
+  /// (`_lineage_ids`, root first). A page can name the same conversation by
+  /// its root, a middle segment or a later tip.
+  final List<String> lineageIds;
   final String? cwd;
   final String? gitRepoRoot;
   final String? gitBranch;
@@ -116,6 +121,7 @@ class Session implements SessionSortKey {
     this.endReason,
     this.parentSessionId,
     this.lineageRootId,
+    this.lineageIds = const [],
     this.cwd,
     this.gitRepoRoot,
     this.gitBranch,
@@ -156,6 +162,11 @@ class Session implements SessionSortKey {
   }
 
   String get logicalId => lineageRootId ?? id;
+
+  /// Every id this row answers to: its live id, its lineage root and each
+  /// compression segment (Desktop's `tombstoneRowIds`).
+  Set<String> get identityIds =>
+      {id, ?lineageRootId, ...lineageIds}..remove('');
 
   /// Chat que todavía existe únicamente como borrador cifrado en el móvil.
   bool get isDraftOnly => source == 'mobile-draft';
@@ -507,6 +518,7 @@ class Session implements SessionSortKey {
     String? endReason,
     String? parentSessionId,
     String? lineageRootId,
+    List<String>? lineageIds,
     String? cwd,
     String? gitRepoRoot,
     String? gitBranch,
@@ -536,6 +548,7 @@ class Session implements SessionSortKey {
     endReason: endReason ?? this.endReason,
     parentSessionId: parentSessionId ?? this.parentSessionId,
     lineageRootId: lineageRootId ?? this.lineageRootId,
+    lineageIds: lineageIds ?? this.lineageIds,
     cwd: cwd ?? this.cwd,
     gitRepoRoot: gitRepoRoot ?? this.gitRepoRoot,
     gitBranch: gitBranch ?? this.gitBranch,
@@ -595,6 +608,7 @@ class Session implements SessionSortKey {
       lineageRootId: _opaqueId(
         json['_lineage_root_id'] ?? json['lineage_root'],
       ),
+      lineageIds: _opaqueIds(json['_lineage_ids']),
       cwd: _boundedText(json['cwd'], 1024),
       gitRepoRoot: _boundedText(json['git_repo_root'], 1024),
       gitBranch: _boundedText(json['git_branch'], 512),
@@ -654,6 +668,11 @@ class Session implements SessionSortKey {
     if (end == null || end <= startedAt) return null;
     return Duration(milliseconds: ((end - startedAt) * 1000).round());
   }
+}
+
+List<String> _opaqueIds(Object? value) {
+  if (value is! List) return const [];
+  return List<String>.unmodifiable(value.map(_opaqueId).whereType<String>());
 }
 
 String? _opaqueId(Object? value) {

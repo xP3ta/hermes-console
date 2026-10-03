@@ -244,13 +244,19 @@ class SessionArchive extends ChangeNotifier {
   /// Every screen (Home recents, Conversations, drawer) filters with this, so
   /// a delete made on any screen drops the row everywhere in the same frame
   /// and a stale retained page, cached tail or slow refresh cannot bring it
-  /// back. Only the deleted physical id matches, and only up to the activity
-  /// watermark recorded at deletion: a row with newer activity is real data
-  /// (the server recreated it) and is shown.
+  /// back. Any id the row answers to matches (live id, lineage root, each
+  /// compression segment, as Desktop's `tombstoneRowIds`), so a page naming
+  /// the same conversation by another segment stays hidden; and only up to
+  /// the activity watermark recorded at deletion: a row with newer activity
+  /// is real data (the server recreated it) and is shown.
   bool isSessionDeleted(Session session) {
-    final watermark = _deleted[session.id];
-    if (watermark == null) return false;
-    return _activitySeconds(session.lastActivityAt) <= watermark;
+    if (_deleted.isEmpty) return false;
+    final activity = _activitySeconds(session.lastActivityAt);
+    for (final id in session.identityIds) {
+      final watermark = _deleted[id];
+      if (watermark != null && activity <= watermark) return true;
+    }
+    return false;
   }
 
   /// True when the server confirmed [sessionId] deleted, whatever activity
@@ -261,8 +267,9 @@ class SessionArchive extends ChangeNotifier {
   /// rule of [isSessionDeleted] would let it back in.
   bool isSessionIdDeleted(String sessionId) => _deleted.containsKey(sessionId);
 
-  /// Records a deletion the server confirmed for [sessionIds] (the physical
-  /// ids that were deleted). Notifies every screen synchronously.
+  /// Records a deletion the server confirmed for [session] (every id it
+  /// answers to) and [sessionIds] (the physical ids that were deleted).
+  /// Notifies every screen synchronously.
   Future<void> markSessionDeleted(
     Session session, {
     Iterable<String> sessionIds = const [],
@@ -271,7 +278,7 @@ class SessionArchive extends ChangeNotifier {
     final nowSeconds = (now ?? DateTime.now()).millisecondsSinceEpoch / 1000.0;
     final activity = _activitySeconds(session.lastActivityAt);
     final watermark = activity > nowSeconds ? activity : nowSeconds;
-    for (final id in {session.id, ...sessionIds}) {
+    for (final id in {...session.identityIds, ...sessionIds}) {
       if (id.isEmpty) continue;
       final previous = _deleted[id];
       if (previous == null || previous < watermark) _deleted[id] = watermark;
