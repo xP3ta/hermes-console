@@ -607,5 +607,68 @@ void main() {
       );
       await tearDownApp(tester, service);
     });
+
+    // Follow-up to 62c6437: the "no details yet" line is honest only when
+    // nothing at all is known. A finished step in this turn, or a task list,
+    // is detail, so the line must stay hidden even with no tool running.
+    testWidgets('a step already done, nothing running: no "no details" line', (
+      tester,
+    ) async {
+      final wall = _Wall()..advance(const Duration(seconds: 5));
+      final service = newService();
+      final gateway = peer.PeerGateway(
+        _snapshot(running: true, turnStartedAt: _turnStart),
+      );
+      final chat = attach(service, gateway, wall);
+      await tester.runAsync(chat.loadMessages);
+      await boot(tester, service);
+      push(tester);
+      await tester.pump();
+      gateway.emit('tool.start', {
+        'tool_id': 't1',
+        'name': 'terminal',
+        'args': {'command': 'pytest -q'},
+      });
+      await tester.pump(const Duration(milliseconds: 16));
+      wall.advance(const Duration(seconds: 2));
+      gateway.emit('tool.complete', {'tool_id': 't1', 'name': 'terminal'});
+      await tester.pump(const Duration(milliseconds: 16));
+
+      await tester.tap(_pill);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(_textIn(_panel), contains('terminal · pytest'));
+      expect(
+        find.byKey(const ValueKey('activity-now-no-details')),
+        findsNothing,
+      );
+      await tearDownApp(tester, service);
+    });
+
+    testWidgets('a task list, nothing running or done: no "no details" line', (
+      tester,
+    ) async {
+      final wall = _Wall()..advance(const Duration(seconds: 5));
+      final service = newService();
+      final gateway = peer.PeerGateway(
+        _snapshot(running: true, turnStartedAt: _turnStart, todos: true),
+      );
+      final chat = attach(service, gateway, wall);
+      await tester.runAsync(chat.loadMessages);
+      await boot(tester, service);
+      push(tester);
+      await tester.pump();
+
+      await tester.tap(_pill);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('activity-tasks-title')), findsOne);
+      expect(_textIn(_panel), contains('Arreglar la pastilla'));
+      expect(
+        find.byKey(const ValueKey('activity-now-no-details')),
+        findsNothing,
+      );
+      await tearDownApp(tester, service);
+    });
   });
 }
