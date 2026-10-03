@@ -1246,8 +1246,10 @@ void main() {
         recoveredId,
       );
 
+      // b7e95b6: the recovered-turn notice is now an in-chat banner above the
+      // composer (it used to be a snackbar that covered the app bar).
       final discard = find.byKey(
-        const ValueKey('hermes-notice-action'),
+        const ValueKey('recovered-turn-discard'),
         skipOffstage: false,
       );
       await tester.tap(discard.last);
