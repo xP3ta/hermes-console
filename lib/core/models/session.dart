@@ -74,6 +74,10 @@ class Session implements SessionSortKey {
   /// (`_lineage_ids`, root first). A page can name the same conversation by
   /// its root, a middle segment or a later tip.
   final List<String> lineageIds;
+
+  /// The server's `is_internal_child`: a delegate run Desktop folds under its
+  /// parent whatever its source. Null when an older server omits it.
+  final bool? isInternalChild;
   final String? cwd;
   final String? gitRepoRoot;
   final String? gitBranch;
@@ -122,6 +126,7 @@ class Session implements SessionSortKey {
     this.parentSessionId,
     this.lineageRootId,
     this.lineageIds = const [],
+    this.isInternalChild,
     this.cwd,
     this.gitRepoRoot,
     this.gitBranch,
@@ -248,22 +253,25 @@ class Session implements SessionSortKey {
   /// Whether this row is its own entry in a session list (Home recents,
   /// Conversations, drawer), one rule for every screen.
   ///
-  /// A root always is. A child (`parent_session_id`) is when a person chats
-  /// in it: Hermes lists `/branch` and reset children as their own rows and
-  /// the Desktop sidebar shows them (`source`, not parenthood, tells them
-  /// apart). Delegate runs (`subagent`), tool sessions and automation
-  /// children stay folded under their parent, and so does a child with no
-  /// source, which an older server could hand over unclassified.
-  /// Compression continuations never arrive as separate rows: the server
-  /// projects them onto one row carrying `_lineage_root_id`.
+  /// The server's `is_internal_child` decides first, as in the Desktop
+  /// sidebar (store/session.ts): an internal child (a delegate run, whatever
+  /// its source) is always folded under its parent. Otherwise a root always
+  /// is its own row, and a child (`parent_session_id`) is when a person
+  /// chats in it: Hermes lists `/branch` and reset children as their own
+  /// rows and Desktop shows them. Automation children (cron, Kanban) stay
+  /// folded. Only when an older server omits `is_internal_child` does the
+  /// source tell a chat child from a delegate run (`subagent`), a tool
+  /// session or an unclassified child, which stay folded. Compression
+  /// continuations never arrive as separate rows: the server projects them
+  /// onto one row carrying `_lineage_root_id`.
   bool get listsAsOwnRow {
+    if (isInternalChild == true) return false;
     final parent = parentSessionId?.trim();
     if (parent == null || parent.isEmpty) return true;
+    if (isJob || isKanbanJob) return false;
+    if (isInternalChild == false) return true;
     final kind = source.trim();
-    return kind.isNotEmpty &&
-        SessionCategory.chats.includesSource(kind) &&
-        !isJob &&
-        !isKanbanJob;
+    return kind.isNotEmpty && SessionCategory.chats.includesSource(kind);
   }
 
   /// Identificador del cron que originó esta sesión.
@@ -519,6 +527,7 @@ class Session implements SessionSortKey {
     String? parentSessionId,
     String? lineageRootId,
     List<String>? lineageIds,
+    bool? isInternalChild,
     String? cwd,
     String? gitRepoRoot,
     String? gitBranch,
@@ -549,6 +558,7 @@ class Session implements SessionSortKey {
     parentSessionId: parentSessionId ?? this.parentSessionId,
     lineageRootId: lineageRootId ?? this.lineageRootId,
     lineageIds: lineageIds ?? this.lineageIds,
+    isInternalChild: isInternalChild ?? this.isInternalChild,
     cwd: cwd ?? this.cwd,
     gitRepoRoot: gitRepoRoot ?? this.gitRepoRoot,
     gitBranch: gitBranch ?? this.gitBranch,
@@ -609,6 +619,9 @@ class Session implements SessionSortKey {
         json['_lineage_root_id'] ?? json['lineage_root'],
       ),
       lineageIds: _opaqueIds(json['_lineage_ids']),
+      isInternalChild: json['is_internal_child'] is bool
+          ? json['is_internal_child'] as bool
+          : null,
       cwd: _boundedText(json['cwd'], 1024),
       gitRepoRoot: _boundedText(json['git_repo_root'], 1024),
       gitBranch: _boundedText(json['git_branch'], 512),

@@ -30,6 +30,7 @@ Map<String, dynamic> _row(
   String source = 'desktop',
   String? parent,
   int age = 60,
+  bool? internalChild,
 }) => {
   'id': id,
   '_lineage_root_id': id,
@@ -44,6 +45,7 @@ Map<String, dynamic> _row(
   'last_active': _now - age,
   'archived': false,
   'parent_session_id': ?parent,
+  'is_internal_child': ?internalChild,
 };
 
 /// A parent with two Desktop branches, plus the children that must stay
@@ -61,6 +63,15 @@ final List<Map<String, dynamic>> _rows = [
   ),
   _row('tool', 'Tool session', source: 'tool', parent: 'parent', age: 40),
   _row('unknown', 'Unclassified child', source: '', parent: 'parent'),
+  // A delegate run that kept its parent's source: only the server's
+  // is_internal_child tells it apart (Desktop filters on that field).
+  _row(
+    'internal',
+    'Internal desktop child',
+    parent: 'parent',
+    age: 30,
+    internalChild: true,
+  ),
 ];
 
 const _shown = [
@@ -68,7 +79,12 @@ const _shown = [
   'Release plan: option A',
   'Release plan: option B',
 ];
-const _folded = ['Delegate run', 'Tool session', 'Unclassified child'];
+const _folded = [
+  'Delegate run',
+  'Tool session',
+  'Unclassified child',
+  'Internal desktop child',
+];
 
 http.Response _gatewayPage() =>
     http.Response(jsonEncode({'object': 'list', 'data': _rows}), 200);
@@ -152,6 +168,18 @@ void main() {
       );
     }
     expect(own(_row('cron_job_20260101_000000', 'Job', parent: 'p')), isFalse);
+    // The server's is_internal_child is the authority when published; the
+    // source only decides for an older server that omits it.
+    expect(
+      own(_row('d', 'Delegate', parent: 'p', internalChild: true)),
+      isFalse,
+    );
+    expect(own(_row('d', 'Delegate', internalChild: true)), isFalse);
+    expect(
+      own(_row('b', 'Branch', source: '', parent: 'p', internalChild: false)),
+      isTrue,
+    );
+    expect(own(_row('r', 'Root', internalChild: false)), isTrue);
   });
 
   testWidgets('Home shows the parent and both branches', (tester) async {
@@ -321,7 +349,7 @@ void main() {
         reason: 'drawer shows $id',
       );
     }
-    for (final id in ['delegate', 'tool', 'unknown']) {
+    for (final id in ['delegate', 'tool', 'unknown', 'internal']) {
       expect(
         find.byKey(ValueKey('drawer-recent-$id'), skipOffstage: false),
         findsNothing,
