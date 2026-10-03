@@ -190,6 +190,21 @@ class SharedGatewayPool {
     }
   }
 
+  /// Retires every chat socket after a credential change (Dashboard secret
+  /// or auth mode, which the pool key cannot see). A retired socket serves
+  /// no new chat: the next [acquireChat] dials with the new credentials.
+  /// Chats still riding it keep it until they let go; it then closes at
+  /// once instead of lingering for a reopen.
+  void retireChatSockets() {
+    for (final entry in _entries.entries.toList()) {
+      if (!entry.key.endsWith(_chatLane)) continue;
+      _entries.remove(entry.key);
+      entry.value.linger?.cancel();
+      entry.value.linger = null;
+      if (entry.value.refs <= 0) unawaited(entry.value.client.close());
+    }
+  }
+
   /// Sondea cada socket vivo del pool (cambio de red). Un socket medio
   /// abierto cae por la ruta normal y su dueño aplica el backoff. Los ya
   /// caídos olvidan el backoff de la red anterior (rl1215).

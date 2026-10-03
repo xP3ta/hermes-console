@@ -28825,6 +28825,9 @@ class ActiveChatService {
   void _onCredentialsRevision() {
     _credentialsEpoch += 1;
     closeWarmGateways();
+    // The shared chat sockets were authenticated with the old credentials
+    // too: no chat opened from now on may ride them.
+    _chatGatewayPool.retireChatSockets();
   }
 
   /// co1215: bumps on every material connection change, including Dashboard

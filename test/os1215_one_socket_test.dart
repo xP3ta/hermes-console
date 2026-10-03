@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -220,10 +221,12 @@ void main() {
   late _Gateway gateway;
   late SharedGatewayPool pool;
   late ActiveChatService service;
+  late ValueNotifier<int> credentials;
 
   ActiveChatService newService({bool shared = true}) {
     final created = ActiveChatService(
       compressionRestoreStore: testCompressionRestoreStore(),
+      connectionCredentialsRevision: credentials,
       chatGatewayPool: pool,
       sharedChatGatewayFactory: shared ? _client : null,
       // The pre-os1215 path: one client per chat.
@@ -260,6 +263,7 @@ void main() {
   setUp(() async {
     gateway = await _Gateway.start();
     pool = SharedGatewayPool.forTesting(linger: Duration.zero);
+    credentials = ValueNotifier<int>(0);
     service = newService();
   });
 
@@ -407,6 +411,35 @@ void main() {
     service.dispose();
     await _waitUntil(() => gateway.liveSockets == 0, reason: 'closed');
     expect(pool.chatClientCount, 0);
+  });
+
+  // d582f32 on the shared path: a credential revision (Dashboard secret or
+  // auth mode, which never reach the pool key) must keep the socket that was
+  // authenticated before it from serving any chat opened afterwards. Chats
+  // still riding it keep it until they let go; then it closes.
+  test('a credential revision keeps later chats off the socket '
+      'authenticated before it', () async {
+    await open('a');
+    final first = _sharedClient(pool, gateway);
+    expect(gateway.sockets, hasLength(1));
+
+    credentials.value += 1;
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(gateway.sockets.first.closeCode, isNull, reason: 'A still owns it');
+
+    await open('b');
+    expect(gateway.sockets, hasLength(2), reason: 'B dials with the new auth');
+    expect(identical(_sharedClient(pool, gateway), first), isFalse);
+
+    // A lets go: the stale socket closes instead of lingering for a reopen.
+    service.release('conn-one-socket', 'stored-a', profile: 'default');
+    await _waitUntil(
+      () => gateway.sockets.first.closeCode != null,
+      reason: 'stale socket closed',
+    );
+    final a2 = await open('a');
+    expect(a2.desktopRuntimeSessionId, 'runtime-a');
+    expect(gateway.sockets, hasLength(2), reason: 'A reopens on the new one');
   });
 
   test('profiles keep separate sockets', () async {
