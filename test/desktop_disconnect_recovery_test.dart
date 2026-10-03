@@ -1570,24 +1570,21 @@ Future<void> _waitUntil(
   }
 }
 
-/// Waits, by observing the chat's own change events, until the turn reaches a
-/// final pipeline state, and returns it. No wall-clock window is involved, so
-/// a slow host only delays the answer; a wrong final state still fails fast.
+/// Waits until the turn reaches a final pipeline state and returns it.
+///
+/// There is no wall-clock budget: a slow host only delays the answer, while a
+/// wrong final state still fails at once. The state is polled rather than
+/// observed through `changes` because an empty transport terminal flips
+/// `state` to completed before its change event, which waits for the
+/// canonical transcript.
 Future<ChatPipelineState> _settledPipelineState(ActiveChat chat) async {
-  bool settled() => const {
+  const settled = {
     ChatPipelineState.completed,
     ChatPipelineState.failed,
     ChatPipelineState.cancelled,
-  }.contains(chat.state);
-  if (settled()) return chat.state;
-  final reached = Completer<void>();
-  final subscription = chat.changes.listen((_) {
-    if (settled() && !reached.isCompleted) reached.complete();
-  });
-  try {
-    if (!settled()) await reached.future;
-  } finally {
-    await subscription.cancel();
+  };
+  while (!settled.contains(chat.state)) {
+    await Future<void>.delayed(const Duration(milliseconds: 5));
   }
   return chat.state;
 }
