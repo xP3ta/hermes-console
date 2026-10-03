@@ -1,0 +1,16 @@
+# Extended regexes (one per line). A changed line under lib/ that matches
+# any of them makes its file core, whatever the file is called. They cover
+# state that survives a restart or decides whether a user's turn or text
+# is kept: preferences, secure storage, caches, drafts, outbox, prepared
+# turns. Changing this list is itself a reviewed change.
+
+SharedPreferences
+FlutterSecureStorage
+[Ss]ecureStorage
+[Dd]raftStore
+[Oo]utbox
+PreparedTurn
+ColdStart
+[A-Za-z]+Cache\b
+[A-Za-z]+Store\b
+\.set(String|StringList|Bool|Int|Double)\(
