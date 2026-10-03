@@ -83,6 +83,14 @@ class Session implements SessionSortKey {
   final String? gitBranch;
   final bool archived;
   final bool? pinned;
+
+  /// The server's `hidden` flag (kept off the default sidebar listing on
+  /// every surface). Null when the server does not publish it.
+  final bool? hidden;
+
+  /// The server's derived read state (`last_read_at` watermark against the
+  /// latest activity). Null when the server does not publish it.
+  final bool? unread;
   final String? profile;
   final bool? isDefaultProfile;
   final String? handoffPlatform;
@@ -132,6 +140,8 @@ class Session implements SessionSortKey {
     this.gitBranch,
     this.archived = false,
     this.pinned,
+    this.hidden,
+    this.unread,
     this.profile,
     this.isDefaultProfile,
     this.handoffPlatform,
@@ -533,6 +543,8 @@ class Session implements SessionSortKey {
     String? gitBranch,
     bool? archived,
     bool? pinned,
+    bool? hidden,
+    bool? unread,
     String? profile,
     bool? isDefaultProfile,
     String? handoffPlatform,
@@ -564,6 +576,8 @@ class Session implements SessionSortKey {
     gitBranch: gitBranch ?? this.gitBranch,
     archived: archived ?? this.archived,
     pinned: pinned ?? this.pinned,
+    hidden: hidden ?? this.hidden,
+    unread: unread ?? this.unread,
     profile: profile ?? this.profile,
     isDefaultProfile: isDefaultProfile ?? this.isDefaultProfile,
     handoffPlatform: handoffPlatform ?? this.handoffPlatform,
@@ -627,6 +641,8 @@ class Session implements SessionSortKey {
       gitBranch: _boundedText(json['git_branch'], 512),
       archived: json['archived'] == true,
       pinned: json['pinned'] is bool ? json['pinned'] as bool : null,
+      hidden: _flag(json['hidden']),
+      unread: json['unread'] is bool ? json['unread'] as bool : null,
       profile: _boundedText(json['profile'], 256),
       isDefaultProfile: json['is_default_profile'] is bool
           ? json['is_default_profile'] as bool
@@ -648,6 +664,15 @@ class Session implements SessionSortKey {
       actualCostUsd: _nonNegativeDouble(json['actual_cost_usd']),
       hasSystemPrompt: json['has_system_prompt'] == true,
     );
+  }
+
+  /// A SQLite flag column: JSON bool, or the raw 0/1 integer the list
+  /// endpoints leave unconverted. Anything else is "not published".
+  static bool? _flag(Object? value) {
+    if (value is bool) return value;
+    if (value == 0) return false;
+    if (value == 1) return true;
+    return null;
   }
 
   static Session? tryParse(Object? value) {
