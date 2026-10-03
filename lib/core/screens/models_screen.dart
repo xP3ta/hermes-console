@@ -457,7 +457,13 @@ class _ModelsScreenState extends State<ModelsScreen>
     final ticket = profileReadTicket();
     // Bridge-first: trae el catálogo completo y editable con el MISMO token,
     // sin login del Dashboard. Solo si el bridge no responde caemos al Dashboard.
-    if (_bridge.connected && await _bridgeLoadOptions(ticket)) return;
+    // The bridge only knows the default profile's home: any other profile
+    // reads (and sets) its model through the profile-scoped Dashboard.
+    if (_bridge.connected &&
+        ticket.owner == 'default' &&
+        await _bridgeLoadOptions(ticket)) {
+      return;
+    }
     if (!ticket.isCurrent) return;
     _viaBridge = false;
     try {

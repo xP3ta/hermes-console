@@ -104,6 +104,52 @@ class _NoBridge implements BridgeManagerContract {
   Future<bool> tryProvision(String connectionId) async => false;
 }
 
+/// A connected Mobile Bridge. It only knows the default profile's home.
+class _ConnectedBridge implements BridgeManagerContract {
+  final requests = <String>[];
+
+  @override
+  Future<BridgeClient?> clientFor(String connectionId) async => BridgeClient(
+    baseUrl: 'https://hermes.local:9131',
+    token: 'bridge-token',
+    httpClient: MockClient((request) async {
+      requests.add(request.url.path);
+      if (request.url.path == '/bridge/model/options') {
+        return http.Response(
+          jsonEncode({
+            'ok': true,
+            'model': 'bridge-model',
+            'provider': 'prov',
+            'providers': [
+              {
+                'slug': 'prov',
+                'name': 'Prov',
+                'authenticated': true,
+                'models': ['bridge-model'],
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      return http.Response('{}', 404);
+    }),
+  );
+  @override
+  Future<BridgeState> probe(String connectionId) async => const BridgeState(
+    status: BridgeStatus.connected,
+    url: 'https://hermes.local:9131',
+    urlIsDerived: true,
+    hasToken: true,
+    caps: BridgeCapabilities(online: true, authValid: true),
+  );
+  @override
+  Future<BridgeProvisionResult> provision(String connectionId) =>
+      throw UnimplementedError();
+  @override
+  Future<bool> tryProvision(String connectionId) async => false;
+}
+
 class _UnreachableBridge extends BridgeManager {
   _UnreachableBridge(super.secure, super.connections);
 
@@ -292,6 +338,39 @@ void main() {
       });
     });
   }
+
+  group('model with a connected bridge', () {
+    Future<_ConnectedBridge> pumpModels(WidgetTester tester) async {
+      final bridge = _ConnectedBridge();
+      await pump(
+        tester,
+        ModelsScreen(
+          connection: _connection,
+          profileScope: scope,
+          dashboardClientForTesting: _Dashboard().client(),
+          bridgeManagerForTesting: bridge,
+          gatewayCatalogForTesting: () => null,
+        ),
+      );
+      return bridge;
+    }
+
+    testWidgets('another profile never shows the default home catalog', (
+      tester,
+    ) async {
+      final bridge = await pumpModels(tester);
+      expect(find.textContaining('ana-model'), findsWidgets);
+      expect(find.textContaining('bridge-model'), findsNothing);
+      expect(bridge.requests, isNot(contains('/bridge/model/options')));
+    });
+
+    testWidgets('the default profile still goes bridge-first', (tester) async {
+      await scope.switchTo('');
+      final bridge = await pumpModels(tester);
+      expect(bridge.requests, contains('/bridge/model/options'));
+      expect(find.textContaining('bridge-model'), findsWidgets);
+    });
+  });
 
   group('a bot card (fixed profile)', () {
     for (final area in ['memory', 'skills']) {
