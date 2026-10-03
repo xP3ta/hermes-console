@@ -1014,4 +1014,37 @@ void main() {
       expect(find.text('Checking an interrupted reply…'), findsNothing);
     });
   });
+
+  // A retry whose task maps to no roster member (no room event names it)
+  // must read as a sentence, not as "? could not reply".
+  group('failure card for a task with no known member', () {
+    for (final (locale, title) in [
+      (const Locale('en'), 'A bot could not reply'),
+      (const Locale('es'), 'Un bot no pudo responder'),
+    ]) {
+      testWidgets('names the bot neutrally (${locale.languageCode})', (
+        tester,
+      ) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: Strings.localizationsDelegates,
+            supportedLocales: Strings.supportedLocales,
+            locale: locale,
+            theme: AppTheme.hermesRedDark,
+            home: Scaffold(
+              body: RoomRetryCard(
+                taskId: 'dtask-unknown',
+                member: null,
+                busy: false,
+                onRetry: () {},
+                onDismiss: () {},
+              ),
+            ),
+          ),
+        );
+        expect(find.text(title), findsOneWidget);
+        expect(find.textContaining('?'), findsNothing);
+      });
+    }
+  });
 }
