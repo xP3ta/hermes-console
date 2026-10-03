@@ -11,7 +11,6 @@ import 'bot_profile_client.dart';
 // ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 import 'dart:math' show Random, min;
 
@@ -1505,13 +1504,18 @@ class TuiGatewayClient
   bool get knownPerSessionReplayTransport =>
       _connected && _connectionReplayCapable;
 
-  /// Runtimes released by every chat on this multiplexed socket. Hermes has
-  /// no per-session detach, so it keeps streaming them here (as to Desktop's
-  /// single socket) until the socket closes; nobody reads them, so their
-  /// frames are dropped before replay bookkeeping until a chat retains the
-  /// runtime again.
-  final LinkedHashSet<String> _releasedRuntimes = LinkedHashSet<String>();
-  static const int _maxReleasedRuntimes = 256;
+  /// Runtimes released by every chat on this multiplexed socket, with the
+  /// socket generation they were released on. Hermes has no per-session
+  /// detach, so it keeps streaming them on that socket (as to Desktop's single
+  /// socket) until it closes; nobody reads them, so their frames are dropped
+  /// before replay bookkeeping until a chat retains the runtime again.
+  ///
+  /// Membership is exact, never evicted: a capped set forgot its oldest
+  /// entry, whose late frames then rebuilt a watermark nobody read and made
+  /// its revive dirty. It is bounded instead by what Hermes streams here: a
+  /// later socket only carries runtimes some chat resumed on it, so entries
+  /// of an older generation are stale and pruned on the next release.
+  final Map<String, int> _releasedRuntimes = <String, int>{};
 
   /// Chats currently reading each runtime on this multiplexed socket.
   final Map<String, int> _runtimeReaders = <String, int>{};
@@ -1530,7 +1534,8 @@ class TuiGatewayClient
   /// nobody read it, so it starts from a clean replay slate, exactly as a
   /// freshly dialled per-chat socket would.
   void _reviveReleasedRuntime(String runtime) {
-    if (_releasedRuntimes.remove(runtime)) _replayCoordinator.forget(runtime);
+    final releasedOn = _releasedRuntimes.remove(runtime);
+    if (releasedOn == _socketGeneration) _replayCoordinator.forget(runtime);
   }
 
   /// The last chat reading [runtimeSessionId] on this multiplexed socket let
@@ -1550,13 +1555,15 @@ class TuiGatewayClient
     _runtimeReaders.remove(runtime);
     _retireWatchdogRuntime(runtime);
     _replayCoordinator.forget(runtime);
+    final generation = _socketGeneration;
     _releasedRuntimes
-      ..remove(runtime)
-      ..add(runtime);
-    while (_releasedRuntimes.length > _maxReleasedRuntimes) {
-      _releasedRuntimes.remove(_releasedRuntimes.first);
-    }
+      ..removeWhere((_, releasedOn) => releasedOn != generation)
+      ..[runtime] = generation;
   }
+
+  @visibleForTesting
+  Set<String> get releasedRuntimesForTesting =>
+      Set.unmodifiable(_releasedRuntimes.keys);
 
   @visibleForTesting
   Set<String> get watchedRuntimesForTesting =>
@@ -2001,7 +2008,7 @@ class TuiGatewayClient
         return;
       }
       final sessionEvent = parsedEvent as SessionGatewayEvent;
-      if (_releasedRuntimes.contains(sessionEvent.sessionId)) return;
+      if (_releasedRuntimes[sessionEvent.sessionId] == generation) return;
       final event = TuiGatewayEvent(
         type: sessionEvent.type,
         sessionId: sessionEvent.sessionId,

@@ -470,6 +470,98 @@ void main() {
     await b.respondToClarify(b.pendingInteractivePrompt!.key, 'no');
   });
 
+  // ac50a29 / 371df81: the released-runtime filter must not depend on a
+  // bounded history. Past the old 256-entry cap the oldest release was
+  // evicted, so a late frame for it rebuilt a watermark nobody read and its
+  // revive skipped the forget. A long-lived socket that releases many more
+  // runtimes still drops every late frame of the first one and revives it
+  // from a clean slate.
+  test('a runtime released before hundreds of others still drops its late '
+      'frames and revives clean', () async {
+    await open('a');
+    final b = await open('b');
+    final client = _sharedClient(pool, gateway);
+    gateway.pushEvent('runtime-a', 'status.update', const {'kind': 'noop'});
+    await _waitUntil(
+      () => client.replayWatermarksForTesting['runtime-a'] == 1,
+      reason: 'A watermark before release',
+    );
+
+    service.release('conn-one-socket', 'stored-a', profile: 'default');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    for (var i = 0; i < 300; i++) {
+      client
+        ..retainSessionRuntime('runtime-churn-$i')
+        ..releaseSessionRuntime('runtime-churn-$i');
+    }
+    expect(client.releasedRuntimesForTesting, contains('runtime-a'));
+    expect(client.releasedRuntimesForTesting, hasLength(301));
+
+    for (var i = 0; i < 3; i++) {
+      gateway.pushEvent('runtime-a', 'status.update', const {'kind': 'noop'});
+    }
+    gateway.pushClarify('runtime-a', 'srq-evicted00001');
+    gateway.pushClarify('runtime-b', 'srq-evictedb0001');
+    await _waitUntil(() => b.pendingInteractivePrompt != null, reason: 'B');
+    expect(
+      client.replayWatermarksForTesting.containsKey('runtime-a'),
+      isFalse,
+      reason: 'a late frame of the oldest release leaves no watermark',
+    );
+    expect(client.watchedRuntimesForTesting, {'runtime-b'});
+
+    final a2 = await open('a');
+    expect(a2.desktopRuntimeSessionId, 'runtime-a');
+    expect(gateway.sockets, hasLength(1));
+    expect(client.releasedRuntimesForTesting, isNot(contains('runtime-a')));
+    expect(
+      client.replayWatermarksForTesting.containsKey('runtime-a'),
+      isFalse,
+      reason: 'revived from a clean replay slate',
+    );
+    expect(a2.pendingInteractivePrompt, isNull);
+
+    // Positive control: the revived runtime takes its own frames again.
+    gateway.pushEvent('runtime-a', 'status.update', const {'kind': 'noop'});
+    await _waitUntil(
+      () => client.replayWatermarksForTesting['runtime-a'] == 5,
+      reason: 'A frames flow again after revive',
+    );
+    gateway.pushClarify('runtime-a', 'srq-evictrevive1');
+    await _waitUntil(
+      () => a2.pendingInteractivePrompt != null,
+      reason: 'A clarify after revive',
+    );
+    await a2.respondToClarify(a2.pendingInteractivePrompt!.key, 'si');
+    await b.respondToClarify(b.pendingInteractivePrompt!.key, 'no');
+  });
+
+  // The released set is bounded by what Hermes streams on the socket: a new
+  // socket only carries runtimes a chat resumed on it, so releases of an
+  // earlier socket are pruned instead of accumulating for the client's life.
+  test('releases of an earlier socket are pruned after a reconnect', () async {
+    await open('a');
+    final b = await open('b');
+    final client = _sharedClient(pool, gateway);
+    service.release('conn-one-socket', 'stored-a', profile: 'default');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(client.releasedRuntimesForTesting, {'runtime-a'});
+
+    final resumesBefore = gateway.rpcCalls('session.resume').length;
+    await gateway.sockets.single.close(1001);
+    await _waitUntil(
+      () =>
+          gateway.sockets.length == 2 &&
+          gateway.rpcCalls('session.resume').length > resumesBefore &&
+          b.desktopRuntimeSessionId != null,
+      timeout: const Duration(seconds: 30),
+    );
+    client
+      ..retainSessionRuntime('runtime-later')
+      ..releaseSessionRuntime('runtime-later');
+    expect(client.releasedRuntimesForTesting, {'runtime-later'});
+  });
+
   // d582f32 on the shared path: a credential revision (Dashboard secret or
   // auth mode, which never reach the pool key) must keep the socket that was
   // authenticated before it from serving any chat opened afterwards. Chats
