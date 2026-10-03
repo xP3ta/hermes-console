@@ -251,6 +251,20 @@ final class BotRosterRegistry extends ChangeNotifier {
         ];
       });
 
+  /// [profiles] with every confirmed mutation not yet covered by an
+  /// accepted read replayed on it, for a screen still showing a roster of
+  /// its own (a cached one); the same list when none applies.
+  List<AgentProfile> withPendingMutations(
+    String connectionId,
+    List<AgentProfile> profiles,
+  ) {
+    var next = profiles;
+    for (final mutation in _pending[connectionId] ?? const <_Mutation>[]) {
+      next = mutation.edit(next) ?? next;
+    }
+    return next;
+  }
+
   /// Drops the roster of a removed or re-pointed connection; reads that
   /// started before this can no longer publish.
   void forget(String connectionId) {

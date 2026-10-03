@@ -8,9 +8,11 @@ import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/screens/profiles_screen.dart';
+import 'package:hermes_android/core/services/bot_roster_cache.dart';
 import 'package:hermes_android/core/services/bot_roster_store.dart';
 import 'package:hermes_android/core/services/mission_control_repository.dart';
 import 'package:hermes_android/core/services/mission_snapshot_cache.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/bot_roster_fakes.dart';
 import 'support/fake_bot_chat_title_lookup.dart';
@@ -140,6 +142,59 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
       // Tear down while timers are idle.
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+  testWidgets(
+    'a delete confirmed over the cached roster hides the bot in Mission Control before any live read',
+    (tester) async {
+      useWideView(tester);
+      final manager0 = await manager();
+      final prefs = await SharedPreferences.getInstance();
+      await BotRosterCache(prefs).write(connection, const [
+        AgentProfile(name: 'default'),
+        AgentProfile(name: 'ops'),
+      ]);
+      // Cold start: the shared store holds only the cached roster.
+      final registry = BotRosterRegistry()
+        ..attachPersistence(prefs, [connection]);
+      final source = PendingSource(registry);
+      final cache = MissionSnapshotCache()
+        ..write(connection, snapshot(['default', 'ops']));
+      await tester.pumpWidget(
+        panes([
+          (
+            'B',
+            MissionControlScreen(
+              connection: connection,
+              connManager: manager0,
+              dataSource: source,
+              snapshotCache: cache,
+              rosterRegistry: registry,
+              botChatTitleLookup: FakeBotChatTitleLookup(),
+            ),
+          ),
+        ]),
+      );
+      await tester.pump();
+      expect(source.loads, hasLength(1));
+      expect(registry.store(connection.id).isLive, isFalse);
+      expect(botRow('ops'), findsOneWidget);
+
+      // Another screen deletes `ops`; the live read is still on the wire.
+      registry.profileDeleted(connection.id, 'ops');
+      await tester.pump();
+      expect(botRow('ops'), findsNothing);
+      expect(botRow('default'), findsOneWidget);
+
+      // The read started before the delete and lands late.
+      source.loads.single.complete(snapshot(['default', 'ops']));
+      await tester.pump();
+      await tester.pump();
+      expect(botRow('ops'), findsNothing);
+      expect(botRow('default'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 1));
       await tester.pumpWidget(const SizedBox());
     },
   );

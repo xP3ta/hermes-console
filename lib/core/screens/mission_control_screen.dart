@@ -270,6 +270,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   SharedGatewayLease? _profileAssetsLease;
   late final HermesDesktopProfileAssetsGateway _profileAssetsGateway;
   MissionBackendSnapshot? _snapshot;
+  late final BotRosterRegistry _roster;
   late final BotRosterStore _rosterStore;
   List<MissionOrganization> _organizations = const [];
   String? _selectedOrganizationId;
@@ -345,7 +346,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     WidgetsBinding.instance.addObserver(this);
     _scheduleRosterRefresh();
     _watchLiveChanges();
-    final roster = widget.rosterRegistry ?? BotRosterRegistry.shared;
+    final roster = _roster = widget.rosterRegistry ?? BotRosterRegistry.shared;
     roster.hydrate(widget.connection);
     _rosterStore = roster.store(widget.connection.id)
       ..addListener(_onSharedRoster);
@@ -411,13 +412,19 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   /// The bot roster shown is the connection's shared one: a bot created,
   /// renamed or deleted on another screen shows here at once, and a load
   /// that started before that change cannot bring the old roster back.
+  /// Until a live read lands, the edits confirmed so far are replayed on
+  /// the roster this screen already shows (its cached snapshot).
   MissionBackendSnapshot _withSharedRoster(MissionBackendSnapshot snapshot) {
     final store = _rosterStore;
-    if (!store.isLive || identical(store.profiles, snapshot.profiles)) {
-      return snapshot;
-    }
+    final profiles = store.isLive
+        ? store.profiles
+        : _roster.withPendingMutations(
+            widget.connection.id,
+            snapshot.profiles,
+          );
+    if (identical(profiles, snapshot.profiles)) return snapshot;
     return MissionBackendSnapshot(
-      profiles: store.profiles,
+      profiles: profiles,
       sessions: snapshot.sessions,
       board: snapshot.board,
       profilesCapability: snapshot.profilesCapability,
