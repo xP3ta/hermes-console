@@ -296,6 +296,35 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets(
+    'nothing starts a second read while the quiet revalidation is on the wire',
+    (tester) async {
+      final manager = await _manager();
+      final server = _HeldServer();
+      addTearDown(server.close);
+      final cache = MissionSnapshotCache()..write(_connection, _lastSeen());
+      await tester.pumpWidget(_host(manager, server.repository(), cache));
+      expect(server.count('profiles.list'), 1);
+      expect(server.count('kanban.board'), 1);
+
+      // A change event and the 30 s tick both land while it is held: the
+      // quiet read still excludes every other read, or two answers could
+      // land out of order.
+      server.sessionsChanged();
+      await tester.pump();
+      await _idle(tester, const Duration(seconds: 31));
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(server.count('profiles.list'), 1, reason: 'no concurrent read');
+      expect(server.count('kanban.board'), 1, reason: 'no concurrent read');
+
+      server.network.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(server.count('kanban.board'), 1);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('a cold open still says it is reading the team', (tester) async {
     final manager = await _manager();
     final server = _HeldServer();
