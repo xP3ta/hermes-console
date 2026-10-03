@@ -709,13 +709,15 @@ class BotModeBackgroundMonitor {
     final at = _profilesAt;
     if (at != null && _now().difference(at) < _profilesTtl) return;
     try {
+      final startedAt = _now();
       _profiles = await gateway.listProfiles();
       _profilesAt = _now();
       // This isolate has its own memory: the persisted cache is how the app
-      // shows this roster on its next cold start.
+      // shows this roster on its next cold start. Ordered by when the read
+      // started, so it never replaces a newer roster the app wrote.
       unawaited(
         BotRosterCache(prefs)
-            .write(connection, _profiles)
+            .write(connection, _profiles, observedAt: startedAt, reload: true)
             .catchError((Object _) {}),
       );
       // Avatars may have changed with the roster.

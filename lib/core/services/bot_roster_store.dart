@@ -67,9 +67,16 @@ final class BotRosterStore extends ChangeNotifier {
 /// deletions newer than an accepted read are replayed on it, so a read that
 /// was on the wire during one can neither undo it nor be lost.
 final class BotRosterRegistry extends ChangeNotifier {
-  BotRosterRegistry();
+  BotRosterRegistry({DateTime Function()? now}) : _now = now ?? DateTime.now;
 
   static final shared = BotRosterRegistry();
+
+  /// Wall clock shared with the background monitor's isolate: it orders the
+  /// writes both make to the persisted cache.
+  final DateTime Function() _now;
+
+  /// When each read still unanswered started.
+  final Map<int, DateTime> _startedAt = {};
 
   int _clock = 0;
   final Map<String, BotRosterStore> _stores = {};
@@ -96,7 +103,11 @@ final class BotRosterRegistry extends ChangeNotifier {
   Iterable<BotRosterStore> get stores => _stores.values;
 
   /// Stamp for a read that is about to start. Pass it to [publish].
-  int beginRead(String connectionId) => ++_clock;
+  int beginRead(String connectionId) {
+    final ticket = ++_clock;
+    _startedAt[ticket] = _now();
+    return ticket;
+  }
 
   /// Lets accepted rosters persist through [BotRosterCache] and restores
   /// the cached roster of every connection that has nothing loaded yet.
@@ -171,12 +182,15 @@ final class BotRosterRegistry extends ChangeNotifier {
     }
     _lastRead[connectionId] = stamp;
     if (sessions) _sessionsAt[connectionId] = stamp;
+    var observedAt = _startedAt[stamp] ?? _now();
+    _startedAt.removeWhere((ticket, _) => ticket <= stamp);
     // Mutations confirmed before the read started are already in it.
     final pending = _pending[connectionId]
       ?..removeWhere((m) => m.stamp < stamp);
     var next = profiles;
     for (final mutation in pending ?? const <_Mutation>[]) {
       next = mutation.edit(next) ?? next;
+      if (mutation.at.isAfter(observedAt)) observedAt = mutation.at;
     }
     if (pending != null && pending.isEmpty) _pending.remove(connectionId);
     _commit(
@@ -184,6 +198,7 @@ final class BotRosterRegistry extends ChangeNotifier {
       label,
       sessions ? next : _keepSessions(store.profiles, next),
       stamp > store.ticket ? stamp : store.ticket,
+      observedAt: observedAt,
     );
     return true;
   }
@@ -323,6 +338,7 @@ final class BotRosterRegistry extends ChangeNotifier {
     _forgotAt.clear();
     _lastRead.clear();
     _pending.clear();
+    _startedAt.clear();
     _sessionsAt.clear();
     _connections.clear();
     _prefs = null;
@@ -336,7 +352,8 @@ final class BotRosterRegistry extends ChangeNotifier {
     List<AgentProfile>? Function(List<AgentProfile>) edit,
   ) {
     final stamp = ++_clock;
-    (_pending[connectionId] ??= []).add(_Mutation(stamp, edit));
+    final at = _now();
+    (_pending[connectionId] ??= []).add(_Mutation(stamp, at, edit));
     final store = this.store(connectionId);
     final current = store.snapshot;
     if (current == null) {
@@ -356,7 +373,14 @@ final class BotRosterRegistry extends ChangeNotifier {
     }
     final next = edit(current.profiles);
     if (next == null) return;
-    _commit(store, current.label, next, stamp, fromCache: current.fromCache);
+    _commit(
+      store,
+      current.label,
+      next,
+      stamp,
+      fromCache: current.fromCache,
+      observedAt: at,
+    );
   }
 
   void _commit(
@@ -366,6 +390,7 @@ final class BotRosterRegistry extends ChangeNotifier {
     int stamp, {
     bool fromCache = false,
     bool persist = true,
+    DateTime? observedAt,
   }) {
     final frozen = List<AgentProfile>.unmodifiable(profiles);
     store._set(
@@ -382,9 +407,9 @@ final class BotRosterRegistry extends ChangeNotifier {
     if (persist && prefs != null && connection != null) {
       // Storage failure must never hide a live roster.
       unawaited(
-        BotRosterCache(
-          prefs,
-        ).write(connection, frozen).catchError((Object _) {}),
+        BotRosterCache(prefs)
+            .write(connection, frozen, observedAt: observedAt ?? _now())
+            .catchError((Object _) {}),
       );
     }
   }
@@ -393,8 +418,9 @@ final class BotRosterRegistry extends ChangeNotifier {
 /// A confirmed create, rename or delete. [edit] returns null when it does
 /// not apply (already there, or already gone), so replaying it is safe.
 final class _Mutation {
-  const _Mutation(this.stamp, this.edit);
+  const _Mutation(this.stamp, this.at, this.edit);
   final int stamp;
+  final DateTime at;
   final List<AgentProfile>? Function(List<AgentProfile>) edit;
 }
 
