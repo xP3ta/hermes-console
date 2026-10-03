@@ -43,6 +43,7 @@ import '../services/mission_snapshot_cache.dart';
 import '../services/mission_snapshot_prewarm.dart';
 import '../services/mission_bot_chat_store.dart';
 import '../services/mission_organization_store.dart';
+import '../services/open_hosted_room_reads.dart';
 import '../services/notifications/background_listener.dart';
 import '../services/tui_gateway_client.dart';
 import '../theme/app_theme.dart';
@@ -905,11 +906,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
               onRead:
                   _dataSource is MissionHostedGroupsReadDataSource &&
                       capabilities != null
-                  ? (room) => (_dataSource as MissionHostedGroupsReadDataSource)
-                        .readHostedGroup(
-                          room,
-                          generation: capabilities.generation,
-                        )
+                  ? _roomReads.read
                   : null,
               log: index < snapshot.hostedGroups.logs.length
                   ? snapshot.hostedGroups.logs[index]
@@ -2410,6 +2407,65 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         : null;
   }
 
+  /// Reads of the open room, each under the generation live at that read:
+  /// a reconnect never leaves the room bound to the closed socket.
+  late final OpenHostedRoomReads _roomReads = OpenHostedRoomReads(
+    capabilities: _liveHostedCapabilities,
+    readUnder: (room, generation) =>
+        (_dataSource as MissionHostedGroupsReadDataSource).readHostedGroup(
+          room,
+          generation: generation,
+        ),
+    onProven: _adoptHostedCapabilities,
+  );
+
+  Future<GroupsCapabilities> _liveHostedCapabilities() async {
+    final source = _dataSource;
+    if (source is MissionHostedGroupsCapabilitySource) {
+      return (source as MissionHostedGroupsCapabilitySource)
+          .hostedGroupCapabilities();
+    }
+    final known = _snapshot?.hostedGroups.capabilities;
+    if (known == null) throw StateError('hosted group capability unavailable');
+    return known;
+  }
+
+  /// A room read proved [proven] live on the current socket: actions from
+  /// the open room (send, rename, stop, disband) use that generation from
+  /// now on instead of the closed socket's. Rooms keep their own authority
+  /// and are re-checked on every result.
+  void _adoptHostedCapabilities(GroupsCapabilities proven) {
+    final snapshot = _snapshot;
+    final current = snapshot?.hostedGroups.capabilities;
+    if (!mounted ||
+        snapshot == null ||
+        current == null ||
+        current.generation == proven.generation ||
+        current.connectionId != proven.connectionId) {
+      return;
+    }
+    final hosted = snapshot.hostedGroups;
+    setState(() {
+      _snapshot = MissionBackendSnapshot(
+        profiles: snapshot.profiles,
+        sessions: snapshot.sessions,
+        board: snapshot.board,
+        profilesCapability: snapshot.profilesCapability,
+        sessionsCapability: snapshot.sessionsCapability,
+        kanbanCapability: snapshot.kanbanCapability,
+        hostedGroups: HostedGroupsSnapshot(
+          capabilities: proven,
+          rooms: hosted.rooms,
+          logs: hosted.logs,
+          driverStatuses: hosted.driverStatuses,
+        ),
+        hostedGroupsCapability: snapshot.hostedGroupsCapability,
+        failures: snapshot.failures,
+        loadedAt: snapshot.loadedAt,
+      );
+    });
+  }
+
   bool get _canCreateHostedRoom {
     final snapshot = _snapshot;
     final capabilities = snapshot?.hostedGroups.capabilities;
@@ -2583,7 +2639,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         source == null ||
         capabilities == null ||
         index < 0 ||
-        index >= snapshot.hostedGroups.rooms.length) {
+        index >= snapshot.hostedGroups.rooms.length ||
+        // A room read already started on a newer socket: this generation
+        // belongs to a closed one and nothing is sent under it.
+        _roomReads.supersedes(capabilities.generation)) {
       throw StateError('hosted room authority unavailable');
     }
     try {

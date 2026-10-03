@@ -6727,6 +6727,10 @@
   "roomStatusNeedsApproval": "Needs your approval",
   "roomStatusBlocked": "Blocked — retry",
   "roomStatusFailed": "A reply failed",
+  "roomStatusRecovering": "Checking an interrupted reply…",
+  "@roomStatusRecovering": {
+    "description": "Room header while the server re-checks a reply interrupted by a restart or lost connection; not a failure"
+  },
   "roomStatusRoundFinished": "Round {round} finished · {ago}",
   "@roomStatusRoundFinished": {
     "placeholders": {
@@ -6833,6 +6837,10 @@
   "roomRetryAction": "Retry",
   "roomRetryDismiss": "Dismiss",
   "roomRetryUnavailable": "Can't be retried from here",
+  "roomRetryUnknownMember": "A bot",
+  "@roomRetryUnknownMember": {
+    "description": "Neutral name in the failure card when the server does not say which bot failed"
+  },
   "roomStripNeedsYou": "{name} needs you",
   "roomStripReplying": "{name} is replying",
   "@roomStripReplying": {
@@ -6984,6 +6992,7 @@
   },
   "roomEmpty": "No messages yet. Say hi and @mention a bot.",
   "roomRefreshFailed": "Could not refresh the room.",
+  "roomRefreshStale": "Reconnecting… the room may be out of date.",
   "roomYou": "You",
   "roomMoreActions": "More actions",
   "roomCannotSend": "This connection cannot write to the room.",

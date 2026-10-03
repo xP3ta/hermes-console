@@ -8009,6 +8009,10 @@
   "roomStatusNeedsApproval": "Necesita tu aprobación",
   "roomStatusBlocked": "Bloqueada — reintentar",
   "roomStatusFailed": "Falló una respuesta",
+  "roomStatusRecovering": "Comprobando una respuesta interrumpida…",
+  "@roomStatusRecovering": {
+    "description": "Room header while the server re-checks a reply interrupted by a restart or lost connection; not a failure"
+  },
   "roomStatusRoundFinished": "Ronda {round} terminada · {ago}",
   "@roomStatusRoundFinished": {
     "placeholders": {
@@ -8115,6 +8119,10 @@
   "roomRetryAction": "Reintentar",
   "roomRetryDismiss": "Descartar",
   "roomRetryUnavailable": "No se puede reintentar desde aquí",
+  "roomRetryUnknownMember": "Un bot",
+  "@roomRetryUnknownMember": {
+    "description": "Neutral name in the failure card when the server does not say which bot failed"
+  },
   "roomStripNeedsYou": "{name} te necesita",
   "@roomStripNeedsYou": {
     "placeholders": {
@@ -8280,6 +8288,7 @@
   },
   "roomEmpty": "Aún no hay mensajes. Saluda y @menciona a un bot.",
   "roomRefreshFailed": "No se pudo actualizar la sala.",
+  "roomRefreshStale": "Reconectando… la sala puede no estar al día.",
   "roomYou": "Tú",
   "roomMoreActions": "Más acciones",
   "roomCannotSend": "Esta conexión no puede escribir en la sala.",

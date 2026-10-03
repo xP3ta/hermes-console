@@ -847,6 +847,49 @@ final class HostedGroupEvent {
       createdAt == other.createdAt;
 }
 
+/// Room event kinds the server publishes when a driver task leaves the
+/// running state (`hosted_room_discussion.py::plan_publication`).
+const _publishedTaskKinds = {
+  'turn.settled',
+  'turn.failed',
+  'turn.cancelled',
+  'turn.deferred',
+};
+
+/// Retry actions the server is still recovering on its own.
+///
+/// `driver_status.pending_actions` lists a `retry` for every task in
+/// `indeterminate` or `deferred` (`hosted_room_service.py::status`), but only
+/// a deferral is a verdict: the server publishes `turn.deferred`, with the
+/// member id, once it gives up. An `indeterminate` attempt (gateway restart,
+/// lost observation) has no room event at all while the running driver
+/// probes it, and it either settles or is deferred within about a minute
+/// (`hosted_room_driver.py::_reconcile_indeterminate`). Showing it as a
+/// failure would raise a false alarm for an unnamed bot.
+///
+/// A retry counts as recovering only when the driver is running, no
+/// terminal event for its task is in [events], and the server's own
+/// `indeterminate` count covers every such retry; anything ambiguous (an old
+/// deferral outside the loaded window) stays a failure.
+Set<String> roomRecoveringRetryTasks(
+  RoomDriverStatus? driver,
+  Iterable<HostedGroupEvent> events,
+) {
+  if (driver == null || !driver.running) return const {};
+  final indeterminate = driver.counts['indeterminate'] ?? 0;
+  if (indeterminate <= 0) return const {};
+  final published = {
+    for (final e in events)
+      if (_publishedTaskKinds.contains(e.kind) && e.activity.taskId != null)
+        e.activity.taskId!,
+  };
+  final unpublished = {
+    for (final retry in driver.retries)
+      if (!published.contains(retry.taskId)) retry.taskId,
+  };
+  return unpublished.length <= indeterminate ? unpublished : const {};
+}
+
 final class HostedGroupLogPage {
   final List<HostedGroupEvent> events;
   final int cursor;

@@ -12,6 +12,7 @@ import '../../../../l10n/app_localizations.dart';
 import '../../../models/attachment_draft.dart';
 import '../../../models/hosted_groups.dart';
 import '../../../services/attachment_uploader.dart';
+import '../../../services/tui_gateway_client.dart' show TuiGatewayRpcError;
 import '../../../theme/app_theme.dart';
 import '../../../widgets/attachment_source_sheet.dart';
 import '../../../widgets/chat/console_composer.dart';
@@ -77,6 +78,39 @@ String _joinDraft(String a, String b) => a.trim().isEmpty
     : b.trim().isEmpty
     ? a
     : '$a\n$b';
+
+/// Which call failed and how, without any message content: the error type,
+/// the RPC method for gateway errors (`groups.state`, `groups.log`,
+/// `groups.capabilities`) with its code and failure kind, and the text of
+/// local errors only when it is one of the client's own constants below.
+/// Any other message may carry remote text and is never logged.
+String roomRefreshFailureKind(Object error) {
+  if (error is TuiGatewayRpcError) {
+    return 'TuiGatewayRpcError method=${error.method} code=${error.code} '
+        'kind=${error.failureKind?.name} reason=${error.reason}';
+  }
+  final message = switch (error) {
+    StateError(:final message) => message,
+    FormatException(:final message) => message,
+    _ => null,
+  };
+  if (message != null && _roomRefreshLocalFailures.contains(message)) {
+    return '${error.runtimeType} $message';
+  }
+  return error.runtimeType.toString();
+}
+
+/// Constant failure texts of the room read path (this screen, Mission
+/// Control's repository and the gateway client), safe to log.
+const _roomRefreshLocalFailures = {
+  'room refresh authority changed',
+  'room refresh unavailable',
+  'incoherent hosted room mutation readback',
+  'hosted group capability unavailable',
+  'hosted groups unsupported',
+  'MissionControlRepository is closed',
+  'Hermes Desktop WebSocket is not connected',
+};
 
 /// The hosted Room screen (spec 070 S3): group-chat layout, round panel,
 /// approvals/retry/stop, activity, shared composer and attachments.
@@ -191,7 +225,12 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   bool _stopping = false;
   bool _pickerOpen = false;
   String? _threadId;
-  String? _error;
+
+  /// When the room was last read successfully, or when polling (re)started.
+  /// The room counts as stale only once this is [roomStaleAfter] old and a
+  /// read failed; a single failed poll never shows anything.
+  late DateTime _freshAt;
+  bool _stale = false;
   int? _lastSeenSeq;
   bool _lastSeenLoaded = false;
   RoomNotificationLevel _notifications = RoomNotificationLevel.all;
@@ -234,14 +273,11 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _freshAt = _now;
     _poller = RoomLogPoller(
       tick: _tick,
       onDelta: (_) {},
-      onError: (_) {
-        if (mounted) {
-          setState(() => _error = Strings.of(context).roomRefreshFailed);
-        }
-      },
+      onError: (error) => _refreshFailed(error, via: 'poll'),
       timer: widget.pollTimer,
     );
     // Text, focus and dictation rebuild only the composer area (a
@@ -267,7 +303,9 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   }
 
   void _onCoverChanged(AnimationStatus status) {
-    _poller.setVisible(status == AnimationStatus.dismissed);
+    final visible = status == AnimationStatus.dismissed;
+    if (visible && !_poller.active) _restartStaleClock();
+    _poller.setVisible(visible);
   }
 
   @override
@@ -275,6 +313,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     final foreground = state == AppLifecycleState.resumed;
     if (foreground == _foreground) return;
     _foreground = foreground;
+    if (foreground) _restartStaleClock();
     _poller.setForeground(foreground);
     if (!foreground) {
       _flushDraft();
@@ -316,10 +355,19 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     );
   }
 
-  List<RoomRetryAction> get _visibleRetries => [
-    for (final r in _driver?.retries ?? const <RoomRetryAction>[])
-      if (!_dismissedTasks.contains(r.taskId)) r,
-  ];
+  /// Retries the server is still recovering by itself: not failures yet.
+  Set<String> get _recoveringRetries =>
+      roomRecoveringRetryTasks(_driver, _events);
+
+  List<RoomRetryAction> get _visibleRetries {
+    final recovering = _recoveringRetries;
+    return [
+      for (final r in _driver?.retries ?? const <RoomRetryAction>[])
+        if (!_dismissedTasks.contains(r.taskId) &&
+            !recovering.contains(r.taskId))
+          r,
+    ];
+  }
 
   void _markSeen() {
     final latest = _log?.latestSeq;
@@ -348,16 +396,17 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     final reset = log.latestSeq < previousLatest;
     if (reset) _frozenKeys = null;
     final driverChanged = !_sameDriver(_driver, result.driverStatus);
+    _freshAt = _now;
     if (added.isNotEmpty ||
         reset ||
         driverChanged ||
         result.room.revision != previous.revision ||
-        _error != null) {
+        _stale) {
       setState(() {
         _room = result.room;
         _log = log;
         _driver = result.driverStatus ?? _driver;
-        _error = null;
+        _stale = false;
         _answering.removeWhere(
           (id) => !(_driver?.approvals.any((a) => a.requestId == id) ?? false),
         );
@@ -399,11 +448,35 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   Future<void> refresh() async {
     try {
       await _tick();
-    } catch (_) {
-      if (mounted) {
-        setState(() => _error = Strings.of(context).roomRefreshFailed);
-      }
+    } catch (error) {
+      _refreshFailed(error, via: 'refresh');
     }
+  }
+
+  /// Silence tolerated before the room shows itself as reconnecting:
+  /// time since the last successful read, not a count of failed polls.
+  ///
+  /// * The idle poll cadence tops out at 15 s (`RoomPollBackoff.slow`), so
+  ///   one lost idle tick plus the retry that succeeds already lands ~30 s
+  ///   after the last good read; anything shorter flags a single blip.
+  /// * 45 s is the silence the client already tolerates before calling the
+  ///   socket half-open (`TuiGatewayClient.defaultHeartbeatDeadline`, the
+  ///   same as Desktop, sized against the server's 30 s send deadline). The
+  ///   room never looks less healthy than the connection itself does.
+  static const roomStaleAfter = Duration(seconds: 45);
+
+  void _restartStaleClock() {
+    // A stale room stays flagged until a read succeeds; otherwise paused
+    // time (background, covered by another route) is not silence.
+    if (!_stale) _freshAt = _now;
+  }
+
+  void _refreshFailed(Object error, {required String via}) {
+    if (!mounted) return;
+    // Which call failed and how, for device logs; never any content.
+    debugPrint('room refresh failed ($via): ${roomRefreshFailureKind(error)}');
+    final stale = _now.difference(_freshAt) >= roomStaleAfter;
+    if (stale != _stale) setState(() => _stale = stale);
   }
 
   // ── Draft ────────────────────────────────────────────────────────────
@@ -647,7 +720,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       _room = result.room;
       if (result.log != null) _log = result.log;
       if (result.driverStatus != null) _driver = result.driverStatus;
-      _error = null;
+      if (result.log != null) {
+        _freshAt = _now;
+        _stale = false;
+      }
     });
     if (result.log != null) {
       _retirePublishedOutbox();
@@ -1045,7 +1121,6 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       _outboxVersion++;
       _attachments.clear();
       _threadId = null;
-      _error = null;
       _restoringDraft = true;
       _composer.clear();
       _restoringDraft = false;
@@ -1462,6 +1537,13 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           : s.rq1215StatusNeedsAnswer;
     }
     if (driver != null &&
+        _visibleRetries.isEmpty &&
+        _recoveringRetries.isNotEmpty) {
+      // The server is still checking an interrupted reply; it settles or
+      // defers it on its own, so this is not a failure (yet).
+      return s.roomStatusRecovering;
+    }
+    if (driver != null &&
         (_visibleRetries.isNotEmpty ||
             (driver.blocked && driver.retries.isEmpty))) {
       // Only offer a retry the card can actually perform; otherwise the
@@ -1669,6 +1751,44 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// The calm "reconnecting" line under the transcript: neutral color, a
+  /// small spinner while polls keep retrying and a retry that reads now.
+  /// It never touches the composer.
+  Widget _staleStatus(Strings s, HermesThemeColors colors) {
+    return Padding(
+      key: const ValueKey('room-refresh-stale'),
+      padding: const EdgeInsets.fromLTRB(16, 2, 8, 2),
+      child: Row(
+        children: [
+          SizedBox.square(
+            dimension: 10,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.5,
+              color: colors.textSecondary,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              s.roomRefreshStale,
+              maxLines: 2,
+              style: TextStyle(color: colors.textSecondary, fontSize: 12),
+            ),
+          ),
+          TextButton(
+            key: const ValueKey('room-refresh-retry'),
+            onPressed: () => unawaited(refresh()),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              textStyle: const TextStyle(fontSize: 12),
+            ),
+            child: Text(s.commonRetry),
+          ),
+        ],
       ),
     );
   }
@@ -2396,18 +2516,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
-                if (_error != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 4,
-                    ),
-                    child: Text(
-                      _error!,
-                      key: const ValueKey('room-error'),
-                      style: TextStyle(color: colors.error, fontSize: 12),
-                    ),
-                  ),
+                if (_stale) _staleStatus(s, colors),
                 ConstrainedBox(
                   constraints: BoxConstraints(
                     maxHeight: math.max(
