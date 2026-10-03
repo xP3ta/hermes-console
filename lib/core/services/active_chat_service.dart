@@ -29075,16 +29075,20 @@ class ActiveChatService {
   /// tails and remembered route go with it, in memory and on disk.
   Future<void> forgetColdStartProfile(String connectionId, String profile) {
     final owner = Session.profileOwner(profile);
-    _forgetReopenTranscripts(connectionId, profile: owner);
-    return _forgetColdStart(
-      () => coldStartStore?.forgetScope(connectionId, profile: owner),
-    );
+    return _forgetColdStart((
+      connectionId: connectionId,
+      profile: owner,
+      sessionId: null,
+    ), () => coldStartStore?.forgetScope(connectionId, profile: owner));
   }
 
   /// cs1215: the connection was deleted.
   Future<void> forgetColdStartConnection(String connectionId) {
-    _forgetReopenTranscripts(connectionId);
-    return _forgetColdStart(() => coldStartStore?.forgetScope(connectionId));
+    return _forgetColdStart((
+      connectionId: connectionId,
+      profile: null,
+      sessionId: null,
+    ), () => coldStartStore?.forgetScope(connectionId));
   }
 
   Future<int>? _coldStartTailsRestore;
@@ -29100,12 +29104,8 @@ class ActiveChatService {
     required String sessionId,
   }) {
     final owner = Session.profileOwner(profile);
-    _forgetReopenTranscripts(
-      connectionId,
-      profile: owner,
-      sessionId: sessionId,
-    );
     return _forgetColdStart(
+      (connectionId: connectionId, profile: owner, sessionId: sessionId),
       () => coldStartStore?.forgetSession(
         connectionId: connectionId,
         profile: owner,
@@ -29116,19 +29116,63 @@ class ActiveChatService {
 
   /// cs1215: credentials were wiped; no cached chat content may survive.
   Future<void> forgetAllColdStart() {
-    _reopenTranscriptCache.clear();
-    _reopenTranscriptCacheBytes = 0;
-    return _forgetColdStart(() => coldStartStore?.clearAll());
+    return _forgetColdStart(null, () => coldStartStore?.clearAll());
   }
 
+  /// Scopes forgotten while a tail restore was suspended on storage. A
+  /// restore drops every tail they cover before it touches the cache, so a
+  /// deletion that raced it never brings the transcript back. A null entry
+  /// covers everything (wipe).
+  final List<_ColdStartScope?> _coldStartTombstones = [];
+  int _coldStartRestoresInFlight = 0;
+
+  /// Forgets [scope] in memory, records it for any restore in flight, runs
+  /// the storage cleanup and forgets it in memory again once that finishes.
+  ///
   /// Cleanup is best effort: a Keystore failure must not block a deletion
   /// the server already confirmed (nothing readable is left in memory).
-  static Future<void> _forgetColdStart(Future<void>? Function() action) async {
+  Future<void> _forgetColdStart(
+    _ColdStartScope? scope,
+    Future<void>? Function() action,
+  ) async {
+    if (_coldStartRestoresInFlight > 0) _coldStartTombstones.add(scope);
+    _forgetColdStartScopeInMemory(scope);
     try {
       await action();
     } catch (error) {
       debugPrint('[cold-start] cleanup failed (${error.runtimeType})');
+    } finally {
+      _forgetColdStartScopeInMemory(scope);
     }
+  }
+
+  void _forgetColdStartScopeInMemory(_ColdStartScope? scope) {
+    if (scope == null) {
+      _reopenTranscriptCache.clear();
+      _reopenTranscriptCacheBytes = 0;
+      return;
+    }
+    _forgetReopenTranscripts(
+      scope.connectionId,
+      profile: scope.profile,
+      sessionId: scope.sessionId,
+    );
+  }
+
+  bool _coldStartTailForgotten(ColdStartTail tail) {
+    for (final scope in _coldStartTombstones) {
+      if (scope == null) return true;
+      if (tail.connectionId != scope.connectionId) continue;
+      if (scope.profile != null && tail.profile != scope.profile) continue;
+      final sessionId = scope.sessionId;
+      if (sessionId == null ||
+          tail.aliases.contains(sessionId) ||
+          tail.storedSessionId == sessionId ||
+          tail.routeSessionId == sessionId) {
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<void> clearCompressionRestoreForSession({
@@ -29150,13 +29194,9 @@ class ActiveChatService {
     required String sessionId,
   }) async {
     final owner = Session.profileOwner(profile);
-    _forgetReopenTranscripts(
-      connectionId,
-      profile: owner,
-      sessionId: sessionId,
-    );
     _forgetWarmGateways(connectionId, sessionId: sessionId);
     await _forgetColdStart(
+      (connectionId: connectionId, profile: owner, sessionId: sessionId),
       () => coldStartStore?.forgetSession(
         connectionId: connectionId,
         profile: owner,
@@ -29217,9 +29257,12 @@ class ActiveChatService {
   }
 
   Future<int> clearCancelledTurnsForConnection(String connectionId) async {
-    _forgetReopenTranscripts(connectionId);
     _forgetWarmGateways(connectionId);
-    await _forgetColdStart(() => coldStartStore?.forgetScope(connectionId));
+    await _forgetColdStart((
+      connectionId: connectionId,
+      profile: null,
+      sessionId: null,
+    ), () => coldStartStore?.forgetScope(connectionId));
     var removed = 0;
     try {
       removed = await _cancelledTurnStore?.removeConnection(connectionId) ?? 0;
@@ -30539,11 +30582,19 @@ class ActiveChatService {
     final store = coldStartStore;
     if (store == null || _disposed) return 0;
     List<ColdStartTail> tails;
+    _coldStartRestoresInFlight += 1;
     try {
       tails = await store.loadTails(limit: ColdStartStore.maxTails);
+      // A scope forgotten while the read was suspended stays forgotten.
+      tails = [
+        for (final tail in tails)
+          if (!_coldStartTailForgotten(tail)) tail,
+      ];
     } catch (error) {
       debugPrint('[cold-start] tails unavailable (${error.runtimeType})');
       return 0;
+    } finally {
+      if (--_coldStartRestoresInFlight == 0) _coldStartTombstones.clear();
     }
     if (_disposed) return 0;
     var restored = 0;
@@ -30836,3 +30887,11 @@ final class _ReopenTranscript {
       chat.sessionProfile == profile &&
       chat.serverSessionId == storedSessionId;
 }
+
+/// cs1215: what a cold-start cleanup forgets. A null [profile] or
+/// [sessionId] covers the whole connection or profile.
+typedef _ColdStartScope = ({
+  String connectionId,
+  String? profile,
+  String? sessionId,
+});
