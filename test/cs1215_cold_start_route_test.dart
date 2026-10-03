@@ -26,6 +26,25 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'cs1215_cold_start_store_test.dart' show MemoryColdStartStorage;
 import 'support/in_memory_compression_restore_storage.dart';
 
+/// Records every tail blob read (each one is a Keystore decryption in
+/// production) and optionally charges [readLatency] per read.
+class _RecordingColdStartStorage extends MemoryColdStartStorage {
+  _RecordingColdStartStorage(MemoryColdStartStorage from, {this.readLatency}) {
+    values.addAll(from.values);
+  }
+
+  final Duration? readLatency;
+  final List<String> tailReads = [];
+
+  @override
+  Future<String?> read(String key) async {
+    if (key.startsWith('cold_start_tail_v1.')) tailReads.add(key);
+    final latency = readLatency;
+    if (latency != null) await Future<void>.delayed(latency);
+    return super.read(key);
+  }
+}
+
 const _connId = 'cold-conn';
 const _sessionId = 'stored-last';
 const _networkLatency = Duration(milliseconds: 1200);
@@ -332,6 +351,61 @@ void main() {
     expect(ms, isNotNull);
     expect(find.byType(ChatScreen), findsOneWidget);
     await tearDownApp(tester, app.chats);
+  });
+
+  group('App Lock: no tail is decrypted before unlock', () {
+    for (final latency in const [Duration.zero, Duration(milliseconds: 60)]) {
+      testWidgets('locked cold start, read latency ${latency.inMilliseconds} '
+          'ms', (tester) async {
+        final storage = _RecordingColdStartStorage(
+          (await tester.runAsync(previousRun))!,
+          readLatency: latency,
+        );
+        final app = await pumpApp(tester, storage: storage, locked: true);
+        // Frame by frame through splash, Home and the lock screen.
+        for (var i = 0; i < 160; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+          expect(storage.tailReads, isEmpty, reason: 'frame $i');
+          expect(find.byType(ChatScreen, skipOffstage: false), findsNothing);
+        }
+        expect(app.reads, isEmpty);
+
+        app.lock.unlock();
+        final ms = await msUntil(tester, lastChatContent);
+        // ignore: avoid_print
+        print(
+          'cs1215 app-lock latency=${latency.inMilliseconds}ms: unlock to '
+          'cached chat painted in ${ms}ms',
+        );
+        expect(ms, isNotNull);
+        expect(storage.tailReads, isNotEmpty);
+        // Painted from the cache, before the network answers.
+        expect(
+          find.byKey(const ValueKey('chat-cached-transcript')),
+          findsOneWidget,
+        );
+        expect(ms, lessThan(_networkLatency.inMilliseconds));
+        await tearDownApp(tester, app.chats);
+      });
+    }
+
+    testWidgets('without App Lock the first chat frame paints the decrypted '
+        'tail, as before', (tester) async {
+      final storage = _RecordingColdStartStorage(
+        (await tester.runAsync(previousRun))!,
+      );
+      final app = await pumpApp(tester, storage: storage);
+      final ms = await msUntil(tester, lastChatContent);
+      // ignore: avoid_print
+      print('cs1215 no app-lock: cached chat painted at ${ms}ms');
+      expect(ms, isNotNull);
+      expect(storage.tailReads, isNotEmpty);
+      expect(
+        find.byKey(const ValueKey('chat-cached-transcript')),
+        findsOneWidget,
+      );
+      await tearDownApp(tester, app.chats);
+    });
   });
 
   testWidgets('unmounting the shell while App Lock waits drops the unlock '
