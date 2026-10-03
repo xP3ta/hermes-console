@@ -141,11 +141,12 @@ final class EventSeq {
     int round = 0,
     bool passed = false,
     String? messageId,
+    String? task,
   }) => _event(
     'turn.settled',
     {'kind': 'gateway', 'id': gatewayId},
     {
-      ..._coords(member, discussion, round: round),
+      ..._coords(member, discussion, round: round, task: task),
       'seen_through_seq': seq,
       'message_event_id': messageId,
       'passed': passed,
@@ -165,6 +166,23 @@ final class EventSeq {
       'seen_through_seq': seq,
       'error': 'provider timeout',
       'reason_code': 'provider_timeout',
+    },
+  );
+
+  /// Server cancellation (`turn.cancelled`, exact payload of
+  /// `hosted_room_discussion.py::_cancelled_effects`).
+  Map<String, dynamic> cancelled(
+    String member,
+    String discussion, {
+    int round = 0,
+    String? task,
+  }) => _event(
+    'turn.cancelled',
+    {'kind': 'gateway', 'id': gatewayId},
+    {
+      ..._coords(member, discussion, round: round, task: task),
+      'seen_through_seq': seq,
+      'reason': 'superseded_by_newer_user_event',
     },
   );
 
@@ -258,4 +276,26 @@ Map<String, dynamic> approvalAction({
     'description': 'dangerous command',
     'choices': choices,
   },
+};
+
+/// Builds one published terminal event for [task] of [member].
+typedef TerminalEventBuilder =
+    Map<String, dynamic> Function(
+      EventSeq seq,
+      String member,
+      String discussion,
+      String task,
+    );
+
+/// The four terminal kinds the server publishes when a driver task leaves
+/// the running state (`hosted_room_discussion.py::_TERMINAL_FIELDS`).
+final Map<String, TerminalEventBuilder> terminalKinds = {
+  'turn.settled': (seq, member, discussion, task) =>
+      seq.settled(member, discussion, passed: true, task: task),
+  'turn.failed': (seq, member, discussion, task) =>
+      seq.failed(member, discussion, task: task),
+  'turn.cancelled': (seq, member, discussion, task) =>
+      seq.cancelled(member, discussion, task: task),
+  'turn.deferred': (seq, member, discussion, task) =>
+      seq.deferred(member, discussion, task: task),
 };

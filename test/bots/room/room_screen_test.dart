@@ -988,6 +988,43 @@ void main() {
       expect(find.text('Checking an interrupted reply…'), findsNothing);
     });
 
+    // Each published terminal kind is the server's verdict on the task: the
+    // retry is a failure card again, never "Checking an interrupted reply…",
+    // even while the indeterminate count still covers it.
+    for (final kind in terminalKinds.keys) {
+      testWidgets('a published $kind shows the failure card, not checking', (
+        tester,
+      ) async {
+        final seq = EventSeq();
+        final u = seq.user('@builder look');
+        await _pump(
+          tester,
+          events: [
+            u,
+            terminalKinds[kind]!(
+              seq,
+              'm-builder',
+              u['event_id'] as String,
+              'dtask-done',
+            ),
+          ],
+          status: driver(
+            blocked: true,
+            counts: {'indeterminate': 1},
+            pending: [
+              {'kind': 'retry', 'task_id': 'dtask-done'},
+            ],
+          ),
+        );
+        expect(
+          find.byKey(const ValueKey('room-retry-dtask-done')),
+          findsOneWidget,
+        );
+        expect(find.text('console-builder could not reply'), findsOneWidget);
+        expect(find.text('Checking an interrupted reply…'), findsNothing);
+      });
+    }
+
     testWidgets('a deferral alongside an indeterminate retry shows only it', (
       tester,
     ) async {
