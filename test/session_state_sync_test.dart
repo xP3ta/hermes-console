@@ -287,6 +287,38 @@ void main() {
       expect(prefs.getStringList(_hiddenKey)!.toSet(), {'s1', 's2'});
     });
 
+    test('a list read that shows the row hidden confirms a pending local '
+        'hide without a PATCH', () async {
+      SharedPreferences.setMockInitialValues({
+        _hiddenKey: ['s1'],
+      });
+      final server = _Server();
+      final archive = await _open(server);
+      // The archived view lists archived rows even when hidden.
+      _read(archive, [_row('s1', hidden: true)]);
+      await archive.remoteStateSettled;
+      expect(server.calls, isEmpty);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getStringList(_hiddenKey), isEmpty);
+    });
+
+    test('an answer that does not confirm hidden keeps the local id', () async {
+      SharedPreferences.setMockInitialValues({
+        _hiddenKey: ['s1'],
+      });
+      // A handler that ignores the key and echoes only ok/title.
+      final server = _Server((_, _) => {'ok': true, 'title': 'Server title'});
+      final archive = await _open(server);
+      _read(archive, [_row('s1')]);
+      await archive.remoteStateSettled;
+      _read(archive, [_row('s1')]);
+      await archive.remoteStateSettled;
+      expect(server.calls, hasLength(1));
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getStringList(_hiddenKey), ['s1']);
+      expect(archive.isSessionHidden(_row('s1')), isTrue);
+    });
+
     test('a late hide answer does not undo a newer local unhide', () async {
       final gates = <Completer<Map<String, Object?>>>[];
       final server = _Server((call, _) {
