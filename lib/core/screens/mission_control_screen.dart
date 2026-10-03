@@ -59,6 +59,7 @@ import 'bot_create_screen.dart';
 import 'bot_profile_settings_screen.dart';
 import 'bot_sections_editor.dart';
 import '../services/bot_profile_client.dart';
+import '../services/bot_roster_store.dart';
 import '../services/bot_section_service.dart';
 import '../services/bot_room_link.dart';
 import 'chat_screen.dart';
@@ -202,6 +203,10 @@ class MissionControlScreen extends StatefulWidget {
   @visibleForTesting
   @visibleForTesting
   final ActiveChatService? activeChats;
+
+  /// Roster shared with every other screen; [BotRosterRegistry.shared] by
+  /// default.
+  final BotRosterRegistry? rosterRegistry;
   final MissionControlOpenTarget? initialOpenTarget;
   @visibleForTesting
   final ValueChanged<Session>? botChatOpenObserver;
@@ -237,6 +242,7 @@ class MissionControlScreen extends StatefulWidget {
     this.botChatStore,
     this.botChatTitleLookup,
     this.activeChats,
+    this.rosterRegistry,
     this.initialOpenTarget,
     this.botChatOpenObserver,
     this.remoteBotLoader,
@@ -264,6 +270,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   SharedGatewayLease? _profileAssetsLease;
   late final HermesDesktopProfileAssetsGateway _profileAssetsGateway;
   MissionBackendSnapshot? _snapshot;
+  late final BotRosterStore _rosterStore;
   List<MissionOrganization> _organizations = const [];
   String? _selectedOrganizationId;
   Object? _loadFailure;
@@ -338,13 +345,17 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     WidgetsBinding.instance.addObserver(this);
     _scheduleRosterRefresh();
     _watchLiveChanges();
+    final roster = widget.rosterRegistry ?? BotRosterRegistry.shared;
+    roster.hydrate(widget.connection);
+    _rosterStore = roster.store(widget.connection.id)
+      ..addListener(_onSharedRoster);
     _snapshotCache =
         widget.snapshotCache ??
         (widget.dataSource == null ? MissionSnapshotCache.shared : null);
     final cached = _snapshotCache?.read(widget.connection);
     if (cached != null) {
       // Paint what the user saw last time; the read below refreshes it.
-      _snapshot = cached;
+      _snapshot = _withSharedRoster(cached);
       _loading = false;
       final source = _dataSource;
       if (source is MissionControlRepository) {
@@ -397,8 +408,38 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     }
   }
 
+  /// The bot roster shown is the connection's shared one: a bot created,
+  /// renamed or deleted on another screen shows here at once, and a load
+  /// that started before that change cannot bring the old roster back.
+  MissionBackendSnapshot _withSharedRoster(MissionBackendSnapshot snapshot) {
+    final store = _rosterStore;
+    if (!store.isLive || identical(store.profiles, snapshot.profiles)) {
+      return snapshot;
+    }
+    return MissionBackendSnapshot(
+      profiles: store.profiles,
+      sessions: snapshot.sessions,
+      board: snapshot.board,
+      profilesCapability: snapshot.profilesCapability,
+      sessionsCapability: snapshot.sessionsCapability,
+      kanbanCapability: snapshot.kanbanCapability,
+      hostedGroups: snapshot.hostedGroups,
+      hostedGroupsCapability: snapshot.hostedGroupsCapability,
+      failures: snapshot.failures,
+      loadedAt: snapshot.loadedAt,
+    );
+  }
+
+  void _onSharedRoster() {
+    final current = _snapshot;
+    if (_disposed || !mounted || current == null) return;
+    final next = _withSharedRoster(current);
+    if (!identical(next, current)) setState(() => _snapshot = next);
+  }
+
   @override
   void dispose() {
+    _rosterStore.removeListener(_onSharedRoster);
     _disposed = true;
     _live.remove(this);
     _rosterTimer?.cancel();
@@ -659,18 +700,20 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         ..remove('sessions');
       if (roster.profilesError case final error?) failures['profiles'] = error;
       if (roster.sessionsError case final error?) failures['sessions'] = error;
-      final snapshot = _retainLastGoodSources(
-        MissionBackendSnapshot(
-          profiles: roster.profiles,
-          sessions: roster.sessions,
-          board: previous.board,
-          profilesCapability: roster.profilesCapability,
-          sessionsCapability: roster.sessionsCapability,
-          kanbanCapability: previous.kanbanCapability,
-          hostedGroups: rooms as HostedGroupsSnapshot,
-          hostedGroupsCapability: previous.hostedGroupsCapability,
-          failures: failures,
-          loadedAt: DateTime.now(),
+      final snapshot = _withSharedRoster(
+        _retainLastGoodSources(
+          MissionBackendSnapshot(
+            profiles: roster.profiles,
+            sessions: roster.sessions,
+            board: previous.board,
+            profilesCapability: roster.profilesCapability,
+            sessionsCapability: roster.sessionsCapability,
+            kanbanCapability: previous.kanbanCapability,
+            hostedGroups: rooms as HostedGroupsSnapshot,
+            hostedGroupsCapability: previous.hostedGroupsCapability,
+            failures: failures,
+            loadedAt: DateTime.now(),
+          ),
         ),
       );
       setState(() => _snapshot = snapshot);
@@ -742,7 +785,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         // The prewarm read used its own repository: resume room logs here.
         source.seedHostedLogs(incoming.hostedGroups);
       }
-      final snapshot = _retainLastGoodSources(incoming);
+      final snapshot = _withSharedRoster(_retainLastGoodSources(incoming));
       setState(() {
         _snapshot = snapshot;
         _loading = false;

@@ -54,7 +54,10 @@ final class BotRosterCache {
           },
       ],
     });
-    if (raw.length <= 262144) await prefs.setString(_key(c), raw);
+    // Every roster read lands here; skip rewriting an unchanged roster.
+    if (raw.length <= 262144 && prefs.getString(_key(c)) != raw) {
+      await prefs.setString(_key(c), raw);
+    }
   }
 
   Future<void> remove(SavedConnection c) async {

@@ -18,6 +18,7 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../models/agent_profile.dart';
 import '../models/dock_config.dart';
+import '../services/bot_roster_store.dart';
 import '../services/connection_manager.dart';
 import '../services/dock_preferences_store.dart';
 import '../services/tui_gateway_client.dart';
@@ -41,10 +42,17 @@ class ProfilesScreen extends StatefulWidget {
   final SavedConnection connection;
   final ConnectionManager connManager;
   final String? initialDeleteProfile;
+
+  /// Roster shared with every other screen; [BotRosterRegistry.shared] by
+  /// default.
+  final BotRosterRegistry? rosterRegistry;
+  final DashboardClient? clientOverride;
   const ProfilesScreen({
     required this.connection,
     required this.connManager,
     this.initialDeleteProfile,
+    this.rosterRegistry,
+    @visibleForTesting this.clientOverride,
     super.key,
   });
 
@@ -54,12 +62,14 @@ class ProfilesScreen extends StatefulWidget {
 
 class _ProfilesScreenState extends State<ProfilesScreen> {
   late final DashboardClient _client;
-  late final TuiGatewayClient _gateway;
+  TuiGatewayClient? _gateway;
+  late final BotRosterRegistry _roster;
+  late final BotRosterStore _store;
   // Mismo caché que usa Mission Control para las mismas caras de bot: cada
   // perfil ya trae su propia identidad visual (foto subida o "Blobatar"
   // procedural), así que la lista no necesita un icono genérico propio.
   late final MissionProfileAvatarCache _avatarCache;
-  List<AgentProfile> _profiles = [];
+  List<AgentProfile> get _profiles => _store.profiles;
   bool _loading = true;
   bool _initialDeleteShown = false;
   String? _error;
@@ -70,9 +80,17 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
   @override
   void initState() {
     super.initState();
-    _client = DashboardClient.lazy(widget.connection);
-    _gateway = TuiGatewayClient(widget.connection, dashboard: _client);
-    _avatarCache = MissionProfileAvatarCache(loader: _gateway.profileAvatar);
+    _client = widget.clientOverride ?? DashboardClient.lazy(widget.connection);
+    final gateway = widget.clientOverride == null
+        ? TuiGatewayClient(widget.connection, dashboard: _client)
+        : null;
+    _gateway = gateway;
+    _avatarCache = MissionProfileAvatarCache(
+      loader: gateway?.profileAvatar ?? (_) async => null,
+    );
+    _roster = widget.rosterRegistry ?? BotRosterRegistry.shared;
+    _roster.hydrate(widget.connection);
+    _store = _roster.store(widget.connection.id)..addListener(_onRoster);
     // _load() lee Strings.of(context) (Localizations), que NO puede invocarse
     // durante initState: lanzaría dependOnInheritedWidgetOfExactType y, al estar
     // fuera del try, dejaría _loading=true para siempre (spinner eterno). Se
@@ -82,9 +100,14 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
     });
   }
 
+  void _onRoster() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
-    unawaited(_gateway.close());
+    _store.removeListener(_onRoster);
+    unawaited(_gateway?.close());
     _client.close();
     super.dispose();
   }
@@ -95,22 +118,30 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
       _loading = true;
       _error = null;
     });
+    final ticket = _roster.beginRead(widget.connection.id);
     try {
       List<AgentProfile> list;
       try {
-        list = await _gateway.listProfiles();
+        final gateway = _gateway;
+        if (gateway == null) throw StateError('no gateway');
+        list = await gateway.listProfiles();
       } catch (_) {
         // Safe read-only fallback for Gateways that predate profiles.list.
         list = await _client.getProfiles();
       }
+      // The shared store keeps whichever roster is newest; this screen
+      // renders the store, never a late response of its own.
+      _roster.publish(
+        widget.connection.id,
+        widget.connection.label,
+        list,
+        ticket: ticket,
+      );
       if (!mounted) return;
-      setState(() {
-        _profiles = list;
-        _loading = false;
-      });
+      setState(() => _loading = false);
       if (!_initialDeleteShown && widget.initialDeleteProfile != null) {
         _initialDeleteShown = true;
-        final profile = list
+        final profile = _profiles
             .where((p) => p.name == widget.initialDeleteProfile)
             .firstOrNull;
         if (profile != null &&
@@ -182,6 +213,7 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
     try {
       final wasActive = _activeProfile == p.name;
       await _client.renameProfile(p.name, newName);
+      _roster.profileRenamed(widget.connection.id, p.name, newName);
       if (wasActive) {
         await widget.connManager.setActiveProfile(
           widget.connection.id,
@@ -244,6 +276,7 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
         await widget.connManager.setActiveProfile(widget.connection.id, '');
       }
       await _client.deleteProfile(p.name);
+      _roster.profileDeleted(widget.connection.id, p.name);
       _snack(str.prfDeleted(p.name));
       await _load();
     } catch (e) {
@@ -263,6 +296,7 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
       ),
     );
     if (created == null || !mounted) return;
+    _roster.profileCreated(widget.connection.id, AgentProfile(name: created));
     // Marcar el recién creado como activo y refrescar.
     await widget.connManager.setActiveProfile(widget.connection.id, created);
     _snack(str.prfCreatedActive(created));
@@ -323,7 +357,8 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
         },
       ),
       body: _wrapWithDock(
-        _loading
+        // The shared (or cached) roster stays visible while it revalidates.
+        _loading && _profiles.isEmpty
             ? const Center(child: CircularProgressIndicator())
             : _error != null
             ? _ErrorState(message: _error!, onRetry: _load)
