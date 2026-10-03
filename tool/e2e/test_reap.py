@@ -69,6 +69,13 @@ def _marked(marker: str) -> list[int]:
     return found
 
 
+def _group_of(pid: int) -> int | None:
+    try:
+        return os.getpgid(pid)
+    except OSError:
+        return None
+
+
 def _listening(port: int) -> bool:
     with socket.socket() as probe:
         probe.settimeout(0.5)
@@ -148,6 +155,54 @@ class ReapTest(unittest.TestCase):
         backend.wait(timeout=5)
         self.assertEqual(_marked(self.marker), [])
         self.assertFalse(any(_listening(p) for p in ports))
+
+    def test_a_scrubbed_member_outliving_its_group_leader_is_reaped(self) -> None:
+        # The recorded group's leader exits; a child in the SAME group (no
+        # setsid) cleared the marker and keeps its listener. A non-empty
+        # group cannot have its PGID reused, so the group is still ours.
+        scrubbed = textwrap.dedent("""
+            import os, signal, socket, sys, time
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen()
+            with open(sys.argv[1], "a") as f:
+                f.write(f"{s.getsockname()[1]}\\n")
+            while True:
+                time.sleep(1)
+        """)
+        leader_code = textwrap.dedent("""
+            import os, subprocess, sys
+            env = {k: v for k, v in os.environ.items() if k != "HERMES_E2E_LANE"}
+            subprocess.Popen([sys.executable, "-c", sys.argv[2], sys.argv[1]], env=env)
+        """)
+        env = dict(os.environ, HERMES_E2E_LANE=self.marker)
+        leader = subprocess.Popen(
+            [sys.executable, "-c", leader_code, str(self.ports), scrubbed],
+            env=env, start_new_session=True)
+        self.cleanup.append(leader)
+        self.pgids.write_text(f"{leader.pid}\n")
+        leader.wait(timeout=10)
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and not (
+                self.ports.exists() and self.ports.read_text().split()):
+            time.sleep(0.05)
+        port = int(self.ports.read_text().split()[0])
+        members = [pid for pid in (int(p) for p in os.listdir("/proc") if p.isdigit())
+                   if _group_of(pid) == leader.pid]
+        try:
+            self.assertEqual(len(members), 1)
+            self.assertEqual(_marked(self.marker), [], "the survivor is unmarked")
+            self.assertTrue(_listening(port))
+
+            rc, _ = self._reap(budget=3)
+
+            self.assertEqual(rc, 0)
+            self.assertFalse(_listening(port), "the group survivor must be reaped")
+        finally:
+            for pid in members:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
 
     def test_a_recorded_group_without_the_marker_is_not_touched(self) -> None:
         # A reused PGID: same number in children.pgid, unrelated process.

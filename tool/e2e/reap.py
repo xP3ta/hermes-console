@@ -8,15 +8,25 @@ listeners and their sockets behind. Every process of the lane carries
 appended to ``<run>/children.pgid`` when it is spawned. This reaper:
 
 1. collects the lane's processes: every PID whose environment holds the exact
-   marker, plus every member of a recorded group whose leader holds it (a
-   recorded group without the marker is a reused PGID and is left alone);
+   marker, plus every member of a recorded group while any member of that
+   group holds it, or while the group was proven ours on an earlier pass of
+   this run. A process group cannot be reused while it has a member, so once
+   proven, a group stays ours until it is empty, even after its leader exits
+   and the survivors scrubbed the marker. A recorded group whose leader
+   (PID == PGID) is gone but which still has members is ours too: Linux keeps
+   a PGID pinned while the group is non-empty, and a reused PGID needs a live
+   creator with that PID. A recorded group with a live, unmarked leader and
+   no marked member is a reused PGID and is left alone;
 2. sends SIGTERM to all of them at once, waits up to half the budget;
 3. sends SIGKILL to whatever is left and waits for it to disappear;
 4. exits 0 only when no marked process remains, 1 otherwise.
 
 Stdlib only (runs before any venv exists, and in CI). Linux ``/proc`` only.
-Residual: a descendant that both scrubs its environment and calls
-``setsid()`` escapes; only a cgroup could contain that.
+Residuals: a descendant that both scrubs its environment and calls
+``setsid()`` escapes; only a cgroup could contain that. A foreign group that
+reused one of our recorded PGIDs (ours emptied, the PID wrapped to the same
+number) and whose own creator already exited looks leaderless too; that
+needs a full PID wrap within one lane run.
 
 Usage: reap.py --marker ID [--pgid-file PATH] [--budget SECONDS]
 """
@@ -61,8 +71,15 @@ def _pgid(pid: int) -> int | None:
         return None
 
 
-def lane_processes(marker: str, recorded_pgids: set[int]) -> set[int]:
-    """Live PIDs of the lane (never this reaper)."""
+def lane_processes(marker: str, recorded_pgids: set[int],
+                   owned_pgids: set[int] | None = None) -> set[int]:
+    """Live PIDs of the lane (never this reaper).
+
+    [owned_pgids] (updated in place) remembers the recorded groups proven to
+    be the lane's: a still non-empty group keeps its PGID, so it cannot have
+    been reused since it was proven.
+    """
+    owned = owned_pgids if owned_pgids is not None else set()
     needle = f"{MARKER_VAR}={marker}".encode()
     me = os.getpid()
     marked: set[int] = set()
@@ -76,9 +93,15 @@ def lane_processes(marker: str, recorded_pgids: set[int]) -> set[int]:
         if group in recorded_pgids:
             by_group.setdefault(group, []).append(pid)
     for group, members in by_group.items():
-        # The leader proves the group is still ours, not a reused PGID.
-        if group in marked:
+        # Any marked member proves the group is ours, not a reused PGID; a
+        # proven group stays ours while it has members (its PGID is pinned).
+        leaderless = group not in members and not _alive(group)
+        if (group in owned or leaderless
+                or any(pid in marked for pid in members)):
+            owned.add(group)
             marked.update(members)
+    # An emptied group may be reused from now on: forget it.
+    owned.intersection_update(by_group)
     return marked
 
 
@@ -94,15 +117,16 @@ def reap(marker: str, recorded_pgids: set[int], budget: float) -> set[int]:
     """Kill the lane within [budget] seconds; return the survivors."""
     deadline = time.monotonic() + budget
     term_until = time.monotonic() + budget / 2
-    pids = lane_processes(marker, recorded_pgids)
+    owned: set[int] = set()
+    pids = lane_processes(marker, recorded_pgids, owned)
     _signal(pids, signal.SIGTERM)
     while pids and time.monotonic() < term_until:
         time.sleep(0.1)
-        pids = lane_processes(marker, recorded_pgids)
+        pids = lane_processes(marker, recorded_pgids, owned)
     while pids and time.monotonic() < deadline:
         _signal(pids, signal.SIGKILL)
         time.sleep(0.1)
-        pids = lane_processes(marker, recorded_pgids)
+        pids = lane_processes(marker, recorded_pgids, owned)
     return pids
 
 
