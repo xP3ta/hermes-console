@@ -275,6 +275,8 @@ final class BotModeRepository {
         connection.label,
         profiles,
         ticket: rosterTicket,
+        // [BotModeGateway.listProfiles] asks for session projections.
+        sessions: true,
       );
       final store = roster.store(connection.id);
       if (!accepted && store.isLive) profiles = store.profiles;

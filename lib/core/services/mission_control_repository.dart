@@ -335,6 +335,36 @@ Future<List<AgentProfile>> loadMissionControlProfiles({
   }
 }
 
+/// [loadMissionControlProfiles] published to [registry], the roster every
+/// screen shares. Only the Gateway read asks for session projections, so
+/// only it is authoritative for them; the legacy Dashboard list is not.
+Future<List<AgentProfile>> loadSharedMissionProfiles({
+  required BotRosterRegistry registry,
+  required SavedConnection connection,
+  required MissionProfilesLoader desktopLoader,
+  required MissionProfilesLoader legacyDashboardLoader,
+}) async {
+  final ticket = registry.beginRead(connection.id);
+  var withSessions = false;
+  final profiles = await loadMissionControlProfiles(
+    desktopLoader: () async {
+      final profiles = await desktopLoader();
+      withSessions = true;
+      return profiles;
+    },
+    legacyDashboardLoader: legacyDashboardLoader,
+  );
+  // Shared with every screen; dropped if a newer roster already landed.
+  registry.publish(
+    connection.id,
+    connection.label,
+    profiles,
+    ticket: ticket,
+    sessions: withSessions,
+  );
+  return profiles;
+}
+
 /// Loads the same aggregate, profile-owned session surface used by Hermes
 /// Desktop. Legacy Gateways are consulted only when the aggregate route is
 /// structurally unsupported; auth, network and malformed responses fail
@@ -533,24 +563,15 @@ final class MissionControlRepository
     final lease = SharedGatewayPool.instance.acquire(connection);
     final desktop = lease.client;
     return MissionControlRepository(
-      profilesLoader: () async {
-        final rosterTicket = BotRosterRegistry.shared.beginRead(connection.id);
-        final profiles = await loadMissionControlProfiles(
-          // One profiles.list snapshot now carries Desktop's last/preferred
-          // session projections and hidden worker liveness. Older Gateways
-          // omit those optional fields and keep returning the same roster.
-          desktopLoader: () => desktop.listProfiles(includeSessions: true),
-          legacyDashboardLoader: dashboard.getProfiles,
-        );
-        // Shared with every screen; dropped if a newer roster already landed.
-        BotRosterRegistry.shared.publish(
-          connection.id,
-          connection.label,
-          profiles,
-          ticket: rosterTicket,
-        );
-        return profiles;
-      },
+      profilesLoader: () => loadSharedMissionProfiles(
+        registry: BotRosterRegistry.shared,
+        connection: connection,
+        // One profiles.list snapshot now carries Desktop's last/preferred
+        // session projections and hidden worker liveness. Older Gateways
+        // omit those optional fields and keep returning the same roster.
+        desktopLoader: () => desktop.listProfiles(includeSessions: true),
+        legacyDashboardLoader: dashboard.getProfiles,
+      ),
       sessionsLoader: () => loadMissionControlSessions(
         dashboardGet: dashboard.apiGet,
         legacyGatewayLoader: () => gateway.getSessions(includeChildren: true),

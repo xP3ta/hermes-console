@@ -205,8 +205,8 @@ void main() {
     expect(store.profile('ops')!.displayName, 'Ops');
     expect(store.profile('ops')!.workerSession?.id, 'w');
     expect(store.profile('new')!.workerSession, isNull);
-    // A read that carries projections is authoritative for them.
-    registry.publish('c', 'C', [
+    // A read that asked for projections is authoritative for them.
+    registry.publish('c', 'C', sessions: true, [
       AgentProfile.fromJson({
         'name': 'new',
         'worker_session': {
@@ -236,6 +236,62 @@ void main() {
     expect(mentions.bots('c').single.profile, 'new');
     mentions.dispose();
   });
+
+  AgentProfile working(String name) => AgentProfile.fromJson({
+    'name': name,
+    'worker_session': {
+      'id': 'w-$name',
+      'source': 'kanban',
+      'title': 't',
+      'last_active': 1,
+    },
+  });
+
+  test('a with-sessions read where every bot is idle clears activity', () {
+    final registry = BotRosterRegistry();
+    registry.publish('c', 'C', [working('ops')], sessions: true);
+    registry.publish(
+      'c',
+      'C',
+      const [AgentProfile(name: 'ops')],
+      ticket: registry.beginRead('c'),
+      sessions: true,
+    );
+    expect(registry.store('c').profile('ops')!.workerSession, isNull);
+    // Without sessions the same roster says nothing about activity.
+    registry.publish('c', 'C', [working('ops')], sessions: true);
+    registry.publish('c', 'C', const [AgentProfile(name: 'ops')]);
+    expect(registry.store('c').profile('ops')!.workerSession?.id, 'w-ops');
+  });
+
+  test(
+    'a with-sessions read that loses the roster race still sets activity',
+    () {
+      final registry = BotRosterRegistry();
+      registry.publish('c', 'C', [working('ops')], sessions: true);
+      final full = registry.beginRead('c');
+      final sessionless = registry.beginRead('c');
+      registry.publish('c', 'C', const [
+        AgentProfile(name: 'ops', displayName: 'Ops'),
+      ], ticket: sessionless);
+      expect(
+        registry.publish(
+          'c',
+          'C',
+          const [AgentProfile(name: 'ops')],
+          ticket: full,
+          sessions: true,
+        ),
+        isFalse,
+      );
+      final ops = registry.store('c').profile('ops')!;
+      expect(ops.displayName, 'Ops');
+      expect(ops.workerSession, isNull);
+      // An older with-sessions read cannot bring activity back.
+      registry.publish('c', 'C', [working('ops')], ticket: 1, sessions: true);
+      expect(registry.store('c').profile('ops')!.workerSession, isNull);
+    },
+  );
 }
 
 extension<T> on T {

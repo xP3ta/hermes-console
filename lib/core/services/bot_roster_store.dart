@@ -70,6 +70,10 @@ final class BotRosterRegistry extends ChangeNotifier {
   int _clock = 0;
   final Map<String, BotRosterStore> _stores = {};
   final Map<String, int> _floor = {};
+  final Map<String, int> _forgotAt = {};
+
+  /// Ticket of the last read accepted for its session projections.
+  final Map<String, int> _sessionsAt = {};
   final Map<String, SavedConnection> _connections = {};
   SharedPreferences? _prefs;
 
@@ -121,38 +125,76 @@ final class BotRosterRegistry extends ChangeNotifier {
   /// Offers a server read. Returns false (and changes nothing) when a newer
   /// read or mutation already landed, or the connection was forgotten after
   /// the read started. Without [ticket] the roster counts as newest.
+  ///
+  /// [sessions] is the read's own `include_sessions`: only such a read is
+  /// authoritative for session projections (a bot it reports with none is
+  /// idle). Any other roster keeps each surviving bot's projections unless
+  /// it carries its own. A with-sessions read that lost the roster race to
+  /// a newer one without sessions still updates the projections, ordered by
+  /// its own clock.
   bool publish(
     String connectionId,
     String label,
     List<AgentProfile> profiles, {
     int? ticket,
+    bool sessions = false,
   }) {
     final stamp = ticket ?? ++_clock;
     final store = this.store(connectionId);
     if (stamp <= (_floor[connectionId] ?? 0) || stamp <= store.ticket) {
+      final current = store.snapshot;
+      if (sessions &&
+          current != null &&
+          stamp > (_forgotAt[connectionId] ?? 0) &&
+          stamp > (_sessionsAt[connectionId] ?? 0)) {
+        _sessionsAt[connectionId] = stamp;
+        _commit(
+          store,
+          current.label,
+          _takeSessions(current.profiles, profiles),
+          current.ticket,
+          fromCache: current.fromCache,
+        );
+      }
       return false;
     }
-    _commit(store, label, _keepSessions(store.profiles, profiles), stamp);
+    if (sessions) _sessionsAt[connectionId] = stamp;
+    _commit(
+      store,
+      label,
+      sessions ? profiles : _keepSessions(store.profiles, profiles),
+      stamp,
+    );
     return true;
   }
 
-  /// Some readers ask `profiles.list` without session projections (Profiles
-  /// screen, mention roster). Such a roster says nothing about sessions, so
-  /// each surviving profile keeps the projections of the previous snapshot
-  /// instead of looking idle until the next full read. A roster that carries
-  /// any projection is taken as is.
+  /// A roster that is not authoritative for sessions: each surviving bot
+  /// keeps its previous projections unless this roster carries its own.
   static List<AgentProfile> _keepSessions(
     List<AgentProfile> previous,
     List<AgentProfile> incoming,
   ) {
-    if (incoming.any(_hasSessions) || !previous.any(_hasSessions)) {
-      return incoming;
-    }
     final byName = {for (final p in previous) p.name: p};
     return [
       for (final p in incoming)
-        if (byName[p.name] case final old? when _hasSessions(old))
+        if (byName[p.name] case final old? when !_hasSessions(p))
           _copy(p, sessionsFrom: old)
+        else
+          p,
+    ];
+  }
+
+  /// Projections of an authoritative with-sessions read applied to the bots
+  /// it reports; bots it does not know keep theirs.
+  static List<AgentProfile> _takeSessions(
+    List<AgentProfile> current,
+    List<AgentProfile> read,
+  ) {
+    final byName = {for (final p in read) p.name: p};
+    return [
+      for (final p in current)
+        if (byName[p.name] case final fresh?)
+          _copy(p, sessionsFrom: fresh)
         else
           p,
     ];
@@ -194,7 +236,7 @@ final class BotRosterRegistry extends ChangeNotifier {
   /// Drops the roster of a removed or re-pointed connection; reads that
   /// started before this can no longer publish.
   void forget(String connectionId) {
-    _floor[connectionId] = ++_clock;
+    _floor[connectionId] = _forgotAt[connectionId] = ++_clock;
     // The endpoint may have changed: persist again only once a screen
     // registers the current connection through [hydrate].
     _connections.remove(connectionId);
@@ -211,6 +253,8 @@ final class BotRosterRegistry extends ChangeNotifier {
       store._set(null);
     }
     _floor.clear();
+    _forgotAt.clear();
+    _sessionsAt.clear();
     _connections.clear();
     _prefs = null;
     notifyListeners();

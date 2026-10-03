@@ -162,6 +162,7 @@ class _RemoteBotRosterState extends State<RemoteBotRoster> {
             connection.label,
             profiles,
             ticket: ticket,
+            sessions: true,
           );
           setState(() => _failed.remove(connection.id));
         } catch (_) {
