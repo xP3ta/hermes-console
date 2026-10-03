@@ -35,8 +35,12 @@ mixin BridgeEditorMixin<T extends StatefulWidget> on State<T> {
   bool _bridgeAutoLoadDone = false;
   bool _bridgeProbed = false;
 
-  BridgeManager get bridgeManager =>
-      _mgr ??= context.findAncestorStateOfType<HermesAppState>()!.bridgeManager;
+  /// Bridge manager to use instead of the app's (screens built in tests).
+  BridgeManager? get bridgeManagerOverride => null;
+
+  BridgeManager get bridgeManager => _mgr ??=
+      bridgeManagerOverride ??
+      context.findAncestorStateOfType<HermesAppState>()!.bridgeManager;
 
   bool get bridgeCanWrite {
     final c = bridge.caps;

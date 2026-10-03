@@ -21,6 +21,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
+import '../services/active_profile_scope.dart';
 import '../services/bridge_manager.dart';
 import '../services/command_risk.dart';
 import '../services/connection_manager.dart';
@@ -34,6 +35,7 @@ import '../widgets/read_only.dart';
 import 'bridge_editor_mixin.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/profile_scope.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
@@ -195,14 +197,25 @@ class SoulScreen extends StatefulWidget {
   /// Dashboard API (`/api/profiles/<name>/soul`). Pass null for a generic draft.
   final SavedConnection? connection;
 
-  const SoulScreen({this.connection, super.key});
+  /// Active profile source; defaults to the app's for [connection].
+  final ActiveProfileScope? profileScope;
+  final DashboardClient? dashboardClientForTesting;
+  final BridgeManager? bridgeManagerForTesting;
+
+  const SoulScreen({
+    this.connection,
+    this.profileScope,
+    @visibleForTesting this.dashboardClientForTesting,
+    @visibleForTesting this.bridgeManagerForTesting,
+    super.key,
+  });
 
   @override
   State<SoulScreen> createState() => _SoulScreenState();
 }
 
 class _SoulScreenState extends State<SoulScreen>
-    with BridgeEditorMixin<SoulScreen> {
+    with BridgeEditorMixin<SoulScreen>, ActiveProfileFollower<SoulScreen> {
   final LocalSoulRepository _repo = LocalSoulRepository();
   final TextEditingController _controller = TextEditingController();
   Timer? _debounce;
@@ -212,9 +225,17 @@ class _SoulScreenState extends State<SoulScreen>
   Timer? _savedTimer;
   bool _hasBackup = false; // hay copia previa restaurable
 
-  // Perfil activo (no-default ⇒ SOUL por perfil vía Dashboard API).
-  String _profile = '';
+  // Profile whose SOUL is edited (empty = default): via the Dashboard API.
+  String get _profile => scopedProfileName;
   DashboardClient? _dashClient;
+
+  /// Draft key of the text now in the editor. The default profile keeps the
+  /// historical per-connection key; any other profile gets its own key, so
+  /// one profile's draft never shows (or is applied) as another's.
+  String _editorScope = '';
+  String get _draftScope => _effectiveProfile == 'default'
+      ? _connectionId
+      : '$_connectionId@$_effectiveProfile';
   bool _profileBusy = false;
   bool _serverSoulTried = false;
 
@@ -237,31 +258,51 @@ class _SoulScreenState extends State<SoulScreen>
   TextEditingController get bridgeController => _controller;
   @override
   String get bridgeLockReason => Strings.of(context).soulApplyToServer;
+  @override
+  BridgeManager? get bridgeManagerOverride => widget.bridgeManagerForTesting;
 
   @override
   void initState() {
     super.initState();
+    final connection = widget.connection;
+    if (connection != null) {
+      followActiveProfile(
+        widget.profileScope ?? appActiveProfileScope(context, connection.id),
+      );
+    }
     _loadDraft();
     _controller.addListener(_onTextChanged);
+  }
+
+  @override
+  void onActiveProfileChanged() {
+    // Keep what was typed for the previous profile under its own key, then
+    // load the new profile's draft and SOUL.
+    final pending = _debounce?.isActive ?? false;
+    _debounce?.cancel();
+    if (pending) unawaited(_repo.save(_editorScope, _controller.text));
+    _serverSoulTried = false;
+    setState(() {
+      _loading = true;
+      _hasBackup = false;
+    });
+    unawaited(
+      _loadDraft().then((_) {
+        if (mounted && _effectiveProfile != 'default') _loadProfileSoul();
+      }),
+    );
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     probeBridgeOnce();
-    // Perfil activo de esta instancia: si no es default, el SOUL se edita por
-    // perfil vía Dashboard API en vez del bridge (que apunta al home default).
-    final cm = context.findAncestorStateOfType<HermesAppState>()?.connManager;
-    final p = (widget.connection != null && cm != null)
-        ? cm.activeProfileFor(widget.connection!.id)
-        : '';
     // Cliente del Dashboard para CUALQUIER perfil (incluido default): permite
     // leer el SOUL real del servidor sin el bridge, vía /api/profiles/*/soul.
     if (widget.connection != null) {
-      _dashClient ??= DashboardClient.lazy(widget.connection!);
-    }
-    if (p != _profile) {
-      setState(() => _profile = p);
+      _dashClient ??=
+          widget.dashboardClientForTesting ??
+          DashboardClient.lazy(widget.connection!);
     }
     // El perfil activo se resuelve AQUÍ (después de initState, donde _loadDraft
     // pudo cargar el SOUL del default por timing). Para un perfil NO-default,
@@ -298,10 +339,12 @@ class _SoulScreenState extends State<SoulScreen>
     final conn = widget.connection;
     if (conn == null) return;
     final client = _dashClient ??= DashboardClient.lazy(conn);
+    final ticket = profileReadTicket();
     try {
-      final res = await client.getProfileSoul(_effectiveProfile);
+      final res = await client.getProfileSoul(ticket.owner);
       final content = (res['content'] ?? '').toString();
-      if (!mounted || content.isEmpty) return;
+      // The previous profile's SOUL never lands on the new one.
+      if (!mounted || !ticket.isCurrent || content.isEmpty) return;
       if (_controller.text.trim().isEmpty) {
         _setText(content);
         _toast(s.soulServerLoaded);
@@ -329,14 +372,18 @@ class _SoulScreenState extends State<SoulScreen>
     final client = _dashClient;
     if (client == null) return;
     setState(() => _profileBusy = true);
+    final ticket = profileReadTicket();
     try {
-      final res = await client.getProfileSoul(_effectiveProfile);
+      final res = await client.getProfileSoul(ticket.owner);
       final content = (res['content'] ?? '').toString();
-      if (!mounted) return;
+      // The previous profile's SOUL never lands on the new one.
+      if (!mounted || !ticket.isCurrent) return;
       _setText(content);
-      _toast(s.soulProfileLoaded(_effectiveProfile));
+      _toast(s.soulProfileLoaded(ticket.owner));
     } catch (e) {
-      if (mounted) _toast(s.soulLoadFailed(localizedApiError(s, e)));
+      if (mounted && ticket.isCurrent) {
+        _toast(s.soulLoadFailed(localizedApiError(s, e)));
+      }
     } finally {
       if (mounted) setState(() => _profileBusy = false);
     }
@@ -347,6 +394,10 @@ class _SoulScreenState extends State<SoulScreen>
     final s = Strings.of(context);
     final client = _dashClient;
     if (client == null) return;
+    // The text in the editor belongs to this profile; a switch while the
+    // confirmation is open must not write it to the new one.
+    final ticket = profileReadTicket();
+    final profile = ticket.owner;
     // Política de aprobación: Solo-lectura bloquea; YOLO aplica directo;
     // Preguntar muestra el diálogo + App Lock. Escribir SOUL → riesgo medio.
     final gate = approvalGate(
@@ -363,8 +414,8 @@ class _SoulScreenState extends State<SoulScreen>
     if (gate == ActionGate.ask) {
       final confirm = await showHermesDialog<bool>(
         context: context,
-        title: s.soulApplyProfileTitle(_effectiveProfile),
-        message: s.soulApplyProfileBody(_effectiveProfile),
+        title: s.soulApplyProfileTitle(profile),
+        message: s.soulApplyProfileBody(profile),
         actions: [
           HermesDialogAction(
             label: s.commonCancel,
@@ -383,15 +434,16 @@ class _SoulScreenState extends State<SoulScreen>
         final ok = await LockScreen.verify(
           context,
           lock,
-          reason: s.soulApplyGateTitle(_effectiveProfile),
+          reason: s.soulApplyGateTitle(profile),
         );
         if (!ok || !mounted) return;
       }
     }
+    if (!ticket.isCurrent || _editorScope != _draftScope) return;
     setState(() => _profileBusy = true);
     try {
-      await client.setProfileSoul(_effectiveProfile, _controller.text);
-      if (mounted) _toast(s.soulProfileApplied(_effectiveProfile));
+      await client.setProfileSoul(profile, _controller.text);
+      if (mounted) _toast(s.soulProfileApplied(profile));
     } catch (e) {
       if (mounted) _toast(s.soulApplyFailed(localizedApiError(s, e)));
     } finally {
@@ -400,9 +452,12 @@ class _SoulScreenState extends State<SoulScreen>
   }
 
   Future<void> _loadDraft() async {
-    final content = await _repo.load(_connectionId);
-    final hasBackup = await _repo.hasBackup(_connectionId);
-    if (!mounted) return;
+    final ticket = profileReadTicket();
+    final scope = _draftScope;
+    final content = await _repo.load(scope);
+    final hasBackup = await _repo.hasBackup(scope);
+    if (!mounted || !ticket.isCurrent) return;
+    _editorScope = scope;
     _controller.text = content ?? '';
     // Move cursor to end
     _controller.selection = TextSelection.collapsed(
@@ -431,7 +486,7 @@ class _SoulScreenState extends State<SoulScreen>
   }
 
   Future<void> _autosave() async {
-    await _repo.save(_connectionId, _controller.text);
+    await _repo.save(_editorScope, _controller.text);
     if (!mounted) return;
     setState(() => _saved = true);
     _savedTimer?.cancel();
@@ -495,7 +550,7 @@ class _SoulScreenState extends State<SoulScreen>
     if (mode == null || !mounted) return; // cancelado
 
     // Copia de seguridad del contenido anterior antes de tocarlo.
-    await _repo.saveBackup(_connectionId, current);
+    await _repo.saveBackup(_editorScope, current);
     if (mounted) setState(() => _hasBackup = true);
 
     if (mode == _SoulApplyMode.append) {
@@ -535,7 +590,7 @@ class _SoulScreenState extends State<SoulScreen>
 
   Future<void> _restoreBackup() async {
     final s = Strings.of(context);
-    final backup = await _repo.loadBackup(_connectionId);
+    final backup = await _repo.loadBackup(_editorScope);
     if (backup == null || !mounted) return;
     final ok = await showHermesDialog<bool>(
       context: context,
@@ -580,10 +635,8 @@ class _SoulScreenState extends State<SoulScreen>
           children: [
             const Text('SOUL'),
             _profileScoped
-                ? Text(
-                    Strings.of(context).soulProfileLabelFmt(_effectiveProfile),
-                    style: TextStyle(fontSize: 11, color: colors.accentHover),
-                  )
+                // States which profile this SOUL belongs to.
+                ? ProfileScopeLabel(profile: _profile)
                 : AnimatedSwitcher(
                     duration: const Duration(milliseconds: 300),
                     child: _saved

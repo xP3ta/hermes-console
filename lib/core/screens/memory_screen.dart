@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
+import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
 import '../services/memory_draft_store.dart';
 import '../design/hermes_design.dart' as d show HermesListRow;
@@ -35,15 +36,24 @@ import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import 'memory_draft_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/profile_scope.dart';
 import '../widgets/feature_dependency_notice.dart';
 import 'instance_edit_screen.dart';
 
 class MemoryScreen extends StatefulWidget {
   final SavedConnection connection;
+
+  /// Fixed profile (a bot card). Null follows the active profile.
   final String? profileOverride;
+
+  /// Active profile source; defaults to the app's for [connection].
+  final ActiveProfileScope? profileScope;
+  final DashboardClient? dashboardClientForTesting;
   const MemoryScreen({
     required this.connection,
     this.profileOverride,
+    this.profileScope,
+    @visibleForTesting this.dashboardClientForTesting,
     super.key,
   });
 
@@ -51,7 +61,8 @@ class MemoryScreen extends StatefulWidget {
   State<MemoryScreen> createState() => _MemoryScreenState();
 }
 
-class _MemoryScreenState extends State<MemoryScreen> {
+class _MemoryScreenState extends State<MemoryScreen>
+    with ActiveProfileFollower<MemoryScreen> {
   late DashboardClient _client;
   MemoryInfo? _info;
   bool _loading = true;
@@ -68,17 +79,28 @@ class _MemoryScreenState extends State<MemoryScreen> {
   @override
   void initState() {
     super.initState();
-    _client = DashboardClient.lazy(widget.connection);
+    _client =
+        widget.dashboardClientForTesting ??
+        DashboardClient.lazy(widget.connection);
     _filterController.addListener(() {
       setState(() => _filter = _filterController.text);
     });
+    final override = widget.profileOverride?.trim() ?? '';
+    followActiveProfile(
+      widget.profileScope ??
+          appActiveProfileScope(context, widget.connection.id),
+      fixedProfile: override.isEmpty ? null : override,
+    );
     _load();
     SharedPreferences.getInstance().then((prefs) {
       if (mounted) setState(() => _drafts = MemoryDraftStore(prefs));
     });
   }
 
-  String get _profile => widget.profileOverride?.trim() ?? '';
+  @override
+  void onActiveProfileChanged() => _load();
+
+  String get _profile => scopedProfileName;
 
   bool _hasDraft(String name) =>
       _drafts?.exists(widget.connection.id, name, profile: _profile) ?? false;
@@ -110,15 +132,17 @@ class _MemoryScreenState extends State<MemoryScreen> {
       _error = null;
       _dependencyFailure = DashboardDependencyFailure.other;
     });
+    final ticket = profileReadTicket();
     try {
-      final info = await _client.getMemoryInfo(profile: _profile);
-      if (!mounted) return;
+      final info = await _client.getMemoryInfo(profile: ticket.name);
+      // A read for the previous profile never lands on the new one.
+      if (!mounted || !ticket.isCurrent) return;
       setState(() {
         _info = info;
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || !ticket.isCurrent) return;
       setState(() {
         _error = localizedApiError(Strings.of(context), e);
         _dependencyFailure = classifyDashboardDependencyFailure(e);
@@ -231,12 +255,9 @@ class _MemoryScreenState extends State<MemoryScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(Strings.of(context).memTitle),
-            if (_profile.isNotEmpty)
-              Text(
-                '@$_profile',
-                style: TextStyle(fontSize: 11, color: colors.accent),
-              )
-            else if (_info != null)
+            // States which profile this memory belongs to.
+            ProfileScopeLabel(profile: _profile),
+            if (_info != null)
               Text(
                 Strings.of(context).memoryConfiguredCount(
                   _info!.configuredCount,
