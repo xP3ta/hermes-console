@@ -3887,6 +3887,81 @@ void main() {
     }
   }
 
+  // Follow-up to 7b9381a: a legacy carrier "exited (exit code 0)" is a
+  // success. The notice must classify by exit code, not only by the status
+  // phrase: exit 0 reads as finished (neutral icon), a non-zero exit reads
+  // as an error (red icon).
+  for (final variant in const [
+    (
+      headline: 'completed normally (exit code 0)',
+      title: 'Background process finished · exit 0',
+      failed: false,
+    ),
+    (
+      headline: 'exited (exit code 0)',
+      title: 'Background process finished · exit 0',
+      failed: false,
+    ),
+    (
+      headline: 'exited (exit code 1)',
+      title: 'Background process finished with an error · exit 1',
+      failed: true,
+    ),
+    (
+      headline: 'exited (exit code 137)',
+      title: 'Background process finished with an error · exit 137',
+      failed: true,
+    ),
+  ]) {
+    testWidgets('tg1215 el aviso de proceso se clasifica por código de salida '
+        '(${variant.headline})', (tester) async {
+      final carrier =
+          '[IMPORTANT: Background process proc_f4c048969c1b ${variant.headline}.\n'
+          'Command: ./build.sh\n'
+          'Output:\n'
+          'done\n'
+          ']';
+      await pumpChat(
+        tester,
+        messages: [
+          {'role': 'assistant', 'content': 'Respuesta posterior'},
+          {
+            'id': 'tg1215-exit-code',
+            'message_id': 'tg1215-exit-code',
+            'role': 'user',
+            'content': carrier,
+          },
+          {
+            'id': 'tg1215-exit-human',
+            'message_id': 'tg1215-exit-human',
+            'role': 'user',
+            'content': 'Pregunta humana',
+          },
+        ],
+        desktopGateway: _UiRewindGateway(),
+        attachDesktopRuntimeOnLoad: false,
+      );
+      tester.platformDispatcher.localesTestValue = [const Locale('en')];
+      addTearDown(tester.platformDispatcher.clearLocalesTestValue);
+      await tester.pump();
+
+      expect(find.text(variant.title), findsOneWidget);
+      expect(find.textContaining('[IMPORTANT:'), findsNothing);
+      final iconFinder = find.byIcon(Icons.terminal_rounded);
+      expect(iconFinder, findsOneWidget);
+      final colors = Theme.of(tester.element(iconFinder)).hermes;
+      final iconColor = tester.widget<Icon>(iconFinder).color;
+      expect(
+        iconColor,
+        variant.failed
+            ? colors.error.withValues(alpha: 0.8)
+            : colors.textSecondary.withValues(alpha: 0.72),
+        reason: variant.failed ? 'a non-zero exit is an error' : 'exit 0',
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   for (final (language, label) in const [
     ('es', 'Cancelado'),
     ('en', 'Cancelled'),
@@ -10795,70 +10870,67 @@ void main() {
       },
     );
 
-    testWidgets(
-      'queued turn: leaving while the enqueue is in flight does not '
-      'resurrect the queued text as a draft',
-      (tester) async {
-        final gateway = _SubmissionGateway()..submitGate = Completer<void>();
-        final connection = _remoteConn('draft-orphan-queued-left');
-        final session = _session().copyWith(
-          id: 'saved-draft-queued-left',
-          messageCount: 2,
-          profile: 'default',
-        );
-        final chat = await pumpChat(
-          tester,
-          session: session,
-          connection: connection,
-          desktopGateway: gateway,
-        );
-        await tester.enterText(find.byType(TextField).first, 'turno en vuelo');
-        await tester.pump(const Duration(milliseconds: 400));
-        await tester.tap(find.byKey(const ValueKey('send')));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 100));
-        gateway.submitGate!.complete();
-        await tester.pump(const Duration(milliseconds: 500));
+    testWidgets('queued turn: leaving while the enqueue is in flight does not '
+        'resurrect the queued text as a draft', (tester) async {
+      final gateway = _SubmissionGateway()..submitGate = Completer<void>();
+      final connection = _remoteConn('draft-orphan-queued-left');
+      final session = _session().copyWith(
+        id: 'saved-draft-queued-left',
+        messageCount: 2,
+        profile: 'default',
+      );
+      final chat = await pumpChat(
+        tester,
+        session: session,
+        connection: connection,
+        desktopGateway: gateway,
+      );
+      await tester.enterText(find.byType(TextField).first, 'turno en vuelo');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      gateway.submitGate!.complete();
+      await tester.pump(const Duration(milliseconds: 500));
 
-        await tester.enterText(find.byType(TextField).first, 'turno encolado');
-        // Past the debounce: the queued text is already an encrypted draft.
-        await tester.pump(const Duration(milliseconds: 400));
-        final store = await readStore();
-        expect(
-          (await store.load(connection.id, session.id)).text,
-          'turno encolado',
-        );
-        // Hold the durable enqueue write so the route is gone before the
-        // enqueue reports success.
-        final writeGate = Completer<void>();
-        delayedOutboxWrite = writeGate;
-        await tester.tap(find.byKey(const ValueKey('send')));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 50));
-        Navigator.of(tester.element(find.byType(ChatScreen))).pop();
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 400));
-        delayedOutboxWrite = null;
-        writeGate.complete();
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 500));
+      await tester.enterText(find.byType(TextField).first, 'turno encolado');
+      // Past the debounce: the queued text is already an encrypted draft.
+      await tester.pump(const Duration(milliseconds: 400));
+      final store = await readStore();
+      expect(
+        (await store.load(connection.id, session.id)).text,
+        'turno encolado',
+      );
+      // Hold the durable enqueue write so the route is gone before the
+      // enqueue reports success.
+      final writeGate = Completer<void>();
+      delayedOutboxWrite = writeGate;
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      delayedOutboxWrite = null;
+      writeGate.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
 
-        expect(chat.queuedMessages, ['turno encolado']);
-        expect(
-          (await store.load(connection.id, session.id)).text,
-          isEmpty,
-          reason: 'a queued turn must not come back as a draft on reopen',
-        );
-        expect(tester.takeException(), isNull);
-        gateway.emitComplete('uno');
-        await tester.pump(const Duration(milliseconds: 1200));
-        gateway.emitComplete('dos');
-        await tester.pump(const Duration(milliseconds: 500));
-        // Let queue drain/retry timers of the background chat settle.
-        await tester.pump(const Duration(seconds: 5));
-        expect(tester.takeException(), isNull);
-      },
-    );
+      expect(chat.queuedMessages, ['turno encolado']);
+      expect(
+        (await store.load(connection.id, session.id)).text,
+        isEmpty,
+        reason: 'a queued turn must not come back as a draft on reopen',
+      );
+      expect(tester.takeException(), isNull);
+      gateway.emitComplete('uno');
+      await tester.pump(const Duration(milliseconds: 1200));
+      gateway.emitComplete('dos');
+      await tester.pump(const Duration(milliseconds: 500));
+      // Let queue drain/retry timers of the background chat settle.
+      await tester.pump(const Duration(seconds: 5));
+      expect(tester.takeException(), isNull);
+    });
 
     testWidgets('queued turn: enqueued batch leaves no draft behind', (
       tester,
@@ -19141,11 +19213,9 @@ void main() {
           reason: 'chat open and resume never call the Bridge or Dashboard',
         );
         expect(gateway.globalCalls, 1, reason: 'resume reuses the catalog');
-        expect(
-          gateway.connectedOnlyFlags,
-          [true],
-          reason: 'the badge read never opens a socket',
-        );
+        expect(gateway.connectedOnlyFlags, [
+          true,
+        ], reason: 'the badge read never opens a socket');
 
         // A cold picker (nothing cached) also goes to the socket first.
         tester
@@ -20793,9 +20863,7 @@ void main() {
     final before = tester.state(field);
 
     // Cualquier evento del agente redibuja la pantalla del chat.
-    final screen = tester.state<State<StatefulWidget>>(
-      find.byType(ChatScreen),
-    );
+    final screen = tester.state<State<StatefulWidget>>(find.byType(ChatScreen));
     for (var i = 0; i < 5; i++) {
       // ignore: invalid_use_of_protected_member
       screen.setState(() {});

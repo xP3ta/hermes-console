@@ -601,6 +601,27 @@ void main() {
       );
       expect(parseBackgroundProcessCarrier('hola'), isNull);
     });
+
+    // Follow-up to 7b9381a: the legacy "exited" phrase with exit code 0 is a
+    // success; only a non-zero (or unknown) exit is a failure.
+    test('un carrier exited con exit 0 es un éxito', () {
+      BackgroundProcessCarrier parse(String headline) =>
+          parseBackgroundProcessCarrier(
+            '[IMPORTANT: Background process proc_f4c048969c1b $headline.\n'
+            'Command: ./build.sh\nOutput:\nok\n]',
+          )!;
+      expect(parse('exited (exit code 0)').failed, isFalse);
+      expect(parse('completed normally (exit code 0)').failed, isFalse);
+      expect(parse('exited (exit code 1)').failed, isTrue);
+      expect(parse('exited (exit code 137)').failed, isTrue);
+      expect(parse('exited (exit code -9)').failed, isTrue);
+      expect(parse('exited (exit code ?)').failed, isTrue);
+      expect(
+        parse('terminated by process.kill (exit code -15, SIGTERM)').failed,
+        isTrue,
+      );
+      expect(parse('failed to start (exit code 0)').failed, isTrue);
+    });
   });
 
   test(

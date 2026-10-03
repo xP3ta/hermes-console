@@ -56,6 +56,15 @@ class BackgroundProcessCarrier {
   final String exitCode;
   final String command;
   final String output;
+
+  /// Si el proceso terminó con error. Hermes escribe la frase legacy
+  /// `exited` también para exit 0, así que esa frase se clasifica por el
+  /// código: solo un código distinto de 0 (o desconocido) es un fallo.
+  bool get failed => switch (status) {
+    BackgroundProcessCarrierStatus.completed => false,
+    BackgroundProcessCarrierStatus.exited => exitCode != '0',
+    _ => true,
+  };
 }
 
 /// Devuelve el carrier solo cuando TODO [raw] es el carrier canónico.

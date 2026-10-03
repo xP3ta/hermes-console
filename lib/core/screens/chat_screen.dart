@@ -17927,7 +17927,10 @@ class _ProcessNotificationRowState extends State<_ProcessNotificationRow> {
 
   String _statusLabel(Strings strings) => switch (widget.carrier.status) {
     BackgroundProcessCarrierStatus.completed => strings.tg1215ProcessCompleted,
-    BackgroundProcessCarrierStatus.exited => strings.tg1215ProcessExited,
+    BackgroundProcessCarrierStatus.exited =>
+      widget.carrier.failed
+          ? strings.tg1215ProcessExited
+          : strings.tg1215ProcessCompleted,
     BackgroundProcessCarrierStatus.terminated =>
       strings.tg1215ProcessTerminated,
     BackgroundProcessCarrierStatus.lost => strings.tg1215ProcessLost,
@@ -17953,7 +17956,7 @@ class _ProcessNotificationRowState extends State<_ProcessNotificationRow> {
       '\$ ${carrier.command}',
       output.isEmpty ? strings.tg1215ProcessNoOutput : output,
     ].join('\n\n');
-    final failed = carrier.status != BackgroundProcessCarrierStatus.completed;
+    final failed = carrier.failed;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 2),
       child: Column(
