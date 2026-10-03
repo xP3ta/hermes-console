@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/companion/data/companion_preferences.dart';
@@ -144,6 +145,28 @@ class _PaintCounter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+/// Centro de la mascota tal como quedó pintado en la capa propia del paseo
+/// (en coordenadas de esa capa), recorriendo las capas grabadas en el último
+/// paint. A diferencia de `getCenter`, que usa la transformación lógica, solo
+/// cambia si la capa se volvió a pintar.
+Offset _paintedPetCenter(RenderObject roaming) {
+  Layer? layer = roaming.debugLayer!.firstChild;
+  var transform = Matrix4.identity();
+  while (layer != null && layer is! PictureLayer) {
+    if (layer is TransformLayer) {
+      transform = transform
+        ..translateByDouble(layer.offset.dx, layer.offset.dy, 0, 1)
+        ..multiply(layer.transform!);
+    } else if (layer is OffsetLayer) {
+      transform.translateByDouble(layer.offset.dx, layer.offset.dy, 0, 1);
+    }
+    layer = (layer as ContainerLayer).firstChild;
+  }
+  expect(layer, isA<PictureLayer>(), reason: 'la mascota debe estar pintada');
+  final bounds = (layer! as PictureLayer).canvasBounds;
+  return MatrixUtils.transformPoint(transform, bounds.center);
 }
 
 void main() {
@@ -435,5 +458,54 @@ void main() {
     }
 
     expect(counter.paints - paintsBefore, 0);
+  });
+
+  testWidgets('cada paso del paseo vuelve a pintar la mascota en su sitio', (
+    tester,
+  ) async {
+    final controller = await _controller(roaming: true);
+    final travelFrames = <Offset>[];
+    await _pump(
+      tester,
+      controller,
+      minPause: const Duration(milliseconds: 10),
+      maxPause: const Duration(milliseconds: 10),
+      minTravel: const Duration(seconds: 5),
+      maxTravel: const Duration(seconds: 5),
+      onTravelFrame: travelFrames.add,
+    );
+    await tester.pump(const Duration(milliseconds: 10));
+    final position = find.byKey(const ValueKey('companion-roaming-position'));
+    RenderObject roaming() {
+      final object = tester.renderObject(position);
+      expect(object.attached, isTrue);
+      return object;
+    }
+
+    final notifier = tester.widget<CompanionRoamingPosition>(position).position;
+    var previous = notifier.value;
+    var previousPainted = _paintedPetCenter(roaming());
+
+    for (var step = 0; step < 2; step++) {
+      travelFrames.clear();
+      // Un paso de paseo (12 por segundo).
+      await tester.pump(const Duration(milliseconds: 84));
+      expect(travelFrames, isNotEmpty);
+      final moved = notifier.value;
+      expect(moved.dx, isNot(previous.dx));
+      expect(roaming().debugNeedsPaint, isFalse);
+      final painted = _paintedPetCenter(roaming());
+      // Lo pintado se desplaza exactamente lo que avanzó la posición.
+      expect(
+        painted.dx - previousPainted.dx,
+        closeTo(moved.dx - previous.dx, 0.01),
+      );
+      expect(
+        painted.dy - previousPainted.dy,
+        closeTo(moved.dy - previous.dy, 0.01),
+      );
+      previous = moved;
+      previousPainted = painted;
+    }
   });
 }
