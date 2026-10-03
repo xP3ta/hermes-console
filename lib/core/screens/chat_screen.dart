@@ -3809,6 +3809,13 @@ class _ChatScreenState extends State<ChatScreen>
   /// Etiqueta corta del modelo activo para el AppBar (p.ej. "GPT-5.5"). Cae a un
   /// texto neutro mientras carga o si el Dashboard no está accesible.
   String get _activeModelLabel {
+    final model = _headerModelId;
+    if (model == null) return Strings.of(context).chaModelServer;
+    return friendlyModelName(model);
+  }
+
+  /// Model id the session chrome paints, or null for the server default.
+  String? get _headerModelId {
     // md1215: a draft without a runtime sends `_selectedModel` with its first
     // message; showing the server default instead read as "it did not change".
     final staged =
@@ -3821,9 +3828,9 @@ class _ChatScreenState extends State<ChatScreen>
     final model =
         _displayedSessionModel?.modelId ?? staged ?? _activeModel?.model;
     if (model == null || model.isEmpty || model == 'hermes-agent') {
-      return Strings.of(context).chaModelServer;
+      return null;
     }
-    return friendlyModelName(model);
+    return model;
   }
 
   void _syncDesktopSessionConfig() {
@@ -11537,6 +11544,7 @@ class _ChatScreenState extends State<ChatScreen>
                       ? _chat.activityKind
                       : null,
                   avatarCache: widget.missionAvatarCache,
+                  sessionModel: _headerModelId,
                 )
               : Semantics(
                   button: !showVoiceSurface,
@@ -16477,11 +16485,16 @@ class _BotChatAppBarTitle extends StatelessWidget {
   final ChatActivityKind? activity;
   final MissionProfileAvatarCache? avatarCache;
 
+  /// Model of this session as the regular chat header shows it; the profile
+  /// default is only a fallback before the session reports one.
+  final String? sessionModel;
+
   const _BotChatAppBarTitle({
     required this.profile,
     required this.fallbackName,
     required this.activity,
     required this.avatarCache,
+    this.sessionModel,
     super.key,
   });
 
@@ -16551,7 +16564,10 @@ class _BotChatAppBarTitle extends StatelessWidget {
                 Text(
                   [
                     if (displayName != name || statusLabel == null) '@$name',
-                    ?statusLabel ?? _modelLabel(profile),
+                    ?statusLabel ??
+                        (sessionModel == null
+                            ? _modelLabel(profile)
+                            : friendlyModelName(sessionModel!)),
                   ].join(' · '),
                   key: const ValueKey('bot-chat-header-subtitle'),
                   maxLines: 1,
