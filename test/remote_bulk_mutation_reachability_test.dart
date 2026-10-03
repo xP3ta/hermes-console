@@ -11,7 +11,6 @@ void main() {
     final cron = source('lib/core/screens/cron_screen.dart');
     final cronRepository = source('lib/core/services/cron_repository.dart');
     final sessionDeletion = source('lib/core/services/session_deletion.dart');
-    final agents = source('lib/core/screens/agent_center_screen.dart');
 
     expect(settings, isNot(contains("ValueKey('history-cleanup-cron')")));
     expect(settings, isNot(contains('Future<void> _clearCron()')));
@@ -37,17 +36,12 @@ void main() {
     }
     expect(sessionDeletion, isNot(contains('sessionsSafeForBulkDelete')));
     expect(sessionDeletion, isNot(contains('cronResults')));
-
-    expect(agents, isNot(contains("ValueKey('agent-center-stop-all')")));
-    expect(agents, isNot(contains('Future<void> _stopAllProcesses()')));
-    expect(RegExp(r'killBackgroundProcess\(').allMatches(agents), hasLength(1));
   });
 
   test('explicit one-target mutations remain wired', () {
     final settings = source('lib/core/screens/settings_screen.dart');
     final sessions = source('lib/core/screens/session_list_screen.dart');
     final cron = source('lib/core/screens/cron_screen.dart');
-    final agents = source('lib/core/screens/agent_center_screen.dart');
 
     expect(settings, contains("ValueKey('history-cleanup-normal')"));
     expect(settings, contains('clearProfileLocalConversationState('));
@@ -63,12 +57,5 @@ void main() {
     expect(cron, contains('Future<bool> _delete(CronJob job)'));
     expect(cron, contains('_client.deleteCronJob(job.id, profile: _profile)'));
     expect(cron, contains("value: 'delete'"));
-
-    expect(
-      agents,
-      contains('_stopProcess(BackgroundProcessEntry process, int ordinal)'),
-    );
-    expect(agents, contains('process.opaqueId,'));
-    expect(agents, contains(': () => _stopProcess('));
   });
 }

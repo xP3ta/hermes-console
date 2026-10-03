@@ -281,7 +281,6 @@
   "drawerProjects": "Proyectos",
   "drawerGroupAgent": "perfil",
   "drawerProfiles": "Perfiles",
-  "drawerAgents": "Agentes",
   "drawerExtensions": "Extensiones",
   "drawerMemory": "Memoria",
   "drawerGroupSystem": "sistema",
@@ -1459,14 +1458,6 @@
   "soulRestorePrevBody": "Se reemplazará el contenido actual por la última copia guardada antes de aplicar una plantilla.",
   "soulRestore": "Restaurar",
   "soulRestored": "Copia restaurada",
-  "soulProfileLabelFmt": "perfil: {profile}",
-  "@soulProfileLabelFmt": {
-    "placeholders": {
-      "profile": {
-        "type": "String"
-      }
-    }
-  },
   "soulDraftSaved": "borrador guardado",
   "soulLocalDoc": "documento local",
   "soulConfigBridge": "Configurar Mobile Bridge",
@@ -2825,14 +2816,6 @@
       }
     }
   },
-  "sklActiveProfile": "perfil: {profile}",
-  "@sklActiveProfile": {
-    "placeholders": {
-      "profile": {
-        "type": "String"
-      }
-    }
-  },
   "sklStatsApi": "{enabled} activas · {total} total · /api/skills",
   "@sklStatsApi": {
     "placeholders": {
@@ -3156,14 +3139,6 @@
     }
   },
   "mdlTitle": "Modelos",
-  "mdlProfile": "perfil: {profile}",
-  "@mdlProfile": {
-    "placeholders": {
-      "profile": {
-        "type": "String"
-      }
-    }
-  },
   "mdlReload": "Recargar",
   "mdlAgentOffline": "Hermes no está activo",
   "mdlLoadError": "No se pudieron cargar los modelos",
@@ -4454,14 +4429,6 @@
       }
     }
   },
-  "prfCreateError": "No se pudo crear el perfil: {error}",
-  "@prfCreateError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
   "prfLoadErrorVersion": "Esta versión de Hermes no expone perfiles todavía. Actualiza el servidor.",
   "prfLoadError": "No se pudieron cargar los perfiles: {error}",
   "@prfLoadError": {
@@ -4489,12 +4456,7 @@
   "prfNameHint": "investigacion",
   "prfSave": "Guardar",
   "prfNameFormatHint": "Solo minúsculas, dígitos, guion y guion bajo.",
-  "prfNameExists": "Ya existe un perfil con ese nombre",
-  "prfNameInvalid": "Nombre no válido",
   "prfNameTaken": "Ya existe",
-  "prfBuilderTitle": "nuevo perfil",
-  "prfCreatingMsg": "Creando perfil…",
-  "prfWritingSoulMsg": "Escribiendo SOUL…",
   "prfAssigningModelMsg": "Asignando modelo…",
   "prfSoulWarning": "Perfil creado, pero el SOUL no se guardó: {error}",
   "@prfSoulWarning": {
@@ -4523,78 +4485,6 @@
   },
   "prfSkipModel": "Solo crear el perfil",
   "prfApplyModel": "Aplicar igualmente",
-  "prfStep1Title": "Identidad",
-  "prfStep1Subtitle": "Nombre, descripción y personalidad inicial",
-  "prfNameLabelRequired": "Nombre del perfil *",
-  "prfDescLabel": "Descripción (opcional)",
-  "prfDescHint": "Agente de investigación con web + visión",
-  "prfSoulTitle": "Personalidad inicial (SOUL)",
-  "prfSoulSubtitle": "Elige un punto de partida. Podrás afinarlo luego en SOUL.",
-  "prfSoulLabel": "SOUL.md (opcional)",
-  "prfSoulHint": "# Identidad\n\nDescribe la personalidad del agente…",
-  "prfStep2Title": "Modelo principal",
-  "prfStep2Subtitle": "Qué modelo usa este perfil por defecto",
-  "prfInheritBase": "Heredar del perfil base",
-  "prfInheritFromClone": "Usa el modelo de «{name}»",
-  "@prfInheritFromClone": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "prfInheritDefault": "Usa el modelo por defecto del agente",
-  "prfRemoveModelTooltip": "Quitar (volver a heredar)",
-  "prfChangeModel": "Cambiar modelo",
-  "prfChooseModel": "Elegir un modelo concreto",
-  "prfStep3Title": "Punto de partida",
-  "prfStep3Subtitle": "Hereda skills, claves y configuración de otro perfil",
-  "prfCloneToggle": "Clonar de un perfil existente",
-  "prfCloneToggleDesc": "Hereda skills y configuración del perfil base.",
-  "prfCloneFrom": "Clonar de:",
-  "prfNoCloneInfo": "Sin clonar: el perfil arranca limpio (sin skills ni claves). Tendrás que configurarlo desde cero.",
-  "prfStep4Title": "Resumen",
-  "prfStep4Subtitle": "Revisa y crea el perfil",
-  "prfSummaryName": "Nombre",
-  "prfSummaryDesc": "Descripción",
-  "prfSummaryModel": "Modelo",
-  "prfSummaryBase": "Base",
-  "prfSummarySoul": "SOUL",
-  "prfSummaryInheritModel": "Heredar del base",
-  "prfSummaryCloneFrom": "Clona de «{name}»",
-  "@prfSummaryCloneFrom": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "prfSummaryCleanBase": "Limpio (sin clonar)",
-  "prfSummarySoulEmpty": "Heredado / vacío",
-  "prfSummarySoulContent": "{count} caracteres ({preset})",
-  "@prfSummarySoulContent": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      },
-      "preset": {
-        "type": "String"
-      }
-    }
-  },
-  "prfSummaryWithModel": "Hermes crea el perfil, el SOUL y el modelo juntos mediante su contrato Gateway aislado por profile. No cambia otros perfiles ni el modelo principal en ejecución.",
-  "prfSummaryNoModel": "Hermes crea este perfil mediante su contrato Gateway aislado por profile. Hereda la base elegida sin cambiar otros perfiles.",
-  "prfBack": "Atrás",
-  "prfCreate": "Crear perfil",
-  "prfNext": "Siguiente",
-  "prfModelsLoadError": "No se pudieron cargar los modelos: {error}",
-  "@prfModelsLoadError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
   "prfConnectedOnly": "solo conectados",
   "prfNotConnected": "sin conectar",
   "prfConnectInModels": "Conéctalo en Modelos para ver sus modelos.",
@@ -4602,12 +4492,6 @@
   "prfLoadErrorToken": "El Dashboard pide token. Configúralo en la instancia (puerto 9119).",
   "prfNameRequired": "Escribe un nombre",
   "prfNamePatternError": "Solo minúsculas, dígitos, _ y - (máx 64, empieza por letra/dígito)",
-  "prfPickerTitle": "Elige modelo",
-  "prfNoModelsHint": "No hay modelos disponibles. Conecta un proveedor (clave o login) en Modelos, o desactiva «solo conectados» para ver todos los proveedores.",
-  "prfPresetInherit": "Heredar del base",
-  "prfPresetTechnical": "Asistente técnico",
-  "prfPresetHomelab": "Operador homelab",
-  "prfPresetMinimal": "Minimalista",
   "wlcScreenTitle": "configura Hermes Console",
   "wlcSubtitle": "Primero dinos dónde funciona tu Hermes. Te guiaremos paso a paso.",
   "wlcLocalTitle": "Usar Hermes en este móvil",
@@ -6634,13 +6518,7 @@
       }
     }
   },
-  "subagentActivityRequested": "pendiente",
   "subagentActivityRunning": "trabajando",
-  "subagentActivityThinking": "razonando",
-  "subagentActivityTool": "usando herramienta",
-  "subagentActivityCompleted": "completado",
-  "subagentActivityFailed": "falló",
-  "subagentActivityCancelled": "cancelado",
   "subagentActivityUnknown": "estado desconocido",
   "subagentActivityModel": "Modelo: {model}",
   "@subagentActivityModel": {
@@ -7024,28 +6902,6 @@
   "extensionsCenterMutationFailureUnavailable": "Se perdió la conexión antes de completar el cambio.",
   "extensionsCenterMutationFailureRejected": "Hermes rechazó el cambio.",
   "extensionsCenterMutationFailureUnknown": "Hermes no pudo completar el cambio.",
-  "agentCenterTitle": "Agentes",
-  "agentCenterRefreshTooltip": "Actualizar actividad",
-  "agentCenterFailureUnsupported": "Esta versión de Hermes no publica el centro de agentes.",
-  "agentCenterFailureForbidden": "La instancia no permite consultar agentes con esta sesión.",
-  "agentCenterFailureInvalidResponse": "Hermes devolvió actividad que no es segura de mostrar.",
-  "agentCenterFailureUnavailable": "No se pudo conectar con la instancia.",
-  "agentCenterFailureRejected": "Hermes rechazó la consulta de agentes.",
-  "agentCenterFailureUnknown": "No se pudo cargar la actividad de agentes.",
-  "agentCenterHistoryOpenFailed": "No se pudo abrir este historial.",
-  "agentCenterWorkFallback": "Trabajo de agentes",
-  "agentCenterHistoryEmpty": "Hermes no guardó nodos en este historial.",
-  "agentCenterStopProcessTitle": "Detener proceso",
-  "agentCenterStopProcessBody": "Se detendrá únicamente “{process}”.",
-  "@agentCenterStopProcessBody": {
-    "placeholders": {
-      "process": {
-        "type": "String"
-      }
-    }
-  },
-  "agentCenterStop": "Detener",
-  "agentCenterStopFailed": "Hermes no pudo detener ese proceso.",
   "agentCenterStopAll": "Detener todos",
   "agentCenterStopAllTitle": "¿Detener todos los procesos activos?",
   "agentCenterStopAllBody": "Se detendrán {count} procesos en segundo plano de esta conversación. El historial de delegaciones seguirá disponible.",
@@ -7057,66 +6913,7 @@
     }
   },
   "agentCenterStopAllFailed": "No se pudieron detener algunos procesos.",
-  "agentCenterNewTaskTitle": "Nueva tarea en segundo plano",
-  "agentCenterNewTaskHint": "Describe una tarea concreta para esta conversación",
-  "agentCenterStart": "Iniciar",
-  "agentCenterTaskAccepted": "Tarea aceptada por Hermes.",
-  "agentCenterTaskStartFailed": "Hermes no pudo iniciar la tarea.",
-  "agentCenterNewTask": "Nueva tarea",
-  "agentCenterIntroRuntime": "Procesos de esta conversación y delegaciones guardadas. Los subagentes son tareas que Hermes repartió, no perfiles.",
-  "agentCenterIntroInstance": "Delegaciones y subagentes que Hermes usó en conversaciones anteriores. No son perfiles configurables. Abre una conversación para ver sus procesos activos.",
-  "agentCenterRunningSection": "En ejecución",
-  "agentCenterNoProcesses": "No hay procesos activos para esta conversación.",
-  "agentCenterProcessFallback": "Proceso {id}",
-  "@agentCenterProcessFallback": {
-    "placeholders": {
-      "id": {
-        "type": "String"
-      }
-    }
-  },
   "agentCenterActive": "activo",
-  "agentCenterProcessStatus": "{status} · {seconds} s",
-  "@agentCenterProcessStatus": {
-    "placeholders": {
-      "status": {
-        "type": "String"
-      },
-      "seconds": {
-        "type": "int"
-      }
-    }
-  },
-  "agentCenterStopTooltip": "Detener este proceso",
-  "agentCenterHistorySection": "Delegaciones guardadas",
-  "agentCenterNoHistory": "Hermes todavía no ha guardado ninguna delegación de subagentes.",
-  "agentCenterSubagentCount": "{count, plural, one{1 subagente} other{{count} subagentes}}",
-  "@agentCenterSubagentCount": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "agentCenterSubagentCountWithDate": "{count, plural, one{1 subagente · {date}} other{{count} subagentes · {date}}}",
-  "@agentCenterSubagentCountWithDate": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      },
-      "date": {
-        "type": "String"
-      }
-    }
-  },
-  "agentCenterStaleView": "{error} Se conserva la última vista.",
-  "@agentCenterStaleView": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
   "projectsCenterTitle": "Proyectos",
   "projectsCenterRefreshTooltip": "Actualizar proyectos",
   "projectsCenterFailureUnsupported": "Esta versión de Hermes no publica Projects.",
@@ -7382,11 +7179,7 @@
       }
     }
   },
-  "missionSharedRooms": "Salas",
   "missionCreateSharedRoom": "Crear sala",
-  "missionNoSharedRooms": "No hay salas oficiales disponibles.",
-  "missionSharedRoomsUnavailable": "Las salas oficiales no están disponibles.",
-  "missionSendSharedMessage": "Enviar mensaje",
   "missionRenameSharedRoom": "Renombrar sala",
   "missionStopSharedRoom": "¿Detener la sala?",
   "missionDisbandSharedRoom": "¿Disolver la sala?",
@@ -7394,9 +7187,6 @@
   "missionDisbandSharedRoomAction": "Disolver sala",
   "missionConfirm": "Confirmar",
   "missionHostedActionFailed": "Hermes no pudo actualizar la sala.",
-  "missionHostedRetryAvailable": "Se puede reintentar una tarea de la sala.",
-  "missionHostedRetryAction": "Reintentar tarea",
-  "missionHostedRetryConfirm": "¿Reintentar esta tarea de la sala?",
   "missionHostedSave": "Guardar",
   "missionHostedCancel": "Cancelar",
   "missionHostedMemberCount": "{count, plural, one{1 miembro} other{{count} miembros}}",
@@ -7412,18 +7202,6 @@
   "@missionHostedRoomCount": {
     "description": "Número de salas oficiales visibles.",
     "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "missionSharedRoomSemantics": "Sala {name}, {count, plural, one{1 miembro} other{{count} miembros}}",
-  "@missionSharedRoomSemantics": {
-    "description": "Etiqueta accesible de una sala oficial sin identificadores opacos.",
-    "placeholders": {
-      "name": {
-        "type": "String"
-      },
       "count": {
         "type": "int"
       }
@@ -7445,7 +7223,6 @@
   "missionBotChatMetadataUnavailable": "No se pudo verificar el Bot Chat. Actualiza Bots e inténtalo de nuevo.",
   "missionOffline": "Hermes no está disponible. Los datos de los perfiles que ya tienes siguen visibles.",
   "missionStaleData": "Algunos datos de los perfiles pueden estar desactualizados.",
-  "missionKanbanUnavailable": "El tablero de tareas no está disponible en esta instalación de Hermes.",
   "roomEveryone": "Todos",
   "roomRecipientsAll": "Todos ({count})",
   "@roomRecipientsAll": {

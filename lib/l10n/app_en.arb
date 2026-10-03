@@ -106,7 +106,6 @@
   "drawerProjects": "Projects",
   "drawerGroupAgent": "profile",
   "drawerProfiles": "Profiles",
-  "drawerAgents": "Agents",
   "drawerExtensions": "Extensions",
   "drawerMemory": "Memory",
   "drawerGroupSystem": "system",
@@ -913,7 +912,6 @@
   "soulRestorePrevBody": "The current content will be replaced with the last copy saved before applying a template.",
   "soulRestore": "Restore",
   "soulRestored": "Copy restored",
-  "soulProfileLabelFmt": "profile: {profile}",
   "soulDraftSaved": "draft saved",
   "soulLocalDoc": "local document",
   "soulConfigBridge": "Configure Mobile Bridge",
@@ -1993,14 +1991,6 @@
       }
     }
   },
-  "sklActiveProfile": "profile: {profile}",
-  "@sklActiveProfile": {
-    "placeholders": {
-      "profile": {
-        "type": "String"
-      }
-    }
-  },
   "sklStatsApi": "{enabled} active · {total} total · /api/skills",
   "@sklStatsApi": {
     "placeholders": {
@@ -2324,14 +2314,6 @@
     }
   },
   "mdlTitle": "Models",
-  "mdlProfile": "profile: {profile}",
-  "@mdlProfile": {
-    "placeholders": {
-      "profile": {
-        "type": "String"
-      }
-    }
-  },
   "mdlReload": "Reload",
   "mdlAgentOffline": "Hermes is not active",
   "mdlLoadError": "Could not load models",
@@ -3588,14 +3570,6 @@
       }
     }
   },
-  "prfCreateError": "Could not create profile: {error}",
-  "@prfCreateError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
   "prfLoadErrorVersion": "This version of Hermes doesn't expose profiles yet. Update the server.",
   "prfLoadError": "Could not load profiles: {error}",
   "@prfLoadError": {
@@ -3623,12 +3597,7 @@
   "prfNameHint": "research",
   "prfSave": "Save",
   "prfNameFormatHint": "Only lowercase letters, digits, hyphen and underscore.",
-  "prfNameExists": "A profile with this name already exists",
-  "prfNameInvalid": "Invalid name",
   "prfNameTaken": "Already exists",
-  "prfBuilderTitle": "new profile",
-  "prfCreatingMsg": "Creating profile…",
-  "prfWritingSoulMsg": "Writing SOUL…",
   "prfAssigningModelMsg": "Assigning model…",
   "prfSoulWarning": "Profile created, but SOUL was not saved: {error}",
   "@prfSoulWarning": {
@@ -3657,78 +3626,6 @@
   },
   "prfSkipModel": "Just create the profile",
   "prfApplyModel": "Apply anyway",
-  "prfStep1Title": "Identity",
-  "prfStep1Subtitle": "Name, description and initial personality",
-  "prfNameLabelRequired": "Profile name *",
-  "prfDescLabel": "Description (optional)",
-  "prfDescHint": "Research agent with web + vision",
-  "prfSoulTitle": "Initial personality (SOUL)",
-  "prfSoulSubtitle": "Choose a starting point. You can refine it later in SOUL.",
-  "prfSoulLabel": "SOUL.md (optional)",
-  "prfSoulHint": "# Identity\n\nDescribe the agent's personality…",
-  "prfStep2Title": "Main model",
-  "prfStep2Subtitle": "Which model this profile uses by default",
-  "prfInheritBase": "Inherit from base profile",
-  "prfInheritFromClone": "Uses the model from «{name}»",
-  "@prfInheritFromClone": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "prfInheritDefault": "Uses the agent's default model",
-  "prfRemoveModelTooltip": "Remove (revert to inherited)",
-  "prfChangeModel": "Change model",
-  "prfChooseModel": "Choose a specific model",
-  "prfStep3Title": "Starting point",
-  "prfStep3Subtitle": "Inherit skills, keys and config from another profile",
-  "prfCloneToggle": "Clone from an existing profile",
-  "prfCloneToggleDesc": "Inherits skills and settings from the base profile.",
-  "prfCloneFrom": "Clone from:",
-  "prfNoCloneInfo": "Without cloning: profile starts clean (no skills or keys). You'll need to configure it from scratch.",
-  "prfStep4Title": "Summary",
-  "prfStep4Subtitle": "Review and create the profile",
-  "prfSummaryName": "Name",
-  "prfSummaryDesc": "Description",
-  "prfSummaryModel": "Model",
-  "prfSummaryBase": "Base",
-  "prfSummarySoul": "SOUL",
-  "prfSummaryInheritModel": "Inherit from base",
-  "prfSummaryCloneFrom": "Clones from «{name}»",
-  "@prfSummaryCloneFrom": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "prfSummaryCleanBase": "Clean (no cloning)",
-  "prfSummarySoulEmpty": "Inherited / empty",
-  "prfSummarySoulContent": "{count} characters ({preset})",
-  "@prfSummarySoulContent": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      },
-      "preset": {
-        "type": "String"
-      }
-    }
-  },
-  "prfSummaryWithModel": "Hermes creates this profile, SOUL and model together through its profile-scoped Gateway contract. Other profiles and the running default model are not changed.",
-  "prfSummaryNoModel": "Hermes creates this profile through its profile-scoped Gateway contract. It inherits the selected base without changing other profiles.",
-  "prfBack": "Back",
-  "prfCreate": "Create profile",
-  "prfNext": "Next",
-  "prfModelsLoadError": "Could not load models: {error}",
-  "@prfModelsLoadError": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
   "prfConnectedOnly": "connected only",
   "prfNotConnected": "not connected",
   "prfConnectInModels": "Connect it in Models to see its models.",
@@ -3736,12 +3633,6 @@
   "prfLoadErrorToken": "Dashboard requires a token. Configure it in the instance settings (port 9119).",
   "prfNameRequired": "Enter a name",
   "prfNamePatternError": "Lowercase letters, digits, _ and - only (max 64, must start with letter/digit)",
-  "prfPickerTitle": "Choose model",
-  "prfNoModelsHint": "No models available. Connect a provider (key or login) in Models, or disable «connected only» to see all providers.",
-  "prfPresetInherit": "Inherit from base",
-  "prfPresetTechnical": "Technical assistant",
-  "prfPresetHomelab": "Homelab operator",
-  "prfPresetMinimal": "Minimalist",
   "wlcScreenTitle": "set up Hermes Console",
   "wlcSubtitle": "First tell us where your Hermes runs. We'll guide you step by step.",
   "wlcLocalTitle": "Use Hermes on this phone",
@@ -5404,13 +5295,7 @@
       }
     }
   },
-  "subagentActivityRequested": "pending",
   "subagentActivityRunning": "working",
-  "subagentActivityThinking": "thinking",
-  "subagentActivityTool": "using a tool",
-  "subagentActivityCompleted": "completed",
-  "subagentActivityFailed": "failed",
-  "subagentActivityCancelled": "cancelled",
   "subagentActivityUnknown": "unknown state",
   "subagentActivityModel": "Model: {model}",
   "@subagentActivityModel": {
@@ -5794,28 +5679,6 @@
   "extensionsCenterMutationFailureUnavailable": "The connection was lost before the change completed.",
   "extensionsCenterMutationFailureRejected": "Hermes rejected the change.",
   "extensionsCenterMutationFailureUnknown": "Hermes could not complete the change.",
-  "agentCenterTitle": "Agents",
-  "agentCenterRefreshTooltip": "Refresh activity",
-  "agentCenterFailureUnsupported": "This Hermes version does not publish the agent center.",
-  "agentCenterFailureForbidden": "The instance does not allow agents to be viewed with this session.",
-  "agentCenterFailureInvalidResponse": "Hermes returned activity that is not safe to display.",
-  "agentCenterFailureUnavailable": "Could not connect to the instance.",
-  "agentCenterFailureRejected": "Hermes rejected the agents request.",
-  "agentCenterFailureUnknown": "Could not load agent activity.",
-  "agentCenterHistoryOpenFailed": "Could not open this history.",
-  "agentCenterWorkFallback": "Agent work",
-  "agentCenterHistoryEmpty": "Hermes did not save any nodes in this history.",
-  "agentCenterStopProcessTitle": "Stop process",
-  "agentCenterStopProcessBody": "Only “{process}” will be stopped.",
-  "@agentCenterStopProcessBody": {
-    "placeholders": {
-      "process": {
-        "type": "String"
-      }
-    }
-  },
-  "agentCenterStop": "Stop",
-  "agentCenterStopFailed": "Hermes could not stop that process.",
   "agentCenterStopAll": "Stop all",
   "agentCenterStopAllTitle": "Stop all active processes?",
   "agentCenterStopAllBody": "This stops {count} background processes for this conversation. Saved delegation history remains available.",
@@ -5827,66 +5690,7 @@
     }
   },
   "agentCenterStopAllFailed": "Some processes could not be stopped.",
-  "agentCenterNewTaskTitle": "New background task",
-  "agentCenterNewTaskHint": "Describe a specific task for this conversation",
-  "agentCenterStart": "Start",
-  "agentCenterTaskAccepted": "Task accepted by Hermes.",
-  "agentCenterTaskStartFailed": "Hermes could not start the task.",
-  "agentCenterNewTask": "New task",
-  "agentCenterIntroRuntime": "Processes for this conversation and saved delegations. Subagents are tasks Hermes delegated, not profiles.",
-  "agentCenterIntroInstance": "Delegations and subagents Hermes used in earlier conversations. They are not configurable profiles. Open a conversation to see its active processes.",
-  "agentCenterRunningSection": "Running",
-  "agentCenterNoProcesses": "No active processes for this conversation.",
-  "agentCenterProcessFallback": "Process {id}",
-  "@agentCenterProcessFallback": {
-    "placeholders": {
-      "id": {
-        "type": "String"
-      }
-    }
-  },
   "agentCenterActive": "active",
-  "agentCenterProcessStatus": "{status} · {seconds} s",
-  "@agentCenterProcessStatus": {
-    "placeholders": {
-      "status": {
-        "type": "String"
-      },
-      "seconds": {
-        "type": "int"
-      }
-    }
-  },
-  "agentCenterStopTooltip": "Stop this process",
-  "agentCenterHistorySection": "Saved delegations",
-  "agentCenterNoHistory": "Hermes has not saved any subagent delegations yet.",
-  "agentCenterSubagentCount": "{count, plural, one{1 subagent} other{{count} subagents}}",
-  "@agentCenterSubagentCount": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "agentCenterSubagentCountWithDate": "{count, plural, one{1 subagent · {date}} other{{count} subagents · {date}}}",
-  "@agentCenterSubagentCountWithDate": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      },
-      "date": {
-        "type": "String"
-      }
-    }
-  },
-  "agentCenterStaleView": "{error} The last view is still shown.",
-  "@agentCenterStaleView": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
   "projectsCenterTitle": "Projects",
   "projectsCenterRefreshTooltip": "Refresh projects",
   "projectsCenterFailureUnsupported": "This Hermes version does not publish Projects.",
@@ -6152,11 +5956,7 @@
       }
     }
   },
-  "missionSharedRooms": "Rooms",
   "missionCreateSharedRoom": "Create room",
-  "missionNoSharedRooms": "No official rooms are available.",
-  "missionSharedRoomsUnavailable": "Official rooms are unavailable.",
-  "missionSendSharedMessage": "Send message",
   "missionRenameSharedRoom": "Rename room",
   "missionStopSharedRoom": "Stop room?",
   "missionDisbandSharedRoom": "Disband room?",
@@ -6164,9 +5964,6 @@
   "missionDisbandSharedRoomAction": "Disband room",
   "missionConfirm": "Confirm",
   "missionHostedActionFailed": "Hermes could not update the room.",
-  "missionHostedRetryAvailable": "A room task can be retried.",
-  "missionHostedRetryAction": "Retry task",
-  "missionHostedRetryConfirm": "Retry this room task?",
   "missionHostedSave": "Save",
   "missionHostedCancel": "Cancel",
   "missionHostedMemberCount": "{count, plural, one{1 member} other{{count} members}}",
@@ -6180,17 +5977,6 @@
   "missionHostedRoomCount": "{count, plural, one{1 room} other{{count} rooms}}",
   "@missionHostedRoomCount": {
     "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "missionSharedRoomSemantics": "Room {name}, {count, plural, one{1 member} other{{count} members}}",
-  "@missionSharedRoomSemantics": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      },
       "count": {
         "type": "int"
       }
@@ -6211,7 +5997,6 @@
   "missionBotChatMetadataUnavailable": "Bot Chat metadata could not be verified. Refresh Bots and try again.",
   "missionOffline": "Hermes is unavailable. Existing profile data remains visible.",
   "missionStaleData": "Some profile data may be out of date.",
-  "missionKanbanUnavailable": "The task board is not available on this Hermes installation.",
   "roomEveryone": "Everyone",
   "roomRecipientsAll": "Everyone ({count})",
   "@roomRecipientsAll": {

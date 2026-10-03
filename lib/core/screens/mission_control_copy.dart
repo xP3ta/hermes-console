@@ -15,8 +15,6 @@ final class MissionControlCopy {
 
   String get title => _strings.missionTitle;
   String get allAgents => _english ? 'All profiles' : 'Todos los perfiles';
-  String get chooseWorkspace =>
-      _english ? 'Choose workspace' : 'Elegir espacio de trabajo';
   String get workspaces => _english ? 'Workspaces' : 'Espacios de trabajo';
   String workspaceAgentCount(int count) => _english
       ? '$count ${count == 1 ? 'profile' : 'profiles'}'
@@ -41,57 +39,19 @@ final class MissionControlCopy {
   String get loading => _english ? 'Loading profiles…' : 'Cargando perfiles…';
   String get retry => _english ? 'Retry' : 'Reintentar';
   String get refresh => _english ? 'Refresh' : 'Actualizar';
-  String get overview => _english ? 'Overview' : 'Resumen';
   String get tasks => _english ? 'Tasks' : 'Tareas';
-  String assignedTasks(int count) =>
-      _english ? 'Assigned tasks ($count)' : 'Tareas asignadas ($count)';
   String get activity => _english ? 'Activity' : 'Actividad';
-  String get recentActivity =>
-      _english ? 'Recent activity' : 'Actividad reciente';
-  String get showAllActivity =>
-      _english ? 'Show all activity' : 'Ver toda la actividad';
   String get showLess => _english ? 'Show less' : 'Mostrar menos';
   String get bots => _strings.missionBotsLabel;
-  String botCount(int count) =>
-      _english ? '$count ${count == 1 ? 'bot' : 'bots'}' : '$count bots';
   String get sharedRoomName =>
       _english ? 'Room name' : 'Nombre de la sala';
   String get chooseSharedMembers =>
       _english ? 'Choose official members' : 'Elige miembros oficiales';
-  String get viewMembers => _english ? 'View members' : 'Ver miembros';
-  String get roomConversation => _english ? 'Conversation' : 'Conversación';
-  String get replyInThread =>
-      _english ? 'Reply in thread' : 'Responder en hilo';
-  String get noRoomMessages => _english
-      ? 'No messages have been published yet.'
-      : 'Todavía no se han publicado mensajes.';
 
-  /// Estado del composer cuando hay un hilo elegido con "Responder en hilo".
-  /// Antes el único indicio era que el texto de sugerencia del campo cambiaba,
-  /// y no había forma de salir del hilo salvo enviar el mensaje.
-  String get replyingInThread =>
-      _english ? 'Replying in thread' : 'Respondiendo en el hilo';
-  String get stopReplyingInThread =>
-      _english ? 'Leave the thread' : 'Salir del hilo';
-
-  /// El protocolo real de una sala compartida (`groups.send`) solo acepta
-  /// `text` y `thread_id`: no hay campo de adjunto ni de imagen en ninguna
-  /// versión del evento. En vez de poner un botón que no puede funcionar, la
-  /// sala vacía lo dice una vez, en voz baja.
-  String get roomTextOnly => _english
-      ? 'Rooms are text-only for now.'
-      : 'Las salas son solo de texto por ahora.';
-  String get sharedRooms => _strings.missionSharedRooms;
   String get createSharedRoom => _strings.missionCreateSharedRoom;
-  String get noSharedRooms => _strings.missionNoSharedRooms;
-  String get sharedRoomsUnavailable => _strings.missionSharedRoomsUnavailable;
-  String get roomDriverUnavailable => _english
-      ? 'The server room driver is unavailable. Refresh to check again.'
-      : 'El motor de salas del servidor no está disponible. Actualiza para comprobarlo.';
   String get roomRefreshFailed => _english
       ? 'Could not refresh this room. Reopen it to reconnect.'
       : 'No se pudo actualizar esta sala. Vuelve a abrirla para reconectar.';
-  String get sendSharedMessage => _strings.missionSendSharedMessage;
   String get renameSharedRoom => _strings.missionRenameSharedRoom;
   // "¿Detener/Disolver la sala compartida?" es el título del diálogo de
   // confirmación (pregunta, tiene sentido ahí) — reutilizado tal cual como
@@ -107,48 +67,21 @@ final class MissionControlCopy {
       _strings.missionDisbandSharedRoomAction;
   String get confirm => _strings.missionConfirm;
   String get hostedActionFailed => _strings.missionHostedActionFailed;
-  String get retrySharedTaskAvailable => _strings.missionHostedRetryAvailable;
-  String get retrySharedTask => _strings.missionHostedRetryAction;
-  String get retrySharedTaskConfirm => _strings.missionHostedRetryConfirm;
-  String sharedRoomSemantics(String name, int members) =>
-      _strings.missionSharedRoomSemantics(name, members);
 
-  String get addToMissionControl => _english ? 'Add to Bots' : 'Añadir a Bots';
-  String get createAgent => _english ? 'New agent' : 'Nuevo agente';
-  String get createAgentDescription => _english
-      ? 'Create a real Hermes profile with its own model and capabilities.'
-      : 'Crea un profile real de Hermes con su modelo y capacidades.';
   String get newAgent => _english ? 'New profile' : 'Nuevo perfil';
   String get botChat => 'Bot Chat';
-  String get botDetails => _english ? 'Bot details' : 'Detalles del bot';
   String get noBots => _english
       ? 'A profile has its own name, memory, skills and chat. Create the first one to get started.'
       : 'Un perfil tiene nombre, memoria, skills y chat propios. Crea el primero para empezar.';
-  String get botNeedsYou => _english ? 'needs you' : 'te necesita';
   String get searchAgents => _english ? 'Search profiles' : 'Buscar perfiles';
   String get clearSearch => _english ? 'Clear search' : 'Borrar búsqueda';
   String get activeNow => _english ? 'Active now' : 'Activos ahora';
-  String get pinnedBots => _english ? 'Pinned' : 'Fijados';
-  String get otherBots => _english ? 'Other bots' : 'Otros bots';
-  String get allBots => _english ? 'All bots' : 'Todos los bots';
-  String get searchResults => _english ? 'Results' : 'Resultados';
-  String showHiddenBots(int count) =>
-      _english ? 'Show hidden ($count)' : 'Mostrar ocultos ($count)';
-  String get hideHiddenBots => _english ? 'Hide hidden' : 'Ocultar ocultos';
-  String get pinBot => _english ? 'Pin to top' : 'Fijar arriba';
-  String get unpinBot => _english ? 'Unpin' : 'Dejar de fijar';
-  String get hideBot => _english ? 'Hide from Bots' : 'Ocultar de Bots';
-  String get showBot => _english ? 'Show in Bots' : 'Mostrar en Bots';
   String get botRosterUpdateFailed => _english
       ? 'Hermes did not update this profile.'
       : 'Hermes no pudo actualizar este perfil.';
   String get noMatchingAgents =>
       _english ? 'No matching profiles' : 'No hay perfiles que coincidan';
-  String get roomTeam => _english ? 'Team' : 'Equipo';
   String roomMemberCount(int count) => _strings.missionHostedMemberCount(count);
-  String roomHomeSummary(int agents, int rooms) => _english
-      ? '$agents ${agents == 1 ? 'agent' : 'agents'} · $rooms ${rooms == 1 ? 'room' : 'rooms'}'
-      : '$agents ${agents == 1 ? 'agente' : 'agentes'} · $rooms ${rooms == 1 ? 'sala' : 'salas'}';
   String roomCount(int count) => _strings.missionHostedRoomCount(count);
   String attentionSummary(int approvals, int blocked) => _english
       ? '$approvals ${approvals == 1 ? 'approval' : 'approvals'} · $blocked blocked'
@@ -158,39 +91,12 @@ final class MissionControlCopy {
   String get profilesUnavailable => _english
       ? 'This Hermes installation does not publish profiles.'
       : 'Esta instalación de Hermes no publica perfiles.';
-  String get roomsBrowseOnly => _english
-      ? 'Hermes cannot verify the team right now. Saved rooms remain visible in browse-only mode.'
-      : 'Hermes no puede verificar el equipo ahora. Las salas guardadas siguen visibles en modo consulta.';
   String get offline => _strings.missionOffline;
   String get staleData => _strings.missionStaleData;
-  String get noProfiles => _english
-      ? 'No bots are available here.'
-      : 'No hay bots disponibles aquí.';
-  String get noTasks =>
-      _english ? 'There are no tasks here yet.' : 'Todavía no hay tareas aquí.';
-  String get kanbanUnavailable => _strings.missionKanbanUnavailable;
-  String get noActivity => _english
-      ? 'Hermes has not published recent activity for this scope.'
-      : 'Hermes no ha publicado actividad reciente para este ámbito.';
-  String get noApprovals => _english
-      ? 'No observed approvals need attention.'
-      : 'No hay aprobaciones observadas pendientes.';
-  String get openChat => _english ? 'Open chat' : 'Abrir chat';
   String get review => _english ? 'Review' : 'Revisar';
-  String get openKanban => _english ? 'Full task board' : 'Tablero completo';
-  String get manageProfiles => _english ? 'Manage bots' : 'Gestionar bots';
-  String get editProfile => _english ? 'Edit profile' : 'Editar profile';
-  String get routines => _english ? 'Routines' : 'Rutinas';
   String get memory => _english ? 'Memory' : 'Memoria';
   String get skills => 'Skills';
   String get soul => 'SOUL';
-  String get recentSessions =>
-      _english ? 'Recent sessions' : 'Sesiones recientes';
-  String get modelUnavailable =>
-      _english ? 'Model not published' : 'Modelo no publicado';
-  String get costUnavailable =>
-      _english ? 'Cost not published' : 'Coste no publicado';
-  String get partialCost => _english ? 'Partial coverage' : 'Cobertura parcial';
   String get staleProfiles => _english
       ? 'Some saved profiles no longer exist. Edit the organization to update it.'
       : 'Algunos perfiles guardados ya no existen. Edita la organización para actualizarla.';
@@ -203,30 +109,19 @@ final class MissionControlCopy {
   String get tokens => _english ? 'tokens' : 'tokens';
   String get input => 'input';
   String get output => 'output';
-  String get cached => _english ? 'cached' : 'caché';
   String get reasoning => 'reasoning';
   String get unknown => _english ? 'Unknown' : 'Desconocido';
-  String get profileLabel => 'Profile';
   String get modelLabel => _english ? 'Model' : 'Modelo';
   String get managerLabel => 'Manager';
-  String get tokensUnavailable =>
-      _english ? 'Tokens not published' : 'Tokens no publicados';
 
   // Editor del bot (identidad visible del profile: nombre, cara y sprite).
   String get editBotTitle => _english ? 'Edit profile' : 'Editar perfil';
   String get botDisplayName => _english ? 'Display name' : 'Nombre visible';
   String get botDisplayNameHint =>
       _english ? 'e.g. Researcher' : 'p. ej. Investigador';
-  String get botShapeLabel => _english ? 'Shape' : 'Forma';
-  String get botColorLabel => _english ? 'Color' : 'Color';
-  String get botFaceFallbackHint => _english
-      ? 'Shape and color are only used when the bot has no sprite.'
-      : 'La forma y el color solo se usan si el bot no tiene sprite.';
-  String get botSpriteLabel => 'Sprite';
   String get botSpriteHint => _english
       ? 'The sprite becomes this profile\'s picture.'
       : 'El sprite se convierte en la imagen de este perfil.';
-  String get botSpriteNone => _english ? 'No sprite' : 'Sin sprite';
   String get botSpriteSearchHint =>
       _english ? 'Search sprites…' : 'Buscar sprites…';
   String get botSpriteEmpty =>
@@ -261,7 +156,6 @@ final class MissionControlCopy {
   String get modelInherited => _english
       ? 'Inherited from the launch profile'
       : 'Heredado del perfil de arranque';
-  String get modelPickerTitle => _english ? 'Choose model' : 'Elegir modelo';
   String get modelCatalogEmpty => _english
       ? 'This Hermes installation did not publish a model catalog. Enter provider and model manually.'
       : 'Esta instalación de Hermes no publicó un catálogo de modelos. Escribe proveedor y modelo a mano.';
@@ -318,18 +212,6 @@ final class MissionControlCopy {
     'taskStarted' => _english ? 'Task started' : 'Tarea iniciada',
     'taskCompleted' => _english ? 'Task completed' : 'Tarea completada',
     'taskBlocked' => _english ? 'Task blocked' : 'Tarea bloqueada',
-    _ => value,
-  };
-
-  String taskStatus(String value) => switch (value) {
-    'ready' => _english ? 'ready' : 'lista',
-    'running' => _english ? 'running' : 'en curso',
-    'blocked' => _english ? 'blocked' : 'bloqueada',
-    'review' => _english ? 'review' : 'en revisión',
-    'done' => _english ? 'done' : 'completada',
-    'scheduled' => _english ? 'scheduled' : 'programada',
-    'todo' => _english ? 'to do' : 'pendiente',
-    'triage' => _english ? 'triage' : 'triaje',
     _ => value,
   };
 }
