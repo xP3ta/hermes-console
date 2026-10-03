@@ -480,8 +480,8 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
       context: context,
       title: _text('¿Descartar cambios?', 'Discard changes?'),
       message: _text(
-                'La identidad del bot todavía no se ha guardado.',
-                'The bot identity has not been saved yet.',
+                'La identidad del perfil todavía no se ha guardado.',
+                'The profile identity has not been saved yet.',
               ),
       actions: [
         HermesDialogAction(
@@ -973,7 +973,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
     return HermesBotFace(
       visual: visual,
       size: size,
-      semanticLabel: _text('Cara del bot', 'Bot face'),
+      semanticLabel: _text('Cara del perfil', 'Profile face'),
       animate: true,
     );
   }

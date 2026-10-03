@@ -14,13 +14,13 @@ final class MissionControlCopy {
   );
 
   String get title => _strings.missionTitle;
-  String get allAgents => _english ? 'All agents' : 'Todos los agentes';
+  String get allAgents => _english ? 'All profiles' : 'Todos los perfiles';
   String get chooseWorkspace =>
       _english ? 'Choose workspace' : 'Elegir espacio de trabajo';
   String get workspaces => _english ? 'Workspaces' : 'Espacios de trabajo';
   String workspaceAgentCount(int count) => _english
-      ? '$count ${count == 1 ? 'agent' : 'agents'}'
-      : '$count ${count == 1 ? 'agente' : 'agentes'}';
+      ? '$count ${count == 1 ? 'profile' : 'profiles'}'
+      : '$count ${count == 1 ? 'perfil' : 'perfiles'}';
   String get createOrganization =>
       _english ? 'Create workspace' : 'Crear espacio de trabajo';
   String get editOrganization =>
@@ -29,7 +29,7 @@ final class MissionControlCopy {
       _english ? 'Workspace name' : 'Nombre del espacio de trabajo';
   String get organizationHint => _english ? 'e.g. Homelab' : 'p. ej. Homelab';
   String get chooseProfiles =>
-      _english ? 'Choose profiles' : 'Selecciona profiles';
+      _english ? 'Choose profiles' : 'Elige perfiles';
   String get save => _strings.missionHostedSave;
   String get cancel => _strings.missionHostedCancel;
   String get delete => _english ? 'Delete' : 'Eliminar';
@@ -37,8 +37,8 @@ final class MissionControlCopy {
       _english ? 'Delete workspace?' : '¿Eliminar espacio de trabajo?';
   String get deleteOrganizationBody => _english
       ? 'Only this local workspace is removed. Hermes profiles are not changed.'
-      : 'Solo se elimina este espacio local. Los profiles de Hermes no cambian.';
-  String get loading => _english ? 'Reading team state…' : 'Leyendo el equipo…';
+      : 'Solo se elimina este espacio local. Tus perfiles de Hermes no cambian.';
+  String get loading => _english ? 'Loading profiles…' : 'Cargando perfiles…';
   String get retry => _english ? 'Retry' : 'Reintentar';
   String get refresh => _english ? 'Refresh' : 'Actualizar';
   String get overview => _english ? 'Overview' : 'Resumen';
@@ -118,14 +118,14 @@ final class MissionControlCopy {
   String get createAgentDescription => _english
       ? 'Create a real Hermes profile with its own model and capabilities.'
       : 'Crea un profile real de Hermes con su modelo y capacidades.';
-  String get newAgent => _english ? 'New agent' : 'Nuevo agente';
+  String get newAgent => _english ? 'New profile' : 'Nuevo perfil';
   String get botChat => 'Bot Chat';
   String get botDetails => _english ? 'Bot details' : 'Detalles del bot';
   String get noBots => _english
-      ? 'A bot is a named teammate with its own memory, skills and chat. Create the first one to get started.'
-      : 'Un bot es un compañero con nombre propio, memoria, skills y chat propios. Crea el primero para empezar.';
+      ? 'A profile has its own name, memory, skills and chat. Create the first one to get started.'
+      : 'Un perfil tiene nombre, memoria, skills y chat propios. Crea el primero para empezar.';
   String get botNeedsYou => _english ? 'needs you' : 'te necesita';
-  String get searchAgents => _english ? 'Search bots' : 'Buscar bots';
+  String get searchAgents => _english ? 'Search profiles' : 'Buscar perfiles';
   String get clearSearch => _english ? 'Clear search' : 'Borrar búsqueda';
   String get activeNow => _english ? 'Active now' : 'Activos ahora';
   String get pinnedBots => _english ? 'Pinned' : 'Fijados';
@@ -140,10 +140,10 @@ final class MissionControlCopy {
   String get hideBot => _english ? 'Hide from Bots' : 'Ocultar de Bots';
   String get showBot => _english ? 'Show in Bots' : 'Mostrar en Bots';
   String get botRosterUpdateFailed => _english
-      ? 'Hermes did not update this bot.'
-      : 'Hermes no pudo actualizar este bot.';
+      ? 'Hermes did not update this profile.'
+      : 'Hermes no pudo actualizar este perfil.';
   String get noMatchingAgents =>
-      _english ? 'No matching bots' : 'No hay bots que coincidan';
+      _english ? 'No matching profiles' : 'No hay perfiles que coincidan';
   String get roomTeam => _english ? 'Team' : 'Equipo';
   String roomMemberCount(int count) => _strings.missionHostedMemberCount(count);
   String roomHomeSummary(int agents, int rooms) => _english
@@ -157,7 +157,7 @@ final class MissionControlCopy {
   String get usage => _english ? 'Usage' : 'Uso';
   String get profilesUnavailable => _english
       ? 'This Hermes installation does not publish profiles.'
-      : 'Esta instalación de Hermes no publica profiles.';
+      : 'Esta instalación de Hermes no publica perfiles.';
   String get roomsBrowseOnly => _english
       ? 'Hermes cannot verify the team right now. Saved rooms remain visible in browse-only mode.'
       : 'Hermes no puede verificar el equipo ahora. Las salas guardadas siguen visibles en modo consulta.';
@@ -193,10 +193,10 @@ final class MissionControlCopy {
   String get partialCost => _english ? 'Partial coverage' : 'Cobertura parcial';
   String get staleProfiles => _english
       ? 'Some saved profiles no longer exist. Edit the organization to update it.'
-      : 'Algunos profiles guardados ya no existen. Edita la organización para actualizarla.';
+      : 'Algunos perfiles guardados ya no existen. Edita la organización para actualizarla.';
   String unattributedSessions(int count) => _english
       ? '$count session${count == 1 ? '' : 's'} did not publish a profile owner. They are included only in overall usage.'
-      : '$count ${count == 1 ? 'sesión no publicó' : 'sesiones no publicaron'} su profile propietario. Solo se incluyen en el uso global.';
+      : '$count ${count == 1 ? 'sesión no publicó' : 'sesiones no publicaron'} su perfil propietario. Solo se incluyen en el uso global.';
   String get working => _english ? 'working' : 'trabajando';
   String get approvals => _english ? 'approvals' : 'aprobaciones';
   String get blocked => _english ? 'blocked' : 'bloqueados';
@@ -213,7 +213,7 @@ final class MissionControlCopy {
       _english ? 'Tokens not published' : 'Tokens no publicados';
 
   // Editor del bot (identidad visible del profile: nombre, cara y sprite).
-  String get editBotTitle => _english ? 'Edit bot' : 'Editar bot';
+  String get editBotTitle => _english ? 'Edit profile' : 'Editar perfil';
   String get botDisplayName => _english ? 'Display name' : 'Nombre visible';
   String get botDisplayNameHint =>
       _english ? 'e.g. Researcher' : 'p. ej. Investigador';
@@ -224,8 +224,8 @@ final class MissionControlCopy {
       : 'La forma y el color solo se usan si el bot no tiene sprite.';
   String get botSpriteLabel => 'Sprite';
   String get botSpriteHint => _english
-      ? 'The sprite becomes this bot\'s picture.'
-      : 'El sprite se convierte en la imagen de este bot.';
+      ? 'The sprite becomes this profile\'s picture.'
+      : 'El sprite se convierte en la imagen de este perfil.';
   String get botSpriteNone => _english ? 'No sprite' : 'Sin sprite';
   String get botSpriteSearchHint =>
       _english ? 'Search sprites…' : 'Buscar sprites…';
@@ -233,33 +233,34 @@ final class MissionControlCopy {
       _english ? 'No sprites available.' : 'No hay sprites disponibles.';
   String get botSpriteUnsupported => _english
       ? 'This Hermes installation does not support profile sprites.'
-      : 'Esta instalación de Hermes no admite sprites por profile.';
-  String get botEditorSaved => _english ? 'Bot updated' : 'Bot actualizado';
+      : 'Esta instalación de Hermes no admite sprites por perfil.';
+  String get botEditorSaved =>
+      _english ? 'Profile updated' : 'Perfil actualizado';
   String get botEditorSaveFailed => _english
       ? 'Hermes did not apply the changes.'
       : 'Hermes no aplicó los cambios.';
 
   // Creación de bots (paridad con CreateAgentDialog de Hermes Desktop).
   String get createAgentSubtitle => _english
-      ? 'A named teammate with its own memory, skills, and chat. It can message your other agents.'
-      : 'Un compañero con nombre propio, memoria, skills y chat propios. Puede escribir a tus otros agentes.';
+      ? 'A profile has its own name, memory, skills and chat. It can message your other profiles.'
+      : 'Un perfil tiene nombre, memoria, skills y chat propios. Puede escribir a tus otros perfiles.';
   String get agentNameLabel => _english ? 'Name' : 'Nombre';
   String get agentNameHint => 'inbox-triage';
   String get agentNameInvalid => _english
       ? 'Use lowercase letters, numbers, dashes and underscores.'
       : 'Usa minúsculas, números, guiones y guiones bajos.';
   String get agentNameTaken => _english
-      ? 'An agent with this name already exists.'
-      : 'Ya existe un agente con este nombre.';
+      ? 'A profile with this name already exists.'
+      : 'Ya existe un perfil con este nombre.';
   String get agentTitleLabel => _english ? 'Title' : 'Título';
   String get agentTitleHint => 'Inbox Triage';
   String get agentDescriptionLabel => _english ? 'Description' : 'Descripción';
   String get agentDescriptionHint => _english
-      ? 'What should this bot help with?'
-      : '¿En qué debería ayudar este bot?';
+      ? 'What should this profile help with?'
+      : '¿En qué debería ayudar este perfil?';
   String get modelInherited => _english
       ? 'Inherited from the launch profile'
-      : 'Heredado del profile de arranque';
+      : 'Heredado del perfil de arranque';
   String get modelPickerTitle => _english ? 'Choose model' : 'Elegir modelo';
   String get modelCatalogEmpty => _english
       ? 'This Hermes installation did not publish a model catalog. Enter provider and model manually.'
@@ -269,10 +270,10 @@ final class MissionControlCopy {
   String get cloneFromLabel => _english ? 'Clone from profile' : 'Clonar de';
   String get cloneFresh => _english
       ? 'Fresh profile (bundled skills)'
-      : 'Profile nuevo (skills incluidas)';
+      : 'Perfil nuevo (skills incluidas)';
   String get shareAuthLabel => _english
       ? 'Share keys & accounts with the main profile'
-      : 'Compartir claves y cuentas con el profile principal';
+      : 'Compartir claves y cuentas con el perfil principal';
   String get shareAuthHint => _english
       ? 'Subscriptions, OAuth logins, and API keys stay shared (not copied), so token refreshes never invalidate each other. Uncheck for an isolated snapshot copy.'
       : 'Suscripciones, logins OAuth y API keys quedan compartidos (no copiados), así que los refrescos de token nunca se invalidan entre sí. Desmárcalo para una copia aislada.';
@@ -291,13 +292,13 @@ final class MissionControlCopy {
   String skillsFromSource(String source) => _english
       ? 'Catalog from $source — unchecked skills are disabled after creation.'
       : 'Catálogo de $source: las skills desmarcadas se desactivan tras la creación.';
-  String get createAgentSubmit => _english ? 'Create agent' : 'Crear agente';
+  String get createAgentSubmit => _english ? 'Create profile' : 'Crear perfil';
   String createAgentError(String detail) => _english
-      ? 'Could not create the agent: $detail'
-      : 'No se pudo crear el agente: $detail';
+      ? 'Could not create the profile: $detail'
+      : 'No se pudo crear el perfil: $detail';
   String agentCreated(String name) => _english
-      ? 'Bot @$name created. Add it to a room when you are ready.'
-      : 'Bot @$name creado. Añádelo a una sala cuando quieras.';
+      ? 'Profile @$name created. Add it to a room when you are ready.'
+      : 'Perfil @$name creado. Añádelo a una sala cuando quieras.';
 
   String status(String value) => switch (value) {
     'idle' => _english ? 'Idle' : 'Inactivo',

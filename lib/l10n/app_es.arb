@@ -260,7 +260,7 @@
   "drawerGroupRecent": "recientes",
   "drawerGroupWorkspace": "principal",
   "drawerSectionWork": "trabajo",
-  "drawerSectionAgents": "agentes",
+  "drawerSectionAgents": "perfiles",
   "drawerHome": "Inicio",
   "drawerSessions": "Conversaciones",
   "drawerPersonalization": "Personalización",
@@ -279,7 +279,7 @@
   "drawerInstances": "Instancias",
   "drawerModels": "Modelos",
   "drawerProjects": "Proyectos",
-  "drawerGroupAgent": "agente",
+  "drawerGroupAgent": "perfil",
   "drawerProfiles": "Perfiles",
   "drawerAgents": "Agentes",
   "drawerExtensions": "Extensiones",
@@ -4474,7 +4474,7 @@
   "prfUseAsActive": "Usar como activo",
   "prfInUse": "en uso",
   "prfRenameTooltip": "Renombrar",
-  "prfEditBotTooltip": "Editar identidad del bot",
+  "prfEditBotTooltip": "Editar identidad del perfil",
   "prfDeleteTooltip": "Borrar",
   "prfDeleteDisabledTooltip": "El perfil por defecto no se puede borrar",
   "prfSkillCount": "{count} skills",
@@ -4486,7 +4486,7 @@
     }
   },
   "prfNameLabel": "Nombre del perfil",
-  "prfNameHint": "research-bot",
+  "prfNameHint": "investigacion",
   "prfSave": "Guardar",
   "prfNameFormatHint": "Solo minúsculas, dígitos, guion y guion bajo.",
   "prfNameExists": "Ya existe un perfil con ese nombre",
@@ -7312,7 +7312,7 @@
   "missionTitle": "Bots",
   "missionBotsLabel": "Bots",
   "missionCreateLabel": "Crear",
-  "missionCreateBotLabel": "Nuevo bot",
+  "missionCreateBotLabel": "Nuevo perfil",
   "missionCreateRoomLabel": "Nueva sala",
   "missionTaskBoardLabel": "Tablero de tareas",
   "missionOpenRoom": "Abrir sala",
@@ -7329,7 +7329,7 @@
       }
     }
   },
-  "dockSettingsResetConfirmBody": "Se restablecerán elementos, comportamiento de Atrás y estilo del perfil {profile}. Los ajustes actuales de este perfil se perderán.",
+  "dockSettingsResetConfirmBody": "Se restablecerán los elementos, el comportamiento de Atrás y el estilo del dock {profile}. Se perderán sus ajustes actuales.",
   "@dockSettingsResetConfirmBody": {
     "placeholders": {
       "profile": {
@@ -7339,7 +7339,7 @@
   },
   "dockProfileBots": "Bots",
   "dockProfileGeneral": "General",
-  "dockProfileBotsDescription": "Se usa dentro de Bots y en las salas de misión.",
+  "dockProfileBotsDescription": "Se usa dentro de Bots y en las salas.",
   "dockProfileGeneralDescription": "Se usa en el resto de la app: inicio y conversaciones.",
   "dockPreviewSectionTitle": "Vista previa",
   "dockItemsSectionTitle": "Elementos",
@@ -7372,7 +7372,7 @@
   "dockHomeLabel": "Inicio",
   "dockSettingsLabel": "Ajustes",
   "dockCreateGeneralSubtitle": "Nueva conversación",
-  "dockCreateBotsSubtitle": "Nuevo bot · Nueva sala",
+  "dockCreateBotsSubtitle": "Nuevo perfil · Nueva sala",
   "dockItemsKeepOneVisible": "Mantén al menos un elemento visible",
   "dockItemDragHandleLabel": "Arrastrar para reordenar {item}",
   "@dockItemDragHandleLabel": {
@@ -7443,8 +7443,8 @@
   "missionApprovalPending": "Aprobación pendiente",
   "missionApprovalDecisionHint": "Decide si quieres continuar",
   "missionBotChatMetadataUnavailable": "No se pudo verificar el Bot Chat. Actualiza Bots e inténtalo de nuevo.",
-  "missionOffline": "Hermes no está disponible. Los datos existentes del equipo siguen visibles.",
-  "missionStaleData": "Algunos datos del equipo pueden estar desactualizados.",
+  "missionOffline": "Hermes no está disponible. Los datos de los perfiles que ya tienes siguen visibles.",
+  "missionStaleData": "Algunos datos de los perfiles pueden estar desactualizados.",
   "missionKanbanUnavailable": "El tablero de tareas no está disponible en esta instalación de Hermes.",
   "roomEveryone": "Todos",
   "roomRecipientsAll": "Todos ({count})",
@@ -7599,7 +7599,7 @@
   "dockToolsLabel": "Útiles",
   "dockCronLabel": "Rutinas",
   "missionBotsUnassigned": "Sin sección",
-  "chaMentionSuggestions": "Mencionar un bot",
+  "chaMentionSuggestions": "Mencionar un perfil",
   "botSectionMove": "Mover a sección…",
   "botSectionNew": "Nueva sección…",
   "botSectionRename": "Renombrar sección",
@@ -7607,8 +7607,8 @@
   "botSectionRemove": "Quitar de sección",
   "botSectionName": "Nombre de sección",
   "botSectionOrderHint": "Orden alfabético. Las secciones vacías no se sincronizan.",
-  "botSectionChooseMembers": "Elige los bots de la sección",
-  "botSectionDeleted": "Sección eliminada. Los bots siguen disponibles.",
+  "botSectionChooseMembers": "Elige los perfiles de la sección",
+  "botSectionDeleted": "Sección eliminada. Los perfiles siguen disponibles.",
   "botUndo": "Deshacer",
   "botRetry": "Reintentar",
   "botSave": "Guardar",
@@ -7623,7 +7623,7 @@
   },
   "botProfileFailed": "No se pudo guardar. Comprueba la conexión y vuelve a intentarlo.",
   "botRecentSession": "Conversación reciente",
-  "botDuplicate": "Duplicar bot",
+  "botDuplicate": "Duplicar perfil",
   "botDuplicated": "Copia creada: {name}",
   "@botDuplicated": {
     "placeholders": {
@@ -7715,8 +7715,8 @@
   "botFaceLock": "Fijar cara",
   "botFaceUnlock": "Liberar cara",
   "botFaceColor": "Color",
-  "botShowHidden": "Mostrar bots ocultos",
-  "botRoomLinkFailed": "Sala creada. No se pudo enlazar a estos bots: {names}. Reintenta sus enlaces antes de enviar.",
+  "botShowHidden": "Mostrar perfiles ocultos",
+  "botRoomLinkFailed": "Sala creada. No se pudo enlazar a estos perfiles: {names}. Reintenta sus enlaces antes de enviar.",
   "@botRoomLinkFailed": {
     "placeholders": {
       "names": {
@@ -7724,7 +7724,7 @@
       }
     }
   },
-  "botRoomLinkUnavailable": "Ningún bot guardado anuncia ahora un RoomLink accesible.",
+  "botRoomLinkUnavailable": "Ningún perfil guardado anuncia ahora un RoomLink accesible.",
   "botDuplicateIncomplete": "Se copió {name}, pero no se pudo restablecer su chat y título. Reintenta para terminar esta copia.",
   "@botDuplicateIncomplete": {
     "placeholders": {
@@ -7736,7 +7736,7 @@
   "botToolsetsInherit": "Sin herramientas seleccionadas, Hermes hereda sus herramientas predeterminadas.",
   "botManageRooms": "Gestionar salas",
   "botRoomMembersUnavailable": "Abre una sala para gestionarla. Este servidor no permite cambiar los miembros de una sala existente.",
-  "botReconnectRoom": "Volver a enlazar bots de la sala",
+  "botReconnectRoom": "Volver a enlazar los perfiles de la sala",
   "botSectionsManage": "Gestionar secciones",
   "botCloneCredentialsHint": "Al clonar se conservan las claves API del origen. Este interruptor controla las claves adicionales copiadas del gateway.",
   "ollamaDiagRunning": "Diagnosticando el agente local…\nSi el bridge está desactualizado lo reinicio.\nPuede tardar hasta ~1 min.",
@@ -7907,7 +7907,7 @@
     }
   },
   "settingsStartupBotsTitle": "Abrir Bots al iniciar",
-  "settingsStartupBotsSubtitle": "Arranca la app en modo Bots en vez de Inicio. Las notificaciones siguen abriendo su pantalla.",
+  "settingsStartupBotsSubtitle": "Arranca la app en Modo Bot en vez de Inicio. Las notificaciones siguen abriendo su pantalla.",
   "roomViewAvailability": "{available} de {total} disponibles",
   "@roomViewAvailability": {
     "placeholders": {
@@ -8138,7 +8138,7 @@
       }
     }
   },
-  "roomStripReplyingMany": "{count} bots están respondiendo",
+  "roomStripReplyingMany": "{count} perfiles están respondiendo",
   "@roomStripReplyingMany": {
     "placeholders": {
       "count": {
@@ -8170,7 +8170,7 @@
       }
     }
   },
-  "roomStripDetail": "Ver qué hace cada bot",
+  "roomStripDetail": "Ver qué hace cada perfil",
   "roomActionFailed": "Hermes rechazó la acción. Inténtalo de nuevo.",
   "roomActivityTitle": "Actividad",
   "roomActivityEmpty": "Aún no hay pases, fallos ni reintentos.",
@@ -8274,14 +8274,14 @@
       }
     }
   },
-  "roomEmpty": "Aún no hay mensajes. Saluda y @menciona a un bot.",
+  "roomEmpty": "Aún no hay mensajes. Saluda y @menciona a un perfil.",
   "roomRefreshFailed": "No se pudo actualizar la sala.",
   "roomYou": "Tú",
   "roomMoreActions": "Más acciones",
   "roomCannotSend": "Esta conexión no puede escribir en la sala.",
   "rosterTitle": "Bots",
   "rosterFilterAll": "Todo",
-  "rosterFilterBots": "Bots",
+  "rosterFilterBots": "Perfiles",
   "rosterFilterRooms": "Salas",
   "rosterNeedsYou": "Te necesitan",
   "rosterRecent": "Recientes",
@@ -8319,7 +8319,7 @@
   "rosterDesktopLabel": "Desktop",
   "rosterDesktopReadOnly": "Esta sala se ejecuta en Hermes Desktop. Console la muestra en solo lectura hasta que Desktop la aloje en el servidor.",
   "rosterSearch": "Buscar",
-  "rosterSearchHint": "Buscar bots y salas",
+  "rosterSearchHint": "Buscar perfiles y salas",
   "rosterNew": "Nuevo",
   "rosterEmpty": "Aún no hay nada aquí",
   "rosterNoMatches": "Sin resultados",
@@ -8341,7 +8341,7 @@
       }
     }
   },
-  "botProfileTitle": "Ficha del bot",
+  "botProfileTitle": "Perfil",
   "botProfileChat": "Chat",
   "botProfileRooms": "Salas · {count}",
   "@botProfileRooms": {
@@ -8406,8 +8406,8 @@
   "reasoningEffortXhigh": "Muy alto",
   "reasoningEffortMax": "Máximo",
   "reasoningEffortUltra": "Ultra",
-  "rosterHideHidden": "Ocultar bots ocultos",
-  "rosterShowHidden": "{count, plural, =1{Mostrar 1 bot oculto} other{Mostrar {count} bots ocultos}}",
+  "rosterHideHidden": "Ocultar perfiles ocultos",
+  "rosterShowHidden": "{count, plural, =1{Mostrar 1 perfil oculto} other{Mostrar {count} perfiles ocultos}}",
   "@rosterShowHidden": {
     "placeholders": {
       "count": {
@@ -8421,10 +8421,10 @@
   "rosterUnhide": "Mostrar",
   "rosterMoveToSection": "Mover a sección…",
   "rosterUpdateFailed": "No se pudo actualizar la lista. Inténtalo de nuevo.",
-  "notifBotModeListenerOn": "Los Bots y las salas pueden avisarte aquí: aprobaciones, @menciones, resúmenes de ronda y progreso en vivo, con Aprobar, Denegar, Responder y Detener desde la propia notificación.",
-  "notifBotModeListenerOff": "La escucha en segundo plano está apagada: los avisos de Bots y salas y los widgets solo se actualizan con Hermes abierto.",
+  "notifBotModeListenerOn": "Los perfiles y las salas pueden avisarte aquí: aprobaciones, @menciones, resúmenes de ronda y progreso en vivo, con Aprobar, Denegar, Responder y Detener desde la propia notificación.",
+  "notifBotModeListenerOff": "La escucha en segundo plano está apagada: los avisos de perfiles y salas y los widgets solo se actualizan con Hermes abierto.",
   "notifLiveUpdatesTitle": "Actualizaciones en vivo",
-  "notifLiveUpdatesSub": "Muestra Bots y salas trabajando en la barra de estado y la pantalla de bloqueo (Android 16+)",
+  "notifLiveUpdatesSub": "Muestra los perfiles y las salas que están trabajando en la barra de estado y la pantalla de bloqueo (Android 16+)",
   "notifKanbanDoneTitle": "También cuando una tarea termine",
   "notifKanbanDoneSub": "Valor por defecto para tareas sin elección propia",
   "designShowAll": "Ver todo",
@@ -9414,7 +9414,7 @@
       }
     }
   },
-  "rq1215CancelWaitBody": "Solo se interrumpe el turno de {name} en esta sala. Su sesión no se cierra y el resto de bots sigue trabajando.",
+  "rq1215CancelWaitBody": "Solo se interrumpe el turno de {name} en esta sala. Su sesión no se cierra y el resto de perfiles sigue trabajando.",
   "@rq1215CancelWaitBody": {
     "placeholders": {
       "name": {
@@ -9443,7 +9443,7 @@
       }
     }
   },
-  "rr1215ResumeBody": "Se vuelve a abrir en el servidor la sesión de {name} en esta sala para que retome su turno pendiente. No se envía ningún mensaje nuevo y el resto de bots no se toca.",
+  "rr1215ResumeBody": "Se vuelve a abrir en el servidor la sesión de {name} en esta sala para que retome su turno pendiente. No se envía ningún mensaje nuevo y el resto de perfiles no se toca.",
   "@rr1215ResumeBody": {
     "placeholders": {
       "name": {

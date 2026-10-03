@@ -1138,7 +1138,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('mission-workspace-sheet')),
-        matching: find.text('1 agente'),
+        matching: find.text('1 perfil'),
       ),
       findsOneWidget,
     );
@@ -1841,7 +1841,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Esta instalación de Hermes no publica profiles.'),
+      find.text('Esta instalación de Hermes no publica perfiles.'),
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('mission-create-agent')), findsOneWidget);
@@ -1984,7 +1984,7 @@ void main() {
 
     expect(find.text('infra'), findsWidgets);
     expect(
-      find.text('Algunos datos del equipo pueden estar desactualizados.'),
+      find.text('Algunos datos de los perfiles pueden estar desactualizados.'),
       findsOneWidget,
     );
   });
@@ -2038,12 +2038,12 @@ void main() {
 
     expect(
       find.text(
-        'Hermes no está disponible. Los datos existentes del equipo siguen visibles.',
+        'Hermes no está disponible. Los datos de los perfiles que ya tienes siguen visibles.',
       ),
       findsNothing,
     );
     expect(
-      find.text('Esta instalación de Hermes no publica profiles.'),
+      find.text('Esta instalación de Hermes no publica perfiles.'),
       findsOneWidget,
     );
     expect(find.text('Old cached task'), findsNothing);
@@ -2499,8 +2499,8 @@ void main() {
       // Empty state con CTA siempre visible, además del botón de cabecera.
       expect(
         find.text(
-          'Un bot es un compañero con nombre propio, memoria, skills y chat '
-          'propios. Crea el primero para empezar.',
+          'Un perfil tiene nombre, memoria, skills y chat propios. Crea el '
+          'primero para empezar.',
         ),
         findsOneWidget,
       );
@@ -2564,7 +2564,7 @@ void main() {
     await _openCreateBot(tester);
     await _enterCreateName(tester, 'Infra');
 
-    expect(find.text('Ya existe un agente con este nombre.'), findsOneWidget);
+    expect(find.text('Ya existe un perfil con este nombre.'), findsOneWidget);
     await _scrollCreateFormTo(tester, 'bot-create-submit');
     final submit = tester.widget<HermesPrimaryButton>(
       find.byKey(const ValueKey('bot-create-submit')),

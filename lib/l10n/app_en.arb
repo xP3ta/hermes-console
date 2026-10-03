@@ -85,7 +85,7 @@
   "drawerGroupRecent": "recent",
   "drawerGroupWorkspace": "main",
   "drawerSectionWork": "work",
-  "drawerSectionAgents": "agents",
+  "drawerSectionAgents": "profiles",
   "drawerHome": "Home",
   "drawerSessions": "Conversations",
   "drawerPersonalization": "Personalization",
@@ -104,7 +104,7 @@
   "drawerInstances": "Instances",
   "drawerModels": "Models",
   "drawerProjects": "Projects",
-  "drawerGroupAgent": "agent",
+  "drawerGroupAgent": "profile",
   "drawerProfiles": "Profiles",
   "drawerAgents": "Agents",
   "drawerExtensions": "Extensions",
@@ -3608,7 +3608,7 @@
   "prfUseAsActive": "Set as active",
   "prfInUse": "in use",
   "prfRenameTooltip": "Rename",
-  "prfEditBotTooltip": "Edit bot identity",
+  "prfEditBotTooltip": "Edit profile identity",
   "prfDeleteTooltip": "Delete",
   "prfDeleteDisabledTooltip": "The default profile cannot be deleted",
   "prfSkillCount": "{count} skills",
@@ -3620,7 +3620,7 @@
     }
   },
   "prfNameLabel": "Profile name",
-  "prfNameHint": "research-bot",
+  "prfNameHint": "research",
   "prfSave": "Save",
   "prfNameFormatHint": "Only lowercase letters, digits, hyphen and underscore.",
   "prfNameExists": "A profile with this name already exists",
@@ -6082,7 +6082,7 @@
   "missionTitle": "Bots",
   "missionBotsLabel": "Bots",
   "missionCreateLabel": "Create",
-  "missionCreateBotLabel": "New bot",
+  "missionCreateBotLabel": "New profile",
   "missionCreateRoomLabel": "New room",
   "missionTaskBoardLabel": "Task board",
   "missionOpenRoom": "Open room",
@@ -6099,7 +6099,7 @@
       }
     }
   },
-  "dockSettingsResetConfirmBody": "This resets items, Back behavior and style for the {profile} profile. Current settings for this profile will be lost.",
+  "dockSettingsResetConfirmBody": "This resets items, Back behavior and style for the {profile} dock. Its current settings will be lost.",
   "@dockSettingsResetConfirmBody": {
     "placeholders": {
       "profile": {
@@ -6109,7 +6109,7 @@
   },
   "dockProfileBots": "Bots",
   "dockProfileGeneral": "General",
-  "dockProfileBotsDescription": "Used inside Bots and in mission rooms.",
+  "dockProfileBotsDescription": "Used inside Bots and in rooms.",
   "dockProfileGeneralDescription": "Used in the rest of the app: home and conversations.",
   "dockPreviewSectionTitle": "Preview",
   "dockItemsSectionTitle": "Items",
@@ -6142,7 +6142,7 @@
   "dockHomeLabel": "Home",
   "dockSettingsLabel": "Settings",
   "dockCreateGeneralSubtitle": "New conversation",
-  "dockCreateBotsSubtitle": "New bot · New room",
+  "dockCreateBotsSubtitle": "New profile · New room",
   "dockItemsKeepOneVisible": "Keep at least one item visible",
   "dockItemDragHandleLabel": "Drag to reorder {item}",
   "@dockItemDragHandleLabel": {
@@ -6209,8 +6209,8 @@
   "missionApprovalPending": "Approval pending",
   "missionApprovalDecisionHint": "Decide whether to continue",
   "missionBotChatMetadataUnavailable": "Bot Chat metadata could not be verified. Refresh Bots and try again.",
-  "missionOffline": "Hermes is unavailable. Existing team data remains visible.",
-  "missionStaleData": "Some team data may be out of date.",
+  "missionOffline": "Hermes is unavailable. Existing profile data remains visible.",
+  "missionStaleData": "Some profile data may be out of date.",
   "missionKanbanUnavailable": "The task board is not available on this Hermes installation.",
   "roomEveryone": "Everyone",
   "roomRecipientsAll": "Everyone ({count})",
@@ -6365,7 +6365,7 @@
   "dockToolsLabel": "Tools",
   "dockCronLabel": "Jobs",
   "missionBotsUnassigned": "Unassigned",
-  "chaMentionSuggestions": "Mention a bot",
+  "chaMentionSuggestions": "Mention a profile",
   "botSectionMove": "Move to section…",
   "botSectionNew": "New section…",
   "botSectionRename": "Rename section",
@@ -6373,8 +6373,8 @@
   "botSectionRemove": "Remove from section",
   "botSectionName": "Section name",
   "botSectionOrderHint": "Alphabetical order. Empty sections do not sync.",
-  "botSectionChooseMembers": "Choose the section’s bots",
-  "botSectionDeleted": "Section deleted. The bots are still available.",
+  "botSectionChooseMembers": "Choose the section’s profiles",
+  "botSectionDeleted": "Section deleted. The profiles are still available.",
   "botUndo": "Undo",
   "botRetry": "Retry",
   "botSave": "Save",
@@ -6389,7 +6389,7 @@
   },
   "botProfileFailed": "Could not save. Check your connection and try again.",
   "botRecentSession": "Recent session",
-  "botDuplicate": "Duplicate bot",
+  "botDuplicate": "Duplicate profile",
   "botDuplicated": "Copy created: {name}",
   "@botDuplicated": {
     "placeholders": {
@@ -6443,8 +6443,8 @@
   "botFaceLock": "Lock face",
   "botFaceUnlock": "Unlock face",
   "botFaceColor": "Color",
-  "botShowHidden": "Show hidden bots",
-  "botRoomLinkFailed": "Room created. These bots could not be linked: {names}. Retry their links before sending.",
+  "botShowHidden": "Show hidden profiles",
+  "botRoomLinkFailed": "Room created. These profiles could not be linked: {names}. Retry their links before sending.",
   "@botRoomLinkFailed": {
     "placeholders": {
       "names": {
@@ -6452,7 +6452,7 @@
       }
     }
   },
-  "botRoomLinkUnavailable": "No saved bots currently advertise a reachable RoomLink.",
+  "botRoomLinkUnavailable": "No saved profiles currently advertise a reachable RoomLink.",
   "botDuplicateIncomplete": "{name} was copied, but its chat and title could not be reset. Retry to finish this copy.",
   "@botDuplicateIncomplete": {
     "placeholders": {
@@ -6464,7 +6464,7 @@
   "botToolsetsInherit": "With no toolsets selected, Hermes inherits its default toolsets.",
   "botManageRooms": "Manage rooms",
   "botRoomMembersUnavailable": "Open a room to manage it. This server cannot change the members of an existing room.",
-  "botReconnectRoom": "Reconnect room bots",
+  "botReconnectRoom": "Reconnect the room's profiles",
   "botSectionsManage": "Manage sections",
   "botCloneCredentialsHint": "Cloning retains the source’s API keys. This switch controls additional keys copied from the gateway.",
   "ollamaDiagRunning": "Diagnosing the local agent…\nIf the bridge is out of date I will restart it.\nThis can take up to ~1 min.",
@@ -6849,7 +6849,7 @@
       }
     }
   },
-  "roomStripReplyingMany": "{count} bots are replying",
+  "roomStripReplyingMany": "{count} profiles are replying",
   "@roomStripReplyingMany": {
     "placeholders": {
       "count": {
@@ -6874,7 +6874,7 @@
     }
   },
   "roomNewPill": "{count, plural, =1{1 new} other{{count} new}}",
-  "roomStripDetail": "See what each bot is doing",
+  "roomStripDetail": "See what each profile is doing",
   "roomActionFailed": "Hermes rejected the action. Try again.",
   "roomActivityTitle": "Activity",
   "roomActivityEmpty": "No passes, failures or retries yet.",
@@ -6978,14 +6978,14 @@
       }
     }
   },
-  "roomEmpty": "No messages yet. Say hi and @mention a bot.",
+  "roomEmpty": "No messages yet. Say hi and @mention a profile.",
   "roomRefreshFailed": "Could not refresh the room.",
   "roomYou": "You",
   "roomMoreActions": "More actions",
   "roomCannotSend": "This connection cannot write to the room.",
   "rosterTitle": "Bots",
   "rosterFilterAll": "All",
-  "rosterFilterBots": "Bots",
+  "rosterFilterBots": "Profiles",
   "rosterFilterRooms": "Rooms",
   "rosterNeedsYou": "Needs you",
   "rosterRecent": "Recent",
@@ -6999,7 +6999,7 @@
   "rosterDesktopLabel": "Desktop",
   "rosterDesktopReadOnly": "This room runs in Hermes Desktop. Console shows it read-only until Desktop hosts it on the server.",
   "rosterSearch": "Search",
-  "rosterSearchHint": "Search bots and rooms",
+  "rosterSearchHint": "Search profiles and rooms",
   "rosterNew": "New",
   "rosterEmpty": "Nothing here yet",
   "rosterNoMatches": "No matches",
@@ -7007,7 +7007,7 @@
   "rosterNoPreview": "No messages yet",
   "rosterRoomMembers": "{count, plural, =1{1 member} other{{count} members}}",
   "botChatComposerHint": "Message {name}",
-  "botProfileTitle": "Bot profile",
+  "botProfileTitle": "Profile",
   "botProfileChat": "Chat",
   "botProfileRooms": "Rooms · {count}",
   "botProfileRoutines": "Routines",
@@ -7044,18 +7044,18 @@
   "reasoningEffortXhigh": "Extra high",
   "reasoningEffortMax": "Max",
   "reasoningEffortUltra": "Ultra",
-  "rosterHideHidden": "Hide hidden bots",
-  "rosterShowHidden": "{count, plural, =1{Show 1 hidden bot} other{Show {count} hidden bots}}",
+  "rosterHideHidden": "Hide hidden profiles",
+  "rosterShowHidden": "{count, plural, =1{Show 1 hidden profile} other{Show {count} hidden profiles}}",
   "rosterPin": "Pin",
   "rosterUnpin": "Unpin",
   "rosterHide": "Hide",
   "rosterUnhide": "Show",
   "rosterMoveToSection": "Move to section…",
   "rosterUpdateFailed": "Could not update the roster. Try again.",
-  "notifBotModeListenerOn": "Bots and rooms can reach you here: approvals, @mentions, round summaries and live progress, with Approve, Deny, Reply and Stop right in the notification.",
-  "notifBotModeListenerOff": "Background listening is off, so Bot and room alerts and the home-screen widgets only update while Hermes is open.",
+  "notifBotModeListenerOn": "Profiles and rooms can reach you here: approvals, @mentions, round summaries and live progress, with Approve, Deny, Reply and Stop right in the notification.",
+  "notifBotModeListenerOff": "Background listening is off, so profile and room alerts and the home-screen widgets only update while Hermes is open.",
   "notifLiveUpdatesTitle": "Live Updates",
-  "notifLiveUpdatesSub": "Show working Bots and rooms in the status bar and lock screen (Android 16+)",
+  "notifLiveUpdatesSub": "Show working profiles and rooms in the status bar and lock screen (Android 16+)",
   "notifKanbanDoneTitle": "Also when a task is done",
   "notifKanbanDoneSub": "Default for tasks without their own choice",
   "designShowAll": "Show all",
@@ -7779,7 +7779,7 @@
   "rq1215OpenChat": "Open its chat",
   "rq1215CancelWait": "Cancel wait",
   "rq1215CancelWaitTitle": "Cancel {name}'s wait?",
-  "rq1215CancelWaitBody": "Only {name}'s turn in this room is interrupted. Its session stays open and the other bots keep working.",
+  "rq1215CancelWaitBody": "Only {name}'s turn in this room is interrupted. Its session stays open and the other profiles keep working.",
   "rq1215KeepWaiting": "Keep waiting",
   "rq1215CancelWaitFailed": "Couldn't cancel the wait. Try again.",
   "rr1215StallTitle": "{name} can't pick up its turn",
@@ -7787,7 +7787,7 @@
   "rr1215StallReadOnlyHint": "You need a connection with write access to resume it.",
   "rr1215Resume": "Resume",
   "rr1215ResumeTitle": "Resume {name}?",
-  "rr1215ResumeBody": "{name}'s session for this room is reopened on the server so it can pick up its pending turn. No new message is sent and the other bots are left alone.",
+  "rr1215ResumeBody": "{name}'s session for this room is reopened on the server so it can pick up its pending turn. No new message is sent and the other profiles are left alone.",
   "rr1215KeepAsIs": "Not now",
   "rr1215Resumed": "{name}'s session is open again",
   "rr1215ResumeFailed": "Couldn't resume {name}. Try again.",

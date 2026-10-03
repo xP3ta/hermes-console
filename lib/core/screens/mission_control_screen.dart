@@ -4260,8 +4260,8 @@ final class _RoomsAreaCopy {
 
   String get removeMember => _english ? 'Remove' : 'Quitar';
   String get noMembersChosen => _english
-      ? 'Tap a bot to add it to the room.'
-      : 'Toca un bot para añadirlo a la sala.';
+      ? 'Tap a profile to add it to the room.'
+      : 'Toca un perfil para añadirlo a la sala.';
 }
 
 class _LoungeEmptyState extends StatelessWidget {

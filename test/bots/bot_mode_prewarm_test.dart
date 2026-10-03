@@ -252,7 +252,7 @@ void main() {
 
         final source = _CountingSource();
         await tester.pumpWidget(screen(manager, source, cache, warm));
-        expect(find.text('Reading team state…'), findsNothing);
+        expect(find.text('Loading profiles…'), findsNothing);
         expect(_rosterRows, findsWidgets);
         expect(source.loads, 1, reason: 'still refreshes in the background');
         source.gate.complete();
@@ -288,7 +288,7 @@ void main() {
       warmSource.gate.complete();
       await tester.pump();
       await tester.pump();
-      expect(find.text('Reading team state…'), findsNothing);
+      expect(find.text('Loading profiles…'), findsNothing);
       expect(_rosterRows, findsWidgets);
       expect(warmSource.loads + source.loads, 1);
       await tester.pumpWidget(const SizedBox());

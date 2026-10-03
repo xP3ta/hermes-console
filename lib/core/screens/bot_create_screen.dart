@@ -816,16 +816,16 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         };
         _error = switch (error) {
           final _BotCreateIdentityFailure failure when failure.uncertain => _text(
-            'El bot existe, pero su identidad quedó en estado incierto. Revísala y vuelve a intentar.',
-            'The bot exists, but its identity is uncertain. Review it and try again.',
+            'El perfil existe, pero no sabemos si su identidad se guardó. Revísala y vuelve a intentarlo.',
+            'The profile exists, but its identity is uncertain. Review it and try again.',
           ),
           _BotCreateIdentityFailure() => _text(
-            'El bot existe, pero no se pudo aplicar su identidad. Corrige el problema y vuelve a intentar.',
-            'The bot exists, but its identity could not be applied. Fix the issue and try again.',
+            'El perfil existe, pero no se pudo aplicar su identidad. Corrige el problema y vuelve a intentarlo.',
+            'The profile exists, but its identity could not be applied. Fix the issue and try again.',
           ),
           FormatException() => _text(
-            'Elige una identidad válida antes de crear el bot.',
-            'Choose a valid identity before creating the bot.',
+            'Elige una identidad válida antes de crear el perfil.',
+            'Choose a valid identity before creating the profile.',
           ),
           _ => copy.createAgentError(humanizeApiError(error)),
         };
@@ -846,8 +846,8 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                       'The profile already exists, but its visual setup is incomplete. Leaving will not open its automatic chat.',
                     )
                   : _text(
-                      'Perderás la configuración de este bot.',
-                      'You will lose this bot setup.',
+                      'Perderás la configuración de este perfil.',
+                      'You will lose this profile setup.',
                     ),
       actions: [
         HermesDialogAction(
@@ -1385,7 +1385,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
     return HermesBotFace(
       visual: visual,
       size: size,
-      semanticLabel: _text('Cara del bot', 'Bot face'),
+      semanticLabel: _text('Cara del perfil', 'Profile face'),
       animate: true,
     );
   }

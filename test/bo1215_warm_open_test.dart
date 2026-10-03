@@ -188,7 +188,7 @@ void main() {
       // First frame: painted from the snapshot with no read answered.
       expect(server.answered, 0, reason: 'nothing awaited before paint');
       expect(_rosterLines, findsWidgets);
-      expect(find.text('Reading team state…'), findsNothing);
+      expect(find.text('Loading profiles…'), findsNothing);
       expect(
         find.byType(CircularProgressIndicator),
         findsNothing,
@@ -401,7 +401,7 @@ void main() {
     await tester.pumpWidget(
       _host(manager, server.repository(), MissionSnapshotCache()),
     );
-    expect(find.text('Reading team state…'), findsOneWidget);
+    expect(find.text('Loading profiles…'), findsOneWidget);
     server.network.complete();
     await tester.pump();
     await tester.pump();
