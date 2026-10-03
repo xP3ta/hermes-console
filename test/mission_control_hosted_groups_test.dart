@@ -1323,7 +1323,12 @@ void main() {
     source.failRead = true;
     await tester.pump(const Duration(seconds: 16));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('room-error')), findsOneWidget);
+    // One failed poll is not worth a status line (the room shows itself as
+    // reconnecting only once stale; see room_refresh_health_test.dart), and
+    // the remote failure text never reaches the screen.
+    expect(source.reads, greaterThan(1));
+    expect(find.byKey(const ValueKey('room-error')), findsNothing);
+    expect(find.byKey(const ValueKey('room-refresh-stale')), findsNothing);
     expect(find.textContaining('private remote failure'), findsNothing);
     final reads = source.reads;
     await tester.pumpWidget(const SizedBox.shrink());

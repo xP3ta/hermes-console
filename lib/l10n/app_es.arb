@@ -8284,6 +8284,7 @@
   },
   "roomEmpty": "Aún no hay mensajes. Saluda y @menciona a un bot.",
   "roomRefreshFailed": "No se pudo actualizar la sala.",
+  "roomRefreshStale": "Reconectando… la sala puede no estar al día.",
   "roomYou": "Tú",
   "roomMoreActions": "Más acciones",
   "roomCannotSend": "Esta conexión no puede escribir en la sala.",

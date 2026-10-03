@@ -6988,6 +6988,7 @@
   },
   "roomEmpty": "No messages yet. Say hi and @mention a bot.",
   "roomRefreshFailed": "Could not refresh the room.",
+  "roomRefreshStale": "Reconnecting… the room may be out of date.",
   "roomYou": "You",
   "roomMoreActions": "More actions",
   "roomCannotSend": "This connection cannot write to the room.",
