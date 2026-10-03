@@ -9409,5 +9409,11 @@
   "tc1215DiffMoreLines": "Ver {count} líneas más",
   "@tc1215DiffMoreLines": {"placeholders": {"count": {"type": "int"}}},
   "tc1215DiffSemantics": "{name}: {added} líneas añadidas, {removed} eliminadas",
-  "@tc1215DiffSemantics": {"placeholders": {"name": {"type": "String"}, "added": {"type": "int"}, "removed": {"type": "int"}}}
+  "@tc1215DiffSemantics": {"placeholders": {"name": {"type": "String"}, "added": {"type": "int"}, "removed": {"type": "int"}}},
+  "tc1215CopyLatest": "Copiar último mensaje",
+  "tc1215CopyFull": "Copiar respuesta completa",
+  "tc1215CopyMarkdown": "Copiar Markdown",
+  "tc1215CopyCode": "{count, plural, =1{Copiar código} other{Copiar {count} bloques de código}}",
+  "@tc1215CopyCode": {"placeholders": {"count": {"type": "int"}}},
+  "tc1215CopyOptionsHint": "más opciones de copia"
 }

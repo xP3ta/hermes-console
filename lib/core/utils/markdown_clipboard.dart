@@ -26,6 +26,36 @@ String markdownToClipboardText(String markdown) {
   return rendered.replaceAll('\r\n', '\n').replaceAll(RegExp(r'^\n+|\n+$'), '');
 }
 
+/// Literal contents of the message's code blocks (fenced or indented), in
+/// order, for the «copy code» scope. Inline code is not a block.
+List<String> markdownCodeBlocks(String markdown) {
+  if (!markdown.contains('```') &&
+      !markdown.contains('~~~') &&
+      !markdown.contains('\n    ')) {
+    return const [];
+  }
+  final document = md.Document(
+    extensionSet: md.ExtensionSet.gitHubFlavored,
+    encodeHtml: false,
+  );
+  final blocks = <String>[];
+  void visit(List<md.Node> nodes) {
+    for (final node in nodes) {
+      if (node is! md.Element) continue;
+      if (node.tag == 'pre') {
+        final text = node.textContent.replaceAll(RegExp(r'\n$'), '');
+        if (text.trim().isNotEmpty) blocks.add(text);
+        continue;
+      }
+      final children = node.children;
+      if (children != null) visit(children);
+    }
+  }
+
+  visit(document.parse(markdown));
+  return blocks;
+}
+
 /// Convierte Markdown en una sola línea de texto legible para previews.
 ///
 /// A diferencia del texto de portapapeles, aquí los saltos y espacios no

@@ -7724,5 +7724,11 @@
   "tc1215DiffMoreLines": "Show {count} more lines",
   "@tc1215DiffMoreLines": {"placeholders": {"count": {"type": "int"}}},
   "tc1215DiffSemantics": "{name}: {added} lines added, {removed} removed",
-  "@tc1215DiffSemantics": {"placeholders": {"name": {"type": "String"}, "added": {"type": "int"}, "removed": {"type": "int"}}}
+  "@tc1215DiffSemantics": {"placeholders": {"name": {"type": "String"}, "added": {"type": "int"}, "removed": {"type": "int"}}},
+  "tc1215CopyLatest": "Copy last message",
+  "tc1215CopyFull": "Copy full response",
+  "tc1215CopyMarkdown": "Copy Markdown",
+  "tc1215CopyCode": "{count, plural, =1{Copy code} other{Copy {count} code blocks}}",
+  "@tc1215CopyCode": {"placeholders": {"count": {"type": "int"}}},
+  "tc1215CopyOptionsHint": "more copy options"
 }

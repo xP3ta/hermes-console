@@ -23318,6 +23318,64 @@ void main() {
       await tester.pump(const Duration(seconds: 2));
     });
 
+    // Each scope in its own chat: the menu covers the route, and the fixture
+    // re-reads the transcript when it is uncovered.
+    for (final (label, expected) in [
+      ('Copiar último mensaje', 'RG_FINAL_ANSWER bold\n\necho RG_CODE'),
+      (
+        'Copiar respuesta completa',
+        'RG_INTERIM_TEXT\n\nRG_FINAL_ANSWER bold\n\necho RG_CODE',
+      ),
+      (
+        'Copiar Markdown',
+        'RG_INTERIM_TEXT\n\nRG_FINAL_ANSWER **bold**\n\n```sh\necho RG_CODE\n```',
+      ),
+      ('Copiar código', 'echo RG_CODE'),
+    ]) {
+      testWidgets('pt1215: mantener copiar ofrece «$label»', (tester) async {
+        await pumpChat(
+          tester,
+          messages: [
+            {
+              ...turn[0],
+              'content': 'RG_FINAL_ANSWER **bold**\n\n```sh\necho RG_CODE\n```',
+            },
+            {...turn[1], 'content': 'RG_INTERIM_TEXT'},
+            ...turn.sublist(2),
+          ],
+        );
+        await tester.longPress(assistantCopy);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byKey(const ValueKey('chat-copy-scopes')), findsOneWidget);
+        for (final entry in const [
+          'Copiar último mensaje',
+          'Copiar respuesta completa',
+          'Copiar Markdown',
+          'Copiar código',
+        ]) {
+          expect(find.text(entry), findsOneWidget);
+        }
+        await tester.tap(find.text(label));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect((await Clipboard.getData(Clipboard.kTextPlain))?.text, expected);
+        await tester.pump(const Duration(seconds: 2));
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('pt1215: un mensaje de texto plano no abre menú al mantener', (
+      tester,
+    ) async {
+      await pumpChat(tester, messages: [turn[0], turn.last]);
+      await tester.longPress(assistantCopy);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('chat-copy-scopes')), findsNothing);
+      await tester.pump(const Duration(seconds: 2));
+    });
+
     testWidgets('el grupo vivo crece en su sitio con todas las herramientas', (
       tester,
     ) async {

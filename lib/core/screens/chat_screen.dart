@@ -15761,6 +15761,7 @@ class _ChatScreenState extends State<ChatScreen>
     final msg = unit as Map<String, dynamic>;
     final role = (msg['role'] as String?) ?? 'assistant';
     var content = (msg['content'] as String?) ?? '';
+    final rawContent = content;
     // Un turno del agente llega en varias filas (herramientas, razonamiento,
     // texto intermedio y final). Como Desktop, todas comparten UNA burbuja:
     // una cabecera, un «Pensó ⌄» con todas las herramientas y el texto al
@@ -16033,6 +16034,14 @@ class _ChatScreenState extends State<ChatScreen>
           : null,
       compact: compact,
       toolOutputs: role == 'assistant' ? _toolOutputFor : null,
+      latestReplyText:
+          role == 'assistant' &&
+              groupPrefix.isNotEmpty &&
+              rawContent.trim().isNotEmpty
+          ? () => projectAssistantSuggestions(
+              splitReasoning(rawContent).answer,
+            ).body
+          : null,
     );
   }
 
@@ -17694,6 +17703,7 @@ class _MessageBubble extends StatelessWidget {
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
   final ToolOutputLookup? toolOutputs;
+  final String Function()? latestReplyText;
 
   const _MessageBubble({
     required this.content,
@@ -17727,6 +17737,7 @@ class _MessageBubble extends StatelessWidget {
     this.compact = false,
     this.performanceProbe,
     this.toolOutputs,
+    this.latestReplyText,
   });
 
   @override
@@ -17769,6 +17780,7 @@ class _MessageBubble extends StatelessWidget {
             compact: compact,
             performanceProbe: performanceProbe,
             toolOutputs: toolOutputs,
+            latestReplyText: latestReplyText,
           );
   }
 }
@@ -19147,6 +19159,10 @@ class _AssistantMessage extends StatelessWidget {
   final ChatPerformanceProbe? performanceProbe;
   final ToolOutputLookup? toolOutputs;
 
+  /// The turn's newest reply alone, when earlier replies share this bubble
+  /// (Desktop «copy message» vs «copy full response»). Read at copy time.
+  final String Function()? latestReplyText;
+
   const _AssistantMessage({
     required this.content,
     required this.linkCache,
@@ -19170,7 +19186,59 @@ class _AssistantMessage extends StatelessWidget {
     this.compact = false,
     this.performanceProbe,
     this.toolOutputs,
+    this.latestReplyText,
   });
+
+  static final RegExp _markdownSyntax = RegExp(r'[`*#\[_|>~]');
+
+  /// Cheap gate for the long-press menu: an earlier reply in the bubble or
+  /// any Markdown syntax. The scopes themselves are built on long press.
+  bool _hasCopyScopes(String answer) =>
+      latestReplyText != null || _markdownSyntax.hasMatch(answer);
+
+  /// Long-press copy scopes; only those that differ from a plain copy and
+  /// have data are offered (no dead entries).
+  List<ChatCopyScope> _copyScopes(BuildContext context, String answer) {
+    final s = Strings.of(context);
+    final raw = GeneratedMediaService.stripDirectives(answer).trim();
+    if (raw.isEmpty) return const [];
+    final plain = markdownToClipboardText(raw);
+    final latest = latestReplyText;
+    final code = markdownCodeBlocks(raw);
+    return [
+      if (latest != null) ...[
+        ChatCopyScope(
+          label: s.tc1215CopyLatest,
+          icon: Icons.short_text_rounded,
+          text: () => markdownToClipboardText(
+            GeneratedMediaService.stripDirectives(latest()),
+          ),
+        ),
+        ChatCopyScope(
+          label: s.tc1215CopyFull,
+          icon: Icons.copy_all_rounded,
+          text: () => plain,
+        ),
+      ] else
+        ChatCopyScope(
+          label: s.chaCopyMessage,
+          icon: Icons.copy_rounded,
+          text: () => plain,
+        ),
+      if (raw != plain)
+        ChatCopyScope(
+          label: s.tc1215CopyMarkdown,
+          icon: Icons.notes_rounded,
+          text: () => raw,
+        ),
+      if (code.isNotEmpty)
+        ChatCopyScope(
+          label: s.tc1215CopyCode(code.length),
+          icon: Icons.code_rounded,
+          text: () => code.join('\n\n'),
+        ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -19445,6 +19513,9 @@ class _AssistantMessage extends StatelessWidget {
         text: () => markdownToClipboardText(
           GeneratedMediaService.stripDirectives(answer),
         ),
+        scopes: isStreaming || !_hasCopyScopes(answer)
+            ? null
+            : () => _copyScopes(context, answer),
       ),
       if (onRegenerate != null)
         ChatMessageActionButton(
