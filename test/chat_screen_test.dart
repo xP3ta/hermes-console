@@ -16768,6 +16768,206 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    // Tarjetas del composer (las del mensaje enviado no se pueden quitar).
+    List<AttachmentCard> composerCards(WidgetTester tester) => tester
+        .widgetList<AttachmentCard>(find.byType(AttachmentCard))
+        .where((card) => card.onRemove != null)
+        .toList();
+
+    // Lote A = «hola» (+ adjunto X si [withX]), guardado como borrador y
+    // enviado offline.
+    Future<ActiveChat> pumpOfflineBatch(
+      WidgetTester tester,
+      _SubmissionGateway gateway,
+      String id, {
+      bool withX = true,
+    }) async {
+      final temp = Directory.systemTemp.createTempSync('chat-retry-batch-');
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      final file = File('${temp.path}/x.pdf')
+        ..writeAsBytesSync([0x25, 0x50, 0x44, 0x46, 1]);
+      final x = AttachmentDraft(
+        localId: 'retry-batch-x',
+        type: AttachmentType.document,
+        name: 'x.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: file.lengthSync(),
+        localPath: file.path,
+      );
+      secureStore[ChatDraftStore.keyForTesting(
+        id,
+        'sess-test',
+        profile: 'default',
+      )] = jsonEncode({
+        'savedAt': DateTime.now().millisecondsSinceEpoch,
+        'text': 'hola',
+        'attachments': [if (withX) x.toJson()],
+      });
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+      addTearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null),
+      );
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn(id),
+        desktopGateway: gateway,
+        messages: [for (final message in durable.reversed) Map.of(message)],
+        storedMessageLoader: (_, _) async => [
+          for (final message in durable) Map.of(message),
+        ],
+        attachmentMaterializer: (attachment) async => attachment,
+        attachmentPrivateCopyDeleter: (_) async => true,
+        initialPreferences: {
+          'approval_global_mode': ApprovalMode.yolo.storageKey,
+        },
+      );
+      await pumpUntilReal(
+        tester,
+        () =>
+            composerText(tester) == 'hola' &&
+            composerCards(tester).length == (withX ? 1 : 0),
+        timeoutMessage: 'draft A was not restored',
+      );
+      expect(composerText(tester), 'hola');
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await pumpUntilReal(
+        tester,
+        () =>
+            gateway.submissions.isNotEmpty &&
+            find.text('↺ reintentar').evaluate().isNotEmpty,
+        timeoutMessage: 'batch A did not fail',
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(gateway.submissions, hasLength(1));
+      expect(gateway.submissions.single.contains('@file:.hermes/x.pdf'), withX);
+      // Fallo previo al ACK: el composer conserva el lote A completo.
+      expect(composerText(tester), 'hola');
+      expect(composerCards(tester).map((card) => card.name), [
+        if (withX) 'x.pdf',
+      ]);
+      return chat;
+    }
+
+    // Añade la imagen Y al composer (pegada desde el teclado).
+    Future<List<String>> pasteY(WidgetTester tester) async {
+      tester
+          .widget<TextField>(find.byType(TextField).last)
+          .contentInsertionConfiguration!
+          .onContentInserted(
+            KeyboardInsertedContent(
+              mimeType: 'image/png',
+              uri: 'content://keyboard/y.png',
+              data: base64Decode(
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+                'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+              ),
+            ),
+          );
+      await pumpUntilReal(
+        tester,
+        () => composerCards(tester).isNotEmpty,
+        timeoutMessage: 'attachment Y was not added',
+      );
+      final names = composerCards(tester).map((card) => card.name).toList();
+      expect(names, hasLength(1));
+      expect(names.single, isNot('x.pdf'));
+      return names;
+    }
+
+    // Pulsa Reintentar y deja correr cualquier subida o envío que provoque.
+    Future<void> tapRetry(WidgetTester tester) async {
+      await tester.tap(find.text('↺ reintentar'));
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    Future<void> expectRetryKeptDraftB(
+      WidgetTester tester,
+      _SubmissionGateway gateway,
+      List<String> cardsB,
+    ) async {
+      // Ni se envía B en lugar de A ni se retira Y del editor.
+      expect(gateway.submissions, hasLength(1));
+      expect(gateway.imageAttachCalls, 0);
+      expect(composerText(tester), 'hola');
+      expect(composerCards(tester).map((card) => card.name), cardsB);
+      expect(find.text('↺ reintentar'), findsOneWidget);
+      expect(find.textContaining('Tu borrador actual se conserva'), findsOne);
+      await tester.pump(const Duration(seconds: 10));
+      expect(tester.takeException(), isNull);
+    }
+
+    // A = «hola» sin adjuntos: su prompt coincide con el texto del composer,
+    // así que solo la comparación del lote completo distingue B = «hola» + Y.
+    testWidgets(
+      'Reintentar no envía «hola» + Y en lugar de «hola» sin adjunto',
+      (tester) async {
+        final gateway = _SubmissionGateway()..submitError = lost;
+        await pumpOfflineBatch(
+          tester,
+          gateway,
+          'conn-qa-f3-retry-addattach',
+          withX: false,
+        );
+        final cardsB = await pasteY(tester);
+
+        gateway.submitError = null;
+        await tapRetry(tester);
+        await expectRetryKeptDraftB(tester, gateway, cardsB);
+      },
+    );
+
+    testWidgets('Reintentar con mismo texto y otro adjunto no envía ese lote', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway()..submitError = lost;
+      await pumpOfflineBatch(tester, gateway, 'conn-qa-f3-retry-attach');
+
+      // Borrador B: mismo texto «hola», pero el adjunto X se cambia por Y.
+      composerCards(tester).single.onRemove!.call();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(composerCards(tester), isEmpty);
+      final cardsB = await pasteY(tester);
+
+      gateway.submitError = null;
+      await tapRetry(tester);
+      await expectRetryKeptDraftB(tester, gateway, cardsB);
+    });
+
+    testWidgets('Reintentar con el lote A intacto reenvía exactamente A', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway()..submitError = lost;
+      await pumpOfflineBatch(tester, gateway, 'conn-qa-f3-retry-same');
+      final wireA = gateway.submissions.single;
+
+      gateway.submitError = null;
+      await tester.tap(find.text('↺ reintentar'));
+      await pumpUntilReal(
+        tester,
+        () => gateway.submissions.length > 1,
+        timeoutMessage: 'retry of batch A was not sent',
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(gateway.submissions, [wireA, wireA]);
+      expect(gateway.imageAttachCalls, 0);
+      expect(composerText(tester), isEmpty);
+      expect(composerCards(tester), isEmpty);
+      gateway.emitComplete('respuesta A');
+      await tester.pump(const Duration(seconds: 10));
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('reabrir con A aceptado y en curso conserva el borrador B', (
       tester,
     ) async {

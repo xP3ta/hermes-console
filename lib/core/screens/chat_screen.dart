@@ -8754,13 +8754,16 @@ class _ChatScreenState extends State<ChatScreen>
     // Reintentar reenvía el composer. Si el usuario ya escribió OTRO borrador,
     // reintentar mandaría ese borrador en lugar del turno fallido y lo
     // retiraría del editor. Se conserva intacto y no se reintenta nada.
+    // «Otro» se decide con el lote completo (texto y adjuntos): el mismo texto
+    // con adjuntos distintos también es otro borrador.
     final retryTarget = _preparedTurn;
     final composerText = _textController.text.trim();
+    final composerIsRetryBatch =
+        retryTarget != null && retryTarget.restoresComposer
+        ? !_composerHoldsOtherDraft(retryTarget)
+        : composerText == prompt.trim() && _pendingAttachments.isEmpty;
     if ((composerText.isNotEmpty || _pendingAttachments.isNotEmpty) &&
-        composerText != prompt.trim() &&
-        !(retryTarget != null &&
-            retryTarget.restoresComposer &&
-            !_composerHoldsOtherDraft(retryTarget))) {
+        !composerIsRetryBatch) {
       HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).chaRetryKeepsDraft)),
         kind: HermesNoticeKind.warning,
