@@ -19202,6 +19202,61 @@ void main() {
     );
 
     testWidgets(
+      'md1215: Bot Chat header shows the session model, not the profile default',
+      (tester) async {
+        final gateway = _ModelConfigGateway();
+        final chat = await pumpChat(
+          tester,
+          desktopGateway: gateway,
+          connection: _remoteConn('conn-md1215-bot'),
+          messagesLoaded: false,
+          session: const Session(
+            id: 'sess-bot-model',
+            title: 'Bot Chat',
+            model: 'hermes-agent',
+            source: 'bot-mode',
+            messageCount: 0,
+            isActive: false,
+            preview: '',
+            startedAt: 1,
+            profile: 'infra',
+          ),
+          missionBotProfile: const AgentProfile(
+            name: 'infra',
+            model: 'profile-default-model',
+          ),
+        );
+        for (var frame = 0; !chat.hasDesktopRuntime && frame < 10; frame++) {
+          await tester.pump(const Duration(milliseconds: 240));
+        }
+        expect(chat.hasDesktopRuntime, isTrue);
+        String subtitle() => tester
+            .widget<Text>(
+              find.byKey(const ValueKey('bot-chat-header-subtitle')),
+            )
+            .data!;
+
+        gateway.emit('session.info', const {
+          'info': {'model': 'old-model', 'provider': 'provider-a'},
+        });
+        await tester.pump();
+        expect(subtitle(), contains(friendlyModelName('old-model')));
+        expect(subtitle(), isNot(contains('profile-default-model')));
+
+        await chat.setSessionModel(
+          DesktopModelSelection(
+            modelId: 'new-model',
+            providerSlug: 'provider-a',
+          ),
+        );
+        await tester.pump();
+        expect(subtitle(), contains(friendlyModelName('new-model')));
+        expect(subtitle(), isNot(contains(friendlyModelName('old-model'))));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
       'md1215: reabrir el selector reutiliza el catálogo y un cambio lo invalida',
       (tester) async {
         final (_, gateway) = await pumpModelChat(tester, 'conn-md1215-cache');
