@@ -633,6 +633,11 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// nativas directamente.
   final HermesHomeWidgetPublisher homeWidgetPublisher =
       HermesHomeWidgetPublisher();
+  late final HomeWidgetDeletedSessionGuard _homeWidgetDeletedSessions =
+      HomeWidgetDeletedSessionGuard(
+        homeWidgetPublisher,
+        widget.connManager.prefs,
+      );
 
   /// Para mostrar el banner discreto in-app (Regla 2) desde fuera del árbol de
   /// una pantalla concreta (lo dispara un evento de otro chat).
@@ -1140,6 +1145,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
 
   Future<void> _syncHomeWidgetConnection() async {
     final connectionId = _activeHomeWidgetConnection()?.id;
+    unawaited(_homeWidgetDeletedSessions.follow(connectionId));
     await widget.activeChats.setHomeWidgetActiveConnection(connectionId);
     await _publishHomeWidgetBase();
   }
@@ -1150,6 +1156,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     widget.activeChats.bindHomeWidgetPublisher(
       homeWidgetPublisher,
       activeConnectionId: _activeHomeWidgetConnection()?.id,
+    );
+    // A confirmed delete on any screen leaves the widget too.
+    unawaited(
+      _homeWidgetDeletedSessions.follow(_activeHomeWidgetConnection()?.id),
     );
     // Carga (no bloqueante) de las mascotas locales y la preferencia guardada.
     // La selección es por perfil: se re-resuelve al cambiar de instancia o de
@@ -2636,6 +2646,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     widget.connManager.activeConnectionId.removeListener(
       _onHomeWidgetConnectionChanged,
     );
+    _homeWidgetDeletedSessions.dispose();
     widget.appLock.locked.removeListener(_retryPendingNewSessionLaunch);
     widget.appLock.locked.removeListener(_onAppLockNoticeGateChanged);
     widget.appLock.locked.removeListener(_restoreColdStartTailsAfterUnlock);

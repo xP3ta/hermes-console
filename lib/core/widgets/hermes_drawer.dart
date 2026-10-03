@@ -714,6 +714,7 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
           baseUrl: widget.connection.baseUrl,
           apiKey: widget.connection.apiKey,
         );
+    SessionListRead? listRead;
     try {
       // Local-only archives (servers without a writable archived flag) must
       // leave the drawer too, as they leave Conversations.
@@ -721,11 +722,17 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
         widget.prefs,
         requestedConnectionId,
       );
+      // A delete recorded while this page is in flight keeps its tombstone
+      // until the page has been filtered and stored.
+      listRead = archive.beginListRead();
       bool shown(Session session) =>
           !archive.isSessionArchived(session) &&
+          !archive.isSessionDeleted(session) &&
+          !archive.isSessionHidden(session) &&
+          !archive.isHidden(session.id) &&
           !session.isJob &&
           !session.isKanbanJob &&
-          session.parentSessionId == null;
+          session.listsAsOwnRow;
       // Four rows need one Desktop-sized page, not the whole history.
       final sessions = await client.getSessions(
         profile: widget.profile,
@@ -741,6 +748,7 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
       // El drawer sigue siendo navegación local si el servidor está offline o
       // no publica listado de sesiones (p. ej. un runtime local legacy).
     } finally {
+      listRead?.end();
       client.close();
     }
   }

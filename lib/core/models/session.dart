@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '../utils/chat_turn.dart';
 import '../utils/markdown_clipboard.dart';
 import '../utils/session_timestamp.dart';
+import 'session_category.dart';
 
 /// Derived lifecycle state for a session.
 ///
@@ -232,6 +233,27 @@ class Session implements SessionSortKey {
   /// ¿Es una sesión de job/cron/skill programada? El servidor las marca con
   /// `source: "cron"` y/o las nombra `cron_<jobid>_<timestamp>` (009-jobs).
   bool get isJob => id.startsWith('cron_') || source == 'cron';
+
+  /// Whether this row is its own entry in a session list (Home recents,
+  /// Conversations, drawer), one rule for every screen.
+  ///
+  /// A root always is. A child (`parent_session_id`) is when a person chats
+  /// in it: Hermes lists `/branch` and reset children as their own rows and
+  /// the Desktop sidebar shows them (`source`, not parenthood, tells them
+  /// apart). Delegate runs (`subagent`), tool sessions and automation
+  /// children stay folded under their parent, and so does a child with no
+  /// source, which an older server could hand over unclassified.
+  /// Compression continuations never arrive as separate rows: the server
+  /// projects them onto one row carrying `_lineage_root_id`.
+  bool get listsAsOwnRow {
+    final parent = parentSessionId?.trim();
+    if (parent == null || parent.isEmpty) return true;
+    final kind = source.trim();
+    return kind.isNotEmpty &&
+        SessionCategory.chats.includesSource(kind) &&
+        !isJob &&
+        !isKanbanJob;
+  }
 
   /// Identificador del cron que originó esta sesión.
   ///

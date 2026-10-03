@@ -559,9 +559,7 @@ final class SessionRepository {
     final requestedOwner = Session.profileOwner(query.profile);
     for (final row in rows) {
       if (row.messageCount < query.boundedMinMessages) continue;
-      if (!query.includeChildren && row.parentSessionId?.isNotEmpty == true) {
-        continue;
-      }
+      if (!query.includeChildren && !row.listsAsOwnRow) continue;
       if (query.archived == SessionArchiveMode.exclude && row.archived) {
         continue;
       }

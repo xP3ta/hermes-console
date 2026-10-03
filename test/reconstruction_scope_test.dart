@@ -32,15 +32,13 @@ void main() {
       final source = File(
         'lib/core/screens/home_dashboard_screen.dart',
       ).readAsStringSync();
-      final hydration = _between(
-        source,
-        'Future<void> _hydrateTurnPreviews(',
-        'String _recentGroupLabel(',
-      );
-
-      expect(hydration, isNot(contains('.getMessages(')));
-      expect(hydration, isNot(contains('latestUserPreview(messages')));
-      expect(hydration, isNot(contains('latestAssistantPreview(messages')));
+      // Home paints the session list's own preview (sessionListPreview, the
+      // Desktop sidebar rule); it never reads a transcript to fill one in.
+      expect(source, isNot(contains('_hydrateTurnPreviews')));
+      expect(source, isNot(contains('.getMessages(')));
+      expect(source, isNot(contains('latestUserPreview(')));
+      expect(source, isNot(contains('latestAssistantPreview(')));
+      expect(source, contains('sessionListPreview('));
     },
   );
 

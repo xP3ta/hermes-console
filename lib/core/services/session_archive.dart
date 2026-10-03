@@ -34,6 +34,14 @@ class SessionArchive extends ChangeNotifier {
   static const _pinnedPrefix = 'pinned_sessions_';
   static const _hiddenPrefix = 'hidden_sessions_';
   static const _titlePrefix = 'session_titles_';
+  static const _deletedPrefix = 'deleted_sessions_';
+
+  /// Soft bound on remembered server-confirmed deletions per connection.
+  ///
+  /// Above it only tombstones no list read can still need are dropped (see
+  /// [beginListRead]); one that a stale page could still carry is never
+  /// evicted, whatever the count.
+  static const maxDeletedTombstones = 200;
 
   final SharedPreferences _prefs;
   final String _connectionId;
@@ -43,6 +51,18 @@ class SessionArchive extends ChangeNotifier {
   Set<String> _pinned = {};
   Set<String> _hidden = {};
   Map<String, String> _titles = {};
+
+  /// Server-confirmed deletions: physical session id -> activity watermark
+  /// (seconds). See [markSessionDeleted].
+  Map<String, double> _deleted = {};
+
+  /// List reads of this process that have not finished (see
+  /// [beginListRead]), and for each tombstone of this process the last read
+  /// that had started when it was recorded. Not persisted: no read of an
+  /// earlier process can still answer.
+  int _listReadSeq = 0;
+  final Set<int> _openListReads = {};
+  final Map<String, int> _deletedAfterRead = {};
 
   int _revision = 0;
 
@@ -84,12 +104,14 @@ class SessionArchive extends ChangeNotifier {
   String get _pinnedKey => '$_pinnedPrefix$_connectionId';
   String get _hiddenKey => '$_hiddenPrefix$_connectionId';
   String get _titleKey => '$_titlePrefix$_connectionId';
+  String get _deletedKey => '$_deletedPrefix$_connectionId';
 
   void _read() {
     _archived = (_prefs.getStringList(_key) ?? []).toSet();
     _pinned = (_prefs.getStringList(_pinnedKey) ?? []).toSet();
     _hidden = (_prefs.getStringList(_hiddenKey) ?? []).toSet();
     _titles = _decodeTitles(_prefs.getStringList(_titleKey) ?? const []);
+    _deleted = _decodeDeleted(_prefs.getStringList(_deletedKey) ?? const []);
   }
 
   void _resync() {
@@ -97,11 +119,13 @@ class SessionArchive extends ChangeNotifier {
     final pinned = _pinned;
     final hidden = _hidden;
     final titles = _titles;
+    final deleted = _deleted;
     _read();
     if (setEquals(archived, _archived) &&
         setEquals(pinned, _pinned) &&
         setEquals(hidden, _hidden) &&
-        mapEquals(titles, _titles)) {
+        mapEquals(titles, _titles) &&
+        mapEquals(deleted, _deleted)) {
       return;
     }
     _revision++;
@@ -213,6 +237,110 @@ class SessionArchive extends ChangeNotifier {
     await _flush();
   }
 
+  // ── Borradas en el servidor ───────────────────────────────────────────────
+
+  /// True when [session] is a row the server already confirmed deleted.
+  ///
+  /// Every screen (Home recents, Conversations, drawer) filters with this, so
+  /// a delete made on any screen drops the row everywhere in the same frame
+  /// and a stale retained page, cached tail or slow refresh cannot bring it
+  /// back. Only the deleted physical id matches, and only up to the activity
+  /// watermark recorded at deletion: a row with newer activity is real data
+  /// (the server recreated it) and is shown.
+  bool isSessionDeleted(Session session) {
+    final watermark = _deleted[session.id];
+    if (watermark == null) return false;
+    return _activitySeconds(session.lastActivityAt) <= watermark;
+  }
+
+  /// True when the server confirmed [sessionId] deleted, whatever activity
+  /// arrives for it later.
+  ///
+  /// For surfaces that only hold an id (the home screen widget): a late
+  /// event from the deleted chat stamps fresh activity, so the watermark
+  /// rule of [isSessionDeleted] would let it back in.
+  bool isSessionIdDeleted(String sessionId) => _deleted.containsKey(sessionId);
+
+  /// Records a deletion the server confirmed for [sessionIds] (the physical
+  /// ids that were deleted). Notifies every screen synchronously.
+  Future<void> markSessionDeleted(
+    Session session, {
+    Iterable<String> sessionIds = const [],
+    DateTime? now,
+  }) {
+    final nowSeconds = (now ?? DateTime.now()).millisecondsSinceEpoch / 1000.0;
+    final activity = _activitySeconds(session.lastActivityAt);
+    final watermark = activity > nowSeconds ? activity : nowSeconds;
+    for (final id in {session.id, ...sessionIds}) {
+      if (id.isEmpty) continue;
+      final previous = _deleted[id];
+      if (previous == null || previous < watermark) _deleted[id] = watermark;
+      _deletedAfterRead[id] = _listReadSeq;
+    }
+    _evictUnneededTombstones();
+    return _flush();
+  }
+
+  /// Starts a session list read (a page or walk of `/api/sessions`) whose
+  /// rows will be stored or painted. Call [SessionListRead.end] once its
+  /// result has been applied, or abandoned.
+  ///
+  /// Screens drop a deleted row from what they retain at once and filter
+  /// every later result with the tombstones, so once every read that had
+  /// started before a deletion has ended, nothing can carry the row again:
+  /// later reads come from the server, which no longer has it. Only then
+  /// may the tombstone go. A plain oldest-first cap would let a read still
+  /// in flight (or a page it retained) resurrect the evicted row.
+  SessionListRead beginListRead() {
+    final id = ++_listReadSeq;
+    _openListReads.add(id);
+    return SessionListRead._(this, id);
+  }
+
+  void _endListRead(int id) {
+    if (!_openListReads.remove(id)) return;
+    if (_evictUnneededTombstones()) unawaited(_flush());
+  }
+
+  /// A tombstone is still needed while a list read that began before it was
+  /// recorded is open.
+  bool _tombstoneNeeded(String id) {
+    final lastReadBefore = _deletedAfterRead[id];
+    if (lastReadBefore == null) return false;
+    return _openListReads.any((read) => read <= lastReadBefore);
+  }
+
+  /// Keeps the store within [maxDeletedTombstones] by dropping, oldest
+  /// first, only tombstones no read can still need. Returns whether any went.
+  bool _evictUnneededTombstones() {
+    final excess = _deleted.length - maxDeletedTombstones;
+    if (excess <= 0) return false;
+    final evictable =
+        _deleted.entries.where((e) => !_tombstoneNeeded(e.key)).toList()
+          ..sort((a, b) => a.value.compareTo(b.value));
+    for (final entry in evictable.take(excess)) {
+      _deleted.remove(entry.key);
+      _deletedAfterRead.remove(entry.key);
+    }
+    return evictable.isNotEmpty;
+  }
+
+  /// Session timestamps arrive in seconds or milliseconds.
+  static double _activitySeconds(double value) =>
+      value > 100000000000 ? value / 1000 : value;
+
+  static Map<String, double> _decodeDeleted(List<String> rows) {
+    final deleted = <String, double>{};
+    for (final row in rows) {
+      final tab = row.indexOf('\t');
+      if (tab <= 0) continue;
+      final watermark = double.tryParse(row.substring(tab + 1));
+      if (watermark == null || !watermark.isFinite) continue;
+      deleted[row.substring(0, tab)] = watermark;
+    }
+    return deleted;
+  }
+
   // ── Títulos locales ──────────────────────────────────────────────────────
 
   String titleFor(String sessionId, String serverTitle) {
@@ -312,6 +440,11 @@ class SessionArchive extends ChangeNotifier {
       _prefs.setStringList(_pinnedKey, _pinned.toList()),
       _prefs.setStringList(_hiddenKey, _hidden.toList()),
       _writeTitles(),
+      if (_deleted.isNotEmpty || _prefs.containsKey(_deletedKey))
+        _prefs.setStringList(
+          _deletedKey,
+          _deleted.entries.map((e) => '${e.key}\t${e.value}').toList(),
+        ),
     ]);
     notifyListeners();
     return writes;
@@ -577,4 +710,15 @@ final class _AcknowledgedPinWrite {
 
   _AcknowledgedPinWrite confirmedCopy() =>
       _AcknowledgedPinWrite(revision, pinned, confirmed: true);
+}
+
+/// An open session list read; see [SessionArchive.beginListRead].
+final class SessionListRead {
+  SessionListRead._(this._archive, this._id);
+
+  final SessionArchive _archive;
+  final int _id;
+
+  /// Idempotent.
+  void end() => _archive._endListRead(_id);
 }

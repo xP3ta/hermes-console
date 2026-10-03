@@ -78,6 +78,8 @@ import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/core/screens/lock_screen.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
+import 'package:hermes_android/core/services/session_archive.dart';
+import 'package:hermes_android/core/models/home_widget_snapshot.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
 import 'package:hermes_android/core/navigation/chat_route.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -10105,6 +10107,65 @@ void main() {
     expect(secureStore[key], raw);
   });
 
+  testWidgets('a chat created here is one local entry, under the server id', (
+    tester,
+  ) async {
+    final gateway = _SubmissionGateway();
+    final connection = _remoteConn('created-once');
+    const provisional = Session(
+      id: 'mob-created-once',
+      title: 'New',
+      model: 'hermes-agent',
+      source: 'mobile',
+      messageCount: 0,
+      isActive: true,
+      preview: '',
+      profile: 'default',
+      startedAt: 1,
+    );
+    final chat = await pumpChat(
+      tester,
+      session: provisional,
+      connection: connection,
+      desktopGateway: gateway,
+    );
+    final store = ChatDraftStore(
+      await SharedPreferences.getInstance(),
+      secureStorage: _MemoryDraftSecureStorage(secureStore),
+    );
+    Future<List<String>> localIds() async => [
+      for (final entry in await store.listForConnection(connection.id))
+        entry.sessionId,
+    ];
+    final field = find.byType(TextField).first;
+
+    // Before the first send the chat only exists here, as one draft row.
+    await tester.enterText(field, 'first turn');
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(await localIds(), ['mob-created-once']);
+
+    await tester.tap(find.byKey(const ValueKey('send')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    gateway.emitComplete();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(chat.createdDraftSessionId, 'stored-submission-test');
+    // Sent: nothing local is left that Home or Conversations could paint
+    // beside the server row.
+    expect(await localIds(), isEmpty);
+
+    // A follow-up draft rides the server row instead of a second entry.
+    await tester.enterText(field, 'follow-up');
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(await localIds(), ['stored-submission-test']);
+    Navigator.of(tester.element(find.byType(ChatScreen))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(await localIds(), ['stored-submission-test']);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'INDEPENDENT same provisional route reattach can save canonical draft',
     (tester) async {
@@ -14396,6 +14457,134 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  /// Deletes the open chat through the chat menu against a fake server that
+  /// confirms it. Returns the deleted ids the server received.
+  Future<List<String>> deleteFromChatMenu(WidgetTester tester) async {
+    final deletes = <String>[];
+    final server = MockClient((request) async {
+      if (request.method == 'DELETE') {
+        deletes.add(request.url.pathSegments.last);
+        return http.Response('{"deleted": true}', 200);
+      }
+      if (request.url.path.endsWith('/sessions')) {
+        return http.Response(
+          jsonEncode({
+            'object': 'list',
+            'data': [
+              {
+                'id': 'sess-test',
+                'title': 'Conversación de prueba',
+                'source': 'mobile',
+                'message_count': 2,
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      return http.Response('not found', 404);
+    });
+
+    await http.runWithClient(() async {
+      await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('chat-control-delete')),
+        260,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('chat-control-sheet')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.tap(find.byKey(const ValueKey('chat-control-delete')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      final dialogActions = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextButton),
+      );
+      await tester.tap(dialogActions.last);
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }, () => server);
+    return deletes;
+  }
+
+  testWidgets('a confirmed delete from the chat menu reaches the shared '
+      'store every list filters with', (tester) async {
+    await pumpChat(tester);
+    final deletes = await deleteFromChatMenu(tester);
+
+    expect(deletes, ['sess-test']);
+    final prefs = await SharedPreferences.getInstance();
+    final shared = await SessionArchive.load(prefs, 'conn-test');
+    // What Home, Conversations and the drawer filter with: the row is gone
+    // from every list without waiting for their next network read.
+    expect(shared.isSessionDeleted(_session()), isTrue);
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byType(ChatScreen), findsNothing);
+  });
+
+  testWidgets('a confirmed delete from the chat menu leaves the home widget', (
+    tester,
+  ) async {
+    const widgetChannel = MethodChannel('home_widget');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      widgetChannel,
+      (call) async => call.method == 'getWidgetData' ? null : true,
+    );
+    addTearDown(() => messenger.setMockMethodCallHandler(widgetChannel, null));
+    await pumpChat(
+      tester,
+      initialPreferences: {
+        'saved_connections': [jsonEncode(_conn().toMap())],
+        'last_connection_id': 'conn-test',
+      },
+    );
+    final app = tester.state<HermesAppState>(find.byType(HermesApp));
+    // The widget points at this chat, as after its last turn.
+    unawaited(
+      app.homeWidgetPublisher
+          .publish(
+            const HermesHomeWidgetSnapshot(
+              configured: true,
+              instanceId: 'conn-test',
+              connectionState: HomeWidgetConnectionState.connected,
+              sessionId: 'sess-test',
+              sessionTitle: 'Conversación de prueba',
+              agentState: HomeWidgetAgentState.idle,
+            ),
+          )
+          .catchError((Object _) {}),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(app.homeWidgetPublisher.latest.sessionId, 'sess-test');
+
+    expect(await deleteFromChatMenu(tester), ['sess-test']);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(app.homeWidgetPublisher.latest.sessionId, isNull);
+    expect(app.homeWidgetPublisher.latest.sessionTitle, isNull);
+
+    // A late event from the deleted chat cannot put it back.
+    unawaited(
+      app.homeWidgetPublisher
+          .update(
+            (current) =>
+                current.copyWith(sessionId: 'sess-test', sessionTitle: 'Late'),
+          )
+          .catchError((Object _) {}),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(app.homeWidgetPublisher.latest.sessionId, isNull);
+    await tester.pump(const Duration(seconds: 1));
+  });
 
   testWidgets('/compact queda local, explica /compress y no toca el agente', (
     tester,
