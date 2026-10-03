@@ -1801,8 +1801,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           onChat: () => unawaited(_openChat(_currentAgent(agent))),
           onRooms: () => unawaited(_manageBotRooms(_currentAgent(agent))),
           onRoutines: () => _openRoutines(profile: name),
+          // a7: without the advanced editor, still this bot's SOUL.
           onSoul: gateway == null || readOnly
-              ? _openSoul
+              ? () => _openSoul(profile: name)
               : () => _openAdvancedSettings(name),
           onSkills: () => _openSkills(profile: name),
           onMemory: () => _openMemory(profile: name),
@@ -2068,9 +2069,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     ),
   );
 
-  void _openSoul() => Navigator.of(context).push(
+  void _openSoul({required String profile}) => Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) => SoulScreen(connection: widget.connection),
+      builder: (_) =>
+          SoulScreen(connection: widget.connection, profileOverride: profile),
     ),
   );
 

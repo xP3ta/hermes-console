@@ -417,6 +417,32 @@ void main() {
       );
     });
 
+    testWidgets('a7: a bot card SOUL stays on that bot while the active '
+        'profile switches under a read still on the wire', (tester) async {
+      final dashboard = _Dashboard();
+      final zedGate = dashboard.gates['soul:zed'] = Completer<void>();
+      await pump(
+        tester,
+        SoulScreen(
+          connection: _connection,
+          profileOverride: 'zed',
+          profileScope: scope,
+          dashboardClientForTesting: dashboard.client(),
+          bridgeManagerForTesting: _UnreachableBridge(SecureStorage(), manager),
+        ),
+      );
+      expect(find.text('Profile: zed'), findsOneWidget);
+      await scope.switchTo('bob');
+      await settle(tester);
+      zedGate.complete();
+      await settle(tester);
+      expect(soulText(tester), 'zed soul');
+      expect(find.text('Profile: zed'), findsOneWidget);
+      expect(dashboard.reads.where((r) => r.startsWith('soul:')).toSet(), {
+        'soul:zed',
+      });
+    });
+
     testWidgets('applying never writes to a profile switched to while the '
         'confirmation was open', (tester) async {
       final dashboard = _Dashboard();

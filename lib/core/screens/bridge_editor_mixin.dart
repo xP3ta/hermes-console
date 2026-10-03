@@ -61,6 +61,12 @@ mixin BridgeEditorMixin<T extends StatefulWidget> on State<T> {
   }
 
   Future<void> probeBridge() async {
+    // Built outside the app (tests): no bridge to probe.
+    if (bridgeManagerOverride == null &&
+        _mgr == null &&
+        context.findAncestorStateOfType<HermesAppState>() == null) {
+      return;
+    }
     var st = await bridgeManager.probe(bridgeConnectionId);
     // Autoprovisión: si corre pero falta token, obtenerlo con la gateway key.
     if (st.status == BridgeStatus.needsToken) {

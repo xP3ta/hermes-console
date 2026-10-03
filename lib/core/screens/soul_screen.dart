@@ -197,6 +197,9 @@ class SoulScreen extends StatefulWidget {
   /// Dashboard API (`/api/profiles/<name>/soul`). Pass null for a generic draft.
   final SavedConnection? connection;
 
+  /// Fixed profile (a bot card). Null follows the active profile.
+  final String? profileOverride;
+
   /// Active profile source; defaults to the app's for [connection].
   final ActiveProfileScope? profileScope;
   final DashboardClient? dashboardClientForTesting;
@@ -204,6 +207,7 @@ class SoulScreen extends StatefulWidget {
 
   const SoulScreen({
     this.connection,
+    this.profileOverride,
     this.profileScope,
     @visibleForTesting this.dashboardClientForTesting,
     @visibleForTesting this.bridgeManagerForTesting,
@@ -266,8 +270,10 @@ class _SoulScreenState extends State<SoulScreen>
     super.initState();
     final connection = widget.connection;
     if (connection != null) {
+      final override = widget.profileOverride?.trim() ?? '';
       followActiveProfile(
         widget.profileScope ?? appActiveProfileScope(context, connection.id),
+        fixedProfile: override.isEmpty ? null : override,
       );
     }
     _loadDraft();

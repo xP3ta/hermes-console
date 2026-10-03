@@ -2931,4 +2931,30 @@ void main() {
       );
     },
   );
+
+  testWidgets('a7: SOUL on a bot card opens that bot\'s SOUL, not the active '
+      'profile\'s', (tester) async {
+    tester.view.physicalSize = const Size(800, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final manager = await _manager();
+    // The user is working in another profile. A read-only connection has no
+    // advanced editor, so the card opens the SOUL screen directly.
+    await manager.setActiveProfile(_connection.id, 'ana');
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        connection: _connection.copyWith(readOnly: true),
+        snapshot: _snapshot(profiles: const [AgentProfile(name: 'infra')]),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openAgentDetail(tester, 'infra');
+    final soul = find.byKey(const ValueKey('bot-profile-soul'));
+    await tester.ensureVisible(soul);
+    await tester.tap(soul);
+    await tester.pumpAndSettle();
+    expect(find.text('Perfil: infra'), findsOneWidget);
+    expect(find.text('Perfil: ana'), findsNothing);
+  });
 }
