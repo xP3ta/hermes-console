@@ -1945,8 +1945,15 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     setState(() => _showSplash = false);
     _retryPendingNewSessionLaunch();
     unawaited(_openVoiceOwnerChatIfReady());
-    unawaited(_openConfiguredStartupDestination());
+    unawaited(_startupDestinationRun = _openConfiguredStartupDestination());
   }
+
+  Future<void>? _startupDestinationRun;
+
+  /// The startup-destination pass (remembered route included), so tests
+  /// can assert that a wait it parked (App Lock) really ends.
+  @visibleForTesting
+  Future<void>? get debugStartupDestinationRun => _startupDestinationRun;
 
   /// Aplica la pantalla de arranque elegida por el usuario (issue #47).
   ///

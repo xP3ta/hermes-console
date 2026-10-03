@@ -417,11 +417,22 @@ void main() {
     }
     // ignore: invalid_use_of_protected_member
     expect(app.lock.locked.hasListeners, isTrue);
+    final run = tester
+        .state<HermesAppState>(find.byType(HermesApp))
+        .debugStartupDestinationRun;
+    expect(run, isNotNull);
+    var waitEnded = false;
+    unawaited(run!.whenComplete(() => waitEnded = true));
+    await tester.pump();
+    expect(waitEnded, isFalse, reason: 'still parked on App Lock');
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
     // The remembered-route waiter was the only listener left behind.
     // ignore: invalid_use_of_protected_member
     expect(app.lock.locked.hasListeners, isFalse);
+    // And its parked Future ends with the unmount instead of hanging
+    // forever (the lock is still on: nothing else could complete it).
+    expect(waitEnded, isTrue);
     app.lock.unlock();
     for (var i = 0; i < 4; i++) {
       await tester.pump(const Duration(milliseconds: 500));
