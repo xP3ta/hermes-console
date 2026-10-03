@@ -7720,5 +7720,9 @@
   "profileSwitcherHint": "Switch profile",
   "profileSwitcherBody": "Each profile has its own chats, memory, SOUL, skills and model.",
   "profileSwitcherLoadFailed": "Couldn't load the profiles. Tap to retry.",
-  "profileSwitcherManage": "Manage profiles"
+  "profileSwitcherManage": "Manage profiles",
+  "tc1215DiffMoreLines": "Show {count} more lines",
+  "@tc1215DiffMoreLines": {"placeholders": {"count": {"type": "int"}}},
+  "tc1215DiffSemantics": "{name}: {added} lines added, {removed} removed",
+  "@tc1215DiffSemantics": {"placeholders": {"name": {"type": "String"}, "added": {"type": "int"}, "removed": {"type": "int"}}}
 }

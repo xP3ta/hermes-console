@@ -118,6 +118,7 @@ import 'package:hermes_android/core/services/voice/voice_phase.dart';
 import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/core/widgets/attachment_history_preview.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
+import 'package:hermes_android/core/widgets/chat/tool_output_cards.dart';
 import 'package:hermes_android/core/widgets/compaction_dock.dart';
 import 'package:hermes_android/core/widgets/generated_image_card.dart';
 import 'package:hermes_android/core/widgets/activity_panel.dart';
@@ -23669,6 +23670,69 @@ void main() {
         find.textContaining('/home/private', findRichText: true),
         findsNothing,
       );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'pt1215: una edición terminada en vivo muestra su diff al desplegar la traza',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-pt1215-diff'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_DIFF_PARENT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-pt-diff',
+        'name': 'patch',
+        'args': {'path': 'lib/foo.dart'},
+      });
+      gateway.emit('tool.complete', const {
+        'tool_id': 'call-pt-diff',
+        'name': 'patch',
+        'args': {'path': 'lib/foo.dart'},
+        'inline_diff':
+            '┊ review diff\n'
+            '\x1B[36ma/lib/foo.dart → b/lib/foo.dart\x1B[0m\n'
+            '@@ -1 +1,2 @@\n-old\n+new\n+more',
+        'result': {'success': true},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      gateway.emit('message.complete', const {'text': 'PUBLIC_DIFF_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      // Folded trace: no diff row, nothing parsed.
+      expect(find.byType(FileDiffCard), findsNothing);
+      expect(find.byType(FileDiffBody), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(FileDiffCard), findsOneWidget);
+      expect(find.byType(FileDiffBody), findsNothing);
+      final row = find.byKey(const ValueKey('file-diff-row-lib/foo.dart'));
+      await tester.ensureVisible(row);
+      await tester.pump();
+      await tester.tap(row);
+      await tester.pump();
+      expect(find.byType(FileDiffBody), findsOneWidget);
+      expect(find.text('+new'), findsOneWidget);
+      expect(find.text('-old'), findsOneWidget);
+      expect(find.textContaining('review diff'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

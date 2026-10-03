@@ -9405,5 +9405,9 @@
   "profileSwitcherHint": "Cambiar de perfil",
   "profileSwitcherBody": "Cada perfil tiene sus propios chats, memoria, SOUL, skills y modelo.",
   "profileSwitcherLoadFailed": "No se pudieron cargar los perfiles. Toca para reintentar.",
-  "profileSwitcherManage": "Gestionar perfiles"
+  "profileSwitcherManage": "Gestionar perfiles",
+  "tc1215DiffMoreLines": "Ver {count} líneas más",
+  "@tc1215DiffMoreLines": {"placeholders": {"count": {"type": "int"}}},
+  "tc1215DiffSemantics": "{name}: {added} líneas añadidas, {removed} eliminadas",
+  "@tc1215DiffSemantics": {"placeholders": {"name": {"type": "String"}, "added": {"type": "int"}, "removed": {"type": "int"}}}
 }

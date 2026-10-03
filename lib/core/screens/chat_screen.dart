@@ -78,6 +78,7 @@ import '../models/session_activity.dart';
 import '../models/session_live_status.dart';
 import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
+import '../models/tool_output.dart';
 import '../navigation/chat_route.dart';
 import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
 import '../services/hermes_update_monitor.dart';
@@ -9047,6 +9048,29 @@ class _ChatScreenState extends State<ChatScreen>
       ? prefix
       : '$prefix\n\n$content';
 
+  /// pt1215: durable tool outputs (diffs, terminal output) by tool id, built
+  /// lazily from the internal transcript and reused while it is unchanged.
+  Map<String, ToolOutputRecord> _durableToolOutputs = const {};
+  Object? _durableToolOutputsSource;
+
+  ToolOutputRecord? _toolOutputFor(String toolId) {
+    final live = _chat.toolOutputs[toolId];
+    if (live != null) return live;
+    // While a turn streams the transcript changes every flush; the live
+    // ledger covers the running turn and history keeps its last index.
+    if (!_chat.isStreaming) {
+      final source = _messages;
+      if (!identical(source, _durableToolOutputsSource)) {
+        _durableToolOutputsSource = source;
+        _durableToolOutputs = indexDurableToolOutputs(
+          _chat.contentHistoryTranscript,
+          toolResultsKey: assistantToolResultEvidenceKey,
+        );
+      }
+    }
+    return _durableToolOutputs[toolId];
+  }
+
   bool _isLatestAssistant(Map<String, dynamic> target) {
     final indexes = _currentRenderProjection.assistantMessageIndexesNewestFirst;
     return indexes.isNotEmpty && identical(_messages[indexes.first], target);
@@ -16008,6 +16032,7 @@ class _ChatScreenState extends State<ChatScreen>
           ? (suggestion) => _useAssistantSuggestion(msg, suggestion)
           : null,
       compact: compact,
+      toolOutputs: role == 'assistant' ? _toolOutputFor : null,
     );
   }
 
@@ -17668,6 +17693,7 @@ class _MessageBubble extends StatelessWidget {
   final AssistantSuggestionCallback? onSuggestionSelected;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
+  final ToolOutputLookup? toolOutputs;
 
   const _MessageBubble({
     required this.content,
@@ -17700,6 +17726,7 @@ class _MessageBubble extends StatelessWidget {
     this.onSuggestionSelected,
     this.compact = false,
     this.performanceProbe,
+    this.toolOutputs,
   });
 
   @override
@@ -17741,6 +17768,7 @@ class _MessageBubble extends StatelessWidget {
             onSuggestionSelected: onSuggestionSelected,
             compact: compact,
             performanceProbe: performanceProbe,
+            toolOutputs: toolOutputs,
           );
   }
 }
@@ -18835,8 +18863,9 @@ class _UserMessage extends StatelessWidget {
 List<ChatTraceEvent> _assistantActivityEvents(
   BuildContext context,
   Map<String, dynamic> metadata,
-  String legacyReasoning,
-) {
+  String legacyReasoning, {
+  ToolOutputLookup? toolOutputs,
+}) {
   final s = Strings.of(context);
   final normalized = normalizeAssistantActivityTrace(
     metadata[assistantActivityTraceKey],
@@ -18870,6 +18899,7 @@ List<ChatTraceEvent> _assistantActivityEvents(
         startedAt: measured?.startedAt,
         duration: measured?.duration,
         memory: MemoryWrite.fromStep(step[memoryWriteStepKey]),
+        output: _settledToolOutput(step, label, toolOutputs),
       ),
     );
   }
@@ -18886,6 +18916,23 @@ List<ChatTraceEvent> _assistantActivityEvents(
     );
   }
   return events;
+}
+
+typedef ToolOutputLookup = ToolOutputRecord? Function(String toolId);
+
+/// Only a settled step of a tool that can leave a diff/terminal output asks
+/// the lookup, so ordinary traces never touch the durable index.
+ToolOutputRecord? _settledToolOutput(
+  Map<String, dynamic> step,
+  String label,
+  ToolOutputLookup? lookup,
+) {
+  if (lookup == null || step['status'] == 'running') return null;
+  if (!isFileEditToolName(label) && !terminalOutputToolNames.contains(label)) {
+    return null;
+  }
+  final id = step['id'];
+  return id is String && id.isNotEmpty ? lookup(id) : null;
 }
 
 Duration? _assistantActivityDuration(Map<String, dynamic> metadata) {
@@ -19098,6 +19145,7 @@ class _AssistantMessage extends StatelessWidget {
   final AssistantSuggestionCallback? onSuggestionSelected;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
+  final ToolOutputLookup? toolOutputs;
 
   const _AssistantMessage({
     required this.content,
@@ -19121,6 +19169,7 @@ class _AssistantMessage extends StatelessWidget {
     this.onSuggestionSelected,
     this.compact = false,
     this.performanceProbe,
+    this.toolOutputs,
   });
 
   @override
@@ -19142,6 +19191,7 @@ class _AssistantMessage extends StatelessWidget {
       context,
       metadata,
       split.reasoning,
+      toolOutputs: toolOutputs,
     );
     final activityActive =
         activityEvents.isNotEmpty &&

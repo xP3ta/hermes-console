@@ -22,6 +22,8 @@ import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/json_rpc_wire.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
+import 'package:hermes_android/core/models/tool_output.dart';
+import 'package:hermes_android/core/utils/unified_diff.dart';
 
 import 'support/contract/gateway_contract.dart';
 
@@ -165,6 +167,18 @@ final List<_Consumer> _consumers = [
       (c) => c.eventPayloadSchema(type),
       (s) => _subagent(type, s),
     ),
+  // pt1215: a file edit's `inline_diff` becomes a diff card (any tool name
+  // the server marks as an edit; `patch` stands in for it here).
+  _Consumer(
+    'event',
+    'tool.complete',
+    (c) => c.eventPayloadSchema('tool.complete'),
+    (s) =>
+        ToolOutputRecord.fromCompletePayload({...s, 'name': 'patch'}) != null,
+    semanticallyEmpty: (s) =>
+        s['inline_diff'] is! String ||
+        cleanInlineDiff(s['inline_diff'] as String).isEmpty,
+  ),
   _Consumer(
     'event',
     'todo.updated',

@@ -55,6 +55,7 @@ import '../models/provider_auth_failure.dart';
 import '../models/session_activity.dart';
 import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
+import '../models/tool_output.dart';
 import '../models/transcript_privacy_state.dart';
 import '../screens/chat_render_projection.dart';
 import '../utils/assistant_content.dart';
@@ -7629,6 +7630,11 @@ class ActiveChat {
   /// privacy vetoes still apply.
   List<Map<String, dynamic>> get contentHistoryTranscript =>
       _applyDurablePrivateTranscriptVetoes(_messages);
+
+  /// pt1215: diffs and terminal output of tools finished live on this chat
+  /// (`tool.complete` `inline_diff`/`result`), keyed by tool id. Display
+  /// only; history falls back to durable tool rows.
+  final ToolOutputLedger toolOutputs = ToolOutputLedger();
 
   /// Consumes the bounded, non-fatal producer warning exactly once for the
   /// mounted chat surface. It is diagnostic state, never assistant content.
@@ -21123,6 +21129,7 @@ class ActiveChat {
           'error': payload['error'] != null || payload['status'] == 'error',
         }, running: false);
         _upsertAssistantToolActivity(payload, running: false, startsNew: false);
+        toolOutputs.recordComplete(payload);
         _applyTodoToolEvent(payload);
         _emit(ActiveChatEvent.toolProgress);
       case 'approval.request':
