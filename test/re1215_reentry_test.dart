@@ -218,6 +218,42 @@ void main() {
       );
     });
 
+    // External review of 3ccc3a8: the roster may not have provided
+    // `last_active` while this chat's turn ran (setUp's busy row carries no
+    // stamp), so the settle has no baseline. A Desktop turn started right
+    // after the end still carries a stamp newer than that end and must
+    // show at once; a stamp from before the end is the finished turn.
+    test('without a baseline stamp, a busy row stamped after the end shows '
+        'at once and one stamped before it stays suppressed', () async {
+      await finishTurn();
+      final endedAt = chat.lastTerminalAt!;
+      service.debugDisposeChatForTesting('peer', 'stored-peer');
+
+      clock = clock.add(const Duration(seconds: 1));
+      _applyRoster(
+        service,
+        'working',
+        lastActiveAt: endedAt.subtract(const Duration(seconds: 30)),
+      );
+      expect(
+        _listStatus(service).isLive,
+        isFalse,
+        reason: 'a stamp from before the end is the finished turn',
+      );
+
+      clock = clock.add(const Duration(seconds: 1));
+      _applyRoster(
+        service,
+        'working',
+        lastActiveAt: endedAt.add(const Duration(seconds: 1)),
+      );
+      expect(
+        _listStatus(service).phase,
+        SessionLivePhase.working,
+        reason: 'a turn stamped after the end is a new turn',
+      );
+    });
+
     test('re-entering shows no provisional «working» pill', () async {
       await finishTurn();
       service.debugDisposeChatForTesting('peer', 'stored-peer');

@@ -255,12 +255,12 @@ final class GlobalActivityAggregate extends ChangeNotifier {
         // The suppression keys on the finished turn. Hermes stamps
         // `last_active` when a turn is submitted; a busy row stamped after
         // the newest stamp seen up to the settle belongs to a newer turn
-        // (e.g. started from Desktop right after) and applies at once.
-        final baseline = settled.lastActiveAt;
+        // (e.g. started from Desktop right after) and applies at once. When
+        // the roster never stamped the finished turn, its end is the floor.
+        final baseline = settled.lastActiveAt ?? settled.endedAt;
         final newerTurn =
             rosterStatusIsBusy(row.status) &&
             requestGeneration > settled.generation &&
-            baseline != null &&
             stamp != null &&
             stamp.isAfter(baseline);
         if (!newerTurn &&
@@ -350,6 +350,7 @@ final class GlobalActivityAggregate extends ChangeNotifier {
         generation: generation,
         at: _now().toUtc(),
         lastActiveAt: _rosterLastActive[durableKey],
+        endedAt: endedAt.toUtc(),
       );
       while (_settledRosterGeneration.length > 256) {
         _settledRosterGeneration.remove(_settledRosterGeneration.keys.first);
@@ -363,7 +364,10 @@ final class GlobalActivityAggregate extends ChangeNotifier {
     if (changed) _changed();
   }
 
-  final Map<String, ({int generation, DateTime at, DateTime? lastActiveAt})>
+  final Map<
+    String,
+    ({int generation, DateTime at, DateTime? lastActiveAt, DateTime endedAt})
+  >
   _settledRosterGeneration = {};
 
   /// Newest server `last_active` stamp seen per durable session; the stamp
