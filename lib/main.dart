@@ -1997,6 +1997,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
 
   bool _startupDestinationApplied = false;
 
+  /// Removes the remembered-route unlock listener while it is waiting.
+  VoidCallback? _releaseColdStartUnlockWait;
+
   /// cs1215: like Desktop's remembered route, a cold start reopens the
   /// surface the user was on for the active connection. A notification,
   /// shortcut or deep link already in flight wins; App Lock defers it until
@@ -2050,10 +2053,18 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
           }
         }
 
-        widget.appLock.locked.addListener(onChange);
+        final lock = widget.appLock.locked;
+        lock.addListener(onChange);
+        // dispose() runs this if the shell unmounts while still locked: the
+        // listener goes and the wait ends (`mounted` is then false).
+        _releaseColdStartUnlockWait = () {
+          lock.removeListener(onChange);
+          if (!unlocked.isCompleted) unlocked.complete();
+        };
         onChange();
         await unlocked.future;
-        widget.appLock.locked.removeListener(onChange);
+        _releaseColdStartUnlockWait?.call();
+        _releaseColdStartUnlockWait = null;
       }
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted || nav.canPop() || externalEntryPending()) {
@@ -2594,6 +2605,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     );
     widget.appLock.locked.removeListener(_retryPendingNewSessionLaunch);
     widget.appLock.locked.removeListener(_onAppLockNoticeGateChanged);
+    _releaseColdStartUnlockWait?.call();
+    _releaseColdStartUnlockWait = null;
     _newSessionLaunchSub?.cancel();
     unawaited(_newSessionLaunchInbox.dispose());
     _inAppSub?.cancel();

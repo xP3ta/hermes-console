@@ -334,6 +334,29 @@ void main() {
     await tearDownApp(tester, app.chats);
   });
 
+  testWidgets('unmounting the shell while App Lock waits drops the unlock '
+      'listener and never opens the chat afterwards', (tester) async {
+    final storage = (await tester.runAsync(previousRun))!;
+    final app = await pumpApp(tester, storage: storage, locked: true);
+    for (var i = 0; i < 16; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+    // ignore: invalid_use_of_protected_member
+    expect(app.lock.locked.hasListeners, isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    // The remembered-route waiter was the only listener left behind.
+    // ignore: invalid_use_of_protected_member
+    expect(app.lock.locked.hasListeners, isFalse);
+    app.lock.unlock();
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+    expect(app.reads, isEmpty);
+    app.chats.dispose();
+    await tester.pump(const Duration(minutes: 5));
+  });
+
   testWidgets('a pending notification open wins over the remembered route', (
     tester,
   ) async {
