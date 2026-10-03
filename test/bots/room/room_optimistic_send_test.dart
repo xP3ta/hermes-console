@@ -2,14 +2,19 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
+import 'package:hermes_android/core/bots/ui/room/room_launcher.dart';
 import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
+import 'package:hermes_android/core/services/chat_draft_store.dart';
+import 'package:hermes_android/core/services/session_deletion.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'room_fixtures.dart';
 
@@ -43,6 +48,10 @@ final class _SlowRoomGateway implements RoomGateway {
 
   /// The room cannot be read (offline, refresh unavailable).
   bool failRead = false;
+
+  /// The acknowledgement answers at once, before any storage work queued by
+  /// the send could run.
+  bool instantAck = false;
 
   _SlowRoomGateway({required this.room, required this.events});
 
@@ -92,7 +101,7 @@ final class _SlowRoomGateway implements RoomGateway {
       thread: attempt.threadId,
     ));
     if (publishBeforeAck && !failSend) _publish(text, attempt);
-    await Future<void>.delayed(_rpc * 2);
+    if (!instantAck) await Future<void>.delayed(_rpc * 2);
     if (failSend) throw StateError('network down');
     _publish(text, attempt);
     if (failAfterPublish) throw StateError('readback failed');
@@ -844,6 +853,60 @@ void main() {
       await tester.pumpAndSettle();
       expect(_composerText(tester), 'lost send\ntyped offline');
       expect(gateway.sends, isEmpty);
+    });
+
+    testWidgets('an instant acknowledgement leaves no draft of the sent '
+        'message in the real store', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      LocalConversationCleanupFence.resetForTesting();
+      SharedPreferences.setMockInitialValues({});
+      final secure = <String, String>{};
+      const channel = MethodChannel(
+        'plugins.it_nomads.com/flutter_secure_storage',
+      );
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        final args = (call.arguments as Map?)?.cast<String, dynamic>() ?? {};
+        switch (call.method) {
+          case 'write':
+            secure[args['key'] as String] = args['value'] as String;
+          case 'read':
+            return secure[args['key'] as String];
+          case 'delete':
+            secure.remove(args['key'] as String);
+          case 'readAll':
+            return Map<String, String>.from(secure);
+          case 'containsKey':
+            return secure.containsKey(args['key'] as String);
+        }
+        return null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final drafts = ChatDraftRoomStore(
+        store: ChatDraftStore(await SharedPreferences.getInstance()),
+        connectionId: 'conn-room',
+        profile: 'default',
+        sessionId: 'mob-room-instant-ack',
+      );
+      final (:gateway, :snapshot) = _staleRoom();
+      gateway.instantAck = true;
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pumpAndSettle();
+      await tester.enterText(_field, 'acked at once');
+      await _tapSend(tester);
+      await tester.pumpAndSettle();
+      expect(gateway.completedSends, 1);
+      expect(secure, isEmpty, reason: 'the sent text is no draft any more');
+
+      // Re-entering offline must not bring the sent text back either.
+      gateway.failRead = true;
+      await _leaveRoom(tester);
+      await _enterRoom(tester, gateway, snapshot, drafts);
+      await tester.pump(_rpc * 2);
+      await tester.pumpAndSettle();
+      expect(_composerText(tester), isEmpty);
     });
 
     testWidgets('a send readback settles a held draft the room refresh '
