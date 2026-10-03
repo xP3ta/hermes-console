@@ -17348,6 +17348,27 @@ class ActiveChat {
     return null;
   }
 
+  /// Identidad opaca del fallo que muestra la burbuja de error del último
+  /// turno, o `null` si no hay ninguno vigente (turno en curso, error retirado
+  /// o un prompt posterior). Cambia cuando el turno se reconcilia, se
+  /// reintenta o falla otro: un callback diferido (p. ej. el Retry tras volver
+  /// a iniciar sesión) la compara para no reenviar un turno que ya no es el
+  /// fallido.
+  Object? get currentFailedTurnToken {
+    for (final message in _messages) {
+      // Un prompt posterior al error ya es otro turno, también el reintento
+      // en curso, cuya fila user optimista queda encima.
+      if (isRealUserTurn(message)) return null;
+      if (message['role'] != 'assistant_error') continue;
+      final projectionId = message['_localTranscriptProjectionId'];
+      // Sin id de proyección (burbujas legadas) la propia fila es la identidad.
+      return projectionId is String && projectionId.isNotEmpty
+          ? projectionId
+          : message;
+    }
+    return null;
+  }
+
   /// Frontera durable del transcript visible justo antes de enviar: identidad
   /// exacta del último user durable, o prueba de que no había ninguno. Las
   /// proyecciones locales de intentos fallidos no son durables y se saltan: si

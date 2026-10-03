@@ -8449,6 +8449,13 @@ class _ChatScreenState extends State<ChatScreen>
   }) async {
     if (_providerReauthRunning) return;
     setState(() => _providerReauthRunning = true);
+    // Identidad del fallo que se ofrece reintentar. El flujo de inicio de
+    // sesión y el aviso posterior duran minutos: si entretanto el turno se
+    // reconcilia, se reintenta o falla otro, ese Retry ya no le corresponde.
+    final retryChat = _chat;
+    final failedTurn = onRetry == null
+        ? null
+        : retryChat.currentFailedTurnToken;
     var renewed = false;
     try {
       renewed = await runProviderReauth(
@@ -8471,13 +8478,29 @@ class _ChatScreenState extends State<ChatScreen>
       SnackBar(
         content: Text(s.hr1215SignedInAgain(label)),
         duration: const Duration(seconds: 10),
-        action: onRetry == null
+        action: onRetry == null || failedTurn == null
             ? null
-            : SnackBarAction(label: s.chaRetry, onPressed: onRetry),
+            : SnackBarAction(
+                label: s.chaRetry,
+                onPressed: () {
+                  if (!mounted ||
+                      !identical(_chat, retryChat) ||
+                      !_isSameFailedTurn(
+                        retryChat.currentFailedTurnToken,
+                        failedTurn,
+                      )) {
+                    return;
+                  }
+                  onRetry();
+                },
+              ),
       ),
       kind: HermesNoticeKind.success,
     );
   }
+
+  static bool _isSameFailedTurn(Object? current, Object captured) =>
+      current is String ? current == captured : identical(current, captured);
 
   /// Retry the last failed send.
   Future<void> _retryLastPrompt([String? bubblePrompt]) async {

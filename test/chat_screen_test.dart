@@ -29920,6 +29920,140 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    // After a sign-in the notice offers Retry for ten seconds, and the flow
+    // itself can stay open for minutes. The retry belongs to the failed turn:
+    // once that turn was retried, reconciled or followed by a newer prompt,
+    // pressing it must not resend anything (it used to resend `_lastPrompt`,
+    // duplicating the newer prompt).
+    group('xr2 the post sign-in Retry belongs to its failed turn', () {
+      const authSurface = {
+        'text': 'Your sign-in expired.',
+        'status': 'error',
+        'error': revoked,
+        'recoverable': true,
+        'error_surface': {
+          'layer': 'auth',
+          'code': 'auth',
+          'retryable': false,
+          'provider': 'openai-codex',
+          'provider_label': 'ChatGPT',
+          'auth_kind': 'oauth',
+        },
+      };
+
+      Future<(ActiveChat, _UiRewindGateway)> signInAgain(
+        WidgetTester tester,
+      ) async {
+        final dashboard = fakeDashboard(
+          providers: [
+            {'id': 'openai-codex', 'name': 'ChatGPT', 'flow': 'device_code'},
+          ],
+        );
+        final failed = await failTurn(
+          tester,
+          dashboard: (_) => dashboard.client,
+          payload: authSurface,
+        );
+        await tester.tap(find.byKey(const ValueKey('hr1215-error-reauth')));
+        for (var i = 0; i < 10; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        await tester.pump(const Duration(seconds: 3));
+        for (var i = 0; i < 10; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        expect(find.text('Sesión de ChatGPT renovada'), findsOneWidget);
+        return failed;
+      }
+
+      Finder noticeRetry() => find.descendant(
+        of: find.byType(HermesNoticeCard),
+        matching: find.text('↺ reintentar'),
+      );
+
+      Future<void> settle(WidgetTester tester) async {
+        for (var i = 0; i < 5; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+      }
+
+      testWidgets('while the turn is still failed it resends it once', (
+        tester,
+      ) async {
+        final (_, gateway) = await signInAgain(tester);
+        expect(gateway.submissions, ['Resume el informe']);
+        await tester.tap(noticeRetry());
+        await settle(tester);
+        expect(gateway.submissions, ['Resume el informe', 'Resume el informe']);
+        gateway.emit('message.complete', const {'text': 'Informe listo'});
+        await settle(tester);
+        expect(tester.takeException(), isNull);
+      });
+
+      for (final finished in const [false, true]) {
+        testWidgets('after the bubble already retried the turn it does nothing '
+            '(${finished ? 'retry finished' : 'retry still running'})', (
+          tester,
+        ) async {
+          final (_, gateway) = await signInAgain(tester);
+          final bubbleRetry = find
+              .text('↺ reintentar')
+              .evaluate()
+              .firstWhere(
+                (element) =>
+                    element.findAncestorWidgetOfExactType<HermesNoticeCard>() ==
+                    null,
+              );
+          await tester.tap(find.byElementPredicate((e) => e == bubbleRetry));
+          await settle(tester);
+          expect(gateway.submissions, [
+            'Resume el informe',
+            'Resume el informe',
+          ]);
+          if (finished) {
+            gateway.emit('message.complete', const {'text': 'Informe listo'});
+            await settle(tester);
+          }
+
+          expect(noticeRetry(), findsOneWidget);
+          await tester.tap(noticeRetry());
+          await settle(tester);
+          expect(gateway.submissions, [
+            'Resume el informe',
+            'Resume el informe',
+          ]);
+          if (!finished) {
+            gateway.emit('message.complete', const {'text': 'Informe listo'});
+            await settle(tester);
+          }
+          expect(tester.takeException(), isNull);
+        });
+      }
+
+      testWidgets('after a newer prompt it never resends that prompt', (
+        tester,
+      ) async {
+        final (chat, gateway) = await signInAgain(tester);
+        expect(
+          await chat.send(
+            fullText: 'Otra pregunta',
+            model: 'hermes-agent',
+            history: const [],
+          ),
+          isTrue,
+        );
+        gateway.emit('message.complete', const {'text': 'Otra respuesta'});
+        await settle(tester);
+        expect(gateway.submissions, ['Resume el informe', 'Otra pregunta']);
+
+        expect(noticeRetry(), findsOneWidget);
+        await tester.tap(noticeRetry());
+        await settle(tester);
+        expect(gateway.submissions, ['Resume el informe', 'Otra pregunta']);
+        expect(tester.takeException(), isNull);
+      });
+    });
+
     testWidgets('the sign-in renews the chat gateway profile', (tester) async {
       final dashboard = fakeDashboard(
         providers: [
