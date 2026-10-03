@@ -3270,7 +3270,11 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _loadSharedArchive() async {
     final prefs = await SharedPreferences.getInstance();
     final archive = await SessionArchive.load(prefs, widget.connection.id);
-    if (mounted) _sharedArchive = archive;
+    if (!mounted) return;
+    _sharedArchive = archive;
+    // Opening a session marks it read on the server, from whichever surface
+    // opened it (Desktop `clearUnreadOnOpen`: every open, only when unread).
+    unawaited(archive.markSessionReadOnOpen(widget.session));
   }
 
   /// Records the server-confirmed delete in the store every list filters

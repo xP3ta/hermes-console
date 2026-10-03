@@ -29,6 +29,7 @@ import '../services/home_widget_publisher.dart';
 import '../services/platform/android_apps.dart';
 import '../services/local_transcript_store.dart';
 import '../services/session_archive.dart';
+import '../services/session_repository.dart';
 import '../services/session_deletion.dart';
 import '../services/turn_outbox_store.dart';
 import '../services/tui_gateway_client.dart';
@@ -201,6 +202,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     _listenedGlobalActivity?.removeListener(_onActivityChanged);
     _archive?.removeListener(_onActivityChanged);
     _archive?.removeListener(_dropDeletedRecents);
+    _detachStateWriter();
     _statusListRead?.end();
     _localStartPoll?.cancel();
     super.dispose();
@@ -829,7 +831,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       );
       return;
     }
-    await archive.setSessionTitle(session, trimmed);
+    try {
+      await archive.renameSession(session, trimmed);
+    } catch (_) {
+      if (!mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).slRenameFailed)),
+        kind: HermesNoticeKind.error,
+      );
+      return;
+    }
     if (!mounted) return;
     setState(() {});
     HermesNotice.of(context).showSnackBar(
@@ -1176,7 +1187,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _healthOk = ok;
       if (!ok) _dashboardAuth = DashboardAuthCheck.unknown;
       _checking = false;
-      _listenArchive(archive);
+      _listenArchive(archive, conn);
       if (!listReadUnavailable) {
         _recentSessions = recentSessions
             .where((s) => !archive.isSessionDeleted(s))
@@ -1235,12 +1246,28 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         .toList(growable: false);
   }
 
+  SessionStateWriter? _stateWriter;
+
+  void _detachStateWriter() {
+    final writer = _stateWriter;
+    _stateWriter = null;
+    if (writer != null) _archive?.detachRemoteState(writer);
+  }
+
   /// Follows the connection's shared [SessionArchive]: a rename, archive or
   /// hide made on any screen repaints the recents without a network read.
-  void _listenArchive(SessionArchive archive) {
+  ///
+  /// Also lends it a writer, so a hide, rename or read made from Home (or a
+  /// chat opened from it) reaches the server as Desktop's would.
+  void _listenArchive(SessionArchive archive, SavedConnection conn) {
     if (identical(_archive, archive)) return;
     _archive?.removeListener(_onActivityChanged);
     _archive?.removeListener(_dropDeletedRecents);
+    _detachStateWriter();
+    if (!conn.readOnly) {
+      final writer = _stateWriter = dashboardSessionStateWriter(conn);
+      archive.attachRemoteState(writer, httpStatusOf: dashboardHttpStatusOf);
+    }
     _archive = archive;
     archive.addListener(_dropDeletedRecents);
     archive.addListener(_onActivityChanged);
