@@ -1573,6 +1573,12 @@ class TuiGatewayClient
   Set<String> get watchedRuntimesForTesting =>
       Set.unmodifiable(_watchdogs.keys);
 
+  /// The single runtime a legacy gateway's unscoped events are attributed to,
+  /// and whether binding a second one made that attribution ambiguous.
+  @visibleForTesting
+  ({String? runtime, bool ambiguous}) get legacyEventRuntimeForTesting =>
+      (runtime: _legacyEventRuntimeId, ambiguous: _legacyEventRuntimeAmbiguous);
+
   @visibleForTesting
   Map<String, int> get replayWatermarksForTesting =>
       _replayCoordinator.watermarks;
