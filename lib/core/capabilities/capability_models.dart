@@ -182,6 +182,10 @@ final class CapabilityItem {
   /// bare name, which can collide across categories.
   final String installedKey;
   final bool installed;
+
+  /// The installed state could not be read for this profile (never the same
+  /// as "not installed"): nothing may offer an install or a mutation.
+  final bool stateUnknown;
   final bool? enabled;
   final bool updateAvailable;
 
@@ -212,6 +216,7 @@ final class CapabilityItem {
     this.installedName = '',
     this.installedKey = '',
     this.installed = false,
+    this.stateUnknown = false,
     this.enabled,
     this.updateAvailable = false,
     this.provenance = '',
@@ -229,6 +234,7 @@ final class CapabilityItem {
 
   CapabilityItem copyWith({
     bool? installed,
+    bool? stateUnknown,
     bool? enabled,
     bool? updateAvailable,
     String? installedName,
@@ -251,6 +257,7 @@ final class CapabilityItem {
     installedName: installedName ?? this.installedName,
     installedKey: installedKey ?? this.installedKey,
     installed: installed ?? this.installed,
+    stateUnknown: stateUnknown ?? this.stateUnknown,
     enabled: enabled ?? this.enabled,
     updateAvailable: updateAvailable ?? this.updateAvailable,
     provenance: provenance ?? this.provenance,

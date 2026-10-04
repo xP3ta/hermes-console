@@ -8780,6 +8780,8 @@
   "cphFailBlockedByScan": "El escaneo de seguridad bloqueó esta instalación.",
   "cphFailUnavailable": "El servidor no respondió a tiempo.",
   "cphFailUncertain": "No hubo respuesta a tiempo. Puede que se haya aplicado: actualiza la lista antes de reintentar.",
+  "cphStateUnknown": "Estado no disponible",
+  "cphStateUnknownBody": "No se pudo leer qué hay instalado en este perfil. Reintenta más tarde.",
   "cphLinkInvalid": "Este enlace no es válido.",
   "cphLinkGit": "Este enlace instala código desde un repositorio Git. Ábrelo en Desktop.",
   "cphLinkUnknown": "{name} no está en el catálogo de este servidor.",

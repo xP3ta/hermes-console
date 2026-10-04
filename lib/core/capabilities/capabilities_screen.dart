@@ -142,6 +142,7 @@ final class CapabilitiesSnapshot {
         out.add(
           entry.copyWith(
             installed: false,
+            stateUnknown: true,
             enabled: false,
             updateAvailable: false,
           ),

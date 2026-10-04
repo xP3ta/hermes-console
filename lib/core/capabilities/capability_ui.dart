@@ -52,6 +52,9 @@ String capabilityTrustBody(Strings s, CapabilityTrust trust) => switch (trust) {
   Strings s,
   CapabilityItem item,
 ) {
+  if (item.stateUnknown) {
+    return (label: s.cphStateUnknown, tone: HermesStatusTone.warn);
+  }
   if (!item.installed) return null;
   if (item.updateAvailable) {
     return (label: s.cphStatusUpdateShort, tone: HermesStatusTone.warn);
@@ -67,6 +70,9 @@ String capabilityTrustBody(Strings s, CapabilityTrust trust) => switch (trust) {
   Strings s,
   CapabilityItem item,
 ) {
+  if (item.stateUnknown) {
+    return (label: s.cphStateUnknown, tone: HermesStatusTone.warn);
+  }
   if (!item.installed) {
     return (label: s.cphStatusNotInstalled, tone: HermesStatusTone.neutral);
   }

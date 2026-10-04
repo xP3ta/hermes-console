@@ -31,7 +31,7 @@ List<CapabilityAction> capabilityActions(
       docs.scheme.toLowerCase() == 'https' &&
       docs.host.isNotEmpty;
   final out = <CapabilityAction>[];
-  if (!readOnly) {
+  if (!readOnly && !item.stateUnknown) {
     if (!item.installed) {
       // Entries on the catalog blocklist are never installable.
       if (item.installId.isNotEmpty && !item.disclosure.isRemoved) {
@@ -616,6 +616,8 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
     String? reason;
     if (widget.readOnly) {
       reason = s.cphReadOnly;
+    } else if (item.stateUnknown) {
+      reason = s.cphStateUnknownBody;
     } else if (d.isRemoved) {
       reason = s.cphRemovedFromCatalog(d.removedReason);
     } else if (!item.installed && item.installId.isEmpty) {

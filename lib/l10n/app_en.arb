@@ -7256,6 +7256,8 @@
   "cphFailBlockedByScan": "The security scan blocked this install.",
   "cphFailUnavailable": "The server didn't answer in time.",
   "cphFailUncertain": "No answer in time. It may have been applied: refresh the list before retrying.",
+  "cphStateUnknown": "State unavailable",
+  "cphStateUnknownBody": "Could not read what is installed in this profile. Try again later.",
   "cphLinkInvalid": "This link is not valid.",
   "cphLinkGit": "This link installs code from a Git repository. Open it on Desktop.",
   "cphLinkUnknown": "{name} is not in this server's catalog.",
