@@ -438,6 +438,13 @@ abstract interface class MissionHostedGroupsReadDataSource {
   });
 }
 
+/// The `groups.capabilities` live on the socket right now. An open room
+/// reads it before each read so a reconnect (a new socket generation) never
+/// leaves the room bound to the generation it was opened with.
+abstract interface class MissionHostedGroupsCapabilitySource {
+  Future<GroupsCapabilities> hostedGroupCapabilities();
+}
+
 /// Profiles and sessions read on their own, for a roster-only refresh.
 final class MissionRosterRead {
   final List<AgentProfile> profiles;
@@ -486,6 +493,7 @@ final class MissionControlRepository
         MissionProfileAvatarDataSource,
         MissionHostedGroupsDataSource,
         MissionHostedGroupsReadDataSource,
+        MissionHostedGroupsCapabilitySource,
         MissionLiveRefreshDataSource {
   final MissionProfilesLoader profilesLoader;
   final MissionSessionsLoader sessionsLoader;
@@ -866,6 +874,13 @@ final class MissionControlRepository
     int generation,
   ) {
     if (_logCursorGeneration != generation) {
+      // A new socket generation (a reconnect) still serves the same room
+      // history: each cursor resumes after the log it holds, and an
+      // authority change or rewound log still restarts it from zero.
+      for (final entry in _logCursors.entries) {
+        final held = entry.value.log;
+        if (held != null) _logSeeds[entry.key] = held;
+      }
       _logCursors.clear();
       _logCursorGeneration = generation;
     }
@@ -913,6 +928,14 @@ final class MissionControlRepository
       throw StateError('hosted group capability unavailable');
     }
     return gateway;
+  }
+
+  @override
+  Future<GroupsCapabilities> hostedGroupCapabilities() async {
+    if (_closed) throw StateError('MissionControlRepository is closed');
+    final gateway = hostedGroupsGateway;
+    if (gateway == null) throw StateError('hosted groups unsupported');
+    return gateway.capabilities();
   }
 
   @override
