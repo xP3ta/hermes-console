@@ -9436,7 +9436,5 @@
   "ad1215KeySet": "Configurada",
   "ad1215KeyMissing": "Sin configurar",
   "ad1215KeyField": "Valor de {key}",
-  "ad1215Active": "Activo",
-  "ad1215Hide": "Ocultar",
   "@ad1215KeyField": {"placeholders": {"key": {"type": "String"}}}
 }

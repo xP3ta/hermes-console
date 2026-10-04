@@ -7751,7 +7751,5 @@
   "ad1215KeySet": "Set",
   "ad1215KeyMissing": "Not set",
   "ad1215KeyField": "Value for {key}",
-  "ad1215Active": "Active",
-  "ad1215Hide": "Hide",
   "@ad1215KeyField": {"placeholders": {"key": {"type": "String"}}}
 }
