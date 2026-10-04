@@ -2382,7 +2382,18 @@ class _ChatScreenState extends State<ChatScreen>
     _scrollController.addListener(_onScroll);
     _textController.addListener(_onComposerChanged);
     _textFocusNode.addListener(_onComposerFocusChanged);
+    _reactionsWereEnabled = MessageReactionPrefs.shared.enabled;
+    MessageReactionPrefs.shared.addListener(_onReactionPrefChanged);
     unawaited(_restoreDraftAndRunInitialAction());
+  }
+
+  bool _reactionsWereEnabled = false;
+
+  void _onReactionPrefChanged() {
+    final enabled = MessageReactionPrefs.shared.enabled;
+    final turnedOn = enabled && !_reactionsWereEnabled;
+    _reactionsWereEnabled = enabled;
+    if (turnedOn && !_disposed) unawaited(_chat.confirmReactions());
   }
 
   void _onComposerFocusChanged() {
@@ -6910,6 +6921,7 @@ class _ChatScreenState extends State<ChatScreen>
     // defunct. El stream del agente NO se cancela aquí: el servicio lo mantiene
     // vivo en segundo plano (se suelta más abajo con _chatService.release).
     _disposed = true;
+    MessageReactionPrefs.shared.removeListener(_onReactionPrefChanged);
     _composerTurnSettleRetryTimer?.cancel();
     _composerTurnSettleRetryTimer = null;
     final modelConfirmationNavigator = _modelConfirmationNavigator;
@@ -15554,11 +15566,9 @@ class _ChatScreenState extends State<ChatScreen>
       builder: (context, child) {
         if (!MessageReactionPrefs.shared.enabled) return child!;
         if (!_chat.canReact) {
-          // Hidden until the server has confirmed message.react; the first
-          // build asks once and the chat repaints when that settles.
-          WidgetsBinding.instance.addPostFrameCallback(
-            (_) => unawaited(_chat.confirmReactions()),
-          );
+          // Hidden until the server has confirmed message.react. Asking is a
+          // lifecycle matter (connect, the preference turning on), never a
+          // build's.
           return child!;
         }
         final reactions = _chat.reactionsFor(rowId);

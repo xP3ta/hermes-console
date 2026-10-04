@@ -1,5 +1,6 @@
 import '../models/bot_mention.dart';
 import '../models/message_reaction.dart';
+import 'message_reaction_prefs.dart';
 import 'bot_mention_roster.dart';
 // Servicio singleton que posee el streaming SSE de los chats. Vive por encima
 // del Navigator (en HermesAppState), así que la respuesta/ejecución del agente
@@ -4554,29 +4555,17 @@ class ActiveChat {
   }
 
   bool _reactionProbeRunning = false;
-  DateTime? _reactionProbeAt;
 
-  /// An inconclusive probe (timeout, a refusal that does not name the method)
-  /// may be asked again, but never faster than this, so a rebuild loop cannot
-  /// turn into a request loop.
-  @visibleForTesting
-  Duration reactionProbeRetryAfter = const Duration(seconds: 60);
-
-  /// Asks the gateway once for this chat whether the server takes reactions
-  /// (a probe that writes nothing) and repaints when that settles. Safe to
-  /// call on every build: only the first call sends anything.
+  /// Asks the gateway whether the server takes reactions (a probe that writes
+  /// nothing) and repaints when that settles. Called from lifecycle and user
+  /// actions only: when the chat connects with reactions on, and when the
+  /// person turns them on. Never from a build. One probe runs at a time.
   Future<void> confirmReactions() async {
     if (_reactionProbeRunning || _disposed || canReact) return;
-    final last = _reactionProbeAt;
-    if (last != null &&
-        DateTime.now().difference(last) < reactionProbeRetryAfter) {
-      return;
-    }
     final runtimeId = _desktopRuntimeSessionId;
     final gateway = _desktopGateway as Object?;
     if (runtimeId == null || gateway is! HermesMessageReactionGateway) return;
     _reactionProbeRunning = true;
-    _reactionProbeAt = DateTime.now();
     try {
       await gateway.confirmMessageReactions(runtimeId);
     } catch (_) {
@@ -9239,6 +9228,9 @@ class ActiveChat {
   }
 
   void _emit(ActiveChatEvent e) {
+    if (e == ActiveChatEvent.connected && MessageReactionPrefs.shared.enabled) {
+      Timer.run(() => unawaited(confirmReactions()));
+    }
     // Un transcript recién hidratado o un turno recién terminado es la
     // evidencia que puede demostrar entregado un turno encolado incierto.
     if ((e == ActiveChatEvent.messagesHydrated || e == ActiveChatEvent.done) &&

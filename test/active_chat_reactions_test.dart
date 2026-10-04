@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/message_reaction.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/message_reaction_prefs.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -187,13 +188,12 @@ void main() {
   );
 
   test(
-    'the probe runs once per chat and never when the server lacks it',
+    'a server without message.react stays hidden',
     () async {
       final gateway = _FakeDesktopGateway()
         ..available = false
         ..serverHasReactions = false;
       final chat = await _liveChat(gateway);
-      await chat.confirmReactions();
       await chat.confirmReactions();
       expect(gateway.confirmCalls, 1);
       expect(chat.canReact, isFalse);
@@ -201,22 +201,41 @@ void main() {
   );
 
   test(
-    'an inconclusive probe may be retried after the cooldown, not before',
+    'connecting asks once when reactions are on and nothing else repeats it',
     () async {
+      SharedPreferences.setMockInitialValues({MessageReactionPrefs.key: true});
+      await MessageReactionPrefs.load();
+      addTearDown(() async {
+        SharedPreferences.setMockInitialValues({});
+        await MessageReactionPrefs.load();
+      });
       final gateway = _FakeDesktopGateway()
         ..available = false
         ..serverHasReactions = false;
       final chat = await _liveChat(gateway);
-      await chat.confirmReactions();
-      await chat.confirmReactions();
-      expect(gateway.confirmCalls, 1, reason: 'inside the cooldown');
-      chat.reactionProbeRetryAfter = Duration.zero;
-      gateway.serverHasReactions = true;
-      await chat.confirmReactions();
-      expect(gateway.confirmCalls, 2);
-      expect(chat.canReact, isTrue);
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.confirmCalls, 1, reason: 'the connect asked once');
+      // Reading the state (what a rebuild does) sends nothing.
+      for (var i = 0; i < 5; i++) {
+        expect(chat.canReact, isFalse);
+        expect(chat.reactionsFor(1), isEmpty);
+      }
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.confirmCalls, 1);
     },
   );
+
+  test('an explicit retry asks again and is single-flight', () async {
+    final gateway = _FakeDesktopGateway()
+      ..available = false
+      ..serverHasReactions = false;
+    final chat = await _liveChat(gateway);
+    await chat.confirmReactions();
+    gateway.serverHasReactions = true;
+    await Future.wait([chat.confirmReactions(), chat.confirmReactions()]);
+    expect(gateway.confirmCalls, 2);
+    expect(chat.canReact, isTrue);
+  });
 
   test(
     'reactions are offered only while the gateway says it can take them',
