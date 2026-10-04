@@ -7780,5 +7780,6 @@
   "adv1215ToolKeyUnset": "Not set",
   "adv1215ToolKeyHint": "Paste the key",
   "adv1215ToolNeedsNous": "Requires a Nous account",
-  "adv1215ToolNothing": "Nothing to configure here"
+  "adv1215ToolNothing": "Nothing to configure here",
+  "adv1215Unreadable": "This server does not offer advanced settings"
 }

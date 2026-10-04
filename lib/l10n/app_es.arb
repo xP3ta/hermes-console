@@ -9465,5 +9465,6 @@
   "adv1215ToolKeyUnset": "Sin configurar",
   "adv1215ToolKeyHint": "Pega la clave",
   "adv1215ToolNeedsNous": "Requiere cuenta de Nous",
-  "adv1215ToolNothing": "No hay nada que configurar aquí"
+  "adv1215ToolNothing": "No hay nada que configurar aquí",
+  "adv1215Unreadable": "Este servidor no publica ajustes avanzados"
 }
