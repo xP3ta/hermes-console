@@ -21,6 +21,7 @@ import '../services/global_activity_aggregate.dart';
 import '../services/chat_draft_store.dart';
 import '../services/drawer_gesture_exclusion.dart';
 import '../services/session_archive.dart';
+import '../services/session_export_service.dart';
 import '../services/session_deletion.dart';
 import '../services/session_repository.dart';
 import '../services/tui_gateway_client.dart';
@@ -147,6 +148,12 @@ class SessionListScreen extends StatefulWidget {
   agentCenterSnapshotLoader;
   final Future<void> Function()? eventReconnectOverride;
   final double Function()? eventReconnectRandomOverride;
+
+  /// Wall clock for the date sections, and the gateway and exporter the
+  /// "move to project" and "export" row actions use.
+  final DateTime Function()? clockOverride;
+  final TuiGatewayClient Function(SavedConnection connection)? gatewayFactory;
+  final SessionExportService? sessionExporter;
   const SessionListScreen({
     required this.connection,
     required this.connManager,
@@ -159,6 +166,9 @@ class SessionListScreen extends StatefulWidget {
     @visibleForTesting this.agentCenterSnapshotLoader,
     @visibleForTesting this.eventReconnectOverride,
     @visibleForTesting this.eventReconnectRandomOverride,
+    @visibleForTesting this.clockOverride,
+    @visibleForTesting this.gatewayFactory,
+    @visibleForTesting this.sessionExporter,
     super.key,
   });
 
