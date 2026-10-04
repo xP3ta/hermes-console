@@ -51,6 +51,18 @@ DashboardClient _dashboard(http.Client client) => DashboardClient(
   httpClientOverride: client,
 );
 
+/// Applies a PUT body to the config a fake server serves, so the re-read
+/// after a save shows what was written.
+void _applyPut(Map<String, dynamic> served, String body) {
+  final patch =
+      (jsonDecode(body) as Map<String, dynamic>)['config']
+          as Map<String, dynamic>;
+  final compression = patch['compression'];
+  if (compression is Map<String, dynamic>) {
+    (served['compression'] as Map<String, dynamic>).addAll(compression);
+  }
+}
+
 Future<CompressionConfigException> _failure(Future<Object?> future) async {
   try {
     await future;
@@ -494,10 +506,11 @@ void main() {
         expect(serverCompression['future_native_sibling'], {'preserve': true});
         expect(saved.configuration, changed);
         expect(saved.profile, 'synthetic-profile');
-        expect(requests.last.method, 'PUT');
-        expect(requests.last.url.queryParameters, {
-          'profile': 'synthetic-profile',
-        });
+        final put = requests.lastWhere((r) => r.method == 'PUT');
+        expect(put.url.queryParameters, {'profile': 'synthetic-profile'});
+        // The save ends with one read of the config.
+        expect(requests.last.method, 'GET');
+        expect(requests.last.url.path, '/api/config');
       },
     );
 
@@ -520,6 +533,7 @@ void main() {
               );
             }
             sent = jsonDecode(request.body) as Map<String, dynamic>;
+            _applyPut(config, request.body);
             return http.Response('{"ok":true}', 200);
           }),
         );
@@ -603,6 +617,7 @@ void main() {
         MockClient((request) async {
           if (request.method == 'PUT') {
             putCount += 1;
+            _applyPut(fixture['config'] as Map<String, dynamic>, request.body);
             return http.Response('{"ok":true}', 200);
           }
           return http.Response(
@@ -955,7 +970,9 @@ void main() {
         final tracking = _TrackingClient((request) async {
           if (request.method == 'PUT') {
             if (!putStarted.isCompleted) putStarted.complete();
-            return putResult.future;
+            final response = await putResult.future;
+            _applyPut(fixture['config'] as Map<String, dynamic>, request.body);
+            return response;
           }
           return http.Response(
             jsonEncode(
@@ -1004,7 +1021,9 @@ void main() {
         final tracking = _TrackingClient((request) async {
           if (request.method == 'PUT') {
             if (!putStarted.isCompleted) putStarted.complete();
-            return putResult.future;
+            final response = await putResult.future;
+            _applyPut(fixture['config'] as Map<String, dynamic>, request.body);
+            return response;
           }
           return http.Response(
             jsonEncode(
@@ -1037,7 +1056,11 @@ void main() {
         expect(repository.isClosed, isTrue);
         expect(tracking.closed, isTrue);
         putResult.complete(http.Response('{"ok":true}', 200));
-        expect((await saving).configuration, changed);
+        // The fenced client cannot re-read, so the save is not marked done.
+        expect(
+          (await _failure(saving)).code,
+          CompressionConfigFailureCode.transport,
+        );
       },
     );
 

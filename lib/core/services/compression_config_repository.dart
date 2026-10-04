@@ -136,14 +136,23 @@ final class CompressionConfigRepository {
           CompressionConfigFailureCode.rejected,
         );
       }
+      // A value is saved only when the server shows it: one read after the
+      // write, and the published fields have to match what was sent.
+      final reread = await _dashboard.getServerConfig(profile: _profile);
+      final shown = reread['compression'];
+      for (final entry in configuration.toDashboardPatch().entries) {
+        if (shown is! Map || !_sameValue(shown[entry.key], entry.value)) {
+          throw const CompressionConfigException(
+            CompressionConfigFailureCode.rejected,
+          );
+        }
+      }
       return CompressionConfigSnapshot.supported(
         profile: _profile,
         configuration: configuration,
         limits: limits,
         optionalFields: base.optionalFields,
-        recordHandle: CompressionConfigRecordHandle.fromRedactedRecord(
-          updatedRecord,
-        ),
+        recordHandle: CompressionConfigRecordHandle.fromRedactedRecord(reread),
         fetchedAt: DateTime.now().toUtc(),
       );
     } catch (error) {
@@ -201,6 +210,9 @@ final class CompressionConfigRepository {
     }
   }
 }
+
+bool _sameValue(Object? seen, Object sent) =>
+    seen is num && sent is num ? seen == sent : seen == sent;
 
 String? _normalizeProfile(String? raw) {
   final value = raw?.trim() ?? '';
