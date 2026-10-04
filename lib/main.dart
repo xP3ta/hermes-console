@@ -2477,17 +2477,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     switch (_catalogLinks.offer(uri)) {
       case CatalogOfferResult.notCatalog:
         break;
-      case CatalogOfferResult.overflow:
-        final nav = _navigatorKey.currentState;
-        if (nav != null) {
-          HermesNotice.ofNavigator(nav)?.show(
-            message: Strings.of(nav.context).cphLinkQueueFull,
-            kind: HermesNoticeKind.warning,
-          );
-        }
-        return;
       case CatalogOfferResult.queued:
       case CatalogOfferResult.duplicate:
+      case CatalogOfferResult.overflow:
         _openCatalogLinks();
         return;
     }
@@ -2517,10 +2509,25 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   void _openCatalogLinks() {
     final nav = _navigatorKey.currentState;
     final active = _activeHomeWidgetConnection();
+    final locked = widget.appLock.locked.value;
+    final onboarding = _showSplash || _showOnboarding;
+    final connected = nav != null && active != null;
+    // A refused link is reported once the app can show it, never lost.
+    if (nav != null &&
+        _catalogLinks.takeOverflow(
+          locked: locked,
+          onboarding: onboarding,
+          connected: connected,
+        )) {
+      HermesNotice.ofNavigator(nav)?.show(
+        message: Strings.of(nav.context).cphLinkQueueFull,
+        kind: HermesNoticeKind.warning,
+      );
+    }
     final action = _catalogLinks.take(
-      locked: widget.appLock.locked.value,
-      onboarding: _showSplash || _showOnboarding,
-      connected: nav != null && active != null,
+      locked: locked,
+      onboarding: onboarding,
+      connected: connected,
     );
     if (action == null || nav == null || active == null) return;
     // The next held link opens once this one is shown or replaced.

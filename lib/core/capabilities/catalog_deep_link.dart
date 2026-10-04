@@ -125,6 +125,8 @@ final class CatalogDeepLinkInbox {
   final PairingLinkDeliveryGate _gate;
   final List<(String, CatalogDeepLinkAction)> _pending = [];
 
+  bool _overflowed = false;
+
   bool get hasPending => _pending.isNotEmpty;
 
   CatalogOfferResult offer(Uri uri) {
@@ -135,9 +137,24 @@ final class CatalogDeepLinkInbox {
     if (_pending.any((entry) => entry.$1 == key)) {
       return CatalogOfferResult.duplicate;
     }
-    if (_pending.length >= maxPending) return CatalogOfferResult.overflow;
+    if (_pending.length >= maxPending) {
+      _overflowed = true;
+      return CatalogOfferResult.overflow;
+    }
     _pending.add((key, action));
     return CatalogOfferResult.queued;
+  }
+
+  /// Whether a link was refused since the last report, once the app can say
+  /// so (the same gate as [take]): never lost to a missing navigator or lock.
+  bool takeOverflow({
+    required bool locked,
+    required bool onboarding,
+    required bool connected,
+  }) {
+    if (locked || onboarding || !connected || !_overflowed) return false;
+    _overflowed = false;
+    return true;
   }
 
   /// The oldest held link, once the app can show it.

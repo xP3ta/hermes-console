@@ -194,6 +194,24 @@ void main() {
         opened++;
       }
       expect(opened, CatalogDeepLinkInbox.maxPending);
+      // The refusal is remembered until the app can say it: held while
+      // locked or before a navigator exists, reported once afterwards.
+      expect(
+        inbox.takeOverflow(locked: true, onboarding: false, connected: true),
+        isFalse,
+      );
+      expect(
+        inbox.takeOverflow(locked: false, onboarding: false, connected: false),
+        isFalse,
+      );
+      expect(
+        inbox.takeOverflow(locked: false, onboarding: false, connected: true),
+        isTrue,
+      );
+      expect(
+        inbox.takeOverflow(locked: false, onboarding: false, connected: true),
+        isFalse,
+      );
       // Room again once the queue drained.
       expect(
         inbox.offer(Uri.parse('hermes://skill/install?identifier=a/z')),
