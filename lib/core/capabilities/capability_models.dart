@@ -526,27 +526,107 @@ final class PluginMutationResult {
   final bool consentRequired;
   final List<String> deltaLines;
   final List<String> warnings;
+
+  /// Env names the plugin still needs (names only, never values).
+  final List<String> missingEnv;
+  final List<String> knownIssues;
+  final List<String> pythonDependencies;
+
+  /// One `name: error` line per live MCP server that did not connect.
+  final List<String> mcpNotices;
   final bool restartRequired;
+  final bool? gatewayReloaded;
 
   const PluginMutationResult({
     required this.ok,
     this.consentRequired = false,
     this.deltaLines = const [],
     this.warnings = const [],
+    this.missingEnv = const [],
+    this.knownIssues = const [],
+    this.pythonDependencies = const [],
+    this.mcpNotices = const [],
     this.restartRequired = false,
+    this.gatewayReloaded,
   });
 
-  factory PluginMutationResult.fromJson(Map<String, dynamic> json) =>
-      PluginMutationResult(
-        ok: json['ok'] == true,
-        consentRequired: json['consent_required'] == true,
-        deltaLines: _strings(json['delta_lines'], max: 300),
-        warnings: [
-          ..._strings(json['warnings'], max: 300),
-          ..._strings(json['missing_env'], max: 120),
-        ],
-        restartRequired: json['restart_required'] == true,
-      );
+  factory PluginMutationResult.fromJson(Map<String, dynamic> json) {
+    final activation = json['activation'];
+    final live = activation is Map ? activation['live_now'] : null;
+    final servers = live is Map
+        ? _rows(live['mcp_servers'], max: 40)
+        : const [];
+    return PluginMutationResult(
+      ok: json['ok'] == true,
+      consentRequired: json['consent_required'] == true,
+      deltaLines: _strings(json['delta_lines'], max: 300),
+      warnings: _strings(json['warnings'], max: 300),
+      missingEnv: _strings(json['missing_env'], max: 120),
+      knownIssues: _strings(json['known_issues'], max: 300),
+      pythonDependencies: _strings(json['python_dependencies'], max: 120),
+      mcpNotices: [
+        for (final server in servers)
+          if (server['connected'] == false)
+            [
+              _text(server['name'], max: 80),
+              _text(server['error'], max: 200),
+            ].where((part) => part.isNotEmpty).join(': '),
+      ].where((line) => line.isNotEmpty).toList(growable: false),
+      restartRequired: json['restart_required'] == true,
+      gatewayReloaded: json['gateway_reloaded'] is bool
+          ? json['gateway_reloaded'] as bool
+          : null,
+    );
+  }
+}
+
+/// One row of `plugins.manage list` (installed plugins of the hub profile).
+final class InstalledPluginRow {
+  final String name;
+  final String key;
+  final String catalogName;
+  final String installedSha;
+  final bool enabled;
+  final bool updateAvailable;
+
+  const InstalledPluginRow({
+    required this.name,
+    this.key = '',
+    this.catalogName = '',
+    this.installedSha = '',
+    this.enabled = true,
+    this.updateAvailable = false,
+  });
+
+  static InstalledPluginRow? tryParse(Map<String, dynamic> json) {
+    final name = _text(json['name'], max: 120);
+    if (name.isEmpty) return null;
+    final status = _text(json['status'], max: 40).toLowerCase();
+    return InstalledPluginRow(
+      name: name,
+      key: _text(json['key'], max: 120),
+      catalogName: _text(json['catalog_name'], max: 120),
+      installedSha: _text(json['installed_sha'], max: 64),
+      enabled: status != 'disabled' && status != 'off',
+      updateAvailable: json['update_available'] == true,
+    );
+  }
+}
+
+extension InstalledPluginRows on List<InstalledPluginRow> {
+  /// Desktop rule: `catalog_name` first, plugin name second.
+  InstalledPluginRow? match({required String catalogName, String? name}) {
+    for (final row in this) {
+      if (row.catalogName.isNotEmpty && row.catalogName == catalogName) {
+        return row;
+      }
+    }
+    final wanted = name ?? catalogName;
+    for (final row in this) {
+      if (row.name == wanted || row.key == wanted) return row;
+    }
+    return null;
+  }
 }
 
 /// Hosted connector (Nous account connectors: `connectors.*`).

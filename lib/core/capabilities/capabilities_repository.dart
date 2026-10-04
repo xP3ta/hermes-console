@@ -24,7 +24,8 @@ import '../models/desktop_control_center.dart';
 import '../services/connection_manager.dart'
     show DashboardAuthException, DashboardHttpException;
 import '../services/desktop_control_gateway.dart';
-import '../services/tui_gateway_client.dart' show TuiGatewayRpcError;
+import '../services/tui_gateway_client.dart'
+    show TuiGatewayRpcError, TuiGatewayRpcFailureKind;
 import 'capability_models.dart';
 
 /// Minimal REST surface (implemented by `DashboardClient`).
@@ -57,6 +58,7 @@ enum CapabilityFeature {
   pluginCatalog,
   pluginInstalled,
   pluginMutations,
+  pluginsManage,
   mcpCatalog,
   mcpServers,
   hostedConnectors,
@@ -68,6 +70,9 @@ enum CapabilityFailureKind {
   rejected,
   unavailable,
   blockedByScan,
+
+  /// The request may still have landed (client timeout): refresh, never retry.
+  uncertain,
   invalidResponse,
 }
 
@@ -341,59 +346,142 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
             .toList(growable: false);
       });
 
-  Future<PluginMutationResult> installPlugin(String catalogName) =>
-      _call(CapabilityFeature.pluginMutations, () async {
-        final result = PluginMutationResult.fromJson(
+  bool get _defaultProfile {
+    final value = profile.trim();
+    return value.isEmpty || value == 'default';
+  }
+
+  /// `plugins.manage` list: the installed state of the hub profile.
+  Future<List<InstalledPluginRow>> installedPluginsRpc() =>
+      _call(CapabilityFeature.pluginsManage, () async {
+        final result = await _rpc('plugins.manage', {'action': 'list'});
+        return _list(result['plugins'])
+            .map(InstalledPluginRow.tryParse)
+            .whereType<InstalledPluginRow>()
+            .toList(growable: false);
+      });
+
+  /// Runs a plugin mutation on the hub profile through `plugins.manage`.
+  /// Without the method, the REST routes (server launch profile) are used
+  /// only when the hub is on the default profile; otherwise the mutation is
+  /// unsupported and the UI hides it.
+  Future<T> _pluginMutation<T>(
+    Map<String, dynamic> params,
+    T Function(Map<String, dynamic>) parse,
+    Future<T> Function() viaRest,
+  ) async {
+    final call = rpc;
+    if (call != null && _support[CapabilityFeature.pluginsManage] != false) {
+      try {
+        final result = await _call(CapabilityFeature.pluginsManage, () async {
+          try {
+            return await _rpc('plugins.manage', params);
+          } on TuiGatewayRpcError catch (error) {
+            if (error.failureKind == TuiGatewayRpcFailureKind.timeout) {
+              throw const CapabilityFailure(CapabilityFailureKind.uncertain);
+            }
+            rethrow;
+          }
+        });
+        _support[CapabilityFeature.pluginMutations] = true;
+        return parse(result);
+      } on CapabilityFailure catch (error) {
+        if (error.kind != CapabilityFailureKind.unsupported) rethrow;
+      }
+    }
+    if (!_defaultProfile) {
+      _support[CapabilityFeature.pluginMutations] = false;
+      throw const CapabilityFailure(CapabilityFailureKind.unsupported);
+    }
+    return _call(CapabilityFeature.pluginMutations, viaRest);
+  }
+
+  PluginMutationResult _checked(PluginMutationResult result) {
+    if (!result.ok && !result.consentRequired) {
+      throw const CapabilityFailure(CapabilityFailureKind.rejected);
+    }
+    return result;
+  }
+
+  Future<PluginMutationResult> installPlugin(String catalogName) {
+    final name = catalogName.trim();
+    return _pluginMutation(
+      {
+        'action': 'install',
+        'catalog_name': name,
+        'enable': true,
+        'force': false,
+      },
+      (json) => _checked(PluginMutationResult.fromJson(json)),
+      () async => _checked(
+        PluginMutationResult.fromJson(
           await rest.post(
             'dashboard/agent-plugins/install',
             body: {
               'identifier': '',
-              'catalog_name': catalogName.trim(),
+              'catalog_name': name,
               'force': false,
               'enable': true,
             },
             timeout: const Duration(minutes: 3),
           ),
-        );
-        if (!result.ok && !result.consentRequired) {
-          throw const CapabilityFailure(CapabilityFailureKind.rejected);
-        }
-        return result;
-      });
+        ),
+      ),
+    );
+  }
 
   Future<PluginMutationResult> updatePlugin(
     String name, {
     bool acceptCapabilities = false,
-  }) => _call(CapabilityFeature.pluginMutations, () async {
-    final result = PluginMutationResult.fromJson(
-      await rest.post(
-        'dashboard/agent-plugins/${_seg(name)}/update',
-        body: acceptCapabilities ? {'accept_capabilities': true} : null,
-        timeout: const Duration(minutes: 3),
+  }) => _pluginMutation(
+    {
+      'action': 'update',
+      'name': name.trim(),
+      if (acceptCapabilities) 'accept_capabilities': true,
+    },
+    (json) => _checked(PluginMutationResult.fromJson(json)),
+    () async => _checked(
+      PluginMutationResult.fromJson(
+        await rest.post(
+          'dashboard/agent-plugins/${_seg(name)}/update',
+          body: acceptCapabilities ? {'accept_capabilities': true} : null,
+          timeout: const Duration(minutes: 3),
+        ),
       ),
-    );
-    if (!result.ok && !result.consentRequired) {
-      throw const CapabilityFailure(CapabilityFailureKind.rejected);
-    }
-    return result;
-  });
-
-  Future<void> setPluginEnabled(
-    String name,
-    bool enabled,
-  ) => _call(CapabilityFeature.pluginMutations, () async {
-    final result = await rest.post(
-      'dashboard/agent-plugins/${_seg(name)}/${enabled ? 'enable' : 'disable'}',
-    );
-    if (result['ok'] != true) {
-      throw const CapabilityFailure(CapabilityFailureKind.rejected);
-    }
-  });
-
-  Future<void> removePlugin(String name) => _call(
-    CapabilityFeature.pluginMutations,
-    () => rest.delete('dashboard/agent-plugins/${_seg(name)}'),
+    ),
   );
+
+  Future<void> setPluginEnabled(String name, bool enabled) async {
+    await _pluginMutation(
+      {
+        'action': 'toggle',
+        'name': name.trim(),
+        'key': name.trim(),
+        'enable': enabled,
+      },
+      (json) => _checked(PluginMutationResult.fromJson(json)),
+      () async {
+        final result = await rest.post(
+          'dashboard/agent-plugins/${_seg(name)}/${enabled ? 'enable' : 'disable'}',
+        );
+        if (result['ok'] != true) {
+          throw const CapabilityFailure(CapabilityFailureKind.rejected);
+        }
+        return const PluginMutationResult(ok: true);
+      },
+    );
+  }
+
+  Future<void> removePlugin(String name) async {
+    await _pluginMutation(
+      {'action': 'remove', 'name': name.trim()},
+      (json) => _checked(PluginMutationResult.fromJson(json)),
+      () async {
+        await rest.delete('dashboard/agent-plugins/${_seg(name)}');
+        return const PluginMutationResult(ok: true);
+      },
+    );
+  }
 
   // ── MCP ─────────────────────────────────────────────────────────────────
 
@@ -513,7 +601,7 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
           DesktopControlFailureKind.rejected,
         CapabilityFailureKind.invalidResponse =>
           DesktopControlFailureKind.invalidResponse,
-        CapabilityFailureKind.unavailable =>
+        CapabilityFailureKind.unavailable || CapabilityFailureKind.uncertain =>
           DesktopControlFailureKind.unavailable,
       });
     }

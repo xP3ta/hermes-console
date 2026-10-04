@@ -93,6 +93,7 @@ String capabilityFailureMessage(Strings s, Object error) {
     CapabilityFailureKind.rejected => s.cphFailRejected,
     CapabilityFailureKind.unavailable => s.cphFailUnavailable,
     CapabilityFailureKind.blockedByScan => s.cphFailBlockedByScan,
+    CapabilityFailureKind.uncertain => s.cphFailUncertain,
     CapabilityFailureKind.invalidResponse => s.cphFailInvalid,
   };
   final detail = error is CapabilityFailure ? error.detail.trim() : '';

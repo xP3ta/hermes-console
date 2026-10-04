@@ -8779,6 +8779,7 @@
   "cphFailRejected": "El servidor rechazó la acción.",
   "cphFailBlockedByScan": "El escaneo de seguridad bloqueó esta instalación.",
   "cphFailUnavailable": "El servidor no respondió a tiempo.",
+  "cphFailUncertain": "No hubo respuesta a tiempo. Puede que se haya aplicado: actualiza la lista antes de reintentar.",
   "cphFailForbidden": "No está permitido con estas credenciales.",
   "cphFailUnsupported": "Este servidor no admite esta acción.",
   "cphFailInvalid": "El servidor envió una respuesta inesperada.",
