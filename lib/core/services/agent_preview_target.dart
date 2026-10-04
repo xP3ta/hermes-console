@@ -89,7 +89,8 @@ AgentPreviewTarget? classifyAgentPreviewTarget(String raw) {
 }
 
 /// One spelling per target, so a `close` finds the `open` it undoes: scheme
-/// and host in lower case, the scheme's default port dropped.
+/// and host in lower case, the scheme's default port dropped, an empty path
+/// as `/`.
 String _canonicalWebUrl(Uri uri) {
   final scheme = uri.scheme.toLowerCase();
   final host = uri.host.contains(':') ? '[${uri.host}]' : uri.host;
@@ -97,7 +98,9 @@ String _canonicalWebUrl(Uri uri) {
   final port = uri.hasPort && uri.port != defaultPort ? ':${uri.port}' : '';
   final query = uri.hasQuery ? '?${uri.query}' : '';
   final fragment = uri.hasFragment ? '#${uri.fragment}' : '';
-  return '$scheme://$host$port${uri.path}$query$fragment';
+  // A browser requests `/` for an empty path, so both spellings are one.
+  final path = uri.path.isEmpty ? '/' : uri.path;
+  return '$scheme://$host$port$path$query$fragment';
 }
 
 final RegExp _numericLabel = RegExp(r'^(?:0x[0-9a-f]+|\d+)$');
