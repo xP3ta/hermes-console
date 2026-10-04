@@ -24245,6 +24245,9 @@ class ActiveChat {
     unawaited(cancelQueuedByIdentity(entries[index].id));
   }
 
+  @visibleForTesting
+  void clearQueueForTesting() => _clearQueue();
+
   void _clearQueue() {
     final hasAcceptedOptimistic = _messages.any(
       (message) => message['_desktopAcceptedQueued'] == true,
@@ -24263,7 +24266,25 @@ class ActiveChat {
     _preparedTurnQueue.clear();
     _blockedPreparedTurnId = null;
     for (final item in prepared) {
-      unawaited(item.delivery.discardPrepared());
+      // A row whose transport started may already be running on the server:
+      // retiring it here would hide it only until the outbox restores it.
+      // It stays visible and keeps its "Stop waiting" action.
+      if (item.delivery.transportStarted || item.delivery.acknowledged) {
+        _preparedTurnQueue.addLast(item);
+        continue;
+      }
+      unawaited(
+        item.delivery.discardPrepared().then((discarded) {
+          if (discarded || _disposed) return;
+          // The store refused the delete (or the transport started meanwhile):
+          // the row is still durable, so it must stay visible.
+          if (_preparedTurnQueue.any((queued) => identical(queued, item))) {
+            return;
+          }
+          _insertPreparedTurnByOrder(item);
+          _emit(ActiveChatEvent.queueChanged);
+        }),
+      );
     }
     _desktopAcceptedQueuedPrompt = null;
     _messages.removeWhere(
