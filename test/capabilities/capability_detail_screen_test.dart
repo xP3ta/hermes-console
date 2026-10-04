@@ -191,7 +191,9 @@ void main() {
         'name': 'install-docker',
         'running': false,
         'exit_code': 1,
-        'lines': ['Security scan: blocked, not installed'],
+        'lines': [
+          'Not installed: the security scan found 2 high-risk pattern(s)',
+        ],
       });
     await _pump(tester, _docker, rest);
     await tester.tap(find.byKey(const ValueKey('cph-primary')));

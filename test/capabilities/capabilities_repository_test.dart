@@ -413,39 +413,42 @@ void main() {
       reply = {'ok': true};
     });
 
-    test('every mutation carries the hub profile and never uses REST', () async {
-      final rest = FakeRest();
-      final repo = repoFor('work', rest);
-      await repo.installPlugin('weather');
-      await repo.setPluginEnabled('weather', false);
-      await repo.updatePlugin('weather', acceptCapabilities: true);
-      await repo.removePlugin('weather');
-      expect(sent.map((c) => c.$1).toSet(), {'plugins.manage'});
-      expect(sent.map((c) => c.$2), [
-        {
-          'action': 'install',
-          'catalog_name': 'weather',
-          'enable': true,
-          'force': false,
-          'profile': 'work',
-        },
-        {
-          'action': 'toggle',
-          'name': 'weather',
-          'key': 'weather',
-          'enable': false,
-          'profile': 'work',
-        },
-        {
-          'action': 'update',
-          'name': 'weather',
-          'accept_capabilities': true,
-          'profile': 'work',
-        },
-        {'action': 'remove', 'name': 'weather', 'profile': 'work'},
-      ]);
-      expect(rest.calls, isEmpty);
-    });
+    test(
+      'every mutation carries the hub profile and never uses REST',
+      () async {
+        final rest = FakeRest();
+        final repo = repoFor('work', rest);
+        await repo.installPlugin('weather');
+        await repo.setPluginEnabled('weather', false);
+        await repo.updatePlugin('weather', acceptCapabilities: true);
+        await repo.removePlugin('weather');
+        expect(sent.map((c) => c.$1).toSet(), {'plugins.manage'});
+        expect(sent.map((c) => c.$2), [
+          {
+            'action': 'install',
+            'catalog_name': 'weather',
+            'enable': true,
+            'force': false,
+            'profile': 'work',
+          },
+          {
+            'action': 'toggle',
+            'name': 'weather',
+            'key': 'weather',
+            'enable': false,
+            'profile': 'work',
+          },
+          {
+            'action': 'update',
+            'name': 'weather',
+            'accept_capabilities': true,
+            'profile': 'work',
+          },
+          {'action': 'remove', 'name': 'weather', 'profile': 'work'},
+        ]);
+        expect(rest.calls, isEmpty);
+      },
+    );
 
     test('-32601 falls back to REST only on the default profile', () async {
       reply = const TuiGatewayRpcError('plugins.manage', 'nope', code: -32601);
@@ -542,5 +545,140 @@ void main() {
       expect(rows.match(catalogName: 'notes', name: 'notes')?.enabled, isFalse);
       expect(rows.match(catalogName: 'ghost', name: 'ghost'), isNull);
     });
+  });
+
+  group('action loop is cancellable', () {
+    FakeRest runningServer() => FakeRest()
+      ..posts['skills/hub/install'] = {'ok': true, 'name': 'a'}
+      ..gets['actions/a/status'] = {
+        'name': 'a',
+        'running': true,
+        'lines': ['cloning'],
+      };
+
+    int statusReads(FakeRest rest) =>
+        rest.calls.where((c) => c.startsWith('GET actions/')).length;
+
+    test('cancel stops the loop without another read', () async {
+      final rest = runningServer();
+      final token = CapabilityActionToken();
+      final repo = CapabilitiesRepository(
+        rest: rest,
+        sleep: (_) async => token.cancel(),
+      );
+      await expectLater(
+        repo.installSkill('x/y', token: token),
+        throwsA(isA<CapabilityActionAbandoned>()),
+      );
+      expect(statusReads(rest), 1);
+    });
+
+    test('pause holds the loop; resume reads once and continues', () async {
+      final rest = runningServer();
+      final token = CapabilityActionToken();
+      var sleeps = 0;
+      final repo = CapabilitiesRepository(
+        rest: rest,
+        sleep: (_) async {
+          sleeps++;
+          if (sleeps == 1) token.pause();
+          if (sleeps == 2) token.cancel();
+        },
+      );
+      final run = repo.installSkill('x/y', token: token);
+      final settled = expectLater(
+        run,
+        throwsA(isA<CapabilityActionAbandoned>()),
+      );
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(statusReads(rest), 1, reason: 'no reads while paused');
+      token.resume();
+      await settled;
+      // resume read once, the next cadence tick cancelled the loop
+      expect(statusReads(rest), 2);
+    });
+
+    test('an MCP background install follows the returned action', () async {
+      final rest = FakeRest()
+        ..posts['mcp/catalog/install'] = {
+          'ok': true,
+          'background': true,
+          'action': 'mcp-install-git',
+        };
+      rest.statusQueue.addAll([
+        {
+          'name': 'mcp-install-git',
+          'running': true,
+          'lines': ['cloning'],
+        },
+        {'name': 'mcp-install-git', 'running': false, 'exit_code': 0},
+      ]);
+      final seen = <String>[];
+      final repo = CapabilitiesRepository(rest: rest, sleep: (_) async {});
+      await repo.installMcp('git-server', onProgress: (s) => seen.add(s.tail));
+      expect(seen, ['cloning', '']);
+      expect(rest.calls.last, 'GET actions/mcp-install-git/status?lines=200');
+    });
+
+    test('a failing MCP background install is a real failure', () async {
+      final rest = FakeRest()
+        ..posts['mcp/catalog/install'] = {
+          'ok': true,
+          'background': true,
+          'action': 'mcp-install-git',
+        };
+      rest.statusQueue.add({
+        'name': 'mcp-install-git',
+        'running': false,
+        'exit_code': 2,
+        'lines': ['build failed'],
+      });
+      final repo = CapabilitiesRepository(rest: rest, sleep: (_) async {});
+      await expectLater(
+        repo.installMcp('git-server'),
+        throwsA(
+          isA<CapabilityFailure>().having(
+            (f) => f.detail,
+            'detail',
+            'build failed',
+          ),
+        ),
+      );
+    });
+
+    test(
+      'MCP env body carries only declared keys and no value leaks',
+      () async {
+        const secret = 'sentinel-secret-value-123';
+        final rest = FakeRest()..posts['mcp/catalog/install'] = {'ok': true};
+        final repo = CapabilitiesRepository(rest: rest, profile: 'work');
+        await repo.installMcp(
+          'docs',
+          environment: {'DOCS_KEY': secret, 'ROGUE': secret},
+          declaredEnv: const ['DOCS_KEY', 'OPTIONAL'],
+        );
+        final body = rest.bodies.single!;
+        expect(body['env'], {'DOCS_KEY': secret});
+        expect(body['profile'], 'work');
+        expect(body['enable'], isTrue);
+
+        rest.posts['mcp/catalog/install'] = DashboardHttpException(
+          400,
+          body: '{"detail":"bad $secret"}',
+        );
+        try {
+          await repo.installMcp(
+            'docs',
+            environment: {'DOCS_KEY': secret},
+            declaredEnv: const ['DOCS_KEY'],
+          );
+          fail('expected a failure');
+        } on CapabilityFailure catch (error) {
+          expect(error.toString(), isNot(contains(secret)));
+          expect(error.detail, isNot(contains(secret)));
+        }
+      },
+    );
   });
 }
