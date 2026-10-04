@@ -544,6 +544,7 @@ void main() {
         'missing_env': ['WEATHER_KEY'],
       }
       ..puts['env'] = {'ok': true};
+    rest.putProbe = const DashboardHttpException(422);
     await _pump(tester, _weatherCatalog, rest);
     await tester.tap(find.byKey(const ValueKey('cph-primary')));
     await tester.pumpAndSettle();
@@ -566,9 +567,37 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('cph-env-submit')));
     await tester.pumpAndSettle();
-    expect(rest.calls.where((c) => c.startsWith('PUT')), ['PUT env']);
+    expect(rest.calls.where((c) => c.startsWith('PUT')), [
+      'PUT env',
+      'PUT env',
+    ]);
     expect(rest.bodies.last, {'key': 'WEATHER_KEY', 'value': secret});
     expect(find.textContaining(secret), findsNothing);
+  });
+
+  testWidgets('no credentials action when the env route is not confirmed', (
+    tester,
+  ) async {
+    final rest = ScriptedRest()
+      ..posts['dashboard/agent-plugins/install'] = {
+        'ok': true,
+        'missing_env': ['WEATHER_KEY'],
+      };
+    await _pump(tester, _weatherCatalog, rest);
+    await tester.tap(find.byKey(const ValueKey('cph-primary')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Faltan credenciales: WEATHER_KEY'),
+      findsOneWidget,
+    );
+    expect(find.text('Añadir credenciales'), findsNothing);
+    // The probe carries no value, so no secret can reach a server that lacks
+    // the route.
+    expect(
+      rest.bodies.whereType<Map>().where((b) => b.containsKey('value')),
+      isEmpty,
+    );
   });
 
   test('install confirmation repeats the essentials', () {

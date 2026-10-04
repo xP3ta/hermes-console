@@ -716,6 +716,32 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     return out;
   }
 
+  /// Whether `PUT /api/env` exists, learned without sending a secret: a
+  /// value-less request is refused by a server that has the route (400/422)
+  /// and answered 404/405 by one that does not. Anything else stays unknown.
+  Future<bool> confirmEnvSupport() async {
+    final known = _support[CapabilityFeature.envSet];
+    if (known != null) return known;
+    try {
+      await rest.put('env', {
+        'key': '',
+        if (!_defaultProfile) 'profile': profile.trim(),
+      });
+    } on DashboardHttpException catch (error) {
+      final status = error.statusCode;
+      if (status == 400 || status == 422) {
+        _support[CapabilityFeature.envSet] = true;
+        return true;
+      }
+      if (status == 404 || status == 405) {
+        _support[CapabilityFeature.envSet] = false;
+      }
+    } catch (_) {
+      // Unreachable or unexpected: support stays unknown.
+    }
+    return false;
+  }
+
   /// Sets the credentials a plugin install reported as missing, one
   /// `PUT /api/env {key, value, profile}` per declared name. Values are
   /// secrets: undeclared names are dropped and no error carries a value.

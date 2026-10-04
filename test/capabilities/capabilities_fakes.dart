@@ -16,6 +16,9 @@ class ScriptedRest implements CapabilitiesRest {
   final List<Map<String, dynamic>> statusQueue = [];
   Object? deleteError;
 
+  /// Reply to a value-less `PUT env` probe (the route check).
+  Object? putProbe;
+
   Object _resolve(Map<String, Object> table, String endpoint) {
     final path = endpoint.split('?').first;
     return table[endpoint] ??
@@ -55,6 +58,10 @@ class ScriptedRest implements CapabilitiesRest {
   ) async {
     calls.add('PUT $endpoint');
     bodies.add(body);
+    if (!body.containsKey('value') && putProbe != null) {
+      final probe = putProbe!;
+      if (probe is Exception) throw probe;
+    }
     final value = _resolve(puts, endpoint);
     if (value is Exception) throw value;
     return Map<String, dynamic>.from(value as Map);

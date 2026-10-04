@@ -258,15 +258,17 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
       }
       if (outcome.message.isNotEmpty) {
         final missing = outcome.missingEnv;
+        final canAddCredentials =
+            missing.isNotEmpty &&
+            !widget.readOnly &&
+            await _repo.confirmEnvSupport();
+        if (!mounted) return;
         notices.show(
           message: outcome.message,
           kind: outcome.ok
               ? HermesNoticeKind.success
               : HermesNoticeKind.warning,
-          action:
-              missing.isNotEmpty &&
-                  !widget.readOnly &&
-                  _repo.supports(CapabilityFeature.envSet) != false
+          action: canAddCredentials
               ? HermesNoticeAction(
                   label: s.cphAddCredentials,
                   onPressed: () => _addCredentials(missing),
