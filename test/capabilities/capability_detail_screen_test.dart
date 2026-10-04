@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/capability_detail_screen.dart';
 import 'package:hermes_android/core/capabilities/capability_models.dart';
 import 'package:hermes_android/core/design/hermes_design.dart';
@@ -46,13 +47,14 @@ Future<void> _pump(
   ScriptedRest rest, {
   bool readOnly = false,
   VoidCallback? onChanged,
+  CapabilitiesRpc? rpc,
 }) async {
   await setPhone(tester);
   await tester.pumpWidget(
     spanishApp(
       CapabilityDetailScreen(
         item: item,
-        repository: repoOf(rest),
+        repository: repoOf(rest, rpc: rpc),
         readOnly: readOnly,
         onChanged: onChanged,
       ),
@@ -261,6 +263,44 @@ void main() {
       findsOneWidget,
     );
     expect(rest.calls, isEmpty);
+  });
+  testWidgets('MCP detail asks for the runtime status once and shows it', (
+    tester,
+  ) async {
+    final methods = <String>[];
+    await _pump(
+      tester,
+      CapabilityItem.mcpServer({'name': 'docs', 'transport': 'http'})!,
+      populatedServer(),
+      rpc: (method, params) async {
+        methods.add(method);
+        return {
+          'servers': [
+            {'name': 'docs', 'tools': 2, 'status': 'failed'},
+          ],
+        };
+      },
+    );
+
+    expect(methods, ['mcp.servers.status']);
+    expect(find.text('Con error'), findsOneWidget);
+    expect(find.text('2 herramientas'), findsOneWidget);
+  });
+
+  testWidgets('non-MCP detail never asks for the runtime status', (
+    tester,
+  ) async {
+    final methods = <String>[];
+    await _pump(
+      tester,
+      _weather,
+      populatedServer(),
+      rpc: (method, params) async {
+        methods.add(method);
+        return {};
+      },
+    );
+    expect(methods, isEmpty);
   });
 }
 
