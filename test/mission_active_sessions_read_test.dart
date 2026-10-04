@@ -149,7 +149,7 @@ void main() {
     });
 
     test(
-      'a refused or failing active_list degrades to an empty list',
+      'a server without session.active_list answers an authoritative empty',
       () async {
         final wire = _Wire()
           ..activeList = () => Future.error(
@@ -165,9 +165,47 @@ void main() {
         final roster = await repository.loadRoster();
 
         expect(full.activeSessions, isEmpty);
-        expect(roster.activeSessions, isEmpty);
+        expect(full.activeSessionsAuthoritative, isTrue);
+        expect(roster.activeSessionsAuthoritative, isTrue);
         expect(full.failures, isEmpty, reason: 'silent degradation');
         expect(full.profiles, hasLength(1));
+      },
+    );
+
+    test(
+      'a timeout or a cut socket is a failed read, not an absence',
+      () async {
+        for (final failure in <Object>[
+          TimeoutException('active_list timed out'),
+          StateError('Hermes Desktop WebSocket closed'),
+          const TuiGatewayRpcError('session.active_list', 'boom', code: -32000),
+        ]) {
+          final wire = _Wire()..activeList = () => Future.error(failure);
+          final repository = wire.repository();
+
+          final full = await repository.load();
+          final roster = await repository.loadRoster();
+
+          expect(full.activeSessionsAuthoritative, isFalse, reason: '$failure');
+          expect(full.activeSessionsObservedAt, isNull);
+          expect(roster.activeSessionsAuthoritative, isFalse);
+          expect(roster.activeSessionsObservedAt, isNull);
+          expect(full.failures, isEmpty, reason: 'still no noisy failure');
+        }
+      },
+    );
+
+    test(
+      'an empty answer is authoritative and sealed with its read time',
+      () async {
+        final wire = _Wire();
+        final repository = wire.repository();
+
+        final full = await repository.load();
+
+        expect(full.activeSessions, isEmpty);
+        expect(full.activeSessionsAuthoritative, isTrue);
+        expect(full.activeSessionsObservedAt, isNotNull);
       },
     );
 
@@ -252,6 +290,37 @@ void main() {
       await tester.pump();
 
       expect(find.text('Esperando tu respuesta · Desplegar'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('a failed active_list keeps the last confirmed activity', (
+      tester,
+    ) async {
+      final manager = await _manager();
+      final wire = _Wire()..activeList = () async => _list('working');
+      final feed = FakeChangeFeed();
+      addTearDown(feed.close);
+      await tester.pumpWidget(_host(manager, wire.repository(feed: feed)));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Trabajando · Migrar'), findsOneWidget);
+
+      // The roster refresh after sessions.changed times out on active_list.
+      wire.activeList = () => Future.error(TimeoutException('timed out'));
+      await _idle(tester, const Duration(seconds: 31));
+      feed.sessionsChanged();
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Trabajando · Migrar'), findsOneWidget);
+
+      // A full reload that fails the same way keeps it too.
+      await _idle(tester, const Duration(seconds: 125));
+      expect(find.text('Trabajando · Migrar'), findsOneWidget);
+
+      // Only an answer, even an empty one, ends it.
+      wire.activeList = () async => const DesktopActiveSessionList();
+      await _idle(tester, const Duration(seconds: 125));
+      expect(find.text('Trabajando · Migrar'), findsNothing);
       await tester.pumpWidget(const SizedBox());
     });
 

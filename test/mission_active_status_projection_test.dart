@@ -293,6 +293,23 @@ void main() {
       expect(settledBefore.livePresence, BotPresence.working);
     });
 
+    test('a remote question outranks the local reply of another chat', () {
+      final replying = MissionLiveChat(
+        profileName: 'infra',
+        sessionId: 'unrelated',
+        title: 'Otra',
+        phase: MissionLivePhase.responding,
+      );
+      final agent = _agentOf(
+        [profile],
+        'infra',
+        [_row('canon-1', 'waiting', title: 'Pregunta')],
+        chats: [replying],
+      );
+      expect(agent.status, MissionAgentStatus.responding);
+      expect(_entry(agent).signal, BotFaceSignal.attention);
+    });
+
     test('a chat of another session does not hide the row', () {
       final other = MissionLiveChat(
         profileName: 'infra',
