@@ -95,8 +95,8 @@ dependencies:
   # (acceso a ficheros, geolocalización, contenido mixto) desde su API pública.
   webview_flutter: ^4.14.1
   webview_flutter_android: ^4.14.1
-  # GPT-Live (voz experimental, opt-in): WebRTC full-duplex contra el modelo de
-  # voz. MIT (flutter-webrtc.org). Solo la imports el adaptador
+  # GPT-Live (experimental voice, opt-in): full-duplex WebRTC against the voice
+  # model. MIT (flutter-webrtc.org). Only imported by the adapter
   # lib/core/services/voice/live/flutter_webrtc_transport.dart.
   flutter_webrtc: ^1.6.2+hotfix.3
 

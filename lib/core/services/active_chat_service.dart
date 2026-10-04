@@ -18425,8 +18425,8 @@ class ActiveChat {
                 await _canUseTurnIdempotency(gateway)
             ? gateway as HermesDesktopIdempotentGateway
             : null;
-        // Sin la capacidad el turno sale igual que hoy: los metadatos se
-        // descartan, nunca se rechaza el envío.
+        // Without the capability the turn goes out as before: the metadata
+        // is dropped, the send is never rejected.
         final surface = clientSurface;
         final surfaceGateway =
             surface != null &&

@@ -154,9 +154,9 @@ class VoiceSettings {
   /// con altavoz falla cerrado y el corte táctil continúa disponible.
   final bool bargeInEnabled;
 
-  /// Opt-in local a la conversación GPT-Live (experimental). Es la única puerta
-  /// de la función: el modo del servidor es informativo y nunca arranca una
-  /// sesión facturada en el móvil. Desactivado por defecto.
+  /// Local opt-in to the GPT-Live conversation (experimental). It is the only
+  /// gate of the feature: the server mode is informational and never starts a
+  /// billed session on the phone. Off by default.
   final bool gptLiveEnabled;
 
   /// Pausar y continuar es el comportamiento por defecto. Quien prefiera una

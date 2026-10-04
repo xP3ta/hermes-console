@@ -183,8 +183,8 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
   Object? _serverVoiceConfigError;
   bool _serverVoiceDetailsExpanded = false;
 
-  // GPT-Live (experimental): una sola lectura de estado al abrir la pantalla,
-  // sin sondeo. `null` = servidor sin la función (404/405) o error.
+  // GPT-Live (experimental): a single status read when the screen opens, no
+  // polling. `null` = server without the feature (404/405) or an error.
   bool _gptLiveStatusRequested = false;
   bool _gptLiveStatusLoaded = false;
   VoiceLiveStatus? _gptLiveStatus;
@@ -2475,8 +2475,8 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
               ? null
               : (value) => _update(_s.copyWith(bargeInEnabled: value)),
         ),
-        // Sin la función en el servidor no hay fila (salvo que ya estuviera
-        // activada: entonces hay que poder apagarla).
+        // Without the feature on the server there is no row (unless it was
+        // already on: then it must be possible to turn it off).
         if (_s.gptLiveEnabled || _gptLiveStatus != null)
           HermesSwitchTile(
             controlKey: const ValueKey('voice_gpt_live_enabled'),
