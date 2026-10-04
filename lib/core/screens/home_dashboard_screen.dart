@@ -28,6 +28,7 @@ import '../services/drawer_gesture_exclusion.dart';
 import '../services/global_activity_aggregate.dart';
 import '../services/home_widget_publisher.dart';
 import '../services/platform/android_apps.dart';
+import '../services/cold_start_store.dart';
 import '../services/local_transcript_store.dart';
 import '../services/session_archive.dart';
 import '../services/session_repository.dart';
@@ -672,17 +673,110 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _followProfileScope(active);
       _configureActivitySource(active);
       _reportInitialLoadProgress(0.64);
-      await _refreshStatus();
+      // cs1215: the last known recents paint while the network read runs;
+      // neither waits for the other.
+      final refresh = _refreshStatus();
+      await _paintColdStartRecents(active, epoch);
+      await refresh;
     } finally {
-      if (mounted && epoch == _reloadEpoch && !_initialLoadComplete) {
-        setState(() => _initialLoadComplete = true);
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted || epoch != _reloadEpoch) return;
-          widget.onInitialLoadProgress?.call(1);
-          widget.onInitialLoadComplete?.call();
-        });
-      }
+      if (epoch == _reloadEpoch) _completeInitialLoad();
     }
+  }
+
+  /// Ends the initial loading state once (lets the splash leave).
+  void _completeInitialLoad() {
+    if (!mounted || _initialLoadComplete) return;
+    final epoch = _reloadEpoch;
+    setState(() => _initialLoadComplete = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || epoch != _reloadEpoch) return;
+      widget.onInitialLoadProgress?.call(1);
+      widget.onInitialLoadComplete?.call();
+    });
+  }
+
+  /// Rows on screen came from the cold-start snapshot, not a list read yet.
+  bool _showingColdStartRecents = false;
+
+  /// cs1215: a cold start paints the recents Home last showed for the
+  /// persisted connection and profile (encrypted on disk), so first paint
+  /// never waits for the network. The list read then replaces them.
+  Future<void> _paintColdStartRecents(
+    SavedConnection? connection,
+    int epoch,
+  ) async {
+    final store = _activeChats?.coldStartStore;
+    if (connection == null || store == null || _initialLoadComplete) return;
+    // Under App Lock nothing private is decrypted before unlock.
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    if (app?.appLock.locked.value == true) return;
+    final ticket = ActiveProfileScope.of(
+      widget.connManager,
+      connection.id,
+    ).capture();
+    List<Session>? cached;
+    SessionArchive archive;
+    try {
+      cached = await store.loadRecents(
+        connectionId: connection.id,
+        profile: ticket.owner,
+      );
+      archive = await SessionArchive.load(
+        widget.connManager.prefs,
+        connection.id,
+      );
+    } catch (error) {
+      debugPrint('[home-dashboard] cold-start recents (${error.runtimeType})');
+      return;
+    }
+    if (!mounted ||
+        _initialLoadComplete ||
+        epoch != _reloadEpoch ||
+        _active?.id != connection.id ||
+        !ticket.isCurrent) {
+      return;
+    }
+    final rows = (cached ?? const <Session>[])
+        .where((s) => _isHomeRecentCandidate(s, archive))
+        .toList();
+    if (rows.isEmpty) return;
+    setState(() {
+      _recentSessions = rows;
+      _showingColdStartRecents = true;
+    });
+    _completeInitialLoad();
+  }
+
+  /// Saves what Home just read from the server for the next cold start.
+  void _saveColdStartRecents(
+    SavedConnection connection,
+    String owner,
+    List<Session> listed,
+    List<Session> recents,
+    SessionArchive archive,
+  ) {
+    final store = _activeChats?.coldStartStore;
+    if (store == null || connection.kind == InstanceKind.localhost) return;
+    final listedIds = {for (final s in listed) s.id};
+    final rows = recents
+        .where(
+          (s) => listedIds.contains(s.id) && _isHomeRecentCandidate(s, archive),
+        )
+        .take(ColdStartStore.maxRecentRows)
+        .toList(growable: false);
+    unawaited(
+      store
+          .saveRecents(
+            connectionId: connection.id,
+            profile: owner,
+            sessions: rows,
+          )
+          .catchError((Object error) {
+            debugPrint(
+              '[home-dashboard] recents not saved (${error.runtimeType})',
+            );
+          }),
+    );
   }
 
   /// Borra un chat directamente desde recientes. Para instancias locales limpia
@@ -1230,13 +1324,28 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       if (!ok) _dashboardAuth = DashboardAuthCheck.unknown;
       _checking = false;
       _listenArchive(archive, conn);
-      if (!listReadUnavailable) {
+      // An unreachable server keeps the cold-start rows on screen instead
+      // of an empty Home; the next good read replaces them.
+      if (!listReadUnavailable && (ok || !_showingColdStartRecents)) {
         _recentSessions = recentSessions
             .where((s) => !archive.isSessionDeleted(s))
             .toList();
+        _showingColdStartRecents = false;
       }
     });
     listRead.end(rows: listReadUnavailable ? const [] : sessions);
+    if (ok && !listReadUnavailable) {
+      _saveColdStartRecents(
+        conn,
+        ownerProfile,
+        sessions,
+        recentSessions,
+        archive,
+      );
+    }
+    // The recents are what the splash waits for; the live activity roster
+    // below decorates them when it lands.
+    _completeInitialLoad();
     if (ok) _scheduleMissionPrewarm(conn);
     await _refreshRemoteActivity(conn, ownerProfile);
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
@@ -1426,7 +1535,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
             languageCode: Localizations.localeOf(context).languageCode,
           ),
           onTap: () => _openChat(session),
-          onStop: activityLabel == null ||
+          onStop:
+              activityLabel == null ||
                   status.phase == SessionLivePhase.compacting
               ? null
               : () => _stopSession(connection, session),
@@ -1954,30 +2064,35 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                           _checking
                               ? Strings.of(context).homeStatusChecking(
                                   _active?.label ??
-                                      Strings.of(context)
-                                          .homeStatusAgentConsole,
+                                      Strings.of(
+                                        context,
+                                      ).homeStatusAgentConsole,
                                 )
                               : _healthOk &&
                                     _dashboardAuth ==
                                         DashboardAuthCheck.invalidCredentials
-                              ? Strings.of(context)
-                                    .m1215HomeDashboardWrongPassword(
-                                      _active?.label ?? '',
-                                    )
+                              ? Strings.of(
+                                  context,
+                                ).m1215HomeDashboardWrongPassword(
+                                  _active?.label ?? '',
+                                )
                               : _healthOk &&
                                     _dashboardAuth ==
                                         DashboardAuthCheck.loginRequired
-                              ? Strings.of(context)
-                                    .m1215HomeDashboardLoginRequired(
-                                      _active?.label ?? '',
-                                    )
+                              ? Strings.of(
+                                  context,
+                                ).m1215HomeDashboardLoginRequired(
+                                  _active?.label ?? '',
+                                )
                               : _healthOk
-                              ? Strings.of(context)
-                                    .homeStatusOnline(_active?.label ?? '')
+                              ? Strings.of(
+                                  context,
+                                ).homeStatusOnline(_active?.label ?? '')
                               : _active == null
                               ? Strings.of(context).homeStatusAgentConsole
-                              : Strings.of(context)
-                                    .homeStatusOffline(_active!.label),
+                              : Strings.of(
+                                  context,
+                                ).homeStatusOffline(_active!.label),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
