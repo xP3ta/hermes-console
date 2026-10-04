@@ -400,6 +400,93 @@ void main() {
     expect(watch.value.text, 'b' * (SubagentLiveWatch.maxLiveChars - 1));
   });
 
+  test(
+    'a short final keeps exactly the tail of the stream that fits',
+    () async {
+      const max = SubagentLiveWatch.maxLiveChars;
+      // EARLY, a filler, a tool line and LATE leave exactly three code units
+      // free, so the four-unit `\nFIN` pushes out one unit of the oldest text.
+      final streamed = 'EARLY${'a' * (max - 25)}\n› read_file\nLATE';
+      expect(streamed.length, max - 3);
+
+      final gateway = FakeWatchGateway();
+      final watch = _watch(gateway)..start();
+      await pumpEventQueue();
+      gateway.emit('watch-1', 'message.delta', {
+        'text': 'EARLY${'a' * (max - 25)}',
+      });
+      gateway.emit('watch-1', 'tool.start', {'name': 'read_file'});
+      gateway.emit('watch-1', 'message.delta', {'text': 'LATE'});
+      expect(watch.value.text, streamed);
+      gateway.emit('watch-1', 'message.complete', {'text': 'FIN'});
+      await pumpEventQueue();
+
+      expect(watch.value.text, '$streamed\nFIN'.substring(1));
+      expect(watch.value.text, startsWith('ARLY'));
+      expect(watch.value.text, contains('› read_file\nLATE\nFIN'));
+      expect(watch.value.text.length, max);
+    },
+  );
+
+  test('a short final with room left keeps everything before it', () async {
+    final gateway = FakeWatchGateway();
+    final watch = _watch(gateway)..start();
+    await pumpEventQueue();
+
+    gateway.emit('watch-1', 'message.delta', {'text': 'EARLY'});
+    gateway.emit('watch-1', 'tool.start', {'name': 'read_file'});
+    gateway.emit('watch-1', 'message.delta', {'text': 'LATE'});
+    gateway.emit('watch-1', 'message.complete', {'text': 'FIN'});
+    await pumpEventQueue();
+
+    expect(watch.value.text, 'EARLY\n› read_file\nLATE\nFIN');
+  });
+
+  test(
+    'a final that only repeats the end of the stream is a duplicate',
+    () async {
+      final gateway = FakeWatchGateway();
+      final watch = _watch(gateway)..start();
+      await pumpEventQueue();
+
+      gateway.emit('watch-1', 'message.delta', {
+        'text': 'Revisado. Resultado: 42',
+      });
+      gateway.emit('watch-1', 'message.complete', {'text': 'Resultado: 42'});
+      await pumpEventQueue();
+
+      expect(watch.value.text, 'Revisado. Resultado: 42');
+    },
+  );
+
+  test(
+    'a normal finish releases and closes the runtime exactly once',
+    () async {
+      final gateway = FakeWatchGateway();
+      final watch = SubagentLiveWatch(
+        gateway: gateway,
+        childSessionId: _child,
+        profile: _parentProfile,
+        isCurrent: () => true,
+      )..start();
+      await pumpEventQueue();
+      expect(gateway.retained, ['watch-1']);
+      expect(gateway.released, isEmpty);
+
+      gateway.emit('watch-1', 'message.complete', {'text': 'listo'});
+      await pumpEventQueue();
+      expect(gateway.released, ['watch-1']);
+      expect(gateway.closed, ['watch-1']);
+
+      // A late frame and the disposal must not release or close it again.
+      gateway.emit('watch-1', 'message.complete', {'text': 'otra vez'});
+      watch.dispose();
+      await pumpEventQueue();
+      expect(gateway.released, ['watch-1']);
+      expect(gateway.closed, ['watch-1']);
+    },
+  );
+
   test('a normal finish cancels the event subscription', () async {
     final gateway = FakeWatchGateway();
     final watch = _watch(gateway)..start();
