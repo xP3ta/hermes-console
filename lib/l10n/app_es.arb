@@ -6358,6 +6358,15 @@
   "lunStartFailedBody": "Termux no aceptó el comando. La causa más habitual es que la propiedad «allow-external-apps» está desactivada: ábrela con el botón de abajo (o actívala en el archivo ~/.termux/termux.properties) y reintenta.",
   "homeOpenStatusHint": "Abre el estado de la instancia",
   "homePetShortcut": "Mascota — abrir Mascotas",
+  "homeProfileListErrorTitle": "No se pudieron cargar las conversaciones de {profile}",
+  "@homeProfileListErrorTitle": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "homeProfileListErrorBody": "La conexión funciona; el servidor rechazó la lista de este perfil.",
   "homeOfflineChip": "sin conexión",
   "homeInstanceDownBody": "No se pudo conectar con «{label}». Comprueba que la instancia esté encendida y accesible desde esta red.",
   "@homeInstanceDownBody": {

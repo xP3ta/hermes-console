@@ -46,6 +46,7 @@ import '../widgets/dock.dart';
 import '../widgets/dock_shortcuts.dart';
 import '../widgets/dock_style.dart' show dockShowsBack;
 import '../widgets/hermes_drawer.dart';
+import '../widgets/profile_scope.dart';
 import '../widgets/profile_switcher.dart';
 import 'profiles_screen.dart';
 import '../widgets/hermes_notice.dart';
@@ -131,6 +132,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   /// missing login keeps the header pill from claiming the agent is online.
   DashboardAuthCheck _dashboardAuth = DashboardAuthCheck.unknown;
   List<Session> _recentSessions = [];
+
+  /// The last read of the active profile's list failed while the connection
+  /// answered: Home stays online and says so next to the list.
+  bool _recentListFailed = false;
   SessionArchive? _archive;
   final Map<String, ({double activityAt, String? user, String? assistant})>
   _turnPreviews = {};
@@ -317,8 +322,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   void _onActiveProfileChanged() {
     _missionPrewarm.cancel();
     if (!mounted) return;
-    // The previous profile's recents leave at once; the new ones follow.
-    setState(() => _recentSessions = []);
+    // The previous profile's recents (and its list error) leave at once;
+    // the new ones follow.
+    setState(() {
+      _recentSessions = [];
+      _recentListFailed = false;
+    });
     _reload();
   }
 
@@ -1002,6 +1011,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         _dashboardAuth = DashboardAuthCheck.unknown;
         _checking = false;
         _recentSessions = [];
+        _recentListFailed = false;
       });
       unawaited(
         app?.updateHomeWidget(
@@ -1126,9 +1136,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                   wanted,
             );
           } on CoreReadException catch (error) {
-            // A rejected key is a real outage of this connection.
-            if (error.kind == CoreReadErrorKind.auth ||
-                error.kind == CoreReadErrorKind.forbidden) {
+            // A rejected key is a real outage of this connection. A named
+            // profile's list has its own credentials (its Dashboard scope):
+            // its refusal leaves the connection online with a list error.
+            if ((error.kind == CoreReadErrorKind.auth ||
+                    error.kind == CoreReadErrorKind.forbidden) &&
+                ownerProfile == 'default') {
               rethrow;
             }
             listReadUnavailable = true;
@@ -1137,6 +1150,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
           } on http.ClientException {
             listReadUnavailable = true;
           } on SocketException {
+            listReadUnavailable = true;
+          } catch (_) {
+            // Any other refusal of a named profile's list (Dashboard login,
+            // malformed page) is that profile's, not the connection's.
+            if (ownerProfile == 'default') rethrow;
             listReadUnavailable = true;
           }
           if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
@@ -1215,6 +1233,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _checking = false;
       _listenArchive(archive);
       if (!listReadUnavailable) _recentSessions = recentSessions;
+      _recentListFailed = ok && listReadUnavailable;
     });
     if (ok) _scheduleMissionPrewarm(conn);
     await _refreshRemoteActivity(conn, ownerProfile);
@@ -2193,6 +2212,16 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                               ),
                             ),
                             ..._buildRecentRows(active, recentLimit),
+                          ] else if (_recentListFailed &&
+                              !isRemoteAndOffline) ...[
+                            const SizedBox(height: 10),
+                            _ProfileListErrorCard(
+                              profile: ProfileScopeLabel.display(
+                                Strings.of(context),
+                                widget.connManager.activeProfileFor(active.id),
+                              ),
+                              onRetry: _refreshStatus,
+                            ),
                           ] else if (!isRemoteAndOffline) ...[
                             const SizedBox(height: 10),
                             HermesEmptyState(
@@ -2533,6 +2562,30 @@ class _LocalAgentOfflineCard extends StatelessWidget {
 
 /// Estado editorial de la instancia remota. Diagnóstico y acciones permanecen
 /// visibles; la explicación secundaria se pliega para no dominar el Home.
+/// The active profile's list could not be read while the connection is up:
+/// says so where the list goes, without turning Home offline.
+class _ProfileListErrorCard extends StatelessWidget {
+  final String profile;
+  final VoidCallback onRetry;
+
+  const _ProfileListErrorCard({required this.profile, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    return HermesEmptyState(
+      key: const ValueKey('home-profile-list-error'),
+      compact: true,
+      title: s.homeProfileListErrorTitle(profile),
+      body: s.homeProfileListErrorBody,
+      primaryLabel: s.commonRetry,
+      primaryIcon: Icons.refresh_rounded,
+      onPrimary: onRetry,
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
+    );
+  }
+}
+
 class _RemoteInstanceOfflineCard extends StatefulWidget {
   final HermesThemeColors colors;
   final String label;

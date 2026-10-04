@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/core_read.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
+import 'package:hermes_android/core/services/active_profile_scope.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/instance_status_panel.dart';
@@ -22,6 +25,8 @@ final class _Hermes {
   final gatewayPaths = <String>[];
   final dashboardQueries = <Map<String, String>>[];
   int dashboardStatus = 200;
+  String? dashboardBody;
+  final dashboardGates = <String, Completer<void>>{};
 
   http.Client client() => MockClient((request) async {
     final url = request.url;
@@ -34,9 +39,13 @@ final class _Hermes {
       }
       if (url.path != '/api/sessions') return http.Response('{}', 404);
       dashboardQueries.add(url.queryParameters);
+      final gate = dashboardGates[url.queryParameters['profile']];
+      if (gate != null) await gate.future;
       if (dashboardStatus != 200) {
         return http.Response('{"detail":"no"}', dashboardStatus);
       }
+      final body = dashboardBody;
+      if (body != null) return http.Response(body, 200);
       final profile = url.queryParameters['profile'] ?? 'default';
       return http.Response(
         '{"sessions":[{"id":"s-$profile","title":"Builder chat",'
@@ -236,6 +245,89 @@ void main() {
     expect(find.byKey(const ValueKey('home-offline-retry')), findsNothing);
     expect(find.textContaining('offline ·'), findsNothing);
     expect(hermes.gatewayPaths.where((p) => p.startsWith('/p/')), isEmpty);
+    await unmount(tester);
+  });
+
+  testWidgets('a 401 on a named profile list is a profile error, not an '
+      'offline connection', (tester) async {
+    final hermes = _Hermes();
+    // A client without the Dashboard route meets the API server's 401.
+    await pumpHome(
+      tester,
+      hermes,
+      clientFactory: (conn) => ApiClient(
+        baseUrl: conn.baseUrl,
+        apiKey: 'test-key',
+        httpClient: hermes.client(),
+      ),
+    );
+    expect(hermes.gatewayPaths, contains('/p/console-builder/api/sessions'));
+    expect(find.byKey(const ValueKey('home-offline-retry')), findsNothing);
+    expect(find.textContaining('offline ·'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('home-profile-list-error')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('console-builder'), findsWidgets);
+    await unmount(tester);
+  });
+
+  testWidgets('an unreadable named profile page is a profile error too', (
+    tester,
+  ) async {
+    final hermes = _Hermes()..dashboardBody = '{"sessions":"none"}';
+    await pumpHome(tester, hermes);
+    expect(find.byKey(const ValueKey('home-offline-retry')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('home-profile-list-error')),
+      findsOneWidget,
+    );
+    await unmount(tester);
+  });
+
+  testWidgets('a profile error leaves with its profile: the next profile '
+      'loads without it', (tester) async {
+    final hermes = _Hermes()..dashboardStatus = 401;
+    final manager = await pumpHome(tester, hermes);
+    expect(
+      find.byKey(const ValueKey('home-profile-list-error')),
+      findsOneWidget,
+    );
+    hermes.dashboardStatus = 200;
+    final gate = hermes.dashboardGates['bob'] = Completer<void>();
+    final conn = manager.getConnections().single;
+    await ActiveProfileScope.of(manager, conn.id).switchTo('bob');
+    await settle(tester);
+    // Bob's read is still on the wire: no error card names ana's failure.
+    expect(find.byKey(const ValueKey('home-profile-list-error')), findsNothing);
+    gate.complete();
+    await settle(tester);
+    expect(find.text('Builder chat'), findsWidgets);
+    expect(find.byKey(const ValueKey('home-profile-list-error')), findsNothing);
+    await unmount(tester);
+  });
+
+  testWidgets('a 401 on the default profile list still means offline', (
+    tester,
+  ) async {
+    final hermes = _Hermes();
+    await pumpHome(
+      tester,
+      hermes,
+      profile: 'default',
+      clientFactory: (conn) => ApiClient(
+        baseUrl: conn.baseUrl,
+        apiKey: 'test-key',
+        httpClient: MockClient((request) async {
+          if (request.url.path == '/health') {
+            return http.Response('{"status":"ok"}', 200);
+          }
+          return http.Response('{}', 401);
+        }),
+      ),
+    );
+    expect(find.byKey(const ValueKey('home-offline-retry')), findsOneWidget);
+    expect(find.byKey(const ValueKey('home-profile-list-error')), findsNothing);
     await unmount(tester);
   });
 }
