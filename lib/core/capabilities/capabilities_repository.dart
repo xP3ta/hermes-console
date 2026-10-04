@@ -11,7 +11,7 @@
 //   MCP      GET /api/mcp/{catalog,servers} · POST /api/mcp/catalog/install
 //            PUT /api/mcp/servers/{n}/enabled · DELETE /api/mcp/servers/{n}
 //            POST /api/mcp/servers[/{n}/test|/{n}/auth] · GET /api/mcp/oauth/flows/{id}
-//   MCP live RPC mcp.servers.status
+//   MCP live RPC mcp.servers.status · GET /api/logs (on demand, one read)
 //   hosted   RPC connectors.{list,catalog,accounts,connect,operation.status,
 //            operation.wake,accounts.remove} · connection.respond
 //
@@ -27,6 +27,7 @@ import '../services/connection_manager.dart'
 import '../services/desktop_control_gateway.dart';
 import '../services/tui_gateway_client.dart' show TuiGatewayRpcError;
 import 'capability_models.dart';
+import 'mcp_log_filter.dart';
 import 'mcp_runtime_status.dart';
 
 /// Minimal REST surface (implemented by `DashboardClient`).
@@ -62,6 +63,7 @@ enum CapabilityFeature {
   mcpCatalog,
   mcpServers,
   mcpStatus,
+  mcpLogs,
   hostedConnectors,
 }
 
@@ -433,6 +435,22 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
           for (final row in servers.map(McpRuntimeRow.tryParse).nonNulls)
             row.name: row,
         };
+      });
+
+  /// One read of the server's log for [server]. stdio servers log into the
+  /// shared MCP stderr file (cut to their own sections); others are found in
+  /// the agent log by name. Lines are returned to the caller and never kept.
+  Future<List<String>> mcpLogLines(String server, {required bool stdio}) =>
+      _call(CapabilityFeature.mcpLogs, () async {
+        final query = stdio
+            ? 'logs?file=mcp&lines=500'
+            : 'logs?file=agent&lines=300'
+                  '&search=${Uri.encodeQueryComponent(server)}';
+        final result = await rest.get(_withProfile(query));
+        final lines = result['lines'];
+        if (lines is! List) throw const FormatException('list expected');
+        final text = lines.whereType<String>().toList(growable: false);
+        return stdio ? filterStdioSections(text, server) : text;
       });
 
   Future<void> installMcp(

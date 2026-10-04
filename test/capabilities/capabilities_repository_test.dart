@@ -493,7 +493,7 @@ void main() {
       final repo = CapabilitiesRepository(rest: rest);
       final lines = await repo.mcpLogLines('my server', stdio: false);
       expect(lines, ['agent: mcp files connected']);
-      expect(rest.calls, ['GET logs?file=agent&lines=300&search=my%20server']);
+      expect(rest.calls, ['GET logs?file=agent&lines=300&search=my+server']);
     });
 
     test('404 marks logs unsupported and is not asked again', () async {
