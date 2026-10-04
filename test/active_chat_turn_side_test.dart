@@ -48,23 +48,26 @@ Future<void> _pump() async {
 
 void main() {
   group('/btw', () {
-    test('sends one prompt.btw while the reply streams and queues nothing', () async {
-      final gateway = FakeTurnSideGateway();
-      final chat = await _streamingChat(gateway);
-      chat.enqueue('después');
+    test(
+      'sends one prompt.btw while the reply streams and queues nothing',
+      () async {
+        final gateway = FakeTurnSideGateway();
+        final chat = await _streamingChat(gateway);
+        chat.enqueue('después');
 
-      final outcome = await chat.askSideQuestion('  ¿qué hora es?  ');
+        final outcome = await chat.askSideQuestion('  ¿qué hora es?  ');
 
-      expect(outcome, SideCommandOutcome.started);
-      expect(gateway.callsTo('prompt.btw').map((call) => call.params), [
-        {'session_id': 'runtime-side', 'text': '¿qué hora es?'},
-      ]);
-      expect(gateway.calls, hasLength(1));
-      expect(gateway.interrupts, isEmpty);
-      expect(gateway.submissions, ['hola']);
-      expect(chat.isStreaming, isTrue);
-      expect(chat.queuedMessages, ['después']);
-    });
+        expect(outcome, SideCommandOutcome.started);
+        expect(gateway.callsTo('prompt.btw').map((call) => call.params), [
+          {'session_id': 'runtime-side', 'text': '¿qué hora es?'},
+        ]);
+        expect(gateway.calls, hasLength(1));
+        expect(gateway.interrupts, isEmpty);
+        expect(gateway.submissions, ['hola']);
+        expect(chat.isStreaming, isTrue);
+        expect(chat.queuedMessages, ['después']);
+      },
+    );
 
     test('an empty question sends nothing', () async {
       final gateway = FakeTurnSideGateway();
@@ -74,21 +77,30 @@ void main() {
       expect(gateway.calls, isEmpty);
     });
 
-    test('method-not-found is remembered and asks for the slash path', () async {
-      final gateway = FakeTurnSideGateway()
-        ..failures.add(
-          const DesktopControlFailure(
-            DesktopControlFailureKind.unsupported,
-            code: -32601,
-          ),
-        );
-      final chat = await _streamingChat(gateway);
+    test(
+      'method-not-found is remembered and asks for the slash path',
+      () async {
+        final gateway = FakeTurnSideGateway()
+          ..failures.add(
+            const DesktopControlFailure(
+              DesktopControlFailureKind.unsupported,
+              code: -32601,
+            ),
+          );
+        final chat = await _streamingChat(gateway);
 
-      expect(await chat.askSideQuestion('hola'), SideCommandOutcome.unsupported);
-      expect(chat.canRunSideAgents, isFalse);
-      expect(await chat.askSideQuestion('otra vez'), SideCommandOutcome.unsupported);
-      expect(gateway.callsTo('prompt.btw'), hasLength(1));
-    });
+        expect(
+          await chat.askSideQuestion('hola'),
+          SideCommandOutcome.unsupported,
+        );
+        expect(chat.canRunSideAgents, isFalse);
+        expect(
+          await chat.askSideQuestion('otra vez'),
+          SideCommandOutcome.unsupported,
+        );
+        expect(gateway.callsTo('prompt.btw'), hasLength(1));
+      },
+    );
 
     test('a read-only connection sends nothing', () async {
       final gateway = FakeTurnSideGateway();
@@ -107,7 +119,10 @@ void main() {
       addTearDown(chat.dispose);
       addTearDown(gateway.close);
 
-      expect(await chat.askSideQuestion('hola'), SideCommandOutcome.unsupported);
+      expect(
+        await chat.askSideQuestion('hola'),
+        SideCommandOutcome.unsupported,
+      );
       expect(gateway.calls, isEmpty);
       expect(gateway.connectCalls, 0);
     });
@@ -179,20 +194,85 @@ void main() {
   });
 
   group('/bg', () {
-    test('sends one prompt.background while streaming and never queues', () async {
-      final gateway = FakeTurnSideGateway();
-      final chat = await _streamingChat(gateway);
+    test(
+      'sends one prompt.background while streaming and never queues',
+      () async {
+        final gateway = FakeTurnSideGateway();
+        final chat = await _streamingChat(gateway);
 
-      final outcome = await chat.startBackgroundPrompt('resume el repo');
+        final outcome = await chat.startBackgroundPrompt('resume el repo');
 
-      expect(outcome, SideCommandOutcome.started);
-      expect(gateway.callsTo('prompt.background').map((call) => call.params), [
-        {'session_id': 'runtime-side', 'text': 'resume el repo'},
-      ]);
-      expect(gateway.calls, hasLength(1));
-      expect(chat.queuedMessages, isEmpty);
-      expect(chat.isStreaming, isTrue);
-    });
+        expect(outcome, SideCommandOutcome.started);
+        expect(
+          gateway.callsTo('prompt.background').map((call) => call.params),
+          [
+            {'session_id': 'runtime-side', 'text': 'resume el repo'},
+          ],
+        );
+        expect(gateway.calls, hasLength(1));
+        expect(chat.queuedMessages, isEmpty);
+        expect(chat.isStreaming, isTrue);
+      },
+    );
+
+    test(
+      'background.complete reaches the result strip and signals it',
+      () async {
+        final gateway = FakeTurnSideGateway();
+        final chat = await _streamingChat(gateway);
+        await chat.startBackgroundPrompt('resume el repo');
+        final events = <ActiveChatEvent>[];
+        final subscription = chat.changes.listen(events.add);
+
+        gateway.emit('background.complete', {
+          'task_id': 'bg-1',
+          'text': 'Listo: 3 archivos.',
+        });
+        gateway.emit('background.complete', {
+          'task_id': 'bg-2',
+          'text': 'error: boom',
+        });
+        await _pump();
+        await subscription.cancel();
+
+        expect(chat.backgroundTaskOutcomes['bg-1'], (
+          text: 'Listo: 3 archivos.',
+          isError: false,
+        ));
+        expect(chat.backgroundTaskOutcomes['bg-2'], (
+          text: 'error: boom',
+          isError: true,
+        ));
+        expect(
+          events.where(
+            (event) => event == ActiveChatEvent.backgroundTaskComplete,
+          ),
+          hasLength(2),
+        );
+        expect(chat.queuedMessages, isEmpty);
+        expect(chat.isStreaming, isTrue);
+
+        chat.dismissBackgroundTaskOutcome('bg-1');
+        expect(chat.backgroundTaskOutcomes.keys, ['bg-2']);
+      },
+    );
+
+    test(
+      'a completion for another runtime or without an id is ignored',
+      () async {
+        final gateway = FakeTurnSideGateway();
+        final chat = await _streamingChat(gateway);
+
+        gateway.emit('background.complete', {
+          'task_id': 'bg-other',
+          'text': 'no es mío',
+        }, sessionId: 'runtime-elsewhere');
+        gateway.emit('background.complete', {'text': 'sin id'});
+        await _pump();
+
+        expect(chat.backgroundTaskOutcomes, isEmpty);
+      },
+    );
 
     test('empty, unsupported and read-only send nothing more', () async {
       final gateway = FakeTurnSideGateway()
