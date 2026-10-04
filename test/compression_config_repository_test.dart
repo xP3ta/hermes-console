@@ -478,6 +478,94 @@ void main() {
       },
     );
 
+    group('re-lectura tras guardar', () {
+      const changed = CompressionConfig(
+        enabled: false,
+        threshold: 0.75,
+        targetRatio: 0.3,
+        protectLastN: 40,
+      );
+
+      Future<(CompressionConfigRepository, CompressionConfigSnapshot)> open(
+        MockClient client,
+      ) async {
+        final dashboard = _dashboard(client);
+        final repository = CompressionConfigRepository(dashboard);
+        addTearDown(() {
+          repository.close();
+          dashboard.close();
+        });
+        return (repository, await repository.load());
+      }
+
+      MockClient server({
+        required List<http.Request> requests,
+        bool keepWrites = true,
+        int? getStatusAfterPut,
+      }) {
+        final fixture = _fixture();
+        final config = _cloneMap(fixture['config']!);
+        final compression = config['compression'] as Map<String, dynamic>;
+        var put = false;
+        return MockClient((request) async {
+          requests.add(request);
+          if (request.method == 'PUT') {
+            put = true;
+            if (keepWrites) {
+              final sent =
+                  (jsonDecode(request.body) as Map<String, dynamic>)['config']
+                      as Map<String, dynamic>;
+              compression.addAll(sent['compression'] as Map<String, dynamic>);
+            }
+            return http.Response('{"ok":true}', 200);
+          }
+          if (request.url.path == '/api/config/schema') {
+            return http.Response(jsonEncode(fixture['schema']), 200);
+          }
+          if (put && getStatusAfterPut != null) {
+            return http.Response('{}', getStatusAfterPut);
+          }
+          return http.Response(jsonEncode(config), 200);
+        });
+      }
+
+      test('un PUT bueno va seguido de una lectura de /api/config', () async {
+        final requests = <http.Request>[];
+        final (repository, base) = await open(server(requests: requests));
+        requests.clear();
+
+        final saved = await repository.save(base, changed);
+
+        expect(requests.map((r) => '${r.method} ${r.url.path}'), [
+          'PUT /api/config',
+          'GET /api/config',
+        ]);
+        expect(saved.configuration, changed);
+      });
+
+      test('un valor que el servidor no guardo es notSaved', () async {
+        final requests = <http.Request>[];
+        final (repository, base) = await open(
+          server(requests: requests, keepWrites: false),
+        );
+
+        final failure = await _failure(repository.save(base, changed));
+
+        expect(failure.code, CompressionConfigFailureCode.notSaved);
+      });
+
+      test('una re-lectura que falla no marca exito', () async {
+        final requests = <http.Request>[];
+        final (repository, base) = await open(
+          server(requests: requests, getStatusAfterPut: 500),
+        );
+
+        final failure = await _failure(repository.save(base, changed));
+
+        expect(failure.code, CompressionConfigFailureCode.unconfirmed);
+      });
+    });
+
     test('rechaza cada valor fuera de rango antes de cualquier PUT', () async {
       final fixture = _fixture();
       var putCount = 0;
