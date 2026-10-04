@@ -1650,6 +1650,9 @@ class _ChatScreenState extends State<ChatScreen>
   // palette is open; closing it (trigger gone, blur, dispose) cancels.
   late final ComposerCompletionScheduler<_SlashLookup> _slashCompletions =
       ComposerCompletionScheduler<_SlashLookup>(fetch: _fetchSlashLookup);
+  // Who answers composer completions (Desktop `scopeKey`): the bound runtime,
+  // or the profile a new-chat draft is routed to. Every slash key carries it.
+  String? _completionScope;
   // `@` references (`complete.path`), same debounce/cancel contract. The key
   // carries the runtime so another session's tree is never served from cache.
   late final ComposerCompletionScheduler<PathCompletionBatch>
@@ -3670,14 +3673,8 @@ class _ChatScreenState extends State<ChatScreen>
         _slashSuggestions = suggestions;
       });
     }
-    if (_textFocusNode.hasFocus &&
-        text.startsWith('/') &&
-        !text.contains(RegExp(r'\s')) &&
-        text.length <= 65) {
-      _slashCompletions.schedule(text, _applySlashLookup);
-    } else {
-      _slashCompletions.cancel();
-    }
+    _syncComposerCompletionScope();
+    _refreshSlashCompletion(text);
     _refreshReferenceQuery();
     _maybeDiscardFailedTurnFromExplicitEmptyComposer();
     _scheduleDraftSave();
@@ -3789,11 +3786,61 @@ class _ChatScreenState extends State<ChatScreen>
       !_transcribing &&
       !_navigationDrawerOpen;
 
-  Future<_SlashLookup?> _fetchSlashLookup(String input) async {
+  String get _composerCompletionScope {
+    final runtime = _chatBound ? _chat.desktopRuntimeSessionId : null;
+    return runtime != null && runtime.isNotEmpty
+        ? 'runtime:$runtime'
+        : 'profile:$_effectiveSessionProfile';
+  }
+
+  /// A runtime bind/rotation or profile change retires every completion keyed
+  /// to the previous scope: pending lookups, memoised answers and rows.
+  void _syncComposerCompletionScope() {
+    final scope = _composerCompletionScope;
+    final previous = _completionScope;
+    _completionScope = scope;
+    if (previous == null || previous == scope) return;
+    _slashCompletions
+      ..cancel()
+      ..clearCache();
+    if (_disposed || !mounted) return;
+    final text = _textController.text;
+    final local = slashSuggestionsFor(text, Strings.of(context));
+    setState(() => _slashSuggestions = local);
+    _refreshSlashCompletion(text);
+  }
+
+  void _refreshSlashCompletion(String text) {
+    if (_textFocusNode.hasFocus &&
+        text.startsWith('/') &&
+        !text.contains(RegExp(r'\s')) &&
+        text.length <= 65) {
+      _slashCompletions.schedule(
+        '$_composerCompletionScope\n$text',
+        _applySlashLookup,
+      );
+    } else {
+      _slashCompletions.cancel();
+    }
+  }
+
+  Future<_SlashLookup?> _fetchSlashLookup(String key) async {
+    final split = key.indexOf('\n');
+    final scope = key.substring(0, split);
+    final input = key.substring(split + 1);
+    if (scope != _composerCompletionScope) return null;
     final catalog = await _loadDesktopCommandCatalog();
     SlashCompletionBatch? completion;
     try {
-      completion = await _chat.completeDesktopSlash(input);
+      completion = await _chat.completeDesktopSlash(
+        input,
+        runtimeSessionId: scope.startsWith('runtime:')
+            ? scope.substring('runtime:'.length)
+            : null,
+        profile: scope.startsWith('profile:')
+            ? scope.substring('profile:'.length)
+            : '',
+      );
     } catch (_) {
       // El catálogo sigue siendo un fallback válido para Gateway modernos que
       // no publiquen complete.slash.
@@ -3802,10 +3849,13 @@ class _ChatScreenState extends State<ChatScreen>
     return _SlashLookup(catalog: catalog, completion: completion);
   }
 
-  void _applySlashLookup(String input, _SlashLookup? lookup) {
+  void _applySlashLookup(String key, _SlashLookup? lookup) {
+    final split = key.indexOf('\n');
+    final input = key.substring(split + 1);
     if (_disposed ||
         !mounted ||
         lookup == null ||
+        key.substring(0, split) != _composerCompletionScope ||
         _textController.text != input) {
       return;
     }
@@ -6170,6 +6220,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _onChatEvent(ActiveChatEvent event) {
     if (_disposed || !mounted) return;
+    _syncComposerCompletionScope();
     if (event == ActiveChatEvent.subagentActivity &&
         !_subagentLeadingEdgeUsed &&
         _coalescedPending == null) {

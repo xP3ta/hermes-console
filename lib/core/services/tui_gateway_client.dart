@@ -813,12 +813,14 @@ abstract class HermesDesktopCommandGateway {
 
 /// Composer completions bound to the chat's runtime, as Desktop sends them
 /// (`use-slash-completions.ts`): `session_id` scopes skill lookups to that
-/// session's profile and workspace (project-local skills). Optional so older
-/// doubles of [HermesDesktopCommandGateway] stay valid.
+/// session's profile and workspace (project-local skills); a new-chat draft
+/// with no session names its `profile` instead (`CompleteSlashParams`).
+/// Optional so older doubles of [HermesDesktopCommandGateway] stay valid.
 abstract class HermesDesktopComposerCompletionGateway {
   Future<SlashCompletionBatch> completeSlashInSession(
     String text, {
     String? runtimeSessionId,
+    String? profile,
   });
 
   /// `complete.path {word, session_id}`: `@` references listed against the
@@ -5376,6 +5378,7 @@ class TuiGatewayClient
   Future<SlashCompletionBatch> completeSlashInSession(
     String text, {
     String? runtimeSessionId,
+    String? profile,
   }) async {
     const method = 'complete.slash';
     final input = text;
@@ -5383,10 +5386,13 @@ class TuiGatewayClient
         input.contains(RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'))) {
       throw const TuiGatewayRpcError(method, 'Invalid slash completion input');
     }
+    final hasRuntime = runtimeSessionId != null && runtimeSessionId.isNotEmpty;
     final result = await _request(method, {
       'text': input,
-      if (runtimeSessionId != null && runtimeSessionId.isNotEmpty)
-        'session_id': _validatedRuntimeId(method, runtimeSessionId),
+      if (hasRuntime)
+        'session_id': _validatedRuntimeId(method, runtimeSessionId)
+      else
+        ..._petParams(profile ?? '', method: method),
     }, timeout: const Duration(seconds: 20));
     return SlashCompletionBatch.fromJson(result, input: input);
   }

@@ -259,12 +259,22 @@ class _ReferenceGateway extends _SlashGateway
     implements HermesDesktopComposerCompletionGateway {
   final List<Map<String, String>> pathCalls = [];
   final Map<String, Completer<PathCompletionBatch>> pathGates = {};
+  // Scope each complete.slash carried: runtime or new-chat profile.
+  final List<Map<String, String?>> slashScopes = [];
 
   @override
   Future<SlashCompletionBatch> completeSlashInSession(
     String text, {
     String? runtimeSessionId,
-  }) => completeSlash(text);
+    String? profile,
+  }) {
+    slashScopes.add({
+      'text': text,
+      'session_id': runtimeSessionId,
+      'profile': profile,
+    });
+    return completeSlash(text);
+  }
 
   @override
   Future<PathCompletionBatch> completePath(
@@ -408,7 +418,12 @@ Future<ActiveChat> _pumpSlashChat(
   bool readOnly = false,
   bool bindInitialStoredSession = true,
   CompressionRestoreStore? compressionRestoreStore,
+  String? sessionProfile,
+  bool? attachDesktopRuntimeOnLoad,
 }) async {
+  final session = sessionProfile == null
+      ? _session
+      : _session.copyWith(profile: sessionProfile);
   tester.platformDispatcher.localesTestValue = [const Locale('es')];
   addTearDown(tester.platformDispatcher.clearLocalesTestValue);
   final prefs = await SharedPreferences.getInstance();
@@ -422,9 +437,11 @@ Future<ActiveChat> _pumpSlashChat(
     connection: connection,
     sessionId: _session.id,
     sessionTitle: _session.title,
+    sessionProfile: sessionProfile,
     initialStoredSessionId: bindInitialStoredSession ? _session.id : null,
     api: _safeApi(),
     desktopGateway: gateway,
+    attachDesktopRuntimeOnLoad: attachDesktopRuntimeOnLoad,
     disableForegroundKeepAlive: true,
   );
   chat
@@ -465,7 +482,7 @@ Future<ActiveChat> _pumpSlashChat(
   final navigatorContext = tester.element(find.byType(Navigator).first);
   Navigator.of(navigatorContext).push(
     MaterialPageRoute<void>(
-      builder: (_) => ChatScreen(connection: connection, session: _session),
+      builder: (_) => ChatScreen(connection: connection, session: session),
     ),
   );
   await tester.pump();
@@ -910,8 +927,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 40));
       }
       await tester.pump(const Duration(milliseconds: 400));
-      expect(gateway.slashCompletionCalls - before, lessThanOrEqualTo(2));
-      expect(gateway.slashCompletionCalls - before, greaterThanOrEqualTo(1));
+      expect(gateway.slashCompletionCalls - before, 1);
 
       final afterBurst = gateway.slashCompletionCalls;
       await tester.enterText(composer, '/zz');
@@ -919,6 +935,118 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(gateway.slashCompletionCalls, afterBurst);
       expect(find.byKey(const ValueKey('chat-slash-palette')), findsNothing);
+    });
+
+    testWidgets('a new chat scopes / to its profile, not the default one', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway();
+      final chat = await _pumpSlashChat(
+        tester,
+        gateway,
+        bindInitialStoredSession: false,
+        attachDesktopRuntimeOnLoad: false,
+        sessionProfile: 'work',
+      );
+      expect(chat.desktopRuntimeSessionId, isNull);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/rev');
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(gateway.slashScopes, [
+        {'text': '/rev', 'session_id': null, 'profile': 'work'},
+      ]);
+    });
+
+    testWidgets('a cached slash answer never crosses a runtime rotation', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway()
+        ..slashResponder = (text) => SlashCompletionBatch.fromJson({
+          'replace_from': 1,
+          'items': [
+            {'text': '/review-a', 'meta': 'Runtime A only', 'kind': 'skill'},
+          ],
+        }, input: text);
+      final chat = await _pumpSlashChat(tester, gateway);
+      final runtimeA = chat.desktopRuntimeSessionId!;
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/rev');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-review-a')),
+        findsOneWidget,
+      );
+
+      // The runtime rotates while the same query is typed again: B is asked
+      // and A's memoised answer is never repainted.
+      final runtimeB = '$runtimeA-rotated';
+      gateway.slashResponder = (text) => SlashCompletionBatch.fromJson({
+        'replace_from': 1,
+        'items': [
+          {'text': '/review-b', 'meta': 'Runtime B', 'kind': 'skill'},
+        ],
+      }, input: text);
+      chat.adoptDesktopRuntimeForTesting(runtimeB);
+      await tester.enterText(composer, '/re');
+      await tester.pump();
+      await tester.enterText(composer, '/rev');
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-review-a')),
+        findsNothing,
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.slashScopes.last, {
+        'text': '/rev',
+        'session_id': runtimeB,
+        'profile': null,
+      });
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-review-b')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-review-a')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('an in-flight slash answer from a retired runtime is dropped', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway();
+      final late = gateway.slashGates['/rev'] =
+          Completer<SlashCompletionBatch>();
+      final chat = await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/rev');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.slashScopes, hasLength(1));
+
+      chat.adoptDesktopRuntimeForTesting(
+        '${chat.desktopRuntimeSessionId}-rotated',
+      );
+      late.complete(
+        SlashCompletionBatch.fromJson(const {
+          'replace_from': 1,
+          'items': [
+            {'text': '/stale-a', 'meta': 'Runtime A', 'kind': 'skill'},
+          ],
+        }, input: '/rev'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-stale-a')),
+        findsNothing,
+      );
     });
 
     testWidgets('a late slash answer never overwrites a newer query', (

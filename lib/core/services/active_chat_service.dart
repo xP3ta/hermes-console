@@ -16073,19 +16073,39 @@ class ActiveChat {
 
   /// Completion efímera. El llamador debe resolver de nuevo contra catálogo o
   /// comando nativo antes de ejecutar; una suggestion nunca concede capability.
-  Future<SlashCompletionBatch?> completeDesktopSlash(String text) async {
+  ///
+  /// [runtimeSessionId] is the runtime the caller keyed its query to (null for
+  /// a new-chat draft, which names its [profile] instead, like Desktop). The
+  /// answer is null when this chat's runtime is not that one, before or after
+  /// the round trip, so another scope's skills are never offered or cached.
+  Future<SlashCompletionBatch?> completeDesktopSlash(
+    String text, {
+    required String? runtimeSessionId,
+    String profile = '',
+  }) async {
     final gateway = _desktopGateway;
     if (gateway is! HermesDesktopCommandGateway) return null;
+    final expected = runtimeSessionId?.isEmpty ?? true
+        ? null
+        : runtimeSessionId;
+    bool current() => (_desktopRuntimeSessionId ?? '') == (expected ?? '');
+    if (!current()) return null;
     try {
+      final SlashCompletionBatch batch;
       // Desktop parity: the runtime scopes project-local skills.
       if (gateway is HermesDesktopComposerCompletionGateway) {
-        return await (gateway as HermesDesktopComposerCompletionGateway)
+        batch = await (gateway as HermesDesktopComposerCompletionGateway)
             .completeSlashInSession(
               text,
-              runtimeSessionId: _desktopRuntimeSessionId,
+              runtimeSessionId: expected,
+              profile: expected == null ? profile : null,
             );
+      } else {
+        batch = await (gateway as HermesDesktopCommandGateway).completeSlash(
+          text,
+        );
       }
-      return await (gateway as HermesDesktopCommandGateway).completeSlash(text);
+      return current() ? batch : null;
     } on TuiGatewayRpcError catch (error) {
       if (error.code == -32601) return null;
       rethrow;

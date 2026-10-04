@@ -235,10 +235,20 @@ void main() {
       runtimeSessionId: 'runtime-t1215',
     );
     await client.completeSlashInSession('/rev');
+    // A new-chat draft has no session yet: it names its profile instead, and
+    // a bound session wins over the profile (CompleteSlashParams).
+    await client.completeSlashInSession('/rev', profile: 'work');
+    await client.completeSlashInSession(
+      '/rev',
+      runtimeSessionId: 'runtime-t1215',
+      profile: 'work',
+    );
 
     expect(requests.map((frame) => frame['params']), [
       {'text': '/rev', 'session_id': 'runtime-t1215'},
       {'text': '/rev'},
+      {'text': '/rev', 'profile': 'work'},
+      {'text': '/rev', 'session_id': 'runtime-t1215'},
     ]);
     expect(scoped.suggestions.single.isSkill, isTrue);
   });
