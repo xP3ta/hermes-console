@@ -8783,6 +8783,7 @@
   "cphStateUnknown": "Estado no disponible",
   "cphStateUnknownBody": "No se pudo leer qué hay instalado en este perfil. Reintenta más tarde.",
   "cphLinkInvalid": "Este enlace no es válido.",
+  "cphLinkQueueFull": "Hay demasiados enlaces de catálogo pendientes. Ábrelos o espera e inténtalo de nuevo.",
   "cphLinkGit": "Este enlace instala código desde un repositorio Git. Ábrelo en Desktop.",
   "cphLinkUnknown": "{name} no está en el catálogo de este servidor.",
   "@cphLinkUnknown": {

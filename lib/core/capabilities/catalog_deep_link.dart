@@ -96,29 +96,48 @@ final class CatalogDestination {
       connectionId == other.connectionId && _profileKey == other._profileKey;
 }
 
+/// What the inbox did with an offered URI.
+enum CatalogOfferResult {
+  /// Not a catalog link: someone else's.
+  notCatalog,
+
+  /// Held (or shown) until the app can open it.
+  queued,
+
+  /// Already held or just handled: nothing to do.
+  duplicate,
+
+  /// The queue is full: the link was refused and the user must be told.
+  overflow,
+}
+
 /// Holds catalog links until the app can show them: never while App Lock is
 /// locked, onboarding runs or no server is connected. Distinct links are kept
-/// in arrival order (a request is never replaced or dropped), and a link
-/// delivered twice (initial link + stream) is queued once.
+/// in arrival order, a link delivered twice (initial link + stream) is queued
+/// once, and the queue is bounded: a link past [maxPending] is refused with
+/// [CatalogOfferResult.overflow], never dropped silently.
 final class CatalogDeepLinkInbox {
   CatalogDeepLinkInbox({PairingLinkDeliveryGate? gate})
     : _gate = gate ?? PairingLinkDeliveryGate();
+
+  static const maxPending = 5;
 
   final PairingLinkDeliveryGate _gate;
   final List<(String, CatalogDeepLinkAction)> _pending = [];
 
   bool get hasPending => _pending.isNotEmpty;
 
-  /// Returns `true` when [uri] is a catalog link (claimed, queued or dropped
-  /// as a duplicate), `false` when it belongs to someone else.
-  bool offer(Uri uri) {
+  CatalogOfferResult offer(Uri uri) {
     final action = resolveCatalogDeepLink(uri);
-    if (action == null) return false;
+    if (action == null) return CatalogOfferResult.notCatalog;
     final key = uri.toString();
-    if (!_gate.shouldHandle(uri)) return true;
-    if (_pending.any((entry) => entry.$1 == key)) return true;
+    if (!_gate.shouldHandle(uri)) return CatalogOfferResult.duplicate;
+    if (_pending.any((entry) => entry.$1 == key)) {
+      return CatalogOfferResult.duplicate;
+    }
+    if (_pending.length >= maxPending) return CatalogOfferResult.overflow;
     _pending.add((key, action));
-    return true;
+    return CatalogOfferResult.queued;
   }
 
   /// The oldest held link, once the app can show it.

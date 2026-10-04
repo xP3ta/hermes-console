@@ -144,13 +144,16 @@ void main() {
     );
 
     test('offer claims catalog links only', () {
-      expect(inbox.offer(link), isTrue);
-      expect(inbox.offer(Uri.parse('hermes://pair?host=h')), isFalse);
+      expect(inbox.offer(link), CatalogOfferResult.queued);
+      expect(
+        inbox.offer(Uri.parse('hermes://pair?host=h')),
+        CatalogOfferResult.notCatalog,
+      );
     });
 
     test('a link delivered twice opens once', () {
-      expect(inbox.offer(link), isTrue);
-      expect(inbox.offer(link), isTrue); // claimed, but not queued again
+      expect(inbox.offer(link), CatalogOfferResult.queued);
+      expect(inbox.offer(link), CatalogOfferResult.duplicate);
       expect(take(), isA<PluginCatalogInstallLink>());
       expect(take(), isNull);
     });
@@ -173,15 +176,29 @@ void main() {
       expect(take(), isNull);
     });
 
-    test('every distinct link held while locked opens, none dropped', () {
-      for (var i = 0; i < 8; i++) {
-        inbox.offer(Uri.parse('hermes://skill/install?identifier=a/b$i'));
-      }
+    test('a full queue refuses the next link visibly and keeps the rest', () {
+      final results = [
+        for (var i = 0; i < CatalogDeepLinkInbox.maxPending + 2; i++)
+          inbox.offer(Uri.parse('hermes://skill/install?identifier=a/b$i')),
+      ];
+      expect(
+        results.where((r) => r == CatalogOfferResult.queued),
+        hasLength(CatalogDeepLinkInbox.maxPending),
+      );
+      expect(
+        results.where((r) => r == CatalogOfferResult.overflow),
+        hasLength(2),
+      );
       var opened = 0;
       while (take() != null) {
         opened++;
       }
-      expect(opened, 8);
+      expect(opened, CatalogDeepLinkInbox.maxPending);
+      // Room again once the queue drained.
+      expect(
+        inbox.offer(Uri.parse('hermes://skill/install?identifier=a/z')),
+        CatalogOfferResult.queued,
+      );
     });
 
     test('distinct links held while locked all open, in order', () {

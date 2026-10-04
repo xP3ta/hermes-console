@@ -2474,9 +2474,22 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// Si la URI es un enlace de emparejado válido, abre el alta de instancia ya
   /// precargada (reutiliza InstanceEditScreen.initialLink). Si no, la ignora.
   void _handlePairingUri(Uri uri) {
-    if (_catalogLinks.offer(uri)) {
-      _openCatalogLinks();
-      return;
+    switch (_catalogLinks.offer(uri)) {
+      case CatalogOfferResult.notCatalog:
+        break;
+      case CatalogOfferResult.overflow:
+        final nav = _navigatorKey.currentState;
+        if (nav != null) {
+          HermesNotice.ofNavigator(nav)?.show(
+            message: Strings.of(nav.context).cphLinkQueueFull,
+            kind: HermesNoticeKind.warning,
+          );
+        }
+        return;
+      case CatalogOfferResult.queued:
+      case CatalogOfferResult.duplicate:
+        _openCatalogLinks();
+        return;
     }
     final link = PairingLink.tryParse(uri.toString());
     if (link == null) return;
