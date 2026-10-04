@@ -10524,7 +10524,9 @@ class _ChatScreenState extends State<ChatScreen>
         moreLabel: strings.chaLoadEarlierMessages,
         model: model,
         onSelect: (index) => Navigator.of(dialogContext).pop(index),
-        onMore: () => unawaited(readIndexPage()),
+        onMore: () {
+          if (!loading) unawaited(readIndexPage());
+        },
       ),
     );
     if (epoch == _promptSheetEpoch) _promptSheetEpoch++;

@@ -112,6 +112,18 @@ void main() {
     );
   });
 
+  testWidgets('a second tap before the next frame does not ask twice', (
+    tester,
+  ) async {
+    var more = 0;
+    final model = _model(['uno'], hasMore: true);
+    await tester.pumpWidget(_host(model, onMore: () => more++));
+    final row = find.byKey(const ValueKey('chat-prompt-more'));
+    await tester.tap(row);
+    await tester.tap(row);
+    expect(more, 1);
+  });
+
   testWidgets('the list follows model updates without rebuilding the sheet', (
     tester,
   ) async {

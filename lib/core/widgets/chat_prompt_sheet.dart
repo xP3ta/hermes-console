@@ -109,10 +109,10 @@ class ChatPromptSheet extends StatelessWidget {
                           child: LinearProgressIndicator(),
                         );
                       }
-                      return HermesListRow(
+                      return _LoadEarlierRow(
                         key: const ValueKey('chat-prompt-more'),
-                        title: moreLabel,
-                        onTap: onMore,
+                        label: moreLabel,
+                        onMore: onMore,
                       );
                     },
                   );
@@ -122,6 +122,39 @@ class ChatPromptSheet extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Fila "cargar anteriores". Pide una sola lectura por aparición: un segundo
+/// toque antes de que el dueño pase a `loading` (y cambie la fila por el
+/// indicador) no repite la petición con el mismo cursor.
+class _LoadEarlierRow extends StatefulWidget {
+  const _LoadEarlierRow({
+    required this.label,
+    required this.onMore,
+    super.key,
+  });
+
+  final String label;
+  final VoidCallback onMore;
+
+  @override
+  State<_LoadEarlierRow> createState() => _LoadEarlierRowState();
+}
+
+class _LoadEarlierRowState extends State<_LoadEarlierRow> {
+  bool _requested = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return HermesListRow(
+      title: widget.label,
+      onTap: () {
+        if (_requested) return;
+        _requested = true;
+        widget.onMore();
+      },
     );
   }
 }
