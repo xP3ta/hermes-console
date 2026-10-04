@@ -16,8 +16,14 @@ final class TurnErrorCopy {
 /// here (the parser drops it).
 TurnErrorCopy turnErrorCopy(Strings s, TurnErrorSurface surface) {
   final byCode = switch (surface.code) {
-    'rate_limit' || 'upstream_rate_limit' || 'free_tier_rate_limited' =>
-      TurnErrorCopy(s.te1215TitleRateLimit, s.te1215HintRateLimit),
+    'rate_limit' || 'upstream_rate_limit' => TurnErrorCopy(
+      s.te1215TitleProviderBusy,
+      s.te1215HintProviderBusy,
+    ),
+    'free_tier_rate_limited' => TurnErrorCopy(
+      s.te1215TitleRateLimit,
+      s.te1215HintRateLimit,
+    ),
     'overloaded' || 'free_tier_at_capacity' => TurnErrorCopy(
       s.te1215TitleOverloaded,
       s.te1215HintOverloaded,

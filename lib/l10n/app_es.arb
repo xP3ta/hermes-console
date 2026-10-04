@@ -9408,6 +9408,8 @@
   "profileSwitcherManage": "Gestionar perfiles",
   "te1215TitleRateLimit": "Límite de uso alcanzado",
   "te1215HintRateLimit": "Espera a que se levante el límite o prueba otro modelo.",
+  "te1215TitleProviderBusy": "El servicio de IA está ocupado",
+  "te1215HintProviderBusy": "El proveedor está limitando las peticiones ahora mismo. Reintenta en un momento o prueba otro modelo.",
   "te1215TitleOverloaded": "Proveedor saturado",
   "te1215HintOverloaded": "Reintenta en unos segundos.",
   "te1215TitleServerError": "Fallo del proveedor",

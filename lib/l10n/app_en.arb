@@ -7723,6 +7723,8 @@
   "profileSwitcherManage": "Manage profiles",
   "te1215TitleRateLimit": "Usage limit reached",
   "te1215HintRateLimit": "Wait for the limit to lift or try another model.",
+  "te1215TitleProviderBusy": "The AI service is busy",
+  "te1215HintProviderBusy": "The provider is limiting requests right now. Try again in a moment or pick another model.",
   "te1215TitleOverloaded": "Provider overloaded",
   "te1215HintOverloaded": "Try again in a few seconds.",
   "te1215TitleServerError": "Provider error",
