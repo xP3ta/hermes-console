@@ -15,20 +15,6 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
-    // Building the "Data" block of Settings (below the new row) trips a
-    // framework assertion about a `ListTile` inside a `DecoratedBox`. It
-    // happens on the base too and has nothing to do with this row; only that
-    // one message is let through.
-    final previous = FlutterError.onError;
-    FlutterError.onError = (details) {
-      if (details.exceptionAsString().contains(
-        'ListTile background color or ink splashes may be invisible',
-      )) {
-        return;
-      }
-      previous?.call(details);
-    };
-    addTearDown(() => FlutterError.onError = previous);
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -43,6 +29,32 @@ void main() {
           null,
         );
   });
+
+  // Building the "Data" block of Settings (below the new row) trips a framework
+  // assertion about a `ListTile` inside a `DecoratedBox`. It happens on the
+  // base too and has nothing to do with this row; only that message is let
+  // through, anything else still fails the test.
+  void letKnownAssertionThrough(WidgetTester tester) {
+    final error = tester.takeException();
+    if (error == null) return;
+    expect(
+      error.toString(),
+      contains('ListTile background color or ink splashes may be invisible'),
+    );
+  }
+
+  Finder advancedRow() => find.byWidgetPredicate(
+    (widget) => widget is HermesNavRow && widget.title == 'Avanzado',
+  );
+
+  Future<void> scrollToAdvanced(WidgetTester tester) async {
+    await tester.scrollUntilVisible(
+      advancedRow(),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    letKnownAssertionThrough(tester);
+  }
 
   Future<void> pumpSettings(WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
@@ -66,19 +78,12 @@ void main() {
       ),
     );
     await tester.pump();
+    letKnownAssertionThrough(tester);
   }
-
-  Finder advancedRow() => find.byWidgetPredicate(
-    (widget) => widget is HermesNavRow && widget.title == 'Avanzado',
-  );
 
   testWidgets('shows exactly one Advanced row', (tester) async {
     await pumpSettings(tester);
-    await tester.scrollUntilVisible(
-      advancedRow(),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
+    await scrollToAdvanced(tester);
     expect(advancedRow(), findsOneWidget);
   });
 
@@ -86,11 +91,7 @@ void main() {
     tester,
   ) async {
     await pumpSettings(tester);
-    await tester.scrollUntilVisible(
-      advancedRow(),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
+    await scrollToAdvanced(tester);
     final s = Strings.of(tester.element(find.byType(SettingsScreen)));
     expect(find.text(s.sd1215Diagnostics), findsNothing);
     expect(find.text(s.sd1215Doctor), findsNothing);
@@ -98,11 +99,7 @@ void main() {
 
   testWidgets('the row opens the Advanced screen', (tester) async {
     await pumpSettings(tester);
-    await tester.scrollUntilVisible(
-      advancedRow(),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
+    await scrollToAdvanced(tester);
     await tester.tap(advancedRow());
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
