@@ -226,10 +226,13 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen>
     _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _appLock?.locked.removeListener(_onAppLocked);
+    final idle = _flow.idle;
     _flow
       ..removeListener(_onFlow)
       ..dispose();
-    _dashboard?.close();
+    // An import that already started is followed to its end first.
+    final dashboard = _dashboard;
+    if (dashboard != null) unawaited(idle.whenComplete(dashboard.close));
     final scope = _secureScope;
     if (scope != null) unawaited(scope.release());
     super.dispose();

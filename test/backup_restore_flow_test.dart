@@ -1,3 +1,4 @@
+import 'dart:async';
 // Backup and restore, step by step: confirmation before anything is sent,
 // `?profile=` on every call (default included), the safety backup first and
 // required to succeed, `force=true` only after the confirmation, the status
@@ -148,6 +149,80 @@ void main() {
       await f.downloadToPhone();
       expect(dir.listSync(), isEmpty);
     });
+
+    test(
+      'covering the page after the upload still reads the final status and refreshes',
+      () async {
+        gateway.runningReads = 3;
+        final f = BackupRestoreFlow(
+          gateway: gateway,
+          profile: 'default',
+          verify: (_) async => true,
+          refresh: () async => refreshes++,
+          tempDirectory: () async => dir,
+          saveToPhone: (_) async {},
+          isVisible: () => visible,
+          followerFor: (read) => ActionFollower(
+            read: (name) async {
+              if (name == 'import') visible = false; // backgrounded mid-import
+              return read(name);
+            },
+            delay: (_) async {},
+          ),
+        );
+        addTearDown(f.dispose);
+        await f.inspect(await _zip(dir), deleteSourceWhenDone: false);
+        await f.restore(confirmed: true, safetyBackup: false);
+        expect(f.step, BackupFlowStep.done);
+        expect(
+          refreshes,
+          1,
+          reason: 'the server changed, so caches are re-read',
+        );
+      },
+    );
+
+    test(
+      'leaving the page after the upload still refreshes once the import ends',
+      () async {
+        gateway.runningReads = 3;
+        late BackupRestoreFlow f;
+        f = BackupRestoreFlow(
+          gateway: gateway,
+          profile: 'default',
+          verify: (_) async => true,
+          refresh: () async => refreshes++,
+          tempDirectory: () async => dir,
+          saveToPhone: (_) async {},
+          isVisible: () => true,
+          followerFor: (read) => ActionFollower(
+            read: (name) async {
+              if (name == 'import') f.dispose();
+              return read(name);
+            },
+            delay: (_) async {},
+          ),
+        );
+        await f.inspect(await _zip(dir), deleteSourceWhenDone: false);
+        await f.restore(confirmed: true, safetyBackup: false);
+        expect(refreshes, 1);
+      },
+    );
+
+    test(
+      'idle resolves right away when nothing runs and after a run',
+      () async {
+        gateway.runningReads = 2;
+        final f = flow();
+        await f.idle;
+        await f.inspect(await _zip(dir), deleteSourceWhenDone: false);
+        final run = f.restore(confirmed: true, safetyBackup: false);
+        final idle = f.idle;
+        await run;
+        await idle.timeout(const Duration(seconds: 1));
+        expect(f.busy, isFalse);
+      },
+    );
 
     test('the safety backup can be downloaded after a failed import', () async {
       gateway.importExit = 1;

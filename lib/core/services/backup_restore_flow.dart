@@ -133,7 +133,24 @@ class BackupRestoreFlow extends ChangeNotifier {
   String? _safetyArchive;
   File? _picked;
   bool _deletePicked = false;
-  bool _busy = false;
+  bool _busyFlag = false;
+  Completer<void>? _idle;
+
+  bool get _busy => _busyFlag;
+  set _busy(bool value) {
+    _busyFlag = value;
+    if (value) {
+      _idle ??= Completer<void>();
+    } else {
+      _idle?.complete();
+      _idle = null;
+    }
+  }
+
+  /// Completes when no action is running. The page waits on it before
+  /// closing the Dashboard client, so an import that already started is
+  /// followed to its end even if the page is left.
+  Future<void> get idle => _idle?.future ?? Future<void>.value();
   bool _disposed = false;
 
   BackupFlowStep get step => _step;
@@ -325,9 +342,13 @@ class BackupRestoreFlow extends ChangeNotifier {
       await gateway.importUpload(profile, zip, force: true);
       _set(BackupFlowStep.importing);
       _set(BackupFlowStep.status);
+      // The upload already started the server restore: covering the page or
+      // leaving it must not stop the follow, or the profile would change on
+      // the server while local caches stay stale. The follower's own read cap
+      // still bounds it.
       final outcome = await _followerFor(gateway.actionStatus).follow(
         'import',
-        keepGoing: _alive,
+        keepGoing: () => true,
         onLines: (lines) {
           _lines = lines;
           if (!_disposed) notifyListeners();
