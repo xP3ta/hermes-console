@@ -125,6 +125,27 @@ void main() {
       expect(_entry(agent).signal, BotFaceSignal.thinking);
     });
 
+    // LiveSessionStatus in the vendored contract also has `streaming` and
+    // `resuming`: a bot emitting or resuming must never read as idle.
+    test('a streaming row reads as working and a resuming row as thinking', () {
+      final streaming = _agentOf(
+        [profile],
+        'infra',
+        [_row('canon-1', 'streaming', title: 'Emitiendo')],
+      );
+      expect(streaming.livePresence, BotPresence.working);
+      expect(_entry(streaming).signal, BotFaceSignal.working);
+      expect(streaming.livePresenceTitle, 'Emitiendo');
+
+      final resuming = _agentOf(
+        [profile],
+        'infra',
+        [_row('canon-1', 'resuming', title: 'Reanudando')],
+      );
+      expect(resuming.livePresence, BotPresence.thinking);
+      expect(_entry(resuming).signal, BotFaceSignal.thinking);
+    });
+
     test('an idle row, an unknown status and no rows leave the bot idle', () {
       for (final rows in [
         [_row('canon-1', 'idle')],
@@ -250,6 +271,26 @@ void main() {
       );
       expect(agent.livePresence, BotPresence.idle);
       expect(agent.status, MissionAgentStatus.working);
+    });
+
+    test('without a read time the snapshot load time stands in for it', () {
+      // `_now` is the snapshot's loadedAt: a chat that settled after it wins,
+      // one that settled before it loses to the row.
+      final settledAfter = _agentOf(
+        [profile],
+        'infra',
+        [_row('canon-1', 'working', title: 'Viejo')],
+        chats: [chat(settledAt: _now.add(const Duration(seconds: 5)))],
+      );
+      expect(settledAfter.livePresence, BotPresence.idle);
+
+      final settledBefore = _agentOf(
+        [profile],
+        'infra',
+        [_row('canon-1', 'working', title: 'Nuevo')],
+        chats: [chat(settledAt: _now.subtract(const Duration(seconds: 5)))],
+      );
+      expect(settledBefore.livePresence, BotPresence.working);
     });
 
     test('a chat of another session does not hide the row', () {
