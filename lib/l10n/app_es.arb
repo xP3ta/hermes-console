@@ -9407,7 +9407,7 @@
   "profileSwitcherLoadFailed": "No se pudieron cargar los perfiles. Toca para reintentar.",
   "profileSwitcherManage": "Gestionar perfiles",
   "voiceGptLiveTitle": "Voz GPT-Live (experimental)",
-  "voiceGptLiveDescription": "Conversación a dúplex completo con el modelo de voz. La voz por turnos sigue de respaldo.",
+  "voiceGptLiveDescription": "Conversación bidireccional con el modelo de voz. La voz por turnos sigue de respaldo.",
   "voiceGptLiveChecking": "Comprobando el servidor…",
   "voiceGptLiveAvailable": "Disponible en este servidor",
   "voiceGptLiveUnavailable": "No disponible: {reason}",

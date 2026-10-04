@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -94,6 +96,13 @@ void main() {
     expect(voice.settings.gptLiveEnabled, isFalse);
     // Off: the description, never the status.
     expect(find.text('Disponible en este servidor'), findsNothing);
+    expect(
+      find.text(
+        'Conversación bidireccional con el modelo de voz. '
+        'La voz por turnos sigue de respaldo.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('toggling on persists and shows the availability', (
@@ -121,6 +130,14 @@ void main() {
     tester,
   ) async {
     await pump(tester, status: (_) => http.Response('not found', 404));
+    expect(find.byKey(_toggleKey, skipOffstage: false), findsNothing);
+  });
+
+  testWidgets('hidden when the status read fails with a network error', (
+    tester,
+  ) async {
+    await pump(tester, status: (_) => throw const SocketException('offline'));
+    expect(tester.takeException(), isNull);
     expect(find.byKey(_toggleKey, skipOffstage: false), findsNothing);
   });
 
