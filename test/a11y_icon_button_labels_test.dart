@@ -31,25 +31,9 @@ void main() {
         .where((file) => file.path.endsWith('.dart'));
 
     for (final file in files) {
-      final source = file.readAsStringSync();
-      for (final match in RegExp(
-        r'\bIconButton(?:\.[A-Za-z]+)?\s*\(',
-      ).allMatches(source)) {
-        if (match.group(0)!.startsWith('IconButton.styleFrom')) continue;
-        final open = source.indexOf('(', match.start);
-        final close = _matchingParen(source, open);
-        if (close == null) {
-          missing.add(
-            '${file.path}:${_lineAt(source, match.start)} (unparsed)',
-          );
-          continue;
-        }
-        final invocation = source.substring(open + 1, close);
-        if (!RegExp(r'\btooltip\s*:').hasMatch(invocation) &&
-            !_hasLabelledWrapper(source, match.start, close)) {
-          missing.add('${file.path}:${_lineAt(source, match.start)}');
-        }
-      }
+      missing.addAll(
+        _unlabelledIconButtons(file.path, file.readAsStringSync()),
+      );
     }
 
     expect(
@@ -59,6 +43,89 @@ void main() {
           'Icon-only controls need a localized tooltip:\n'
           '${missing.join('\n')}',
     );
+  });
+
+  group('icon button scanner fixtures', () {
+    test('accepts a direct tooltip argument', () {
+      expect(
+        _unlabelledIconButtons('fixture.dart', '''
+Widget build() => IconButton(
+  icon: const Icon(Icons.add),
+  tooltip: label,
+  onPressed: () {},
+);
+'''),
+        isEmpty,
+      );
+    });
+
+    test('rejects a tooltip token hidden inside onPressed', () {
+      expect(
+        _unlabelledIconButtons('fixture.dart', '''
+Widget build() => IconButton(
+  icon: const Icon(Icons.add),
+  onPressed: () {
+    show(tooltip: value);
+  },
+);
+'''),
+        ['fixture.dart:1'],
+      );
+    });
+
+    test('rejects a tooltip token hidden inside a nested widget', () {
+      expect(
+        _unlabelledIconButtons('fixture.dart', '''
+Widget build() => IconButton(
+  icon: Icon(Icons.add, semanticLabel: 'x'),
+  onPressed: () {},
+  style: Wrapper(child: Foo(tooltip: value)),
+);
+'''),
+        ['fixture.dart:1'],
+      );
+    });
+
+    test('rejects a tooltip token inside a string literal', () {
+      expect(
+        _unlabelledIconButtons('fixture.dart', '''
+Widget build() => IconButton(
+  icon: const Icon(Icons.add),
+  onPressed: () => log('tooltip: none'),
+);
+'''),
+        ['fixture.dart:1'],
+      );
+    });
+
+    test('accepts a Semantics wrapper with a direct label', () {
+      expect(
+        _unlabelledIconButtons('fixture.dart', '''
+Widget build() => Semantics(
+  label: 'Add',
+  child: IconButton(icon: const Icon(Icons.add), onPressed: () {}),
+);
+'''),
+        isEmpty,
+      );
+    });
+
+    test('rejects a label that belongs to a nested widget of the wrapper', () {
+      expect(
+        _unlabelledIconButtons('fixture.dart', '''
+Widget build() => Semantics(
+  child: Column(
+    children: [
+      Text('x', semanticsLabel: 'x'),
+      Other(label: 'unrelated'),
+      IconButton(icon: const Icon(Icons.add), onPressed: () {}),
+    ],
+  ),
+);
+'''),
+        ['fixture.dart:6'],
+      );
+    });
   });
 
   testWidgets('sample screen controls expose localized semantics labels', (
@@ -83,10 +150,7 @@ void main() {
       matching: find.byType(IconButton),
     );
     expect(refresh, findsOneWidget);
-    expect(
-      tester.widget<IconButton>(refresh).onPressed,
-      isNotNull,
-    );
+    expect(tester.widget<IconButton>(refresh).onPressed, isNotNull);
     expect(find.bySemanticsLabel('Refresh'), findsOneWidget);
 
     await tester.pumpWidget(
@@ -289,6 +353,27 @@ final class _FakeAudioPlayback implements GeneratedAudioPlayback {
 
   @override
   Future<void> seek(Duration position) async {}
+}
+
+List<String> _unlabelledIconButtons(String path, String source) {
+  final missing = <String>[];
+  for (final match in RegExp(
+    r'\bIconButton(?:\.[A-Za-z]+)?\s*\(',
+  ).allMatches(source)) {
+    if (match.group(0)!.startsWith('IconButton.styleFrom')) continue;
+    final open = source.indexOf('(', match.start);
+    final close = _matchingParen(source, open);
+    if (close == null) {
+      missing.add('$path:${_lineAt(source, match.start)} (unparsed)');
+      continue;
+    }
+    final invocation = source.substring(open + 1, close);
+    if (!RegExp(r'\btooltip\s*:').hasMatch(invocation) &&
+        !_hasLabelledWrapper(source, match.start, close)) {
+      missing.add('$path:${_lineAt(source, match.start)}');
+    }
+  }
+  return missing;
 }
 
 int _lineAt(String source, int offset) =>
