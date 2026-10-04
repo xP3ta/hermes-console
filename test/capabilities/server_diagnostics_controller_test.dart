@@ -453,11 +453,17 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       c.dispose();
       final before = notified;
+      final readsAtDispose = count(rest, 'GET actions/');
       gate.complete();
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
       expect(notified, before);
+      expect(
+        count(rest, 'GET actions/'),
+        readsAtDispose,
+        reason: 'nothing is read after dispose',
+      );
     });
 
     test(
