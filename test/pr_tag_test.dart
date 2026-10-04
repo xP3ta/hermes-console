@@ -162,6 +162,29 @@ void main() {
     expect(gateway.listCalls.length, 1);
   });
 
+  test(
+    'a branch asked while another lookup is in flight is not lost',
+    () async {
+      gateway.prsByBranch = {
+        'feat/a': _pr('feat/a', 1),
+        'feat/b': _pr('feat/b', 2),
+      };
+      final gate = Completer<void>();
+      gateway.hold = gate.future;
+      final a = service.tagFor(_s('a', branch: 'feat/a'));
+      final b = service.tagFor(_s('b', branch: 'feat/b'));
+      await Future<void>.delayed(Duration.zero);
+      gate.complete();
+      expect((await a)?.number, 1);
+      expect(
+        (await b)?.number,
+        2,
+        reason: 'B must be asked, not coalesced away',
+      );
+      expect(gateway.listCalls.length, 2, reason: 'one request at a time');
+    },
+  );
+
   test('404 turns the capability off for good', () async {
     gateway.listError = _unsupported;
     expect(await service.tagFor(_s('a')), isNull);

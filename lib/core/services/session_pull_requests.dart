@@ -261,30 +261,34 @@ class PullRequestTagService {
     String? branch,
     int? number,
   }) async {
-    final pending = _inFlight[repo];
-    if (pending != null) {
-      await pending;
+    // One request per repo at a time, but a waiter whose key the finished
+    // request did not carry asks again instead of being answered "none".
+    var waited = false;
+    for (var turn = 0; turn < 4; turn++) {
+      final pending = _inFlight[repo];
+      if (pending != null) {
+        await pending;
+        waited = true;
+        continue;
+      }
       final entry = _repos[repo];
-      return _asked(entry, branch, number)
-          ? _read(entry, branch, number)
-          : null;
+      final fresh =
+          entry != null && _now().difference(entry.at) < pullRequestStale;
+      if (fresh && (waited ? _asked(entry, branch, number) : true)) {
+        return _asked(entry, branch, number)
+            ? _read(entry, branch, number)
+            : null;
+      }
+      final flight = _refresh(repo, entry, branch: branch, number: number);
+      _inFlight[repo] = flight;
+      try {
+        await flight;
+      } finally {
+        if (identical(_inFlight[repo], flight)) _inFlight.remove(repo);
+      }
+      return _read(_repos[repo], branch, number);
     }
-    final entry = _repos[repo];
-    final fresh =
-        entry != null && _now().difference(entry.at) < pullRequestStale;
-    if (fresh) {
-      return _asked(entry, branch, number)
-          ? _read(entry, branch, number)
-          : null;
-    }
-    final flight = _refresh(repo, entry, branch: branch, number: number);
-    _inFlight[repo] = flight;
-    try {
-      await flight;
-    } finally {
-      if (identical(_inFlight[repo], flight)) _inFlight.remove(repo);
-    }
-    return _read(_repos[repo], branch, number);
+    return null;
   }
 
   Future<void> _refresh(
