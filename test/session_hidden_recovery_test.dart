@@ -178,6 +178,37 @@ void main() {
     );
   });
 
+  test('a search hit begun after the show answer (no hidden flag) keeps '
+      'the chat revealed until a listing carries it', () async {
+    final server = _Server();
+    final archive = await _open(server);
+    await archive.hideSession(_row('s1'));
+    await archive.remoteStateSettled;
+    await archive.unhideSession(_row('s1', hidden: null));
+    await archive.remoteStateSettled;
+
+    // The search starts after the answer; the listing still omits the row.
+    _read(archive, [_row('s1', hidden: null)]);
+    expect(_ids(archive.revealedSessions), ['s1']);
+    expect(archive.isSessionHidden(_row('s1', hidden: null)), isFalse);
+
+    _read(archive, [_row('s1')]);
+    expect(archive.revealedSessions, isEmpty);
+  });
+
+  test('a chat shown again only locally is settled by any row of it', () async {
+    SharedPreferences.setMockInitialValues({
+      'hidden_sessions_$_conn': ['old'],
+    });
+    final archive = await _open(_Server());
+    final row = _row('old', hidden: null);
+    _read(archive, [row]);
+    await archive.unhideSession(row);
+    expect(_ids(archive.revealedSessions), ['old']);
+    _read(archive, [row]);
+    expect(archive.revealedSessions, isEmpty);
+  });
+
   test('a read showing the chat visible (shown elsewhere, or pinned on '
       'Desktop) drops it from the hidden list', () async {
     final server = _Server();

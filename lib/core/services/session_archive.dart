@@ -65,6 +65,10 @@ class SessionArchive extends ChangeNotifier {
   /// Chats just shown again, kept in the lists until a read made after the
   /// server confirmed carries them (a read begun earlier omits them).
   final Map<String, Session> _revealed = {};
+
+  /// Ids in [_revealed] shown again on the server: only a row that carries
+  /// the `hidden` flag (a listing, not a search hit) settles them.
+  final Set<String> _revealedOnServer = {};
   Map<String, String> _titles = {};
   Map<String, String> _autoTitles = {};
 
@@ -342,6 +346,7 @@ class SessionArchive extends ChangeNotifier {
     _hiddenOverlay.remove(id);
     _hidden.add(id);
     _revealed.remove(id);
+    _revealedOnServer.remove(id);
     final known = _hiddenRows[id];
     _hiddenRows[id] = known != null && session.hidden == null ? known : session;
     await _flush();
@@ -369,6 +374,11 @@ class SessionArchive extends ChangeNotifier {
     }
     // The list row taken when hiding, not a search hit with its snippet.
     _revealed[id] = (snapshot ?? session).copyWith(hidden: false);
+    if (remote) {
+      _revealedOnServer.add(id);
+    } else {
+      _revealedOnServer.remove(id);
+    }
     await _flush();
     if (remote) {
       _writeHidden(
@@ -928,6 +938,7 @@ class SessionArchive extends ChangeNotifier {
       if (restoreRow != null) {
         _hiddenRows[id] = restoreRow;
         _revealed.remove(id);
+        _revealedOnServer.remove(id);
       }
       await _flush();
     } else if (dropped) {
@@ -997,7 +1008,12 @@ class SessionArchive extends ChangeNotifier {
         // Shown again elsewhere (another device, or a pin on Desktop).
         persist = true;
       }
-      if (overlay == null && _revealed.remove(id) != null) {
+      // A search hit has no hidden flag and may come before the listing
+      // carries the row again: it does not settle a server show.
+      final settlesReveal =
+          row.hidden != null || !_revealedOnServer.contains(id);
+      if (overlay == null && settlesReveal && _revealed.remove(id) != null) {
+        _revealedOnServer.remove(id);
         changed = true;
       }
       // An override equal to the server's title is redundant; dropping it
