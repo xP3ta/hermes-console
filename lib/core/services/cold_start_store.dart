@@ -188,6 +188,10 @@ class ColdStartStore {
   static const indexKey = 'cold_start_index_v1';
   static const Duration _routeRenewal = Duration(hours: 1);
   static const _tailPrefix = 'cold_start_tail_v1.';
+  static const _recentsPrefix = 'cold_start_recents_v1.';
+
+  /// Rows kept per Home recents snapshot.
+  static const int maxRecentRows = 24;
 
   final ColdStartStorage _storage;
   final int Function() _nowMs;
@@ -209,6 +213,10 @@ class ColdStartStore {
   ) =>
       '$_tailPrefix${_hex(connectionId)}.${_hex(Session.profileOwner(profile))}'
       '.${_hex(storedSessionId)}';
+
+  static String recentsKey(String connectionId, String profile) =>
+      '$_recentsPrefix${_hex(connectionId)}.'
+      '${_hex(Session.profileOwner(profile))}';
 
   Future<T> _serial<T>(Future<T> Function() action) {
     final completer = Completer<T>();
@@ -285,6 +293,154 @@ class ColdStartStore {
     if (_nowMs() - route.savedAtMs > maxAge.inMilliseconds) return null;
     return route;
   });
+
+  // ── Home recents ────────────────────────────────────────────────────────
+
+  /// Persists the recents Home last painted for one connection and profile,
+  /// so the next cold start paints them before any network read lands.
+  /// Session list fields only (ids, title, preview, timestamps), never a
+  /// transcript. An empty list forgets the scope's snapshot.
+  Future<void> saveRecents({
+    required String connectionId,
+    required String profile,
+    required List<Session> sessions,
+  }) => _serial(() async {
+    final owner = Session.profileOwner(profile);
+    final key = recentsKey(connectionId, owner);
+    final rows = [
+      for (final session in sessions.take(maxRecentRows))
+        if (session.id.isNotEmpty) _recentRow(session),
+    ];
+    if (rows.isEmpty) {
+      _written.remove(key);
+      await _storage.delete(key);
+      return;
+    }
+    final payload = jsonEncode({
+      'v': 1,
+      'c': connectionId,
+      'p': owner,
+      'rows': rows,
+    });
+    if (_written[key] == payload) return;
+    _written.remove(key);
+    await _storage.write(key, payload);
+    _written[key] = payload;
+  });
+
+  /// The recents saved by [saveRecents] for this scope, or null.
+  Future<List<Session>?> loadRecents({
+    required String connectionId,
+    required String profile,
+  }) => _serial(() async {
+    final owner = Session.profileOwner(profile);
+    final key = recentsKey(connectionId, owner);
+    final raw = await _storage.read(key);
+    if (raw == null) return null;
+    final rows = _decodeRecents(raw, connectionId, owner);
+    if (rows == null) {
+      _written.remove(key);
+      await _storage.delete(key);
+      return null;
+    }
+    _written[key] = raw;
+    return rows;
+  });
+
+  static Map<String, Object?> _recentRow(Session s) => {
+    'id': s.id,
+    'title': s.title,
+    'model': s.model,
+    'source': s.source,
+    'message_count': s.messageCount,
+    'is_active': s.isActive,
+    'preview': s.preview,
+    'started_at': s.startedAt,
+    'ended_at': ?s.endedAt,
+    'last_active': ?s.updatedAt,
+    'parent_session_id': ?s.parentSessionId,
+    '_lineage_root_id': ?s.lineageRootId,
+    if (s.lineageIds.isNotEmpty) '_lineage_ids': s.lineageIds,
+    'is_internal_child': ?s.isInternalChild,
+    'archived': s.archived,
+    'pinned': ?s.pinned,
+    'hidden': ?s.hidden,
+    'unread': ?s.unread,
+    'profile': ?s.profile,
+  };
+
+  static List<Session>? _decodeRecents(
+    String raw,
+    String connectionId,
+    String owner,
+  ) {
+    try {
+      final data = jsonDecode(raw);
+      if (data is! Map || data['v'] != 1) return null;
+      if (data['c'] != connectionId || data['p'] != owner) return null;
+      final rows = data['rows'];
+      if (rows is! List) return null;
+      return [
+        for (final row in rows.take(maxRecentRows)) ?Session.tryParse(row),
+      ];
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Drops the rows naming any of [ids] from every recents snapshot of
+  /// [connectionId] among [keys] (one profile when [owner] is set).
+  Future<void> _forgetRecentsSession(
+    Iterable<String> keys, {
+    required String connectionId,
+    String? owner,
+    required Set<String> ids,
+  }) async {
+    for (final key in keys) {
+      if (!_inRecentsScope(key, connectionId, owner)) continue;
+      final raw = await _storage.read(key);
+      if (raw == null) continue;
+      Object? keyOwner;
+      try {
+        final data = jsonDecode(raw);
+        keyOwner = data is Map ? data['p'] : null;
+      } catch (_) {}
+      final rows = keyOwner is String
+          ? _decodeRecents(raw, connectionId, keyOwner)
+          : null;
+      if (rows == null) {
+        _written.remove(key);
+        await _storage.delete(key);
+        continue;
+      }
+      final kept = [
+        for (final row in rows)
+          if (!row.identityIds.any(ids.contains) && !ids.contains(row.id)) row,
+      ];
+      if (kept.length == rows.length) continue;
+      _written.remove(key);
+      if (kept.isEmpty) {
+        await _storage.delete(key);
+      } else {
+        final payload = jsonEncode({
+          'v': 1,
+          'c': connectionId,
+          'p': keyOwner,
+          'rows': [for (final row in kept) _recentRow(row)],
+        });
+        await _storage.write(key, payload);
+        _written[key] = payload;
+      }
+    }
+  }
+
+  /// A recents key of [connectionId] (every connection when null), of one
+  /// profile when [owner] is set.
+  static bool _inRecentsScope(String key, String? connectionId, String? owner) {
+    if (connectionId == null) return key.startsWith(_recentsPrefix);
+    if (owner != null) return key == recentsKey(connectionId, owner);
+    return key.startsWith('$_recentsPrefix${_hex(connectionId)}.');
+  }
 
   // ── Transcript tails ────────────────────────────────────────────────────
 
@@ -450,7 +606,10 @@ class ColdStartStore {
   /// a corrupt index every tail looks unindexed, and forgetting one
   /// connection must not delete another connection's tails. A null
   /// [connectionId] sweeps every scope (only [clearAll]).
-  Future<void> _sweepUnindexedTails(
+  ///
+  /// Returns the listing it swept, so a caller can clean other blobs of the
+  /// scope without decrypting the whole store a second time.
+  Future<List<String>> _sweepUnindexedTails(
     _ColdStartIndex index, {
     String? connectionId,
     String? owner,
@@ -459,10 +618,25 @@ class ColdStartStore {
         ? _tailPrefix
         : '$_tailPrefix${_hex(connectionId)}.'
               '${owner == null ? '' : '${_hex(owner)}.'}';
-    for (final key in (await _storage.keys()).toList()) {
+    final keys = (await _storage.keys()).toList();
+    for (final key in keys) {
       if (!key.startsWith(scope) || index.tails.containsKey(key)) {
         continue;
       }
+      _written.remove(key);
+      await _storage.delete(key);
+    }
+    return keys;
+  }
+
+  /// Deletes every Home recents snapshot of the scope among [keys].
+  Future<void> _deleteRecents(
+    Iterable<String> keys, {
+    String? connectionId,
+    String? owner,
+  }) async {
+    for (final key in keys) {
+      if (!_inRecentsScope(key, connectionId, owner)) continue;
       _written.remove(key);
       await _storage.delete(key);
     }
@@ -495,7 +669,17 @@ class ColdStartStore {
     if (routeGone) index.routes.remove(connectionId);
     await _deleteTails(index, keys);
     if (routeGone && keys.isEmpty) await _saveIndex(index);
-    await _sweepUnindexedTails(index, connectionId: connectionId, owner: owner);
+    final listed = await _sweepUnindexedTails(
+      index,
+      connectionId: connectionId,
+      owner: owner,
+    );
+    await _forgetRecentsSession(
+      listed,
+      connectionId: connectionId,
+      owner: owner,
+      ids: ids,
+    );
   });
 
   /// Connection deleted, a profile's local history cleared, or credentials
@@ -516,11 +700,12 @@ class ColdStartStore {
         if (routeGone) index.routes.remove(connectionId);
         await _deleteTails(index, keys);
         if (routeGone && keys.isEmpty) await _saveIndex(index);
-        await _sweepUnindexedTails(
+        final listed = await _sweepUnindexedTails(
           index,
           connectionId: connectionId,
           owner: owner,
         );
+        await _deleteRecents(listed, connectionId: connectionId, owner: owner);
       });
 
   /// Removes everything this store ever wrote.
@@ -531,7 +716,7 @@ class ColdStartStore {
     }
     index.tails.clear();
     index.routes.clear();
-    await _sweepUnindexedTails(index);
+    await _deleteRecents(await _sweepUnindexedTails(index));
     _written.clear();
     await _storage.delete(indexKey);
   });
