@@ -219,6 +219,8 @@ void main() {
             profile: 'other',
           );
           expect(rig.api.statusProfiles, ['ops', 'other']);
+          // The user moved to chat B, the chat of the second entry.
+          rig.visible.value = 'chat-2';
           if (aResolvesFirst) {
             gateA.complete(available);
             gateB.complete(available);
@@ -277,6 +279,24 @@ void main() {
         expect(rig.live.calls, ['enter']);
       },
     );
+
+    for (final hidden in <String?>[null, 'some-other-chat']) {
+      test('leaving the chat route during the status read opens no live '
+          'session (visible: $hidden)', () async {
+        rig.optIn = true;
+        final gate = Completer<VoiceLiveStatus?>();
+        rig.api.statusGateQueue.add(gate);
+        final entering = rig.enter();
+        rig.visible.value = hidden;
+        gate.complete(
+          const VoiceLiveStatus(mode: VoiceLiveMode.gptLive, available: true),
+        );
+        await entering;
+        expect(rig.live.calls, isEmpty);
+        expect(rig.chained.calls, isEmpty);
+        expect(rig.coordinator.active, isFalse);
+      });
+    }
 
     test('exit during the status read opens nothing', () async {
       rig.optIn = true;

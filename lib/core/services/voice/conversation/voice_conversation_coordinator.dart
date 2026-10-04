@@ -107,6 +107,12 @@ class VoiceConversationCoordinator extends ChangeNotifier
       _probing = false;
       _probeChat = null;
       if (status != null && status.available) {
+        // The route may have been left while the status read was pending;
+        // the route listener is not attached yet, so check the current value.
+        if (!_chatVisible(chat)) {
+          if (!_disposed) notifyListeners();
+          return;
+        }
         engine = _liveEngine();
       } else {
         final s = lookupStrings(Locale(_languageCode()));
@@ -171,14 +177,7 @@ class VoiceConversationCoordinator extends ChangeNotifier
     final visible = _visibleSession;
     if (visible != null) {
       void onVisible() {
-        final id = visible.value;
-        final owned = <String?>{
-          chat.sessionId,
-          chat.serverSessionId,
-          chat.logicalSessionId,
-          chat.storedSessionId,
-        };
-        if (!owned.contains(id)) {
+        if (!_chatVisible(chat)) {
           unawaited(live.endSession(LiveSessionEnd.routeLeave));
         }
       }
@@ -199,6 +198,20 @@ class VoiceConversationCoordinator extends ChangeNotifier
       _profileChanges = watch.changes;
       watch.changes.addListener(onProfile);
     }
+  }
+
+  /// Whether [chat] is the session the user is looking at. Without a route
+  /// notifier every chat counts as visible.
+  bool _chatVisible(ActiveChat chat) {
+    final visible = _visibleSession;
+    if (visible == null) return true;
+    final owned = <String?>{
+      chat.sessionId,
+      chat.serverSessionId,
+      chat.logicalSessionId,
+      chat.storedSessionId,
+    };
+    return owned.contains(visible.value);
   }
 
   void _unwatchLive() {
