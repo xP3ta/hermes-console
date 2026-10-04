@@ -8071,6 +8071,14 @@
       }
     }
   },
+  "rosterWaitingFor": "Esperando tu respuesta · {title}",
+  "@rosterWaitingFor": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
   "rosterWorking": "Trabajando…",
   "rosterThinking": "Pensando…",
   "rosterSpeaking": "Respondiendo…",

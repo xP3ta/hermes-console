@@ -6776,6 +6776,7 @@
   "rosterRecent": "Recent",
   "rosterNeedsYouBadge": "Needs you",
   "rosterWorkingOn": "Working · {title}",
+  "rosterWaitingFor": "Waiting for you · {title}",
   "rosterWorking": "Working…",
   "rosterThinking": "Thinking…",
   "rosterSpeaking": "Replying…",
