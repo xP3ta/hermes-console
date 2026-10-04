@@ -367,7 +367,15 @@ abstract class HermesDesktopSessionHistoryGateway {
 final class DesktopApprovalResult {
   final int resolved;
 
-  const DesktopApprovalResult({required this.resolved});
+  /// False when the choice went out as a bare response frame to an approval
+  /// server request: nothing acknowledges it, so a transport loss right after
+  /// the write leaves its delivery unknown.
+  final bool deliveryAcknowledged;
+
+  const DesktopApprovalResult({
+    required this.resolved,
+    this.deliveryAcknowledged = true,
+  });
 
   factory DesktopApprovalResult.fromJson(Map<String, dynamic> json) {
     final resolved = json['resolved'];
@@ -540,7 +548,15 @@ enum DesktopPromptResponseStatus { ok, expired }
 final class DesktopPromptResponse {
   final DesktopPromptResponseStatus status;
 
-  const DesktopPromptResponse._(this.status);
+  /// False when the answer went out as a bare response frame to a server
+  /// request: nothing acknowledges it, so a transport loss right after the
+  /// write leaves its delivery unknown.
+  final bool deliveryAcknowledged;
+
+  const DesktopPromptResponse._(
+    this.status, {
+    this.deliveryAcknowledged = true,
+  });
 
   bool get isExpired => status == DesktopPromptResponseStatus.expired;
 
@@ -1463,6 +1479,12 @@ class TuiGatewayClient
   final Map<String, _OpenServerRequest> _openServerRequests = {};
   // Approval queue `request_id` → JSON-RPC server request id (`srq-…`).
   final Map<String, String> _approvalServerRequestIds = {};
+  // Server request id → approval `request_id` of approvals this socket
+  // answered by a bare response frame. Hermes may still withdraw one it had
+  // settled first; its `request.cancel` must name the approval, not the frame.
+  // That race is immediate, so only the latest answers are kept.
+  final Map<String, String> _answeredApprovalServerRequestIds = {};
+  static const _answeredApprovalServerRequestLimit = 32;
   int _nextId = 1;
   bool _connected = false;
   bool _closed = false;
@@ -2178,6 +2200,7 @@ class TuiGatewayClient
     if (method is! String) return event;
     var requestId = id;
     if (method == 'approval') {
+      requestId = _answeredApprovalServerRequestIds.remove(id) ?? id;
       for (final entry in _approvalServerRequestIds.entries) {
         if (entry.value == id) {
           requestId = entry.key;
@@ -2212,6 +2235,15 @@ class TuiGatewayClient
         'reason': event.payload['reason'],
       }),
     );
+  }
+
+  void _rememberAnsweredApproval(String serverRequestId, String requestId) {
+    final answered = _answeredApprovalServerRequestIds
+      ..remove(serverRequestId)
+      ..[serverRequestId] = requestId;
+    while (answered.length > _answeredApprovalServerRequestLimit) {
+      answered.remove(answered.keys.first);
+    }
   }
 
   /// Answers an open server request over the socket it arrived on. False when
@@ -2298,6 +2330,7 @@ class TuiGatewayClient
     _pending.clear();
     _openServerRequests.clear();
     _approvalServerRequestIds.clear();
+    _answeredApprovalServerRequestIds.clear();
     if (wasConnected && !_events.isClosed) {
       _events.addError(
         TuiGatewayRpcError(
@@ -2927,6 +2960,7 @@ class TuiGatewayClient
     _pending.clear();
     _openServerRequests.clear();
     _approvalServerRequestIds.clear();
+    _answeredApprovalServerRequestIds.clear();
   }
 
   Future<Map<String, dynamic>> _request(
@@ -7213,7 +7247,10 @@ class TuiGatewayClient
           'Hermes Desktop WebSocket was replaced',
         );
       }
-      return const DesktopPromptResponse._(DesktopPromptResponseStatus.ok);
+      return const DesktopPromptResponse._(
+        DesktopPromptResponseStatus.ok,
+        deliveryAcknowledged: false,
+      );
     }
     if (requestId.startsWith(_serverRequestIdPrefix)) {
       // A v7 server request that is not open on this socket: it reached
@@ -7295,7 +7332,7 @@ class TuiGatewayClient
     required EphemeralSensitiveValue value,
   }) async {
     try {
-      late final Future<Map<String, dynamic>> pendingResponse;
+      late final Future<DesktopPromptResponse> pendingResponse;
       try {
         final opaqueRequestId = _interactiveRequestId(method, requestId);
         await _connectForRequest('gateway.connect');
@@ -7310,12 +7347,7 @@ class TuiGatewayClient
         // before awaiting a remote response.
         value.dispose();
       }
-      final result = await pendingResponse;
-      return DesktopPromptResponse.fromJson(
-        result,
-        method: method,
-        allowExpired: true,
-      );
+      return await pendingResponse;
     } catch (error) {
       if (SanitizedRpcFailureFactory.isCertified(error)) {
         rethrow;
@@ -7326,7 +7358,7 @@ class TuiGatewayClient
     }
   }
 
-  Future<Map<String, dynamic>> _sendSensitiveResponseConnected({
+  Future<DesktopPromptResponse> _sendSensitiveResponseConnected({
     required String method,
     required String requestId,
     required String valueKey,
@@ -7336,16 +7368,29 @@ class TuiGatewayClient
     if (_openServerRequests.containsKey(requestId)) {
       // v7 server requests answer every one-string prompt under `value`.
       if (!_respondServerRequest(requestId, {'value': ephemeralValue})) {
-        return Future<Map<String, dynamic>>.error(
+        return Future<DesktopPromptResponse>.error(
           TuiGatewayRpcError(method, 'Hermes Desktop WebSocket was replaced'),
         );
       }
-      return Future<Map<String, dynamic>>.value({'status': 'ok'});
+      // A bare response frame: nothing acknowledges it. The value is not
+      // kept; if it died with the socket the user enters it again.
+      return Future<DesktopPromptResponse>.value(
+        const DesktopPromptResponse._(
+          DesktopPromptResponseStatus.ok,
+          deliveryAcknowledged: false,
+        ),
+      );
     }
     return _requestConnected(method, {
       'request_id': requestId,
       valueKey: ephemeralValue,
-    }, redactRemoteError: true);
+    }, redactRemoteError: true).then(
+      (result) => DesktopPromptResponse.fromJson(
+        result,
+        method: method,
+        allowExpired: true,
+      ),
+    );
   }
 
   @override
@@ -7360,7 +7405,12 @@ class TuiGatewayClient
           'Hermes Desktop WebSocket was replaced',
         );
       }
-      return const DesktopPromptResponse._(DesktopPromptResponseStatus.ok);
+      // A bare response frame, like clarify/sudo/secret: nothing
+      // acknowledges it.
+      return const DesktopPromptResponse._(
+        DesktopPromptResponseStatus.ok,
+        deliveryAcknowledged: false,
+      );
     }
     final result = await _request(method, {
       'request_id': _interactiveRequestId(method, requestId),
@@ -7384,6 +7434,7 @@ class TuiGatewayClient
             if (resolveAll) 'all': true,
           })) {
         _approvalServerRequestIds.remove(requestId);
+        _rememberAnsweredApproval(serverRequestId, requestId);
         return;
       }
     } else if (resolveAll) {
@@ -7432,7 +7483,11 @@ class TuiGatewayClient
       // The response frame is the first-wins answer by construction: it can
       // only settle the request it was minted for.
       _approvalServerRequestIds.remove(request);
-      return const DesktopApprovalResult(resolved: 1);
+      _rememberAnsweredApproval(serverRequestId, request);
+      return const DesktopApprovalResult(
+        resolved: 1,
+        deliveryAcknowledged: false,
+      );
     }
     final result = await _request(method, {
       'session_id': _validatedRuntimeId(method, runtimeSessionId),

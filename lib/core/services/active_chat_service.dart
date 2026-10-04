@@ -4772,6 +4772,28 @@ class ActiveChat {
   DateTime? _desktopTurnStartedAt;
   InteractivePromptState _interactivePrompts =
       const InteractivePromptState.empty();
+
+  /// Clarify, sudo, secret and terminal.read answers written as bare response
+  /// frames, which Hermes never acknowledges. A transport loss forgets their
+  /// tombstones (see [InteractivePromptUnacknowledgedAnswerLost]). Only keys:
+  /// a sensitive value is never kept for a resend; the user enters it again.
+  final Set<InteractivePromptKey> _unacknowledgedPromptAnswers = {};
+
+  /// Transport losses seen by this chat. An unacknowledged answer whose
+  /// outcome lands after a loss cannot tell whether Hermes read it.
+  int _desktopTransportLosses = 0;
+
+  /// Approval request ids settled in [_settledApprovalsTurnEpoch] (answered
+  /// here with `resolved: 1`, or withdrawn by Hermes with `request.cancel`),
+  /// mapped to whether Hermes acknowledged the settlement. A replay of one
+  /// (stale snapshot, `open_requests` racing the answer) must not bring the
+  /// card back and invite a second answer. A choice sent as a bare response
+  /// frame stays unacknowledged until Hermes confirms it; a transport loss
+  /// forgets those, and the resume decides whether Hermes read the choice (no
+  /// longer listed) or still waits on it (re-offered). Entries hold only for
+  /// the turn they were settled in: a later turn may reuse an id.
+  final Map<String, bool> _settledApprovals = <String, bool>{};
+  int _settledApprovalsTurnEpoch = 0;
   final Map<InteractivePromptKey, Future<DesktopPromptResponse>> _batchLocks =
       {};
   SubagentActivityState? _subagentActivities;
@@ -18690,6 +18712,7 @@ class ActiveChat {
       _onDesktopEvent,
       onError: (Object error, StackTrace stackTrace) {
         if (_isOtherRuntimesSubscriptionError(gateway, error)) return;
+        _desktopTransportLosses += 1;
         final interruptedActiveTurn =
             _usingDesktopGateway && isStreaming && !_runTerminal;
         final clientSubmittedTurn = _clientSubmittedCurrentTurn;
@@ -18713,8 +18736,24 @@ class ActiveChat {
             InteractivePromptRuntimeDetached(disconnectedRuntimeId),
           );
         }
+        // An answer that went out without acknowledgement may have died with
+        // the socket. The resume snapshot is the authority: a request it still
+        // lists was never read, so its card must become answerable again.
+        for (final key in _unacknowledgedPromptAnswers) {
+          _reduceInteractivePrompt(
+            InteractivePromptUnacknowledgedAnswerLost(key),
+          );
+        }
+        _unacknowledgedPromptAnswers.clear();
+        _settledApprovals.removeWhere((_, acknowledged) => !acknowledged);
         _usingDesktopGateway = false;
         _retireDesktopRuntime(reason: _RuntimeRetirement.transportLoss);
+        // The retirement moved the bind/session epochs, so an automatic
+        // reattach still in flight (in its resume or its backoff) fails its
+        // fence and can never adopt again. Forget it so this loss schedules
+        // the one live loop instead of being dropped behind a loop that will
+        // exit silently.
+        _desktopAutomaticReattach = null;
         // qr1215: the queue gets a fresh budget once this socket is back.
         if (_hasQueuedWork) _armQueuedTransportWait();
         if (viewerRecoveryClosed) _closeViewerRecovery(gateway);
@@ -21128,6 +21167,8 @@ class ActiveChat {
       case 'approval.request':
         _flushTokenBuffer();
         _handleApprovalRequest(payload);
+      case 'approval.responded':
+        _handleDesktopApprovalSettled(payload);
       case 'message.complete':
         _clearDesktopCompactingIndicator();
         final completeText = payload['text'] ?? payload['rendered'];
@@ -24753,6 +24794,12 @@ class ActiveChat {
   ///   blocked     → deniega solo (instancia/sesión solo-lectura).
   ///   ask / sin política → muestra la tarjeta y notifica si está en 2º plano.
   void _handleApprovalRequest(Map<String, dynamic> event) {
+    final answeredId = _approvalRequestId(event);
+    if (answeredId != null &&
+        _currentTurnSettledApprovals.containsKey(answeredId)) {
+      // Already settled: a replay must not reopen the card.
+      return;
+    }
     // User input may legitimately take longer than the transport watchdog.
     // Resume the inactivity budget only after the approval is answered.
     _activityWatchdogTimer?.cancel();
@@ -24847,6 +24894,34 @@ class ActiveChat {
     return _resolveApprovalRequest(choice, approval);
   }
 
+  Map<String, bool> get _currentTurnSettledApprovals {
+    if (_settledApprovalsTurnEpoch != _turnEpoch) {
+      _settledApprovals.clear();
+      _settledApprovalsTurnEpoch = _turnEpoch;
+    }
+    return _settledApprovals;
+  }
+
+  void _recordSettledApproval(String requestId, {required bool acknowledged}) {
+    final settled = _currentTurnSettledApprovals;
+    settled[requestId] = acknowledged || (settled[requestId] ?? false);
+  }
+
+  /// Hermes settled an approval (`request.cancel`, adapted by the client):
+  /// answered on any surface, timed out or interrupted. Its card closes, and
+  /// a replay of it stays closed for this turn, even after a drop.
+  void _handleDesktopApprovalSettled(Map<String, dynamic> payload) {
+    final settledId = _approvalRequestId(payload);
+    if (settledId == null) return;
+    _recordSettledApproval(settledId, acknowledged: true);
+    final approval = pendingApproval;
+    if (approval == null || _approvalRequestId(approval) != settledId) return;
+    _cancelApprovalNotification(approval, terminal: false);
+    pendingApproval = null;
+    _armActivityWatchdog();
+    _emit(ActiveChatEvent.toolProgress);
+  }
+
   String? _approvalRequestId(Map<String, dynamic>? approval) {
     final value = (approval?['request_id'] ?? approval?['approval_id'])
         ?.toString()
@@ -24893,11 +24968,14 @@ class ActiveChat {
     if (currentRunId == null && desktop != null && runtimeId != null) {
       final requestBindEpoch = _desktopBindEpoch;
       final requestSessionEpoch = _desktopSessionEpoch;
+      final requestTurnEpoch = _turnEpoch;
       var resolved = 1;
+      var acknowledged = true;
       if (desktop is HermesDesktopApprovalResultGateway) {
         final result = await (desktop as HermesDesktopApprovalResultGateway)
             .resolveApprovalChecked(runtimeId, choice, requestId: approvalId);
         resolved = result.resolved;
+        acknowledged = result.deliveryAcknowledged;
       } else {
         await desktop.resolveApproval(runtimeId, choice, requestId: approvalId);
       }
@@ -24906,6 +24984,15 @@ class ActiveChat {
           _desktopRuntimeSessionId == runtimeId &&
           _desktopBindEpoch == requestBindEpoch &&
           _desktopSessionEpoch == requestSessionEpoch;
+      if (resolved > 0 && !_disposed && requestTurnEpoch == _turnEpoch) {
+        if (acknowledged) {
+          _recordSettledApproval(approvalId, acknowledged: true);
+        } else if (authorityStillCurrent) {
+          // The socket that carried it is still current; a later loss of it
+          // forgets this tombstone unless Hermes confirms it first.
+          _recordSettledApproval(approvalId, acknowledged: false);
+        }
+      }
       if (!authorityStillCurrent || !requestStillCurrent()) return;
       if (resolved <= 0) {
         // Hermes ya no tiene esta petición (resuelta en otra superficie o
@@ -25372,8 +25459,18 @@ class ActiveChat {
       }
       throw StateError('Interactive prompt is no longer responding');
     }
+    final transportLossesAtAnswer = _desktopTransportLosses;
     try {
       final result = await invoke(interactiveGateway);
+      if (!result.isExpired &&
+          !result.deliveryAcknowledged &&
+          transportLossesAtAnswer != _desktopTransportLosses) {
+        // The socket that carried this unacknowledged answer dropped before
+        // its outcome landed: the loss already forgot the card, and the
+        // resume decides. Writing a tombstone here would hide a request
+        // Hermes still waits on, or close the card the resume re-offered.
+        return result;
+      }
       if (_disposed || _desktopRuntimeSessionId != key.runtimeSessionId) {
         _reduceInteractivePrompt(InteractivePromptExpired(key));
         return result;
@@ -25383,6 +25480,9 @@ class ActiveChat {
             ? InteractivePromptExpired(key)
             : InteractivePromptResponded(key),
       );
+      if (!result.isExpired && !result.deliveryAcknowledged) {
+        _unacknowledgedPromptAnswers.add(key);
+      }
       if (!result.isExpired && !_runTerminal) _armActivityWatchdog();
       return result;
     } catch (error) {

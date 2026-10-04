@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
+import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/shared_gateway_pool.dart';
@@ -22,6 +24,10 @@ class _Gateway {
   bool sendReadyImmediately = true;
   bool answerClientCapabilities = true;
   bool rejectClientCapabilities = false;
+
+  /// While set, every `session.resume` is recorded but answered only once it
+  /// completes: a barrier that parks a reattach on the server.
+  Completer<void>? resumeGate;
   Map<String, dynamic> Function(Map<String, dynamic> frame) resumeResult =
       (_) => {'session_id': 'runtime-1', 'stored_session_id': 'stored-1'};
   Map<String, dynamic> Function(Map<String, dynamic> frame) activeListResult =
@@ -45,6 +51,10 @@ class _Gateway {
         if (!_frames.isClosed) _frames.add(frame);
         final method = frame['method'];
         if (method is! String) continue; // a server-request response
+        final heldResume = resumeGate;
+        if (method == 'session.resume' && heldResume != null) {
+          await heldResume.future;
+        }
         if (method == 'client.capabilities' && !answerClientCapabilities) {
           continue;
         }
@@ -67,6 +77,7 @@ class _Gateway {
           'session.events.since' => eventsSinceResult(frame),
           'session.active_list' => activeListResult(frame),
           'clarify.lock' => {'status': 'ok', 'remaining': <String>[]},
+          'approval.respond' => {'resolved': 1},
           _ => <String, dynamic>{'status': 'ok'},
         };
         socket.add(
@@ -146,6 +157,61 @@ SavedConnection _connectionFor(_Gateway gateway) => SavedConnection(
   apiKey: 'gateway-key',
   dashboardUrl: 'http://127.0.0.1:${gateway.server.port}',
 );
+
+/// The real client, with barriers around prompt answers: a test decides
+/// whether the transport loss reaches the chat before or after the outcome
+/// of an answer already written into the socket.
+class _GatedClient extends TuiGatewayClient {
+  _GatedClient(super.connection, {super.dashboard});
+
+  /// Holds a clarify answer's outcome after its frame was written.
+  Completer<void>? clarifyOutcomeGate;
+
+  /// Holds a terminal.read answer before its frame is written.
+  Completer<void>? terminalReadWriteGate;
+
+  /// Holds an approval choice's outcome after it was sent.
+  Completer<void>? approvalOutcomeGate;
+
+  @override
+  Future<DesktopApprovalResult> resolveApprovalChecked(
+    String runtimeSessionId,
+    String choice, {
+    required String requestId,
+  }) async {
+    final result = await super.resolveApprovalChecked(
+      runtimeSessionId,
+      choice,
+      requestId: requestId,
+    );
+    final gate = approvalOutcomeGate;
+    if (gate != null) await gate.future;
+    return result;
+  }
+
+  @override
+  Future<DesktopPromptResponse> respondToClarify(
+    String requestId,
+    String answer, {
+    String? questionId,
+  }) async {
+    final result = await super.respondToClarify(
+      requestId,
+      answer,
+      questionId: questionId,
+    );
+    final gate = clarifyOutcomeGate;
+    if (gate != null) await gate.future;
+    return result;
+  }
+
+  @override
+  Future<DesktopPromptResponse> respondToTerminalRead(String requestId) async {
+    final gate = terminalReadWriteGate;
+    if (gate != null) await gate.future;
+    return super.respondToTerminalRead(requestId);
+  }
+}
 
 TuiGatewayClient _clientFor(_Gateway gateway) {
   final client = TuiGatewayClient(
@@ -365,7 +431,8 @@ void main() {
   });
 
   test(
-    'an answered clarify never reopens from a stale replay after a drop',
+    'an answered clarify never reopens from a stale replay on the same socket '
+    'nor after a drop once Hermes consumed it',
     () async {
       gateway.resumeResult = (_) => {
         'session_id': 'runtime-1',
@@ -384,23 +451,164 @@ void main() {
       await _waitUntil(() => chat.pendingInteractivePrompt != null);
       await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'si');
       expect(chat.pendingInteractivePrompt, isNull);
+      await gateway.nextFrame((frame) => frame['id'] == 'srq-answered0001');
 
-      // A replay that still lists the answered id (race with the server
-      // settling it) must not resurrect the card.
+      // A replay computed before Hermes read the answer, delivered on the
+      // same socket, must not resurrect the card.
+      final answeredKey = chat.interactivePrompts.entries.keys.single;
+      gateway.pushServerRequest('srq-answered0001', 'clarify', {
+        'question': 'Seguimos?',
+        'choices': ['si', 'no'],
+      });
+      // Frames are handled in order: once this later question shows, the
+      // stale replay above has been processed.
+      gateway.pushServerRequest('srq-barrier00001', 'clarify', {
+        'question': 'Otra?',
+        'choices': ['si', 'no'],
+      });
+      await _waitUntil(
+        () =>
+            chat.pendingInteractivePrompt?.key.requestId == 'srq-barrier00001',
+      );
+      expect(
+        chat.interactivePrompts[answeredKey]?.status,
+        InteractivePromptStatus.responded,
+      );
+      await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'no');
+      expect(chat.pendingInteractivePrompt, isNull);
+
+      // Hermes consumed both answers and asked something new: the resume
+      // lists only the new request.
       gateway.resumeResult = (_) => {
         'session_id': 'runtime-1',
         'stored_session_id': 'stored-1',
         'running': true,
         'status': 'waiting',
-        'open_requests': [_openClarify('srq-answered0001')],
+        'open_requests': [_openClarify('srq-nextquest001')],
       };
-      final resumesBefore = gateway.rpcCalls('session.resume').length;
       await gateway.sockets.single.close(1001);
       await _waitUntil(
-        () => gateway.rpcCalls('session.resume').length > resumesBefore,
+        () =>
+            chat.pendingInteractivePrompt?.key.requestId == 'srq-nextquest001',
         timeout: const Duration(seconds: 20),
       );
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(
+        chat.interactivePrompts.entries.values
+            .where((entry) => entry.needsInput)
+            .map((entry) => entry.key.requestId),
+        ['srq-nextquest001'],
+      );
+      expect(
+        gateway.frames.where((frame) => frame['id'] == 'srq-answered0001'),
+        hasLength(1),
+      );
+    },
+  );
+
+  test('an acknowledged clarify answer never reopens from a stale replay '
+      'after a drop', () async {
+    gateway.resumeResult = (_) => {
+      'session_id': 'runtime-1',
+      'stored_session_id': 'stored-1',
+      'running': true,
+      'status': 'working',
+    };
+    final client = _clientFor(gateway);
+    final chat = _chatFor(gateway, client, attach: true);
+    await chat.loadMessages();
+    await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+    // A request this socket never registered is answered through the
+    // acknowledged `request.answer` proxy.
+    gateway.pushSessionEvent('clarify.request', {
+      'request_id': 'srq-acked0000001',
+      'question': 'Seguimos?',
+      'choices': ['si', 'no'],
+    });
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+    await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'si');
+    expect(gateway.rpcCalls('request.answer'), hasLength(1));
+    expect(chat.pendingInteractivePrompt, isNull);
+
+    // A replay racing the settlement still lists the acknowledged id.
+    gateway.resumeResult = (_) => {
+      'session_id': 'runtime-1',
+      'stored_session_id': 'stored-1',
+      'running': true,
+      'status': 'waiting',
+      'open_requests': [_openClarify('srq-acked0000001')],
+    };
+    final resumesBefore = gateway.rpcCalls('session.resume').length;
+    await gateway.sockets.single.close(1001);
+    await _waitUntil(
+      () =>
+          gateway.rpcCalls('session.resume').length > resumesBefore &&
+          chat.desktopRuntimeSessionId == 'runtime-1',
+      timeout: const Duration(seconds: 20),
+    );
+    expect(chat.pendingInteractivePrompt, isNull);
+    expect(gateway.rpcCalls('request.answer'), hasLength(1));
+  });
+
+  test(
+    'an answer written into a socket that just died reopens the card when '
+    'the resume still lists the request, and the new answer is sent once',
+    () async {
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'waiting',
+        'open_requests': [_openClarify('srq-lostanswer01')],
+      };
+      final proxy = await _FlakyProxy.start(gateway.server.port);
+      addTearDown(proxy.close);
+      final client = TuiGatewayClient(
+        _connectionFor(
+          gateway,
+        ).copyWith(dashboardUrl: 'http://127.0.0.1:${proxy.port}'),
+        dashboard: _TicketDashboardClient(),
+      );
+      addTearDown(client.close);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      final key = chat.pendingInteractivePrompt!.key;
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+
+      // The path dies before the client notices: the answer frame is written
+      // into a dead socket, so Hermes never reads it.
+      proxy.severAll();
+      final lost = await chat.respondToClarify(key, 'si');
+      expect(lost.deliveryAcknowledged, isFalse);
+      expect(chat.pendingInteractivePrompt, isNull);
+
+      await _waitUntil(
+        () =>
+            gateway.rpcCalls('session.resume').length > resumesBefore &&
+            chat.desktopRuntimeSessionId == 'runtime-1',
+        timeout: const Duration(seconds: 20),
+      );
+      // Hermes still waits on the same request: the card is answerable again.
+      expect(chat.pendingInteractivePrompt?.key.requestId, 'srq-lostanswer01');
+      expect(
+        chat.pendingInteractivePrompt?.status,
+        InteractivePromptStatus.pending,
+      );
+      expect(chat.awaitsUnseenInput, isFalse);
+      expect(
+        gateway.frames.where((frame) => frame['id'] == 'srq-lostanswer01'),
+        isEmpty,
+      );
+
+      await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'no');
+      final answer = await gateway
+          .nextFrame((frame) => frame['id'] == 'srq-lostanswer01')
+          .timeout(const Duration(seconds: 2));
+      expect(answer['result'], {'answer': 'no'});
+      expect(
+        gateway.frames.where((frame) => frame['id'] == 'srq-lostanswer01'),
+        hasLength(1),
+      );
       expect(chat.pendingInteractivePrompt, isNull);
     },
   );
@@ -549,6 +757,688 @@ void main() {
     // then re-attached through a fresh socket and resume.
     expect(gateway.rpcCalls('session.resume').length, greaterThan(flips));
     expect(gateway.sockets.length, greaterThan(flips));
+  });
+
+  group('unacknowledged sudo, secret and approval answers', () {
+    Map<String, dynamic> openSudo(String id) => {
+      'id': id,
+      'method': 'sudo',
+      'params': {'session_id': 'runtime-1'},
+    };
+    Map<String, dynamic> openSecret(String id) => {
+      'id': id,
+      'method': 'secret',
+      'params': {
+        'session_id': 'runtime-1',
+        'env_var': 'API_TOKEN',
+        'prompt': 'Token?',
+      },
+    };
+    const approvalParams = <String, dynamic>{
+      'request_id': 'appr-lost000001',
+      'command': 'rm -rf build',
+      'description': 'delete build',
+      'choices': ['once', 'deny'],
+    };
+    Map<String, dynamic> openApproval(String id) => {
+      'id': id,
+      'method': 'approval',
+      'params': {'session_id': 'runtime-1', ...approvalParams},
+    };
+    Map<String, dynamic> waiting(List<Map<String, dynamic>> open) => {
+      'session_id': 'runtime-1',
+      'stored_session_id': 'stored-1',
+      'running': true,
+      'status': 'waiting',
+      'open_requests': open,
+      for (final entry in open)
+        if (entry['method'] == 'approval')
+          'pending_approval': {...(entry['params'] as Map<String, dynamic>)}
+            ..remove('session_id'),
+    };
+
+    Future<(ActiveChat, _FlakyProxy)> attachedThroughProxy() async {
+      final proxy = await _FlakyProxy.start(gateway.server.port);
+      addTearDown(proxy.close);
+      final client = TuiGatewayClient(
+        _connectionFor(
+          gateway,
+        ).copyWith(dashboardUrl: 'http://127.0.0.1:${proxy.port}'),
+        dashboard: _TicketDashboardClient(),
+      );
+      addTearDown(client.close);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      return (chat, proxy);
+    }
+
+    Future<void> awaitReattach(ActiveChat chat, int resumesBefore) =>
+        _waitUntil(
+          () =>
+              gateway.rpcCalls('session.resume').length > resumesBefore &&
+              chat.desktopRuntimeSessionId == 'runtime-1',
+          timeout: const Duration(seconds: 20),
+        );
+
+    /// A running turn whose resume asks nothing of the user keeps the viewer
+    /// detached by design; only the resume itself proves the reconnect.
+    Future<void> awaitResume(int resumesBefore) async {
+      await _waitUntil(
+        () => gateway.rpcCalls('session.resume').length > resumesBefore,
+        timeout: const Duration(seconds: 20),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+
+    Iterable<Map<String, dynamic>> answersTo(String id) =>
+        gateway.frames.where((frame) => frame['id'] == id);
+
+    for (final kind in const ['sudo', 'secret']) {
+      final id = kind == 'sudo' ? 'srq-lostsudo0001' : 'srq-lostsecret01';
+      Map<String, dynamic> open() =>
+          kind == 'sudo' ? openSudo(id) : openSecret(id);
+      Future<DesktopPromptResponse> answer(
+        ActiveChat chat,
+        EphemeralSensitiveValue value,
+      ) => kind == 'sudo'
+          ? chat.respondToSudo(chat.pendingInteractivePrompt!.key, value)
+          : chat.respondToSecret(chat.pendingInteractivePrompt!.key, value);
+
+      test('a $kind answer written into a socket that just died reopens the '
+          'card when the resume still lists it; the user re-enters it and '
+          'it reaches Hermes once', () async {
+        gateway.resumeResult = (_) => waiting([open()]);
+        final (chat, proxy) = await attachedThroughProxy();
+        await _waitUntil(() => chat.pendingInteractivePrompt != null);
+        expect(chat.pendingInteractivePrompt!.key.requestId, id);
+        final resumesBefore = gateway.rpcCalls('session.resume').length;
+
+        proxy.severAll();
+        final lostValue = EphemeralSensitiveValue('first-value');
+        final lost = await answer(chat, lostValue);
+        expect(lost.deliveryAcknowledged, isFalse);
+        // Nothing is kept for a resend: the holder is redacted and disposed.
+        expect(lostValue.hasValue, isFalse);
+        expect(lostValue.isDisposed, isTrue);
+        expect(chat.pendingInteractivePrompt, isNull);
+
+        await awaitReattach(chat, resumesBefore);
+        expect(chat.pendingInteractivePrompt?.key.requestId, id);
+        expect(
+          chat.pendingInteractivePrompt?.status,
+          InteractivePromptStatus.pending,
+        );
+        expect(answersTo(id), isEmpty);
+
+        await answer(chat, EphemeralSensitiveValue('second-value'));
+        final frame = await gateway
+            .nextFrame((frame) => frame['id'] == id)
+            .timeout(const Duration(seconds: 2));
+        expect(frame['result'], {'value': 'second-value'});
+        expect(answersTo(id), hasLength(1));
+        expect(
+          gateway.frames.any((f) => jsonEncode(f).contains('first-value')),
+          isFalse,
+        );
+        expect(chat.pendingInteractivePrompt, isNull);
+      });
+
+      test('a $kind answer lost with the socket stays closed when the resume '
+          'no longer lists it', () async {
+        gateway.resumeResult = (_) => waiting([open()]);
+        final (chat, proxy) = await attachedThroughProxy();
+        await _waitUntil(() => chat.pendingInteractivePrompt != null);
+        final resumesBefore = gateway.rpcCalls('session.resume').length;
+        gateway.resumeResult = (_) => {
+          'session_id': 'runtime-1',
+          'stored_session_id': 'stored-1',
+          'running': true,
+          'status': 'working',
+        };
+
+        proxy.severAll();
+        await answer(chat, EphemeralSensitiveValue('only-value'));
+        await awaitResume(resumesBefore);
+        expect(chat.pendingInteractivePrompt, isNull);
+        expect(
+          chat.interactivePrompts.entries.values.where((e) => e.needsInput),
+          isEmpty,
+        );
+      });
+
+      test('an acknowledged $kind answer never reopens from a stale replay '
+          'after a drop', () async {
+        gateway.resumeResult = (_) => {
+          'session_id': 'runtime-1',
+          'stored_session_id': 'stored-1',
+          'running': true,
+          'status': 'working',
+        };
+        final client = _clientFor(gateway);
+        final chat = _chatFor(gateway, client, attach: true);
+        await chat.loadMessages();
+        await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+        // Not registered on this socket: answered by the acknowledged RPC.
+        gateway.pushSessionEvent('$kind.request', {
+          'request_id': id,
+          if (kind == 'secret') ...{'env_var': 'API_TOKEN', 'prompt': 'T?'},
+        });
+        await _waitUntil(() => chat.pendingInteractivePrompt != null);
+        final acked = await answer(chat, EphemeralSensitiveValue('acked'));
+        expect(acked.deliveryAcknowledged, isTrue);
+        expect(gateway.rpcCalls('$kind.respond'), hasLength(1));
+
+        gateway.resumeResult = (_) => waiting([open()]);
+        final resumesBefore = gateway.rpcCalls('session.resume').length;
+        await gateway.sockets.single.close(1001);
+        await awaitReattach(chat, resumesBefore);
+        expect(chat.pendingInteractivePrompt, isNull);
+        expect(gateway.rpcCalls('$kind.respond'), hasLength(1));
+        expect(answersTo(id), isEmpty);
+      });
+    }
+
+    test(
+      'an approval written into a socket that just died is pending again '
+      'when the resume re-offers it, and the new choice is sent once',
+      () async {
+        const srq = 'srq-lostappr0001';
+        gateway.resumeResult = (_) => waiting([openApproval(srq)]);
+        final (chat, proxy) = await attachedThroughProxy();
+        await _waitUntil(() => chat.pendingApproval != null);
+        expect(chat.pendingApproval!['request_id'], 'appr-lost000001');
+        final resumesBefore = gateway.rpcCalls('session.resume').length;
+
+        proxy.severAll();
+        await chat.resolveApproval('once');
+        expect(chat.pendingApproval, isNull);
+
+        await awaitReattach(chat, resumesBefore);
+        await _waitUntil(() => chat.pendingApproval != null);
+        expect(chat.pendingApproval!['request_id'], 'appr-lost000001');
+        expect(answersTo(srq), isEmpty);
+        expect(gateway.rpcCalls('approval.respond'), isEmpty);
+
+        await chat.resolveApproval('deny');
+        final frame = await gateway
+            .nextFrame((frame) => frame['id'] == srq)
+            .timeout(const Duration(seconds: 2));
+        expect(frame['result'], {'choice': 'deny'});
+        expect(answersTo(srq), hasLength(1));
+        expect(gateway.rpcCalls('approval.respond'), isEmpty);
+        expect(chat.pendingApproval, isNull);
+      },
+    );
+
+    test('an approval lost with the socket stays closed when the resume no '
+        'longer lists it', () async {
+      const srq = 'srq-goneappr0001';
+      gateway.resumeResult = (_) => waiting([openApproval(srq)]);
+      final (chat, proxy) = await attachedThroughProxy();
+      await _waitUntil(() => chat.pendingApproval != null);
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+
+      proxy.severAll();
+      await chat.resolveApproval('once');
+      await awaitResume(resumesBefore);
+      expect(chat.pendingApproval, isNull);
+      expect(answersTo(srq), isEmpty);
+      expect(gateway.rpcCalls('approval.respond'), isEmpty);
+    });
+
+    test('an answered approval never reopens from a stale replay on the same '
+        'socket, nor after a drop once Hermes acknowledged it', () async {
+      const srq = 'srq-ackedappr001';
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _clientFor(gateway);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushServerRequest(srq, 'approval', approvalParams);
+      await _waitUntil(() => chat.pendingApproval != null);
+      await chat.resolveApproval('once');
+      await gateway.nextFrame((frame) => frame['id'] == srq);
+      expect(chat.pendingApproval, isNull);
+
+      // A replay computed before Hermes read the answer, on the same socket.
+      gateway.pushServerRequest(srq, 'approval', approvalParams);
+      gateway.pushServerRequest('srq-barrier00001', 'clarify', {
+        'question': 'Otra?',
+        'choices': ['si', 'no'],
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      expect(chat.pendingApproval, isNull);
+
+      // Hermes consumed both answers and asked something new: the resume
+      // lists only the new request, so the approval stays closed.
+      await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'si');
+      gateway.resumeResult = (_) => waiting([_openClarify('srq-nextquest001')]);
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+      await gateway.sockets.single.close(1001);
+      await awaitReattach(chat, resumesBefore);
+      await _waitUntil(
+        () =>
+            chat.pendingInteractivePrompt?.key.requestId == 'srq-nextquest001',
+      );
+      expect(chat.pendingApproval, isNull);
+      expect(answersTo(srq), hasLength(1));
+    });
+
+    test('an approval acknowledged over approval.respond never reopens from a '
+        'stale snapshot after a drop', () async {
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _clientFor(gateway);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushSessionEvent('approval.request', approvalParams);
+      await _waitUntil(() => chat.pendingApproval != null);
+      await chat.resolveApproval('once');
+      expect(gateway.rpcCalls('approval.respond'), hasLength(1));
+      expect(chat.pendingApproval, isNull);
+
+      gateway.resumeResult = (_) => waiting([openApproval('srq-stale0000001')]);
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+      await gateway.sockets.single.close(1001);
+      await awaitReattach(chat, resumesBefore);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(chat.pendingApproval, isNull);
+      expect(gateway.rpcCalls('approval.respond'), hasLength(1));
+      expect(answersTo('srq-stale0000001'), isEmpty);
+    });
+
+    Future<(ActiveChat, _FlakyProxy, _GatedClient)> gatedThroughProxy() async {
+      final proxy = await _FlakyProxy.start(gateway.server.port);
+      addTearDown(proxy.close);
+      final client = _GatedClient(
+        _connectionFor(
+          gateway,
+        ).copyWith(dashboardUrl: 'http://127.0.0.1:${proxy.port}'),
+        dashboard: _TicketDashboardClient(),
+      );
+      addTearDown(client.close);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      return (chat, proxy, client);
+    }
+
+    for (final lossFirst in const [true, false]) {
+      final order = lossFirst
+          ? 'the drop is observed before the reattach resume answers'
+          : 'the resume already re-offered the card';
+      test('a clarify answer lost with the socket whose outcome lands after '
+          '$order is answerable again and reaches Hermes once', () async {
+        const id = 'srq-lateoutcome1';
+        gateway.resumeResult = (_) => waiting([_openClarify(id)]);
+        final (chat, proxy, client) = await gatedThroughProxy();
+        await _waitUntil(() => chat.pendingInteractivePrompt != null);
+        final key = chat.pendingInteractivePrompt!.key;
+        final resumesBefore = gateway.rpcCalls('session.resume').length;
+        final resumeGate = gateway.resumeGate = Completer<void>();
+        final outcomeGate = client.clarifyOutcomeGate = Completer<void>();
+
+        // Written into a dead socket; the chat learns the outcome only when
+        // the barrier opens.
+        proxy.severAll();
+        final lost = chat.respondToClarify(key, 'si');
+        // Barrier: the loss reached the chat, whose reattach resume is now
+        // parked on the server.
+        await _eventually(
+          () =>
+              chat.desktopRuntimeSessionId == null &&
+              gateway.rpcCalls('session.resume').length > resumesBefore,
+        );
+        client.clarifyOutcomeGate = null;
+        if (lossFirst) {
+          outcomeGate.complete();
+          expect((await lost).deliveryAcknowledged, isFalse);
+          gateway.resumeGate = null;
+          resumeGate.complete();
+          await _eventually(() => chat.desktopRuntimeSessionId == 'runtime-1');
+        } else {
+          gateway.resumeGate = null;
+          resumeGate.complete();
+          await _eventually(
+            () => chat.pendingInteractivePrompt?.key.requestId == id,
+          );
+          outcomeGate.complete();
+          expect((await lost).deliveryAcknowledged, isFalse);
+        }
+        expect(chat.desktopRuntimeSessionId, 'runtime-1');
+        expect(
+          chat.pendingInteractivePrompt?.status,
+          InteractivePromptStatus.pending,
+        );
+        expect(answersTo(id), isEmpty);
+
+        await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'no');
+        final frame = await gateway
+            .nextFrame((frame) => frame['id'] == id)
+            .timeout(const Duration(seconds: 2));
+        expect(frame['result'], {'answer': 'no'});
+        expect(answersTo(id), hasLength(1));
+      });
+    }
+
+    test('a terminal.read answer written into a socket that just died is '
+        'answered again when the resume still lists it', () async {
+      const id = 'srq-lostterm0001';
+      final open = {
+        'id': id,
+        'method': 'terminal.read',
+        'params': {'session_id': 'runtime-1'},
+      };
+      // The clarify keeps Hermes waiting on the user, so the viewer rejoins.
+      gateway.resumeResult = (_) =>
+          waiting([open, _openClarify('srq-stillopen001')]);
+      final proxy = await _FlakyProxy.start(gateway.server.port);
+      addTearDown(proxy.close);
+      final client = _GatedClient(
+        _connectionFor(
+          gateway,
+        ).copyWith(dashboardUrl: 'http://127.0.0.1:${proxy.port}'),
+        dashboard: _TicketDashboardClient(),
+      );
+      addTearDown(client.close);
+      final writeGate = client.terminalReadWriteGate = Completer<void>();
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      // The automatic answer is parked before its frame is written.
+      await _eventually(
+        () => chat.interactivePrompts.entries.values.any(
+          (entry) =>
+              entry.key.requestId == id &&
+              entry.status == InteractivePromptStatus.responding,
+        ),
+      );
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+
+      proxy.severAll();
+      client.terminalReadWriteGate = null;
+      writeGate.complete();
+      await awaitReattach(chat, resumesBefore);
+      final frame = await gateway
+          .nextFrame((frame) => frame['id'] == id)
+          .timeout(const Duration(seconds: 5));
+      expect(frame['result'], {
+        'value': TerminalReadResponsePolicy.noOwnedTerminalText,
+      });
+      expect(answersTo(id), hasLength(1));
+    });
+
+    bool hasPrompt(ActiveChat chat, String id) => chat
+        .interactivePrompts
+        .entries
+        .values
+        .any((entry) => entry.key.requestId == id && entry.needsInput);
+
+    /// Frames are handled in order: once this question shows, every frame
+    /// pushed before it has been processed.
+    Future<void> clarifyBarrier(ActiveChat chat, String id) async {
+      gateway.pushServerRequest(id, 'clarify', {
+        'question': 'Otra?',
+        'choices': ['si', 'no'],
+      });
+      await _eventually(() => hasPrompt(chat, id));
+    }
+
+    test('a bare approval choice that Hermes then settles with request.cancel '
+        'stays closed after a drop and a stale resume', () async {
+      const srq = 'srq-cancelappr01';
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _clientFor(gateway);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushServerRequest(srq, 'approval', approvalParams);
+      await _eventually(() => chat.pendingApproval != null);
+      await chat.resolveApproval('once');
+      await gateway.nextFrame((frame) => frame['id'] == srq);
+      // Hermes had already settled the request elsewhere and says so.
+      gateway.pushSessionEvent('request.cancel', {
+        'id': srq,
+        'method': 'approval',
+        'reason': 'resolved',
+      });
+      await clarifyBarrier(chat, 'srq-barrier00001');
+
+      gateway.resumeResult = (_) =>
+          waiting([openApproval(srq), _openClarify('srq-nextquest001')]);
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+      await gateway.sockets.single.close(1001);
+      await awaitReattach(chat, resumesBefore);
+      await _eventually(() => hasPrompt(chat, 'srq-nextquest001'));
+      expect(chat.pendingApproval, isNull);
+      expect(answersTo(srq), hasLength(1));
+    });
+
+    test('an approval another client settled closes the card and never '
+        'reopens from a stale replay, before or after a drop', () async {
+      const srq = 'srq-elsewhere002';
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _clientFor(gateway);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushServerRequest(srq, 'approval', approvalParams);
+      await _eventually(() => chat.pendingApproval != null);
+
+      gateway.pushSessionEvent('request.cancel', {
+        'id': srq,
+        'method': 'approval',
+        'reason': 'resolved',
+      });
+      await clarifyBarrier(chat, 'srq-barrier00001');
+      expect(chat.pendingApproval, isNull);
+
+      // A replay computed before the settlement, on the same socket.
+      gateway.pushSessionEvent('approval.request', approvalParams);
+      await clarifyBarrier(chat, 'srq-barrier00002');
+      expect(chat.pendingApproval, isNull);
+
+      gateway.resumeResult = (_) =>
+          waiting([openApproval(srq), _openClarify('srq-nextquest001')]);
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+      await gateway.sockets.single.close(1001);
+      await awaitReattach(chat, resumesBefore);
+      await _eventually(() => hasPrompt(chat, 'srq-nextquest001'));
+      expect(chat.pendingApproval, isNull);
+      expect(answersTo(srq), isEmpty);
+      expect(gateway.rpcCalls('approval.respond'), isEmpty);
+    });
+
+    test('a request.cancel that lands before the outcome of a bare approval '
+        'choice keeps it closed after a drop and a stale resume', () async {
+      const srq = 'srq-cancelfirst1';
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _GatedClient(
+        _connectionFor(gateway),
+        dashboard: _TicketDashboardClient(),
+      );
+      addTearDown(client.close);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushServerRequest(srq, 'approval', approvalParams);
+      await _eventually(() => chat.pendingApproval != null);
+      final outcomeGate = client.approvalOutcomeGate = Completer<void>();
+      final choice = chat.resolveApproval('once');
+      await gateway.nextFrame((frame) => frame['id'] == srq);
+      gateway.pushSessionEvent('request.cancel', {
+        'id': srq,
+        'method': 'approval',
+        'reason': 'resolved',
+      });
+      await clarifyBarrier(chat, 'srq-barrier00001');
+      client.approvalOutcomeGate = null;
+      outcomeGate.complete();
+      await choice;
+
+      gateway.resumeResult = (_) =>
+          waiting([openApproval(srq), _openClarify('srq-nextquest001')]);
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+      await gateway.sockets.single.close(1001);
+      await awaitReattach(chat, resumesBefore);
+      await _eventually(() => hasPrompt(chat, 'srq-nextquest001'));
+      expect(chat.pendingApproval, isNull);
+      expect(answersTo(srq), hasLength(1));
+    });
+
+    test('an approval answer whose outcome lands after its turn ended does '
+        'not hide the same id in the next turn', () async {
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _GatedClient(
+        _connectionFor(gateway),
+        dashboard: _TicketDashboardClient(),
+      );
+      addTearDown(client.close);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushSessionEvent('approval.request', approvalParams);
+      await _eventually(() => chat.pendingApproval != null);
+      final outcomeGate = client.approvalOutcomeGate = Completer<void>();
+      final choice = chat.resolveApproval('once');
+      await gateway.nextFrame((frame) => frame['method'] == 'approval.respond');
+
+      gateway.pushSessionEvent('message.complete', {
+        'text': 'done',
+        'status': 'complete',
+      });
+      await _eventually(() => !chat.isStreaming);
+      chat.beginExternallyObservedDesktopTurnForTesting(
+        const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-1',
+          storedSessionId: 'stored-1',
+          created: false,
+          running: true,
+        ),
+      );
+      client.approvalOutcomeGate = null;
+      outcomeGate.complete();
+      await choice;
+
+      gateway.pushSessionEvent('approval.request', approvalParams);
+      await clarifyBarrier(chat, 'srq-barrier00001');
+      expect(chat.pendingApproval?['request_id'], 'appr-lost000001');
+    });
+
+    test('a request.cancel for an approval answered by a response frame names '
+        'the approval; only the latest answers are remembered', () async {
+      final client = _clientFor(gateway);
+      final requests = <String>[];
+      final settled = <String>[];
+      final subscription = client.events.listen((event) {
+        if (event.type == 'approval.request') {
+          requests.add(event.payload['request_id'] as String);
+        } else if (event.type == 'approval.responded') {
+          settled.add(event.payload['request_id'] as String);
+        }
+      }, onError: (Object _) {});
+      addTearDown(subscription.cancel);
+      await client.connect();
+      String srq(int i) => 'srq-cap${i.toString().padLeft(9, '0')}';
+      String appr(int i) => 'appr-cap$i';
+      const answered = 33;
+      for (var i = 0; i < answered; i++) {
+        gateway.pushServerRequest(srq(i), 'approval', {
+          ...approvalParams,
+          'request_id': appr(i),
+        });
+      }
+      await _eventually(() => requests.length == answered);
+      for (var i = 0; i < answered; i++) {
+        final result = await client.resolveApprovalChecked(
+          'runtime-1',
+          'once',
+          requestId: appr(i),
+        );
+        expect(result.deliveryAcknowledged, isFalse);
+      }
+      for (final i in const [0, answered - 1]) {
+        gateway.pushSessionEvent('request.cancel', {
+          'id': srq(i),
+          'method': 'approval',
+          'reason': 'resolved',
+        });
+      }
+      await _eventually(() => settled.length == 2);
+      // The oldest answer fell out of the bounded memory; the latest still
+      // maps its frame back to the approval.
+      expect(settled, [srq(0), appr(answered - 1)]);
+    });
+
+    test('an approval id answered in one turn is shown again when a later '
+        'turn asks with the same id', () async {
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _clientFor(gateway);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushSessionEvent('approval.request', approvalParams);
+      await _eventually(() => chat.pendingApproval != null);
+      await chat.resolveApproval('once');
+      expect(gateway.rpcCalls('approval.respond'), hasLength(1));
+      expect(chat.pendingApproval, isNull);
+
+      gateway.pushSessionEvent('message.complete', {
+        'text': 'done',
+        'status': 'complete',
+      });
+      await _eventually(() => !chat.isStreaming);
+      chat.beginExternallyObservedDesktopTurnForTesting(
+        const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-1',
+          storedSessionId: 'stored-1',
+          created: false,
+          running: true,
+        ),
+      );
+      gateway.pushSessionEvent('approval.request', approvalParams);
+      await clarifyBarrier(chat, 'srq-barrier00001');
+      expect(chat.pendingApproval?['request_id'], 'appr-lost000001');
+    });
   });
 }
 

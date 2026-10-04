@@ -876,4 +876,68 @@ void main() {
       );
     });
   });
+
+  test('an unacknowledged answer lost with its transport forgets only the '
+      'responded tombstone', () {
+    var state = const InteractivePromptState.empty();
+    for (final id in ['answered', 'expired', 'cancelled', 'pending', 'busy']) {
+      state = InteractivePromptReducer.reduce(
+        state,
+        InteractivePromptReceived(_clarify('runtime-a', id)),
+      );
+    }
+    state = InteractivePromptReducer.reduce(
+      state,
+      InteractivePromptResponseStarted(_key('runtime-a', 'answered')),
+    );
+    state = InteractivePromptReducer.reduce(
+      state,
+      InteractivePromptResponded(_key('runtime-a', 'answered')),
+    );
+    state = InteractivePromptReducer.reduce(
+      state,
+      InteractivePromptExpired(_key('runtime-a', 'expired')),
+    );
+    state = InteractivePromptReducer.reduce(
+      state,
+      InteractivePromptCancelled(_key('runtime-a', 'cancelled')),
+    );
+    state = InteractivePromptReducer.reduce(
+      state,
+      InteractivePromptResponseStarted(_key('runtime-a', 'busy')),
+    );
+    for (final id in ['answered', 'expired', 'cancelled', 'pending', 'busy']) {
+      state = InteractivePromptReducer.reduce(
+        state,
+        InteractivePromptUnacknowledgedAnswerLost(_key('runtime-a', id)),
+      );
+    }
+    expect(state[_key('runtime-a', 'answered')], isNull);
+    expect(
+      state[_key('runtime-a', 'expired')]?.status,
+      InteractivePromptStatus.expired,
+    );
+    expect(
+      state[_key('runtime-a', 'cancelled')]?.status,
+      InteractivePromptStatus.cancelled,
+    );
+    expect(
+      state[_key('runtime-a', 'pending')]?.status,
+      InteractivePromptStatus.pending,
+    );
+    expect(
+      state[_key('runtime-a', 'busy')]?.status,
+      InteractivePromptStatus.responding,
+    );
+
+    // The replay of a request Hermes still holds open shows it again.
+    state = InteractivePromptReducer.reduce(
+      state,
+      InteractivePromptReceived(_clarify('runtime-a', 'answered')),
+    );
+    expect(
+      state[_key('runtime-a', 'answered')]?.status,
+      InteractivePromptStatus.pending,
+    );
+  });
 }
