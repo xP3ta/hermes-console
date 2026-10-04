@@ -53,6 +53,7 @@ class VoiceConversationCoordinator extends ChangeNotifier
   LiveVoiceConversationEngine? _live;
   VoiceConversationEngine? _current;
   ActiveChat? _probeChat;
+  String _probeProfile = '';
   bool _probing = false;
   bool _disposed = false;
   int _epoch = 0;
@@ -83,7 +84,11 @@ class VoiceConversationCoordinator extends ChangeNotifier
     Future<void> Function(String prompt)? onBeforeSend,
   }) async {
     if (_disposed) return;
-    if (_probing && identical(_probeChat, chat)) return;
+    // The same chat and profile already being probed is one entry; another
+    // profile supersedes the pending probe.
+    if (_probing && identical(_probeChat, chat) && _probeProfile == profile) {
+      return;
+    }
     final running = _current;
     if (running != null && running.active) {
       if (running.ownsChat(chat)) return;
@@ -95,6 +100,7 @@ class VoiceConversationCoordinator extends ChangeNotifier
     if (_gptLiveEnabled()) {
       _probing = true;
       _probeChat = chat;
+      _probeProfile = profile;
       notifyListeners();
       final status = await _readStatus(chat, profile);
       if (epoch != _epoch || _disposed) return;

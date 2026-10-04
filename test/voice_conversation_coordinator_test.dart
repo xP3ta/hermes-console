@@ -238,6 +238,46 @@ void main() {
       );
     }
 
+    test('same chat entered again with another profile while the status read '
+        'is pending: the stale probe opens nothing', () async {
+      rig.optIn = true;
+      const available = VoiceLiveStatus(
+        mode: VoiceLiveMode.gptLive,
+        available: true,
+      );
+      final gateOps = Completer<VoiceLiveStatus?>();
+      final gateOther = Completer<VoiceLiveStatus?>();
+      rig.api.statusGateQueue.addAll([gateOps, gateOther]);
+      final first = rig.enter(profile: 'ops');
+      final second = rig.enter(profile: 'other');
+      expect(rig.api.statusProfiles, ['ops', 'other']);
+      gateOps.complete(available);
+      gateOther.complete(available);
+      await first;
+      await second;
+      expect(rig.live.calls, ['enter']);
+      expect(rig.live.enteredProfile, 'other');
+      expect(rig.chained.calls, isEmpty);
+    });
+
+    test(
+      'same chat and profile entered twice while pending reads once',
+      () async {
+        rig.optIn = true;
+        final gate = Completer<VoiceLiveStatus?>();
+        rig.api.statusGateQueue.add(gate);
+        final first = rig.enter(profile: 'ops');
+        final second = rig.enter(profile: 'ops');
+        gate.complete(
+          const VoiceLiveStatus(mode: VoiceLiveMode.gptLive, available: true),
+        );
+        await first;
+        await second;
+        expect(rig.api.statusCalls, 1);
+        expect(rig.live.calls, ['enter']);
+      },
+    );
+
     test('exit during the status read opens nothing', () async {
       rig.optIn = true;
       final gate = Completer<VoiceLiveStatus?>();
