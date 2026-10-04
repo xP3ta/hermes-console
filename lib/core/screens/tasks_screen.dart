@@ -12,6 +12,7 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
@@ -20,6 +21,7 @@ import '../models/connection.dart';
 import '../models/dock_config.dart' show DockItemId;
 import '../models/kanban.dart';
 import '../services/kanban_client.dart';
+import '../services/kanban_watch_board.dart';
 import '../services/connection_manager.dart'
     show ConnectionManager, DashboardHttpException;
 import '../services/dock_preferences_store.dart';
@@ -92,6 +94,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
 
   List<KanbanBoardRef> _boards = const [];
   late String? _selectedBoard;
+  bool _watchedBoardRestored = false;
   bool _boardCapabilityChecked = false;
   bool _initialTaskOpened = false;
 
@@ -216,6 +219,8 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
 
   Future<void> _load() async {
     if (!_loading) setState(() => _loading = true);
+    await _restoreWatchedBoard();
+    if (!mounted) return;
     try {
       final board = await _client.getBoard(
         includeArchived: _includeArchived,
@@ -237,6 +242,33 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
         _error = _humanError(e);
         _loading = false;
       });
+    }
+  }
+
+  /// Opens on the board picked last (the one background notifications
+  /// watch) unless the caller asked for a specific board.
+  Future<void> _restoreWatchedBoard() async {
+    if (_watchedBoardRestored) return;
+    _watchedBoardRestored = true;
+    if (_selectedBoard != null) return;
+    try {
+      // Bounded: a preferences store that never answers must not keep the
+      // board from loading.
+      final prefs = await SharedPreferences.getInstance().timeout(
+        const Duration(seconds: 1),
+      );
+      _selectedBoard ??= KanbanWatchBoard.read(prefs, widget.connection.id);
+    } catch (_) {
+      // Without preferences the server's current board is the default.
+    }
+  }
+
+  Future<void> _rememberWatchedBoard(String slug) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await KanbanWatchBoard.write(prefs, widget.connection.id, slug);
+    } catch (_) {
+      // Best effort: the board still opens; notifications keep the old one.
     }
   }
 
@@ -711,6 +743,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
       _taskFilter = null;
       _includeArchived = false;
     });
+    unawaited(_rememberWatchedBoard(slug));
     await _load();
     if (mounted) _subscribeEvents();
   }
