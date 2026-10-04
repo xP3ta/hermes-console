@@ -700,7 +700,10 @@ final class MissionControlRepository
     try {
       return _ActiveSessionsRead((await loader()).sessions, true);
     } catch (error) {
-      return _ActiveSessionsRead(const [], _isUnsupported(error));
+      // Only the typed «method not found» says the server lacks the method.
+      // A 404 in a message, an HTTP status or any other code is a failed read.
+      final missing = error is TuiGatewayRpcError && error.code == -32601;
+      return _ActiveSessionsRead(const [], missing);
     }
   }
 
