@@ -224,6 +224,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   bool _stallAgain = false;
   bool _resuming = false;
   bool _compressing = false;
+
+  /// `session.compress` confirmed by the server (see
+  /// [GatewayRoomMemberCompressor.probeSupport]); hidden until then.
+  bool _compressSupported = false;
   final Set<String> _retrying = {};
   Animation<double>? _coverAnimation;
   bool _stopping = false;
@@ -291,6 +295,14 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     unawaited(_restoreDraft());
     unawaited(_probePrompts());
     unawaited(_probeStall());
+    unawaited(_probeCompress());
+  }
+
+  Future<void> _probeCompress() async {
+    final compressor = widget.memberCompressor;
+    if (compressor == null) return;
+    final supported = await compressor.probeSupport();
+    if (mounted && supported) setState(() => _compressSupported = true);
   }
 
   @override
@@ -1405,6 +1417,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   Future<void> _compressMemberHistory(HostedGroupMember member) async {
     final compressor = widget.memberCompressor;
     if (compressor == null ||
+        !_compressSupported ||
         _compressing ||
         (_driver?.working ?? false) ||
         (_driver?.running ?? false)) {
@@ -1520,7 +1533,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           ],
           profileFor: widget.profileFor,
           avatarCache: widget.avatarCache,
-          onCompress: widget.memberCompressor == null
+          onCompress: widget.memberCompressor == null || !_compressSupported
               ? null
               : _compressMemberHistory,
           compressDisabled:

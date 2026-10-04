@@ -174,6 +174,21 @@ final class GatewayRoomMemberCompressor {
 
   const GatewayRoomMemberCompressor(this.rpc);
 
+  /// Whether the server confirms `session.compress`. No capability RPC
+  /// declares it, so an empty session id reaches the handler without side
+  /// effects: a server that has it answers 4001 ("session not found"), a
+  /// legacy one answers -32601. Anything else stays unconfirmed.
+  Future<bool> probeSupport() async {
+    try {
+      await rpc('session.compress', const {'session_id': ''});
+      return true;
+    } on TuiGatewayRpcError catch (error) {
+      return error.code == 4001;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<RoomMemberCompressionResult> compress(
     HostedGroupRoom room,
     HostedGroupMember member,

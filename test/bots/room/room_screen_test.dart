@@ -16,6 +16,7 @@ import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/artifact_export_service.dart';
+import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat/chat_message_selection_area.dart';
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
@@ -987,7 +988,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(calls.map((call) => call.$1), [
+    // The first call is the side-effect-free capability probe.
+    expect(calls.first.$1, 'session.compress');
+    expect(calls.first.$2, {'session_id': ''});
+    expect(calls.skip(1).map((call) => call.$1), [
       'session.list',
       'session.resume',
       'session.compress',
@@ -1032,12 +1036,66 @@ void main() {
     expect(find.byKey(const ValueKey('room-settings-compress')), findsNothing);
   });
 
+  testWidgets('compress row needs server-confirmed session.compress', (
+    tester,
+  ) async {
+    Future<void> openSettings() async {
+      await tester.tap(find.byKey(const ValueKey('room-overflow')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
+      await tester.pumpAndSettle();
+    }
+
+    // Legacy writable server: the method is unknown (-32601).
+    final legacyCalls = <(String, Map<String, dynamic>)>[];
+    final legacy = GatewayRoomMemberCompressor((method, params) async {
+      legacyCalls.add((method, params));
+      if (method == 'session.compress') {
+        throw TuiGatewayRpcError(method, 'unknown method', code: -32601);
+      }
+      return const {};
+    });
+    await _pump(tester, events: const [], memberCompressor: legacy);
+    await openSettings();
+    expect(find.byKey(const ValueKey('room-settings-compress')), findsNothing);
+    expect(legacyCalls.map((call) => call.$1), ['session.compress']);
+    expect(legacyCalls.single.$2, {'session_id': ''});
+
+    // Probe that never answers: nothing is shown until it is confirmed.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    final never = Completer<Map<String, dynamic>>();
+    await _pump(
+      tester,
+      events: const [],
+      memberCompressor: GatewayRoomMemberCompressor((_, _) => never.future),
+    );
+    await openSettings();
+    expect(find.byKey(const ValueKey('room-settings-compress')), findsNothing);
+
+    // Current server: the handler answers 4001 for the empty probe id.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    final current = GatewayRoomMemberCompressor((method, params) async {
+      throw TuiGatewayRpcError(method, 'session not found', code: 4001);
+    });
+    await _pump(tester, events: const [], memberCompressor: current);
+    await openSettings();
+    expect(
+      find.byKey(const ValueKey('room-settings-compress')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('compression is single-flight and drops a result after dispose', (
     tester,
   ) async {
     final gate = Completer<Map<String, dynamic>>();
     var calls = 0;
     final compressor = GatewayRoomMemberCompressor((method, params) {
+      if (method == 'session.compress' && params['session_id'] == '') {
+        return Future.value(const <String, dynamic>{});
+      }
       calls++;
       return gate.future;
     });
