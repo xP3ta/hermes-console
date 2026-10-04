@@ -709,7 +709,10 @@ class _SkillsScreenState extends State<SkillsScreen>
           children: [
             const Text('skills'),
             // States which profile these skills belong to.
-            ProfileScopeLabel(profile: _profile),
+            ProfileScopeLabel(
+              profile: _profile,
+              connectionId: widget.connection.id,
+            ),
             if (_installed.isNotEmpty)
               Text(
                 // Fuente de datos explícita. El conteo de activas solo es

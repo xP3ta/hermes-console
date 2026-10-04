@@ -16,31 +16,6 @@ import 'profile_scope.dart';
 /// never overwrite a newer roster.
 typedef ProfileRosterReader = Future<List<AgentProfile>> Function();
 
-/// Label for a profile: its display name when set, else its name.
-String profileDisplayLabel(Strings strings, AgentProfile profile) {
-  final display = profile.displayName.trim();
-  if (display.isNotEmpty) return display;
-  return ProfileScopeLabel.display(strings, profile.name);
-}
-
-/// Display name of the active profile [name] (empty = default), the same
-/// one the switcher lists: the roster's `display_name` when the profile is
-/// known (Desktop `profileLabel`: `display_name || name`), else its name.
-String activeProfileDisplayLabel(
-  Strings strings,
-  String name,
-  Iterable<AgentProfile> roster,
-) {
-  final owner = name.trim();
-  final isDefault = owner.isEmpty || owner == 'default';
-  for (final profile in roster) {
-    if (isDefault ? profile.isDefault : profile.name == owner) {
-      return profileDisplayLabel(strings, profile);
-    }
-  }
-  return ProfileScopeLabel.display(strings, owner);
-}
-
 /// The one way to change the active profile (Desktop's profile rail). A
 /// switch re-scopes the whole app for [connection]: chats, Home, model,
 /// SOUL, skills and memory. Plain on purpose: the redesign restyles it via
