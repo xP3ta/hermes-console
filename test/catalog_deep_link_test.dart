@@ -173,9 +173,11 @@ void main() {
       expect(take(), isNull);
     });
 
-    test('a newer link replaces a held one', () {
+    test('distinct links held while locked all open, in order', () {
       inbox.offer(link);
       inbox.offer(Uri.parse('hermes://skill/install?identifier=a/b'));
+      expect(take(locked: true), isNull);
+      expect(take(), isA<PluginCatalogInstallLink>());
       expect(take(), isA<SkillInstallLink>());
       expect(take(), isNull);
     });
@@ -330,6 +332,23 @@ void main() {
       );
     });
 
+    test('a named profile whose list is unsupported is unavailable', () async {
+      final target = await resolve(
+        server(),
+        'installed-one',
+        rpc: (method, params) async =>
+            throw const TuiGatewayRpcError('plugins.manage', 'x', code: -32601),
+      );
+      expect(
+        target,
+        isA<CatalogLinkLeave>().having(
+          (t) => t.reason,
+          'reason',
+          CatalogLinkLeaveReason.unavailable,
+        ),
+      );
+    });
+
     test('an unreadable catalog is unavailable', () async {
       final rest = ScriptedRest()
         ..gets['dashboard/plugins/catalog'] = const DashboardHttpException(500);
@@ -340,6 +359,46 @@ void main() {
           'reason',
           CatalogLinkLeaveReason.unavailable,
         ),
+      );
+    });
+  });
+
+  group('resolveSkillLinkTarget', () {
+    ScriptedRest hub() => ScriptedRest()
+      ..gets['skills/hub/search'] = {
+        'results': [
+          {'name': 'docker', 'identifier': 'official/docker', 'source': 'x'},
+          {'name': 'other', 'identifier': 'acme/docker-other'},
+        ],
+        'installed': {'official/installed': true},
+      };
+
+    Future<CatalogLinkTarget> resolve(ScriptedRest rest, String id) =>
+        resolveSkillLinkTarget(
+          CapabilitiesRepository(rest: rest),
+          SkillInstallLink(id),
+        );
+
+    CatalogLinkLeaveReason? reasonOf(CatalogLinkTarget t) =>
+        t is CatalogLinkLeave ? t.reason : null;
+
+    test('an identifier the server lists opens its detail', () async {
+      final target = await resolve(hub(), 'official/docker');
+      expect(target, isA<CatalogLinkShow>());
+      expect((target as CatalogLinkShow).item.installId, 'official/docker');
+    });
+
+    test('an identifier the server does not list is unknown', () async {
+      expect(
+        reasonOf(await resolve(hub(), 'official/nothing')),
+        CatalogLinkLeaveReason.unknown,
+      );
+    });
+
+    test('a server without the hub routes is unavailable', () async {
+      expect(
+        reasonOf(await resolve(ScriptedRest(), 'official/docker')),
+        CatalogLinkLeaveReason.unavailable,
       );
     });
   });

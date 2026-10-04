@@ -2510,13 +2510,16 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
       connected: nav != null && active != null,
     );
     if (action == null || nav == null || active == null) return;
+    // The next held link opens once this one is shown or replaced.
     unawaited(
       openCatalogDeepLink(
         navigator: nav,
         connManager: widget.connManager,
         connection: active,
         action: action,
-      ),
+      ).whenComplete(() {
+        if (mounted) _openCatalogLinks();
+      }),
     );
   }
 

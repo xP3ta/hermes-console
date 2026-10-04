@@ -150,25 +150,15 @@ class _CatalogDeepLinkScreenState extends State<CatalogDeepLinkScreen> {
   Future<void> _resolve() async {
     final s = Strings.of(context);
     final action = widget.action;
-    if (action is SkillInstallLink) {
-      final segments = action.identifier.split('/');
-      final name = segments.last.isEmpty ? action.identifier : segments.last;
-      _show(
-        CapabilityItem(
-          kind: CapabilityKind.skill,
-          id: 'skill:link:${action.identifier}',
-          name: name,
-          source: action.identifier,
-          installId: action.identifier,
-          installedName: name,
-          provenance: 'hub',
-          canRemove: true,
-        ),
-      );
-      return;
+    final CatalogLinkTarget target;
+    switch (action) {
+      case PluginCatalogInstallLink():
+        target = await resolveCatalogLinkTarget(_repository, action);
+      case SkillInstallLink():
+        target = await resolveSkillLinkTarget(_repository, action);
+      default:
+        return _leave(s.cphLinkInvalid);
     }
-    if (action is! PluginCatalogInstallLink) return _leave(s.cphLinkInvalid);
-    final target = await resolveCatalogLinkTarget(_repository, action);
     if (!mounted || !_ticket.isCurrent) return;
     switch (target) {
       case CatalogLinkShow(:final item):

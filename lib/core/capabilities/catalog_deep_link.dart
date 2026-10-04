@@ -96,18 +96,21 @@ final class CatalogDestination {
       connectionId == other.connectionId && _profileKey == other._profileKey;
 }
 
-/// Holds at most one catalog link until the app can show it: never while App
-/// Lock is locked, onboarding runs or no server is connected, and a link
-/// delivered twice (initial link + stream) is queued once.
+/// Holds catalog links until the app can show them: never while App Lock is
+/// locked, onboarding runs or no server is connected. Distinct links are kept
+/// in arrival order (a request is never replaced by a later one), and a link
+/// delivered twice (initial link + stream) is queued once. The queue is
+/// bounded; links past [maxPending] are refused.
 final class CatalogDeepLinkInbox {
   CatalogDeepLinkInbox({PairingLinkDeliveryGate? gate})
     : _gate = gate ?? PairingLinkDeliveryGate();
 
-  final PairingLinkDeliveryGate _gate;
-  CatalogDeepLinkAction? _pending;
-  String _pendingKey = '';
+  static const maxPending = 5;
 
-  bool get hasPending => _pending != null;
+  final PairingLinkDeliveryGate _gate;
+  final List<(String, CatalogDeepLinkAction)> _pending = [];
+
+  bool get hasPending => _pending.isNotEmpty;
 
   /// Returns `true` when [uri] is a catalog link (claimed, queued or dropped
   /// as a duplicate), `false` when it belongs to someone else.
@@ -116,22 +119,20 @@ final class CatalogDeepLinkInbox {
     if (action == null) return false;
     final key = uri.toString();
     if (!_gate.shouldHandle(uri)) return true;
-    if (_pending != null && _pendingKey == key) return true;
-    _pending = action;
-    _pendingKey = key;
+    if (_pending.any((entry) => entry.$1 == key)) return true;
+    if (_pending.length >= maxPending) return true;
+    _pending.add((key, action));
     return true;
   }
 
+  /// The oldest held link, once the app can show it.
   CatalogDeepLinkAction? take({
     required bool locked,
     required bool onboarding,
     required bool connected,
   }) {
-    if (locked || onboarding || !connected) return null;
-    final action = _pending;
-    _pending = null;
-    _pendingKey = '';
-    return action;
+    if (locked || onboarding || !connected || _pending.isEmpty) return null;
+    return _pending.removeAt(0).$2;
   }
 }
 
@@ -208,6 +209,39 @@ Future<CatalogLinkTarget> resolveCatalogLinkTarget(
     }
   }
   if (item.installed && !item.updateAvailable && !item.disclosure.isRemoved) {
+    return CatalogLinkLeave(
+      CatalogLinkLeaveReason.alreadyInstalled,
+      name: item.name,
+    );
+  }
+  return CatalogLinkShow(item);
+}
+
+/// Resolves a skill identifier through the connected server's own hub (one
+/// search read). An identifier the server does not list is `unknown`; a
+/// server without the hub routes is `unavailable`, so Install is never shown
+/// for something the server cannot install.
+Future<CatalogLinkTarget> resolveSkillLinkTarget(
+  CapabilitiesRepository repository,
+  SkillInstallLink link,
+) async {
+  final segments = link.identifier.split('/');
+  final query = segments.last.isEmpty ? link.identifier : segments.last;
+  final List<CapabilityItem> results;
+  try {
+    results = await repository.searchHub(query);
+  } catch (_) {
+    return const CatalogLinkLeave(CatalogLinkLeaveReason.unavailable);
+  }
+  final matches = results.where((item) => item.installId == link.identifier);
+  if (matches.isEmpty) {
+    return CatalogLinkLeave(
+      CatalogLinkLeaveReason.unknown,
+      name: link.identifier,
+    );
+  }
+  final item = matches.first;
+  if (item.installed) {
     return CatalogLinkLeave(
       CatalogLinkLeaveReason.alreadyInstalled,
       name: item.name,
