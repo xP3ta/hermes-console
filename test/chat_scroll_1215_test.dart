@@ -1145,6 +1145,68 @@ void main() {
       await tearDownChat(tester, gateway);
     });
 
+    testWidgets('the sticky prompt skips a process-notification carrier', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      final history = longReplyHistory()
+        ..insert(1, {
+          'id': 'carrier-u',
+          'role': 'user',
+          'content': '[IMPORTANT: Background process 7 finished]',
+        });
+      await pumpChat(tester, gateway, history: history);
+      await settle(tester);
+      expect(sticky(), findsOneWidget);
+      expect(
+        find.descendant(
+          of: sticky(),
+          matching: find.textContaining('Pregunta larga del turno'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: sticky(),
+          matching: find.textContaining('Background process'),
+        ),
+        findsNothing,
+      );
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('Prompts does not list a process-notification carrier', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      final history = _history()
+        ..insert(1, {
+          'id': 'carrier-u',
+          'role': 'user',
+          'content': '[IMPORTANT: Background process 7 finished]',
+        });
+      await pumpChat(tester, gateway, history: history);
+      await settle(tester);
+      await openPrompts(tester);
+      final sheet = find.byKey(const ValueKey('chat-prompt-sheet'));
+      expect(sheet, findsOneWidget);
+      expect(
+        find.descendant(
+          of: sheet,
+          matching: find.textContaining('Background process'),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: sheet,
+          matching: find.text('Pregunta histórica 29 con contexto adicional.'),
+        ),
+        findsOneWidget,
+      );
+      await tearDownChat(tester, gateway);
+    });
+
     testWidgets('a jump starts an away period with no new messages', (
       tester,
     ) async {
