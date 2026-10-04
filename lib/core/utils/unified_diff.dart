@@ -53,19 +53,24 @@ final class FileDiff {
 }
 
 /// The CLI `┊ review diff` header. Hermes localizes its text
-/// (`display.diff.review_header`: «┊ revisar diff», «┊ Review-Diff»…), so
-/// only the `┊` gutter marks it; a diff's first line never starts with one.
-final RegExp _reviewHeader = RegExp(r'^\s*┊');
+/// (`display.diff.review_header`: «  ┊ revisar diff», «  ┊ Review-Diff»…),
+/// so only the `┊` gutter marks it. A single leading space is a diff
+/// context line (` ┊ status rail`), never the header.
+final RegExp _reviewHeader = RegExp(r'^(?:\s{2,})?┊');
 
 /// Strips ANSI and the CLI `┊ review diff` header in any locale (Desktop
-/// `stripInlineDiffChrome`). Returns '' for blank input.
+/// `stripInlineDiffChrome`). Only leading chrome goes: once the diff body
+/// starts, a `┊` is source text. Returns '' for blank input.
 String cleanInlineDiff(String raw) {
   if (raw.trim().isEmpty) return '';
   final lines = stripAnsi(raw).split('\n');
-  if (lines.isNotEmpty && _reviewHeader.hasMatch(lines.first)) {
-    lines.removeAt(0);
+  var start = 0;
+  while (start < lines.length &&
+      (lines[start].trim().isEmpty || _reviewHeader.hasMatch(lines[start]))) {
+    start++;
   }
-  return lines.join('\n').trim();
+  // trimRight only: a leading space is the first context line's prefix.
+  return lines.sublist(start).join('\n').trimRight();
 }
 
 DiffStats countDiffLineStats(String diff) {

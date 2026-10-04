@@ -131,6 +131,27 @@ void main() {
       expect(record.files.single.diff, isNot(contains('┊')));
     });
 
+    test('a ┊ inside the diff body is source, not the review header', () {
+      const body =
+          '@@ -1,3 +1,3 @@\n'
+          ' ┊ status rail\n'
+          '-┊ removed\n'
+          '+┊ added';
+      for (final raw in [
+        body,
+        ' ┊ status rail\n-┊ removed\n+┊ added',
+        '  ┊ revisar diff\na/lib/foo.dart → b/lib/foo.dart\n$body',
+        '┊ review diff\n$body',
+      ]) {
+        final cleaned = cleanInlineDiff(raw);
+        expect(cleaned, isNot(contains('revisar')), reason: raw);
+        expect(cleaned, isNot(contains('review diff')), reason: raw);
+        for (final line in [' ┊ status rail', '-┊ removed', '+┊ added']) {
+          expect(cleaned.split('\n'), contains(line), reason: raw);
+        }
+      }
+    });
+
     test('a section without any change or hunk is no diff card', () {
       final record = ToolOutputRecord.fromCompletePayload(
         _complete(inlineDiff: 'stray preamble\n$_inlineDiff'),
