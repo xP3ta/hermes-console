@@ -46,7 +46,13 @@ class _Rig {
       },
       transportFactory: () {
         transportsCreated++;
-        return transport;
+        // A transport is never reused after dispose: the first session gets
+        // [transport], every later one a fresh fake.
+        final next = transportsCreated == 1
+            ? transport
+            : FakeLiveRtcTransport(log: log);
+        transports.add(next);
+        return next;
       },
       audioEvents: () => audio.stream,
       languageCode: () => 'en',
@@ -61,6 +67,7 @@ class _Rig {
   late final ActiveChat chat;
   late final GptLiveVoiceConversationController controller;
   int transportsCreated = 0;
+  final transports = <FakeLiveRtcTransport>[];
   bool apiFails = false;
   int notifications = 0;
 
@@ -567,8 +574,12 @@ void main() {
         expect(rig.controller.active, isTrue);
         expect(rig.transportsCreated, 2);
         expect(rig.api.createCalls, hasLength(2));
-        // One answer per session: the first, then the fresh one.
+        // One answer per session, each on its own transport.
         expect(rig.log.where((e) => e == 'setRemoteAnswer'), hasLength(2));
+        expect(rig.transports, hasLength(2));
+        expect(identical(rig.transports[0], rig.transports[1]), isFalse);
+        expect(rig.transports[0].remoteAnswer, isNotNull);
+        expect(rig.transports[1].remoteAnswer, isNotNull);
       });
     });
 
@@ -595,6 +606,13 @@ void main() {
         expect(rig.transportsCreated, 2);
         expect(rig.api.createCalls, hasLength(2));
         expect(rig.log.where((e) => e == 'setRemoteAnswer'), hasLength(1));
+        // The retry runs on a new transport; the failed one stays disposed.
+        expect(rig.transports, hasLength(2));
+        expect(identical(rig.transports[0], rig.transports[1]), isFalse);
+        expect(rig.transports[0].remoteAnswer, isNull);
+        expect(rig.transports[1].remoteAnswer, isNotNull);
+        expect(rig.transports[0].disposeCalls, 1);
+        expect(rig.transports[1].disposeCalls, 0);
         expect(rig.controller.note, isNull);
         // A second retry while the session is live opens nothing.
         rig.controller.retry();
