@@ -268,6 +268,8 @@ class PullRequestTagService {
     // request that finishes, so the loop cannot spin.
     var waited = false;
     while (true) {
+      // A 404/405 learned while waiting ends every waiter without a request.
+      if (!_supported) return null;
       final pending = _inFlight[repo];
       if (pending != null) {
         await pending;

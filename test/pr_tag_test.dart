@@ -201,6 +201,25 @@ void main() {
     expect(asked, names.toSet());
   });
 
+  test('waiters stop at once when the first answer is 404', () async {
+    gateway.listError = _unsupported;
+    final gate = Completer<void>();
+    gateway.hold = gate.future;
+    final futures = [
+      for (final n in ['a', 'b', 'c', 'd', 'e'])
+        service.tagFor(_s(n, branch: 'feat/$n')),
+    ];
+    await Future<void>.delayed(Duration.zero);
+    gate.complete();
+    expect(await Future.wait(futures), everyElement(isNull));
+    expect(
+      gateway.listCalls.length,
+      1,
+      reason: 'known-unsupported: no retries',
+    );
+    expect(service.supported, isFalse);
+  });
+
   test('404 turns the capability off for good', () async {
     gateway.listError = _unsupported;
     expect(await service.tagFor(_s('a')), isNull);
