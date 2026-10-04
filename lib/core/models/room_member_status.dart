@@ -1,3 +1,4 @@
+import '../bots/state/bot_presence.dart';
 import 'hosted_groups.dart';
 import 'mission_control.dart';
 
@@ -163,10 +164,13 @@ final class BotLiveStatus {
     ];
     // "Active" means a live server signal (a streaming/thinking chat), never
     // "wrote something in the last 90 s" (spec 070 § Presence).
-    final active = const {
-      MissionAgentStatus.thinking,
-      MissionAgentStatus.responding,
-    }.contains(agent?.status);
+    final livePresence = agent?.livePresence ?? BotPresence.idle;
+    final active =
+        const {
+          MissionAgentStatus.thinking,
+          MissionAgentStatus.responding,
+        }.contains(agent?.status) ||
+        livePresence == BotPresence.thinking;
     final worker = profile?.workerSession;
     final freshWorker =
         worker != null &&
@@ -181,9 +185,10 @@ final class BotLiveStatus {
             driverApproval ||
             agent?.approval != null ||
             agent?.status == MissionAgentStatus.approvalRequired ||
-            agent?.status == MissionAgentStatus.blocked
+            agent?.status == MissionAgentStatus.blocked ||
+            livePresence == BotPresence.attention
         ? RoomPresence.needsYou
-        : working || profileWorking
+        : working || profileWorking || livePresence == BotPresence.working
         ? RoomPresence.working
         : active
         ? RoomPresence.active
@@ -201,6 +206,7 @@ final class BotLiveStatus {
         ? null
         : first([
             if (working) running.activity.description,
+            if (livePresence == BotPresence.working) agent?.livePresenceTitle,
             if (freshWorker) worker.title,
             if (profileWorking) agent?.liveSessionTitle,
             // Pinned "Bot Chat" is navigation, not a description of current work.

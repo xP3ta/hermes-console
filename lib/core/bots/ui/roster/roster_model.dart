@@ -5,6 +5,7 @@ import '../../../models/room_member_status.dart';
 import '../../../models/room_mirror.dart';
 import '../../../utils/markdown_clipboard.dart';
 import '../../data/desktop_projection_rooms.dart';
+import '../../state/bot_presence.dart';
 import '../../state/attention.dart';
 import '../../state/bot_chat_target.dart';
 import 'living_bot_face.dart';
@@ -72,7 +73,8 @@ final class BotRosterEntry extends RosterEntry {
     if (live.presence == RoomPresence.needsYou ||
         hasAttention ||
         agent.status == MissionAgentStatus.approvalRequired ||
-        agent.status == MissionAgentStatus.error) {
+        agent.status == MissionAgentStatus.error ||
+        agent.livePresence == BotPresence.attention) {
       return BotFaceSignal.attention;
     }
     if (agent.status == MissionAgentStatus.responding) {
@@ -84,6 +86,9 @@ final class BotRosterEntry extends RosterEntry {
     if (agent.status == MissionAgentStatus.working ||
         live.presence == RoomPresence.working) {
       return BotFaceSignal.working;
+    }
+    if (agent.livePresence == BotPresence.thinking) {
+      return BotFaceSignal.thinking;
     }
     return BotFaceSignal.idle;
   }
@@ -105,10 +110,17 @@ final class BotRosterEntry extends RosterEntry {
       return text == null || text.isEmpty ? null : text;
     }
 
-    final workingOn =
-        signal == BotFaceSignal.idle || signal == BotFaceSignal.attention
+    // The chat the server says the bot is busy in, whoever moves it: it names
+    // the work («Working · chat») and the question («Waiting for you · chat»).
+    final remoteTitle = agent.livePresence == BotPresence.idle
         ? null
-        : clean(chat.workingOn) ??
+        : clean(agent.livePresenceTitle);
+    final workingOn = signal == BotFaceSignal.idle
+        ? null
+        : signal == BotFaceSignal.attention
+        ? (agent.livePresence == BotPresence.attention ? remoteTitle : null)
+        : remoteTitle ??
+              clean(chat.workingOn) ??
               clean(live.workingOn) ??
               clean(agent.liveSessionTitle) ??
               clean(agent.currentTask?.title);

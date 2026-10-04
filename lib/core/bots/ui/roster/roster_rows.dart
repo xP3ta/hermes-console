@@ -156,6 +156,9 @@ String rosterBotLine(Strings s, BotRosterEntry entry) => switch (entry.signal) {
   BotFaceSignal.working || BotFaceSignal.thinking || BotFaceSignal.speaking
       when entry.workingOn != null =>
     s.rosterWorkingOn(entry.workingOn!),
+  BotFaceSignal.attention when entry.workingOn != null => s.rosterWaitingFor(
+    entry.workingOn!,
+  ),
   BotFaceSignal.working => s.rosterWorking,
   BotFaceSignal.thinking => s.rosterThinking,
   BotFaceSignal.speaking => s.rosterSpeaking,
