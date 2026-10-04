@@ -7306,8 +7306,8 @@ class ActiveChat {
         current == null ||
         current.scope.runtimeSessionId != runtimeId ||
         current.scope != activity.key.scope ||
-        activity.isTerminal ||
-        (activity.childSessionId?.trim() ?? '').isEmpty) {
+        (activity.childSessionId?.trim() ?? '').isEmpty ||
+        !_isLiveInRoster(current, activity)) {
       return null;
     }
     final bindEpoch = _desktopBindEpoch;
@@ -7319,8 +7319,20 @@ class ActiveChat {
           !_disposed &&
           _desktopRuntimeSessionId == runtimeId &&
           _desktopBindEpoch == bindEpoch &&
-          _desktopSessionEpoch == sessionEpoch,
+          _desktopSessionEpoch == sessionEpoch &&
+          _subagentActivities != null &&
+          _isLiveInRoster(_subagentActivities!, activity),
     );
+  }
+
+  /// The roster's current row for [activity]'s key is still a live child: a
+  /// row captured before `subagent.complete` is not enough.
+  static bool _isLiveInRoster(
+    SubagentActivityState roster,
+    SubagentActivity activity,
+  ) {
+    final row = roster[activity.key];
+    return row != null && !row.isTerminal;
   }
 
   bool canTailSubagent(SubagentActivity activity) =>
