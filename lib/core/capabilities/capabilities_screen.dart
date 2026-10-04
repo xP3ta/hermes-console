@@ -186,6 +186,7 @@ final class CapabilitiesSnapshot {
             installed: true,
             enabled: local.enabled,
             canRemove: local.canRemove,
+            installedKey: local.installedKey,
           ),
         );
       } else {

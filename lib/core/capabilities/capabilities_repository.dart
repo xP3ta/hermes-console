@@ -370,7 +370,7 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     void Function(CapabilityActionStatus)? onProgress,
     CapabilityActionToken? token,
   ) async {
-    if (token?.cancelled ?? false) throw const CapabilityActionAbandoned();
+    await _gate(token);
     final started = await _call(
       feature,
       () => rest.post(_withProfile(endpoint), body: body),
@@ -380,6 +380,15 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
       throw const CapabilityFailure(CapabilityFailureKind.invalidResponse);
     }
     return _followAction(feature, name, onProgress, token);
+  }
+
+  /// Every request of an action waits here first: cancelled → abandoned,
+  /// paused → held until resumed (or cancelled).
+  Future<void> _gate(CapabilityActionToken? token) async {
+    if (token == null) return;
+    if (token.cancelled) throw const CapabilityActionAbandoned();
+    await token._untilResumed();
+    if (token.cancelled) throw const CapabilityActionAbandoned();
   }
 
   /// Polls `/api/actions/{name}/status` on the one shared cadence. The loop
@@ -393,7 +402,7 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
   ) async {
     var elapsed = Duration.zero;
     while (true) {
-      if (token?.cancelled ?? false) throw const CapabilityActionAbandoned();
+      await _gate(token);
       final status = await _call(
         feature,
         () async => CapabilityActionStatus.fromJson(
@@ -417,9 +426,6 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
       }
       await _sleep(actionPollInterval);
       elapsed += actionPollInterval;
-      if (token != null) {
-        await token._untilResumed();
-      }
     }
   }
 
@@ -584,20 +590,23 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     ),
   );
 
-  /// Toggles by canonical [key] (Desktop sends the key only); the bare
-  /// [name] is used only when a server row carries no key, and by the REST
-  /// fallback.
+  /// Toggles by canonical [key] (Desktop sends the key only). [name] is used
+  /// only by the REST fallback.
   Future<void> setPluginEnabled(
     String name,
     bool enabled, {
     String key = '',
   }) async {
+    final canonical = key.trim();
+    // Names collide across categories (`image_gen/fal`, `video_gen/fal`): a
+    // keyless row is read-only for the profile-aware path, as on Desktop.
+    if (canonical.isEmpty &&
+        rpc != null &&
+        _support[CapabilityFeature.pluginsManage] != false) {
+      throw const CapabilityFailure(CapabilityFailureKind.rejected);
+    }
     await _pluginMutation(
-      {
-        'action': 'toggle',
-        'key': key.trim().isEmpty ? name.trim() : key.trim(),
-        'enable': enabled,
-      },
+      {'action': 'toggle', 'key': canonical, 'enable': enabled},
       (json) => _checked(PluginMutationResult.fromJson(json)),
       () async {
         final result = await rest.post(
@@ -654,7 +663,7 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     void Function(CapabilityActionStatus)? onProgress,
     CapabilityActionToken? token,
   }) async {
-    if (token?.cancelled ?? false) throw const CapabilityActionAbandoned();
+    await _gate(token);
     final env = <String, String>{};
     for (final entry in environment.entries) {
       if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]{0,127}$').hasMatch(entry.key)) {

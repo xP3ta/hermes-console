@@ -41,7 +41,11 @@ List<CapabilityAction> capabilityActions(
       if (item.updateAvailable && item.kind == CapabilityKind.plugin) {
         out.add(CapabilityAction.update);
       }
-      final togglable = item.installedName.isNotEmpty && item.enabled != null;
+      // Plugins are addressed by canonical key; a keyless row is read-only.
+      final togglable =
+          item.installedName.isNotEmpty &&
+          item.enabled != null &&
+          (item.kind != CapabilityKind.plugin || item.installedKey.isNotEmpty);
       if (togglable && item.enabled == false) out.add(CapabilityAction.enable);
       if (togglable && item.enabled == true) out.add(CapabilityAction.disable);
       if (item.kind == CapabilityKind.mcp &&
@@ -96,12 +100,30 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
   final CapabilityActionToken _token = CapabilityActionToken();
   bool _busy = false;
 
+  /// Skill preview, read once when a hub skill opens. Its row exists only
+  /// after the server answered it (no row on servers without the route).
+  SkillPreview? _preview;
+
   CapabilitiesRepository get _repo => widget.repository;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (_item.kind == CapabilityKind.skill &&
+        !_item.installed &&
+        _item.installId.isNotEmpty) {
+      unawaited(_loadPreview());
+    }
+  }
+
+  Future<void> _loadPreview() async {
+    try {
+      final preview = await _repo.skillPreview(_item.installId);
+      if (mounted) setState(() => _preview = preview);
+    } catch (_) {
+      // Unsupported or unreadable: the row simply never appears.
+    }
   }
 
   @override
@@ -344,8 +366,8 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
 
   Future<void> _showPreview() async {
     final s = Strings.of(context);
-    final preview = await _guard(() => _repo.skillPreview(_item.installId));
-    if (preview == null || !mounted) return;
+    final preview = _preview;
+    if (preview == null) return;
     await showHermesDialog<void>(
       context: context,
       title: s.cphRowPreview,
@@ -871,8 +893,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
                   subtitle: d.bootstrap.join('\n'),
                   subtitleMaxLines: 12,
                 ),
-              if (skillRows &&
-                  _repo.supports(CapabilityFeature.skillPreview) != false)
+              if (skillRows && _preview != null)
                 HermesListRow(
                   key: const ValueKey('cph-row-preview'),
                   icon: Icons.description_outlined,
@@ -880,7 +901,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
                   onTap: _busy ? null : _showPreview,
                 ),
               if (skillRows &&
-                  _repo.supports(CapabilityFeature.skillScan) != false)
+                  _repo.supports(CapabilityFeature.skillScan) == true)
                 HermesListRow(
                   key: const ValueKey('cph-row-scan'),
                   icon: Icons.security_outlined,

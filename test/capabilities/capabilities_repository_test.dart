@@ -419,7 +419,7 @@ void main() {
         final rest = FakeRest();
         final repo = repoFor('work', rest);
         await repo.installPlugin('weather');
-        await repo.setPluginEnabled('weather', false);
+        await repo.setPluginEnabled('weather', false, key: 'weather');
         await repo.updatePlugin('weather', acceptCapabilities: true);
         await repo.removePlugin('weather');
         expect(sent.map((c) => c.$1).toSet(), {'plugins.manage'});
