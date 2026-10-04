@@ -166,6 +166,45 @@ void main() {
     },
   );
 
+  test('loaded matches of one lineage collapse to its newest tip when the '
+      'server returns no hit', () {
+    final oldSegment = Session(
+      id: 'root-a',
+      title: 'QA 9485',
+      model: 'm',
+      source: 'mobile',
+      messageCount: 2,
+      isActive: false,
+      preview: '',
+      startedAt: 1,
+      updatedAt: 5,
+    );
+    final tip = Session(
+      id: 'tip-a',
+      title: 'QA 9485',
+      model: 'm',
+      source: 'mobile',
+      messageCount: 4,
+      isActive: true,
+      preview: '',
+      startedAt: 6,
+      updatedAt: 20,
+      lineageRootId: 'root-a',
+      lineageIds: const ['root-a', 'tip-a'],
+    );
+
+    bool matches(Session s) =>
+        sessionMatchesSearchText(s, '9485', title: s.title);
+    expect(matches(oldSegment) && matches(tip), isTrue);
+    expect(
+      appendLoadedSearchMatches(
+        const [],
+        [oldSegment, tip].where(matches),
+      ).map((s) => s.id),
+      ['tip-a'],
+    );
+  });
+
   test('a new draft is included when no remote session has its id', () {
     final freshDraft = _session(
       id: 'draft-id',

@@ -116,24 +116,36 @@ bool sessionMatchesSearchText(
 }
 
 /// Desktop `mergeSearchResults`: the ranked server hits keep their order and
-/// loaded rows the server did not return follow, in list order.
+/// loaded rows the server did not return follow, in list order, once per
+/// owner and lineage. When several loaded segments of one lineage match, the
+/// newest one (the lineage tip) takes the slot of the first.
 @visibleForTesting
 List<Session> appendLoadedSearchMatches(
   List<Session> hits,
   Iterable<Session> loadedMatches,
 ) {
-  final seen = <(String, String)>{
-    for (final hit in hits)
-      for (final id in hit.identityIds) (Session.profileOwner(hit.profile), id),
-  };
-  return [
-    ...hits,
-    for (final row in loadedMatches)
-      if (!row.identityIds.any(
-        (id) => seen.contains((Session.profileOwner(row.profile), id)),
-      ))
-        row,
-  ];
+  Iterable<(String, String)> keys(Session row) {
+    final owner = Session.profileOwner(row.profile);
+    return row.identityIds.map((id) => (owner, id));
+  }
+
+  final seen = <(String, String)>{for (final hit in hits) ...keys(hit)};
+  final appended = <Session>[];
+  final slotByKey = <(String, String), int>{};
+  for (final row in loadedMatches) {
+    final rowKeys = keys(row).toList(growable: false);
+    if (rowKeys.any(seen.contains)) continue;
+    final slot = rowKeys.map((key) => slotByKey[key]).nonNulls.firstOrNull;
+    if (slot == null) {
+      appended.add(row);
+    } else if (row.lastActivityAt > appended[slot].lastActivityAt) {
+      appended[slot] = row;
+    }
+    for (final key in rowKeys) {
+      slotByKey[key] = slot ?? appended.length - 1;
+    }
+  }
+  return [...hits, ...appended];
 }
 
 /// Identifica filas cuyo estado durable cambió dentro del mismo owner y
@@ -1012,7 +1024,8 @@ class _SessionListScreenState extends State<SessionListScreen>
     return resolveSessionLiveStatus(
       chat: chat?.liveStatus,
       chatAuthoritative:
-          chat != null && (chat.hasDesktopRuntime || chat.lastTerminalAt != null),
+          chat != null &&
+          (chat.hasDesktopRuntime || chat.lastTerminalAt != null),
       chatSettledAt: chat?.lastTerminalAt,
       global: globalActive ? _globalForSession(session) : null,
     );
@@ -3093,10 +3106,8 @@ class _SessionTile extends StatelessWidget {
   /// Semantic state of the live row: the dot and the status line share its
   /// colour (green working, calm tint compacting, amber waiting, muted
   /// stale/idle), so the status never reads like the title.
-  SessionStatusTone get _statusTone => sessionStatusToneFor(
-    sessionLiveStatusKind(status),
-    stale: status.stale,
-  );
+  SessionStatusTone get _statusTone =>
+      sessionStatusToneFor(sessionLiveStatusKind(status), stale: status.stale);
 
   @override
   Widget build(BuildContext context) {
@@ -3180,7 +3191,8 @@ class _SessionTile extends StatelessWidget {
                         ],
                         if (unread &&
                             !streamActive &&
-                            status.phase != SessionLivePhase.waitingForUser) ...[
+                            status.phase !=
+                                SessionLivePhase.waitingForUser) ...[
                           const SizedBox(width: 7),
                           Semantics(
                             label: strings.slUnreadDot,
