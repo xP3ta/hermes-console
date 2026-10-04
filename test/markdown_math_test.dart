@@ -75,6 +75,11 @@ void main() {
       expect(protectMarkdownMath(spaced), spaced);
     });
 
+    test('any word-prefixed currency is prose, not only R$', () {
+      const text = r'Va de US$ 1,200 a US$ 3,400 * 2 al año.';
+      expect(protectMarkdownMath(text), text);
+    });
+
     test(r'\( ... \) is normalised to an inline span', () {
       expect(
         protectMarkdownMath(r'Vale \(a_1 * b_2\) aquí.'),
