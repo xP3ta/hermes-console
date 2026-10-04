@@ -32,7 +32,7 @@ class _Gateway {
             // A lazy resume is a watch; any other resume is a chat's.
             'session_id': (frame['params'] as Map)['lazy'] == true
                 ? 'watch-runtime-1'
-                : 'chat-runtime-1',
+                : 'chat-runtime-${++chatResumes}',
             'session_key': (frame['params'] as Map)['session_id'],
             'running': true,
             'messages': <Object>[],
@@ -51,6 +51,7 @@ class _Gateway {
   final HttpServer server;
   final sockets = <WebSocket>[];
   final frames = <Map<String, dynamic>>[];
+  var chatResumes = 0;
 
   static Future<_Gateway> start() async =>
       _Gateway._(await HttpServer.bind(InternetAddress.loopbackIPv4, 0));
@@ -150,6 +151,21 @@ void main() {
         ambiguous: false,
       ));
       expect(client.watchedRuntimesForTesting, watched);
+    },
+  );
+
+  test(
+    'the legacy anchor probe does report two chat runtimes as ambiguous',
+    () async {
+      final client = clientFor();
+
+      await client.resumeExisting('chat-a');
+      await client.resumeExisting('chat-b');
+
+      expect(client.legacyEventRuntimeForTesting, (
+        runtime: null,
+        ambiguous: true,
+      ));
     },
   );
 
