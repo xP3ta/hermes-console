@@ -367,11 +367,8 @@ class SessionArchive extends ChangeNotifier {
     } else {
       _hiddenOverlay.remove(id);
     }
-    if (session.startedAt > 0 || snapshot == null) {
-      _revealed[id] = session.copyWith(hidden: false);
-    } else {
-      _revealed[id] = snapshot.copyWith(hidden: false);
-    }
+    // The list row taken when hiding, not a search hit with its snippet.
+    _revealed[id] = (snapshot ?? session).copyWith(hidden: false);
     await _flush();
     if (remote) {
       _writeHidden(
