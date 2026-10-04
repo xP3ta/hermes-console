@@ -19,6 +19,9 @@ enum SlashAction {
   activity,
   kanban,
   find,
+  btw,
+  background,
+  branch,
   remote,
   unavailable,
 }
@@ -60,7 +63,14 @@ class SlashCommand {
 }
 
 /// Catálogo de comandos conocidos (cliente). El orden es el de la paleta.
-List<SlashCommand> slashCommands(Strings s) => [
+///
+/// `/btw`, `/bg` and `/branch` only appear when the chat can run them
+/// ([sideAgents], [branch]); typing them still routes correctly either way.
+List<SlashCommand> slashCommands(
+  Strings s, {
+  bool sideAgents = false,
+  bool branch = false,
+}) => [
   SlashCommand(
     name: 'help',
     description: s.slashDescHelp,
@@ -134,16 +144,43 @@ List<SlashCommand> slashCommands(Strings s) => [
     action: SlashAction.find,
     takesArg: true,
   ),
+  if (sideAgents) ...[
+    SlashCommand(
+      name: 'btw',
+      argHint: s.tc1215SlashArgBtw,
+      description: s.tc1215SlashDescBtw,
+      action: SlashAction.btw,
+      takesArg: true,
+    ),
+    SlashCommand(
+      name: 'bg',
+      argHint: s.tc1215SlashArgBg,
+      description: s.tc1215SlashDescBg,
+      action: SlashAction.background,
+      takesArg: true,
+    ),
+  ],
+  if (branch)
+    SlashCommand(
+      name: 'branch',
+      description: s.tc1215SlashDescBranch,
+      action: SlashAction.branch,
+    ),
 ];
 
 /// Sugerencias mientras se escribe el nombre del comando: el texto empieza por
 /// `/` y aún no tiene espacio ni salto (todavía no se escriben argumentos).
 /// Devuelve lista vacía si no procede mostrar la paleta.
-List<SlashCommand> slashSuggestionsFor(String text, Strings s) {
+List<SlashCommand> slashSuggestionsFor(
+  String text,
+  Strings s, {
+  bool sideAgents = false,
+  bool branch = false,
+}) {
   if (!text.startsWith('/')) return const [];
   if (text.contains(' ') || text.contains('\n')) return const [];
   final q = text.substring(1).toLowerCase();
-  final cmds = slashCommands(s);
+  final cmds = slashCommands(s, sideAgents: sideAgents, branch: branch);
   if (q.isEmpty) return cmds;
   return cmds.where((c) => c.name.startsWith(q)).toList();
 }
@@ -204,6 +241,10 @@ ParsedSlash? parseSlashCommand(String text) {
     'activity': SlashAction.activity,
     'find': SlashAction.find,
     'buscar': SlashAction.find,
+    'btw': SlashAction.btw,
+    'bg': SlashAction.background,
+    'background': SlashAction.background,
+    'branch': SlashAction.branch,
   };
   final action = nameToAction[name];
   if (action != null) {

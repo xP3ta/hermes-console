@@ -3541,10 +3541,15 @@ class QueuedEntryView {
     this.stopWaitingAvailable = false,
     this.missingAttachment = false,
     this.persistenceFailed = false,
+    this.sending = false,
   });
 
   final String id;
   final QueuedEntryKind kind;
+
+  /// The drain has taken this row and is sending it: it can be neither edited
+  /// nor moved, and nothing may overtake it.
+  final bool sending;
   final int queueOrder;
   final String text;
   final List<AttachmentDraft> attachments;
@@ -8123,6 +8128,7 @@ class ActiveChat {
           kind: QueuedEntryKind.text,
           queueOrder: item.queueOrder,
           text: stripBotMentionNote(item.text),
+          sending: item.id == _queueDrainInFlightId,
         ),
       ),
       ..._preparedTurnQueue.map(
@@ -8142,6 +8148,8 @@ class ActiveChat {
           persistenceFailed: _queuedTurnsNotStored.contains(
             item.turn.clientTurnId,
           ),
+          sending:
+              'prepared:${item.turn.clientTurnId}' == _queueDrainInFlightId,
         ),
       ),
     ]..sort((left, right) => left.queueOrder.compareTo(right.queueOrder));

@@ -13,6 +13,7 @@ class ChatControlLabels {
   final String refresh;
   final String artifacts;
   final String? content;
+  final String? branch;
   final String details;
   final String cron;
   final String? recovery;
@@ -40,6 +41,7 @@ class ChatControlLabels {
     this.recovery,
     this.extensions,
     this.content,
+    this.branch,
   });
 }
 
@@ -55,6 +57,7 @@ class ChatControlSheet extends StatelessWidget {
   final VoidCallback onRefresh;
   final VoidCallback onArtifacts;
   final VoidCallback? onContent;
+  final VoidCallback? onBranch;
   final VoidCallback? onDetails;
   final VoidCallback? onCron;
   final VoidCallback? onRecovery;
@@ -73,6 +76,7 @@ class ChatControlSheet extends StatelessWidget {
     required this.onArtifacts,
     this.onDelete,
     this.onContent,
+    this.onBranch,
     this.readOnly = false,
     this.showDetails = false,
     this.showCron = false,
@@ -163,6 +167,13 @@ class ChatControlSheet extends StatelessWidget {
                 title: labels.refresh,
                 onTap: onRefresh,
               ),
+              if (labels.branch != null && onBranch != null)
+                _ActionRow(
+                  key: const ValueKey('chat-control-branch'),
+                  icon: Icons.call_split_rounded,
+                  title: labels.branch!,
+                  onTap: onBranch,
+                ),
               if (showReleaseDesktop)
                 _ActionRow(
                   key: const ValueKey('chat-control-release-desktop'),

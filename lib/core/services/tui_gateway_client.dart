@@ -6206,9 +6206,19 @@ class TuiGatewayClient
       timeout: const Duration(seconds: 30),
       capability: DesktopGatewayCapability.turnSide,
     );
+    final taskId = parseSideAgentTaskId(result);
+    if (taskId == null) {
+      return _invalidControlResponse(DesktopGatewayCapability.turnSide);
+    }
+    return taskId;
+  }
+
+  /// The `task_id` of a `prompt.btw` / `prompt.background` result, or null
+  /// when the result does not carry a usable one.
+  static String? parseSideAgentTaskId(Map<String, dynamic> result) {
     final taskId = result['task_id'];
     if (taskId is! String || taskId.trim().isEmpty || taskId.length > 512) {
-      return _invalidControlResponse(DesktopGatewayCapability.turnSide);
+      return null;
     }
     return taskId;
   }
@@ -6279,6 +6289,13 @@ class TuiGatewayClient
       timeout: const Duration(seconds: 60),
       capability: capability,
     );
+    return parseBranchResult(result) ?? _invalidControlResponse(capability);
+  }
+
+  /// A `session.branch` / `session.branch_whole` result, or null when the
+  /// child ids are unusable. `messages`, `info` and `messages_omitted` are
+  /// optional and never read: the child chat loads its own transcript.
+  static DesktopBranchResult? parseBranchResult(Map<String, dynamic> result) {
     final runtimeId = result['session_id'];
     final storedId = result['stored_session_id'];
     final title = result['title'];
@@ -6289,7 +6306,7 @@ class TuiGatewayClient
         storedId.trim().isEmpty ||
         storedId != storedId.trim() ||
         storedId.length > 512) {
-      return _invalidControlResponse(capability);
+      return null;
     }
     return DesktopBranchResult(
       runtimeSessionId: runtimeId,
