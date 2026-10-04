@@ -7,6 +7,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
+import 'package:hermes_android/core/design/list.dart' as design_list;
 import 'package:hermes_android/core/services/bot_profile_client.dart';
 import 'package:hermes_android/core/widgets/remote_bot_roster.dart';
 import 'package:hermes_android/core/models/bot_visual_identity.dart';
@@ -15,6 +16,7 @@ import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/models/profile_pet.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/screens/profiles_screen.dart';
+import 'package:hermes_android/core/screens/skills_screen.dart';
 import 'package:hermes_android/core/screens/tasks_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -25,6 +27,7 @@ import 'package:hermes_android/core/services/mission_organization_store.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/capabilities/capabilities_screen.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -774,6 +777,21 @@ void main() {
       await tester.scrollUntilVisible(find.byKey(ValueKey(key)), 200);
       expect(find.byKey(ValueKey(key)), findsOneWidget);
     }
+    final skills = find.byKey(const ValueKey('bot-profile-skills'));
+    await tester.ensureVisible(skills);
+    await tester.pumpAndSettle();
+    tester.widget<design_list.HermesListRow>(skills).onTap!();
+    await tester.pump(const Duration(milliseconds: 500));
+    final hubFinder = find.byType(CapabilitiesHub, skipOffstage: false);
+    final hub = tester.widget<CapabilitiesHub>(hubFinder);
+    expect(hub.profile, 'infra');
+    expect(hub.advancedBuilder, isNull);
+    expect(hub.classicSkillsBuilder, isNotNull);
+    final classic =
+        hub.classicSkillsBuilder!(tester.element(hubFinder)) as SkillsScreen;
+    expect(classic.profileOverride, 'infra');
+    Navigator.of(tester.element(hubFinder)).pop();
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.byKey(const ValueKey('bot-profile-chat')),
       -200,

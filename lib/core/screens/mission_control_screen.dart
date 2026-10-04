@@ -68,7 +68,6 @@ import 'memory_screen.dart';
 import 'mission_control_copy.dart';
 import 'profile_editor_screen.dart';
 import 'profile_flows.dart';
-import 'skills_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
 import '../design/hermes_design.dart'
@@ -1348,7 +1347,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 
   Future<void> _moveBotToSection([AgentProfile? profile]) async {
-    if (_sectionBusy || _botProfileGateway == null || widget.connection.readOnly) return;
+    if (_sectionBusy || _botProfileGateway == null || widget.connection.readOnly) {
+      return;
+    }
     final profiles = _snapshot?.profiles ?? const <AgentProfile>[];
     if (profile != null && !profiles.any((p) => identical(p, profile))) return;
     final changes = await chooseBotSection(context, profiles, bot: profile);
@@ -2069,8 +2070,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   void _openSkills({String? profile}) => Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) =>
-          SkillsScreen(connection: widget.connection, profileOverride: profile),
+      builder: (_) => buildCapabilitiesHub(
+        connection: widget.connection,
+        connManager: widget.connManager,
+        capabilities: widget.connManager.loadCapabilities(widget.connection.id),
+        profileOverride: profile,
+      ),
     ),
   );
 
@@ -3283,7 +3288,9 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
     setState(() => _peersLoading = true);
     try {
       final peers = await widget.loadPeers!();
-      if (mounted) setState(() { _peers = peers; _selectedPeers.retainAll(peers.map((p) => p.key)); });
+      if (mounted) {
+        setState(() { _peers = peers; _selectedPeers.retainAll(peers.map((p) => p.key)); });
+      }
     } catch (_) { if (mounted) setState(() => _peers = []); }
     finally { if (mounted) setState(() => _peersLoading = false); }
   }
