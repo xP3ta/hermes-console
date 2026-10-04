@@ -83,6 +83,7 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     required this.profile,
     required this.isCurrent,
     this.childIsLive = _never,
+    this.invalidation,
   }) : super(const SubagentLiveWatchView());
 
   /// Upper bound of raw mirrored text kept in memory. The stored transcript
@@ -100,6 +101,11 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
 
   /// Whether the parent's own roster still reports the child as working.
   final bool Function() childIsLive;
+
+  /// Notifies when something that [isCurrent] reads may have changed (the
+  /// active profile, the owning chat), so a watch that receives no event still
+  /// notices it is stale.
+  final Listenable? invalidation;
 
   static bool _never() => false;
 

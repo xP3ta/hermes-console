@@ -73,6 +73,17 @@ class FakeWatchGateway implements SubagentWatchGateway {
         ),
       );
 
+  /// `session.events.since` asking [runtime] (and only it) to rehydrate: the
+  /// shared socket itself stays healthy.
+  void rehydrate(String runtime) => _events.addError(
+    TuiGatewayRpcError(
+      'session.events.since',
+      'Hermes Desktop live subscription requires rehydration',
+      failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      data: {'session_id': runtime},
+    ),
+  );
+
   void drop() => _events.addError(
     const TuiGatewayRpcError(
       'gateway.transport',
