@@ -872,7 +872,8 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
         CapabilityFeature.mcpCatalog,
         action,
         onProgress,
-        token,
+        null,
+        token: token,
       );
     }
   }
