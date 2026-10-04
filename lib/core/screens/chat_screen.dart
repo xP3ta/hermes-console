@@ -3978,7 +3978,12 @@ class _ChatScreenState extends State<ChatScreen>
     }
     _refreshReferenceQuery();
     final text = _textController.text;
-    final local = slashSuggestionsFor(text, Strings.of(context));
+    final local = slashSuggestionsFor(
+      text,
+      Strings.of(context),
+      sideAgents: _chat.canRunSideAgents,
+      branch: _chat.canBranchChat,
+    );
     setState(() => _slashSuggestions = local);
     _refreshSlashCompletion(text);
   }
