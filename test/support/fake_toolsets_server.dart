@@ -1,6 +1,7 @@
 // A scripted Dashboard for the toolsets endpoints: the list, one toolset's
 // config and models, and the writes, with a switch to make the server ignore
 // them. Shared by the repository and the screen tests.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -94,6 +95,9 @@ final class FakeToolsetsServer {
   int? putStatus;
   bool ignoreWrites = false;
 
+  /// The next PUT waits for this before the server applies it.
+  Completer<void>? holdNextPut;
+
   late final DashboardClient dashboard = DashboardClient(
     host: 'hermes.example.test',
     port: 9119,
@@ -120,6 +124,11 @@ final class FakeToolsetsServer {
       return http.Response(jsonEncode(models), 200);
     }
     if (request.method == 'PUT') {
+      final hold = holdNextPut;
+      if (hold != null) {
+        holdNextPut = null;
+        await hold.future;
+      }
       final status = putStatus;
       if (status != null) return http.Response('{}', status);
       final body = jsonDecode(request.body) as Map<String, dynamic>;

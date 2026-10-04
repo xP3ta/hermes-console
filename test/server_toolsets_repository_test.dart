@@ -1,5 +1,6 @@
 // Toolsets of the server: the list, enabling, the provider, the model and the
 // credentials of one toolset. Every write is confirmed by reading back.
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -17,10 +18,12 @@ ServerToolsetsRepository _repo(
   FakeToolsetsServer server, {
   String? profile,
   bool writable = true,
+  bool Function()? isCurrent,
 }) => ServerToolsetsRepository(
   server.dashboard,
   profile: profile,
   writable: writable,
+  isCurrent: isCurrent,
 );
 
 Future<ServerConfigException> _failure(Future<Object?> future) async {
@@ -231,6 +234,105 @@ void main() {
       for (final request in server.requests) {
         expect(request.url.queryParameters, {'profile': 'work'});
       }
+    });
+  });
+
+  group('overlapping writes', () {
+    Future<void> settle() async {
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    test(
+      'two provider choices run in order: the last intent is final',
+      () async {
+        final server = FakeToolsetsServer()..holdNextPut = Completer<void>();
+        final hold = server.holdNextPut!;
+        final repo = _repo(server);
+
+        final first = repo.setProvider('web', 'beta');
+        await settle();
+        final second = repo.setProvider('web', 'alpha');
+        await settle();
+        expect(server.puts, hasLength(1), reason: 'the second waits its turn');
+
+        hold.complete();
+        expect((await first).activeProvider, 'beta');
+        expect((await second).activeProvider, 'alpha');
+        expect(server.puts.map((r) => jsonDecode(r.body)['provider']), [
+          'beta',
+          'alpha',
+        ]);
+        expect(server.config['active_provider'], 'alpha');
+      },
+    );
+
+    test('two model choices run in order: the last intent is final', () async {
+      final server = FakeToolsetsServer()..holdNextPut = Completer<void>();
+      final hold = server.holdNextPut!;
+      final repo = _repo(server);
+
+      final first = repo.setModel('web', 'm2');
+      await settle();
+      final second = repo.setModel('web', 'm1');
+      await settle();
+      hold.complete();
+      await first;
+      expect((await second).current, 'm1');
+      expect(server.puts.map((r) => jsonDecode(r.body)['model']), ['m2', 'm1']);
+      expect(server.models['current'], 'm1');
+    });
+
+    test('a write for another toolset does not wait', () async {
+      final server = FakeToolsetsServer()..holdNextPut = Completer<void>();
+      final hold = server.holdNextPut!;
+      final repo = _repo(server);
+
+      final first = repo.setProvider('web', 'beta');
+      await settle();
+      final other = repo.setEnabled('files', true);
+      await settle();
+      expect(server.puts, hasLength(2));
+      hold.complete();
+      await Future.wait([first, other]);
+    });
+
+    test('closing sends only the write already in flight', () async {
+      final server = FakeToolsetsServer()..holdNextPut = Completer<void>();
+      final hold = server.holdNextPut!;
+      final repo = _repo(server);
+
+      final first = repo.setProvider('web', 'beta');
+      await settle();
+      final second = _failure(repo.setModel('web', 'm2'));
+      await settle();
+      repo.close();
+      hold.complete();
+
+      expect((await first).activeProvider, 'beta');
+      expect((await second).kind, ServerConfigFailureKind.closed);
+      expect(server.puts, hasLength(1));
+    });
+
+    test('a queued write whose profile went stale sends no PUT', () async {
+      final server = FakeToolsetsServer()..holdNextPut = Completer<void>();
+      final hold = server.holdNextPut!;
+      var current = true;
+      final repo = _repo(server, isCurrent: () => current);
+
+      final first = repo.setProvider('web', 'beta');
+      await settle();
+      final second = _failure(
+        repo.saveCredentials('web', {'ALPHA_KEY': 'synthetic'}),
+      );
+      await settle();
+      current = false;
+      hold.complete();
+
+      await first;
+      expect((await second).kind, ServerConfigFailureKind.closed);
+      expect(server.puts, hasLength(1));
     });
   });
 
