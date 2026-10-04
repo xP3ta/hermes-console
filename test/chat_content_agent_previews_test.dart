@@ -104,12 +104,19 @@ void main() {
   testWidgets('localhost and private targets are listed but never opened', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(800, 2400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final targets = [
       'localhost:3000',
       'http://127.0.0.1:5173',
       'http://0.0.0.0:8000',
       'http://[::1]:3000',
       'http://192.168.1.20',
+      // A browser reads these as loopback and private addresses too.
+      'http://0177.0.0.1',
+      'http://012.0.0.1',
+      'http://[::ffff:7f00:1]',
+      'http://[0:0:0:0:0:0:0:1]',
     ];
     final harness = _Harness(
       _transcript([

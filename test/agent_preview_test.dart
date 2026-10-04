@@ -217,6 +217,42 @@ void main() {
       );
     });
 
+    test('a close whose url has the wrong type is ignored, not close-all', () {
+      for (final bad in <Object>[
+        42,
+        true,
+        1.5,
+        ['x'],
+        {'a': 1},
+      ]) {
+        expect(
+          _urls([
+            _open('https://example.com/a'),
+            _assistant([
+              _call({'action': 'close', 'url': bad}),
+            ]),
+          ]),
+          ['https://example.com/a'],
+          reason: '$bad',
+        );
+      }
+      // Absent, null or empty still mean every preview.
+      for (final all in <Map<String, Object?>>[
+        {'action': 'close'},
+        {'action': 'close', 'url': null},
+        {'action': 'close', 'url': '  '},
+      ]) {
+        expect(
+          _urls([
+            _open('https://example.com/a'),
+            _assistant([_call(all)]),
+          ]),
+          isEmpty,
+          reason: '$all',
+        );
+      }
+    });
+
     test(
       'transcript order decides: a later open survives an earlier close',
       () {

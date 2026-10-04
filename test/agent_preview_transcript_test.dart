@@ -96,6 +96,51 @@ void main() {
     expect(dump, contains('https://example.com/a'));
   });
 
+  test('a wrapped preview keeps only action, url and label too', () {
+    final transcript = _loaded([
+      _assistant('c1', 'tool_call', {
+        'calls': [
+          {
+            'name': 'desktop_preview',
+            'arguments': {
+              'action': 'open',
+              'url': 'https://example.com/w',
+              'label': 'Wrapped',
+              'cookie': 'session=wrapped-secret',
+              'token': 'tok-wrapped-secret',
+            },
+          },
+          {
+            'name': 'read_file',
+            'arguments': {'path': '/home/user/wrapped-notes.txt'},
+          },
+        ],
+      }),
+      _result('c1', 'tool_call'),
+    ]);
+
+    final calls = jsonEncode(transcript.single['tool_calls']);
+
+    expect(collectAgentPreviews(transcript).single.label, 'Wrapped');
+    expect(jsonEncode(transcript), isNot(contains('wrapped-secret')));
+    expect(calls, isNot(contains('/home/user/wrapped-notes.txt')));
+  });
+
+  test('the size bound counts UTF-8 bytes, not characters', () {
+    // 2000 emoji are 4000 UTF-16 units but 8000 bytes.
+    final transcript = _loaded([
+      _assistant('c1', 'desktop_preview', {
+        'action': 'open',
+        'url': 'https://example.com/a',
+        'label': '😀' * 2000,
+      }),
+      _result('c1', 'desktop_preview'),
+    ]);
+
+    expect(collectAgentPreviews(transcript), isEmpty);
+    expect(utf8.encode(jsonEncode(transcript)).length, lessThan(5000));
+  });
+
   test('an oversized argument blob is dropped, not kept', () {
     final transcript = _loaded([
       _assistant('c1', 'desktop_preview', {
