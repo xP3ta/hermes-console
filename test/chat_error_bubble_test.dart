@@ -1,6 +1,8 @@
 // The error card of a failed turn follows the gateway's `error_surface`: one
 // visible action, the rest behind "ver detalles", a usage-limit reset with an
 // optional single armed retry, and "Copiar detalles".
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -664,6 +666,46 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('Iniciar sesión gratis'));
       expect(signedIn, 1);
+    });
+
+    testWidgets('a late check of a replaced card never offers sign-in', (
+      tester,
+    ) async {
+      final first = Completer<bool>();
+      final second = Completer<bool>();
+      final pending = [first, second];
+      var checks = 0;
+      Widget card(Object scope) => _host(
+        ChatErrorBubble(
+          error: 'rate limited',
+          prompt: 'hola',
+          onRetry: () {},
+          onSignInFreeTier: () {},
+          freeTierSignInAvailable: () => pending[checks++].future,
+          retryScope: scope,
+          surface: _surface(
+            'free_tier_rate_limited',
+            extra: {'message': 'Busy'},
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(card('chat-1'));
+      await _openDetails(tester);
+      expect(checks, 1);
+
+      // The same list slot now shows another chat's failure.
+      await tester.pumpWidget(card('chat-2'));
+      first.complete(true);
+      await tester.pump();
+      expect(find.text('Iniciar sesión gratis'), findsNothing);
+
+      // The replacement runs its own check and gets its own answer.
+      await _openDetails(tester);
+      expect(checks, 2);
+      second.complete(true);
+      await tester.pump();
+      expect(find.text('Iniciar sesión gratis'), findsOneWidget);
     });
 
     testWidgets('a non-free code never asks', (tester) async {
