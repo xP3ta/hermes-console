@@ -126,8 +126,8 @@ enum BotPresence {
   /// [derive] uses too).
   static BotPresence ofLiveStatus(String? status) => switch (status) {
     'waiting' => BotPresence.attention,
-    'starting' => BotPresence.thinking,
-    'working' => BotPresence.working,
+    'starting' || 'resuming' => BotPresence.thinking,
+    'working' || 'streaming' => BotPresence.working,
     _ => BotPresence.idle,
   };
 
