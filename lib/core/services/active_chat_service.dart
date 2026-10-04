@@ -56,6 +56,7 @@ import '../models/provider_auth_failure.dart';
 import '../models/session_activity.dart';
 import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
+import '../models/tool_output.dart';
 import '../models/transcript_privacy_state.dart';
 import '../screens/chat_render_projection.dart';
 import '../utils/assistant_content.dart';
@@ -7652,6 +7653,11 @@ class ActiveChat {
   /// privacy vetoes still apply.
   List<Map<String, dynamic>> get contentHistoryTranscript =>
       _applyDurablePrivateTranscriptVetoes(_messages);
+
+  /// pt1215: diffs and terminal output of tools finished live on this chat
+  /// (`tool.complete` `inline_diff`/`result`), keyed by tool id. Display
+  /// only; history falls back to durable tool rows.
+  final ToolOutputLedger toolOutputs = ToolOutputLedger();
 
   /// Consumes the bounded, non-fatal producer warning exactly once for the
   /// mounted chat surface. It is diagnostic state, never assistant content.
@@ -21139,6 +21145,20 @@ class ActiveChat {
       // the completed turn.
       return;
     }
+    if (_usingDesktopGateway && _runTerminal && event.type == 'tool.complete') {
+      // pt1215: a tool's diff/output may land after its turn settled. It is
+      // display data keyed by the tool id, so it fills that step's card in
+      // place without amending the completed turn. Only an event the
+      // terminal's own transport orders after it, naming a step that turn
+      // ran, is admitted: replays, rotated transports and unknown ids could
+      // otherwise flood (and evict) the bounded ledger.
+      if (_isCausallyAfterDesktopTerminal(event) &&
+          _settledTurnRanTool(payload) &&
+          toolOutputs.recordComplete(payload)) {
+        _emit(ActiveChatEvent.toolProgress);
+      }
+      return;
+    }
     if (!_usingDesktopGateway || _runTerminal) return;
 
     if (isTerminal) _recordDesktopTerminalFence(event);
@@ -21243,6 +21263,12 @@ class ActiveChat {
         if (event.type == 'tool.start') _applyTodoToolEvent(payload);
         _emit(ActiveChatEvent.toolProgress);
       case 'tool.complete':
+        if (_previousTurnRanTool(payload)) {
+          // pt1215: the settled turn's tool finishing while the next turn
+          // runs. Without a turn id it would close (or add) a step of the
+          // running turn; durable history fills the old card instead.
+          return;
+        }
         _flushTokenBuffer();
         _captureDesktopGeneratedImage(payload);
         _handleLegacyDelegateEvent(event.type, runtimeId, payload);
@@ -21253,6 +21279,7 @@ class ActiveChat {
           'error': payload['error'] != null || payload['status'] == 'error',
         }, running: false);
         _upsertAssistantToolActivity(payload, running: false, startsNew: false);
+        toolOutputs.recordComplete(payload);
         _applyTodoToolEvent(payload);
         _emit(ActiveChatEvent.toolProgress);
       case 'approval.request':
@@ -22546,6 +22573,56 @@ class ActiveChat {
       'reasoning': reasoning,
       assistantActivityTraceKey: activity,
     };
+  }
+
+  /// pt1215: whether [message]'s trace has a step for the exact tool of a
+  /// `tool.complete` (same id and name).
+  static bool _traceRanTool(
+    Map<String, dynamic> message,
+    Map<String, dynamic> payload,
+  ) {
+    final id = payload['tool_id']?.toString().trim() ?? '';
+    final name = payload['name']?.toString().trim() ?? '';
+    if (id.isEmpty || name.isEmpty) return false;
+    final trace = message[assistantActivityTraceKey];
+    if (trace is! List) return false;
+    for (final step in trace) {
+      if (step is Map &&
+          (step['kind'] == 'tool' || step['kind'] == 'skill') &&
+          step['id'] == id &&
+          step['label'] == name) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// The newest (settled) assistant turn ran the tool this late
+  /// `tool.complete` names.
+  bool _settledTurnRanTool(Map<String, dynamic> payload) {
+    final index = _assistantActivityMessageIndex();
+    return index >= 0 && _traceRanTool(_messages[index], payload);
+  }
+
+  /// A live `tool.complete` names a step of the turn before the newest
+  /// prompt (and none of the current one). Scans that one turn only.
+  bool _previousTurnRanTool(Map<String, dynamic> payload) {
+    final newestPrompt = _messages.indexWhere((m) => m['role'] == 'user');
+    if (newestPrompt < 0) return false;
+    for (var i = 0; i < newestPrompt; i++) {
+      if (_messages[i]['role'] == 'assistant' &&
+          _traceRanTool(_messages[i], payload)) {
+        return false;
+      }
+    }
+    for (var i = newestPrompt + 1; i < _messages.length; i++) {
+      final message = _messages[i];
+      if (message['role'] == 'user') return false;
+      if (message['role'] == 'assistant' && _traceRanTool(message, payload)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   void _upsertAssistantToolActivity(

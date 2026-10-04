@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../../l10n/app_localizations.dart';
 import '../../theme/app_theme.dart';
+import '../../design/modal.dart';
 import '../hermes_notice.dart';
 import '../message_avatar_header.dart';
 import 'chat_message_selection_area.dart';
@@ -141,6 +142,8 @@ class ChatMessageActionButton extends StatelessWidget {
     required this.label,
     required this.onPressed,
     this.iconSize = 18,
+    this.onLongPress,
+    this.longPressHint,
   });
 
   final IconData icon;
@@ -148,17 +151,25 @@ class ChatMessageActionButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final double iconSize;
 
+  /// Secondary action on long press (e.g. more copy scopes). When set the
+  /// tooltip stays out of the long-press gesture.
+  final VoidCallback? onLongPress;
+  final String? longPressHint;
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     return Semantics(
       button: true,
       label: label,
+      onLongPressHint: onLongPress == null ? null : longPressHint,
       excludeSemantics: true,
       child: Tooltip(
         message: label,
+        triggerMode: onLongPress == null ? null : TooltipTriggerMode.manual,
         child: InkWell(
           onTap: onPressed,
+          onLongPress: onLongPress,
           borderRadius: BorderRadius.circular(24),
           child: SizedBox(
             width: 48,
@@ -173,12 +184,68 @@ class ChatMessageActionButton extends StatelessWidget {
   }
 }
 
+/// An extra copy scope offered on long press of [ChatCopyMessageButton].
+class ChatCopyScope {
+  const ChatCopyScope({
+    required this.label,
+    required this.icon,
+    required this.text,
+  });
+
+  final String label;
+  final IconData icon;
+
+  /// Evaluated only when chosen.
+  final String Function() text;
+}
+
 /// «Copiar mensaje»: copia [text] (ya en texto plano) y confirma con un aviso.
+/// With [scopes], a long press lists them (Desktop «Copy full response»
+/// parity) — no extra permanent button. The list is built only on long
+/// press, so no build pays for parsing the message.
 class ChatCopyMessageButton extends StatelessWidget {
-  const ChatCopyMessageButton({super.key, required this.text});
+  const ChatCopyMessageButton({super.key, required this.text, this.scopes});
 
   /// Texto a copiar; se evalúa al pulsar.
   final String Function() text;
+
+  final List<ChatCopyScope> Function()? scopes;
+
+  static void _copy(BuildContext context, String value) {
+    Clipboard.setData(ClipboardData(text: value));
+    HermesNotice.of(context).showSnackBar(
+      SnackBar(
+        content: Text(Strings.of(context).chaCopied),
+        duration: const Duration(seconds: 1),
+      ),
+      kind: HermesNoticeKind.success,
+    );
+  }
+
+  Future<void> _chooseScope(BuildContext context) async {
+    final scopes = this.scopes?.call() ?? const <ChatCopyScope>[];
+    if (scopes.length < 2) {
+      _copy(context, scopes.isEmpty ? text() : scopes.single.text());
+      return;
+    }
+    HapticFeedback.selectionClick();
+    final chosen = await showHermesMenu<int>(
+      context: context,
+      surfaceKey: const ValueKey('chat-copy-scopes'),
+      originRect: hermesOriginOf(context),
+      actions: [
+        for (var i = 0; i < scopes.length; i++)
+          HermesAction(
+            key: ValueKey('chat-copy-scope-$i'),
+            value: i,
+            icon: scopes[i].icon,
+            label: scopes[i].label,
+          ),
+      ],
+    );
+    if (chosen == null || !context.mounted) return;
+    _copy(context, scopes[chosen].text());
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -187,16 +254,9 @@ class ChatCopyMessageButton extends StatelessWidget {
       icon: Icons.copy_rounded,
       iconSize: 16,
       label: strings.chaCopyMessage,
-      onPressed: () {
-        Clipboard.setData(ClipboardData(text: text()));
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(context).chaCopied),
-            duration: const Duration(seconds: 1),
-          ),
-          kind: HermesNoticeKind.success,
-        );
-      },
+      onPressed: () => _copy(context, text()),
+      onLongPress: scopes == null ? null : () => _chooseScope(context),
+      longPressHint: strings.tc1215CopyOptionsHint,
     );
   }
 }

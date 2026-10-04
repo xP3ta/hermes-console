@@ -7728,5 +7728,20 @@
   "t1215RefStarterUrl": "Reference a link",
   "t1215RefOpenFolder": "Open folder",
   "t1215PastedContent": "Pasted content",
-  "t1215PastedContentSave": "Save"
+  "t1215PastedContentSave": "Save",
+  "tc1215DiffMoreLines": "Show {count} more lines",
+  "@tc1215DiffMoreLines": {"placeholders": {"count": {"type": "int"}}},
+  "tc1215DiffSemantics": "{name}: {added} lines added, {removed} removed",
+  "@tc1215DiffSemantics": {"placeholders": {"name": {"type": "String"}, "added": {"type": "int"}, "removed": {"type": "int"}}},
+  "tc1215CopyLatest": "Copy last message",
+  "tc1215CopyFull": "Copy full response",
+  "tc1215CopyMarkdown": "Copy Markdown",
+  "tc1215CopyCode": "{count, plural, =1{Copy code} other{Copy {count} code blocks}}",
+  "@tc1215CopyCode": {"placeholders": {"count": {"type": "int"}}},
+  "tc1215CopyOptionsHint": "more copy options",
+  "tc1215TerminalOutput": "Output",
+  "tc1215OutputShowAll": "Show all ({count} lines)",
+  "@tc1215OutputShowAll": {"placeholders": {"count": {"type": "int"}}},
+  "tc1215FilesChanged": "{count, plural, =1{1 file changed} other{{count} files changed}}",
+  "@tc1215FilesChanged": {"placeholders": {"count": {"type": "int"}}}
 }

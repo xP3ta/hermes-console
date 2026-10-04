@@ -118,6 +118,7 @@ import 'package:hermes_android/core/services/voice/voice_phase.dart';
 import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/core/widgets/attachment_history_preview.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
+import 'package:hermes_android/core/widgets/chat/tool_output_cards.dart';
 import 'package:hermes_android/core/widgets/compaction_dock.dart';
 import 'package:hermes_android/core/widgets/generated_image_card.dart';
 import 'package:hermes_android/core/widgets/activity_panel.dart';
@@ -961,6 +962,7 @@ class _RunningViewerDropGateway extends _DroppedTransportGateway {
 class _SequencedSuccessorGateway extends _UiRewindGateway {
   final Object producer = Object();
   int sequence = 0;
+  int transportGeneration = 1;
 
   @override
   void emit(String type, [Map<String, dynamic> payload = const {}]) {
@@ -970,7 +972,7 @@ class _SequencedSuccessorGateway extends _UiRewindGateway {
         sessionId: 'runtime-ui-test',
         payload: payload,
         sequence: ++sequence,
-        transportGeneration: 1,
+        transportGeneration: transportGeneration,
         producerChannel: producer,
       ),
     );
@@ -23679,6 +23681,136 @@ void main() {
       await tester.pump(const Duration(seconds: 2));
     });
 
+    // Each scope in its own chat: the menu covers the route, and the fixture
+    // re-reads the transcript when it is uncovered.
+    for (final (label, expected) in [
+      ('Copiar último mensaje', 'RG_FINAL_ANSWER bold\n\necho RG_CODE'),
+      (
+        'Copiar respuesta completa',
+        'RG_INTERIM_TEXT\n\nRG_FINAL_ANSWER bold\n\necho RG_CODE',
+      ),
+      (
+        'Copiar Markdown',
+        'RG_INTERIM_TEXT\n\nRG_FINAL_ANSWER **bold**\n\n```sh\necho RG_CODE\n```',
+      ),
+      ('Copiar código', 'echo RG_CODE'),
+    ]) {
+      testWidgets('pt1215: mantener copiar ofrece «$label»', (tester) async {
+        await pumpChat(
+          tester,
+          messages: [
+            {
+              ...turn[0],
+              'content': 'RG_FINAL_ANSWER **bold**\n\n```sh\necho RG_CODE\n```',
+            },
+            {...turn[1], 'content': 'RG_INTERIM_TEXT'},
+            ...turn.sublist(2),
+          ],
+        );
+        await tester.longPress(assistantCopy);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byKey(const ValueKey('chat-copy-scopes')), findsOneWidget);
+        for (final entry in const [
+          'Copiar último mensaje',
+          'Copiar respuesta completa',
+          'Copiar Markdown',
+          'Copiar código',
+        ]) {
+          expect(find.text(entry), findsOneWidget);
+        }
+        await tester.tap(find.text(label));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect((await Clipboard.getData(Clipboard.kTextPlain))?.text, expected);
+        await tester.pump(const Duration(seconds: 2));
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets(
+      'pt1215: mantener copiar ofrece «Copiar código» para código indentado',
+      (tester) async {
+        // A lone reply with no Markdown punctuation at all: only the
+        // indentation makes it code, and the block opens the message.
+        await pumpChat(
+          tester,
+          messages: [
+            {...turn[0], 'content': '    echo indented\n    ls'},
+            turn.last,
+          ],
+        );
+        await tester.longPress(assistantCopy);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byKey(const ValueKey('chat-copy-scopes')), findsOneWidget);
+        await tester.tap(find.text('Copiar código'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(
+          (await Clipboard.getData(Clipboard.kTextPlain))?.text,
+          'echo indented\nls',
+        );
+        await tester.pump(const Duration(seconds: 2));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    final patchTurn = <Map<String, dynamic>>[
+      turn[0],
+      {
+        'role': 'tool',
+        'tool_call_id': 'rg-call-9',
+        'tool_name': 'patch',
+        'content': jsonEncode({
+          'success': true,
+          'diff': '--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b\n',
+        }),
+        'timestamp': 1700000300,
+      },
+      toolRow(9, 'patch', 'x.py'),
+      turn.last,
+    ];
+
+    testWidgets('pt1215: historial: el último turno resume sus archivos', (
+      tester,
+    ) async {
+      await pumpChat(tester, messages: patchTurn);
+      expect(find.byType(ChangedFilesCard), findsOneWidget);
+      expect(find.text('1 archivo cambiado'), findsOneWidget);
+    });
+
+    testWidgets('pt1215: un turno anterior no repite el resumen', (
+      tester,
+    ) async {
+      await pumpChat(
+        tester,
+        messages: [
+          {
+            'role': 'assistant',
+            'content': 'RG_LATER_ANSWER',
+            'id': 'rg-later',
+            'timestamp': 1700000900,
+          },
+          {'role': 'user', 'content': 'RG_LATER', 'id': 'rg-later-user'},
+          ...patchTurn,
+        ],
+      );
+      expect(find.text('RG_LATER_ANSWER'), findsOneWidget);
+      expect(find.byType(ChangedFilesCard), findsNothing);
+    });
+
+    testWidgets('pt1215: un mensaje de texto plano no abre menú al mantener', (
+      tester,
+    ) async {
+      await pumpChat(tester, messages: [turn[0], turn.last]);
+      await tester.longPress(assistantCopy);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('chat-copy-scopes')), findsNothing);
+      await tester.pump(const Duration(seconds: 2));
+    });
+
     testWidgets('el grupo vivo crece en su sitio con todas las herramientas', (
       tester,
     ) async {
@@ -24031,6 +24163,549 @@ void main() {
         find.textContaining('/home/private', findRichText: true),
         findsNothing,
       );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'pt1215: una edición terminada en vivo muestra su diff al desplegar la traza',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-pt1215-diff'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_DIFF_PARENT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-pt-diff',
+        'name': 'patch',
+        'args': {'path': 'lib/foo.dart'},
+      });
+      gateway.emit('tool.complete', const {
+        'tool_id': 'call-pt-diff',
+        'name': 'patch',
+        'args': {'path': 'lib/foo.dart'},
+        'inline_diff':
+            '┊ review diff\n'
+            '\x1B[36ma/lib/foo.dart → b/lib/foo.dart\x1B[0m\n'
+            '@@ -1 +1,2 @@\n-old\n+new\n+more',
+        'result': {'success': true},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      gateway.emit('message.complete', const {'text': 'PUBLIC_DIFF_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      // Folded trace: no diff row, nothing parsed.
+      expect(find.byType(FileDiffCard), findsNothing);
+      expect(find.byType(FileDiffBody), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(FileDiffCard), findsOneWidget);
+      expect(find.byType(FileDiffBody), findsNothing);
+      final row = find.byKey(const ValueKey('file-diff-row-lib/foo.dart'));
+      await tester.ensureVisible(row);
+      await tester.pump();
+      await tester.tap(row);
+      await tester.pump();
+      expect(find.byType(FileDiffBody), findsOneWidget);
+      expect(find.text('+new'), findsOneWidget);
+      expect(find.text('-old'), findsOneWidget);
+      expect(find.textContaining('review diff'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'pt1215: un tool.complete tardío tras cerrar el turno rellena la misma tarjeta',
+    (tester) async {
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-pt1215-late'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_LATE_PARENT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-pt-late',
+        'name': 'patch',
+        'args': {'path': 'lib/late.dart'},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      gateway.emit('message.complete', const {'text': 'PUBLIC_LATE_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(FileDiffCard), findsNothing);
+      expect(find.byType(ChangedFilesCard), findsNothing);
+      final rowsBefore = tester
+          .widgetList(find.byType(ThinkingTraceCard))
+          .length;
+      final transcriptBefore = chat.messages.toString();
+
+      // The settled turn learns the edit's diff afterwards (same tool id).
+      // Idle chat: only the event itself may ask for the repaint.
+      await tester.pump(const Duration(seconds: 2));
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      gateway.emit('tool.complete', const {
+        'tool_id': 'call-pt-late',
+        'name': 'patch',
+        'args': {'path': 'lib/late.dart'},
+        'inline_diff': '@@ -1 +1,2 @@\n-old\n+new\n+more',
+        'result': {'success': true},
+      });
+      await tester.idle();
+      expect(tester.binding.hasScheduledFrame, isTrue);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(FileDiffCard), findsOneWidget);
+      expect(find.text('+02 −01 · late.dart'), findsOneWidget);
+      expect(find.text('1 archivo cambiado'), findsOneWidget);
+      expect(
+        tester.widgetList(find.byType(ThinkingTraceCard)).length,
+        rowsBefore,
+      );
+      // Display data only: the settled turn itself is not amended.
+      expect(chat.messages.toString(), transcriptBefore);
+      expect(find.text('PUBLIC_LATE_DONE'), findsOneWidget);
+      expect(find.text('PUBLIC_LATE_PARENT'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('activity-done-call-pt-late')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  group('pt1215: valla del tool.complete tardío', () {
+    const lateDiff = '@@ -1 +1,2 @@\n-old\n+new\n+more';
+
+    Map<String, dynamic> lateComplete(String id) => {
+      'tool_id': id,
+      'name': 'patch',
+      'args': const {'path': 'lib/late.dart'},
+      'inline_diff': lateDiff,
+      'result': const {'success': true},
+    };
+
+    /// Settles a turn whose only step is `patch` [toolId] with no diff yet,
+    /// trace unfolded.
+    Future<ActiveChat> settleTurn(
+      WidgetTester tester,
+      _UiRewindGateway gateway, {
+      String toolId = 'call-fence',
+    }) async {
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-pt1215-fence'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_FENCE_PARENT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', {
+        'tool_id': toolId,
+        'name': 'patch',
+        'args': const {'path': 'lib/late.dart'},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      gateway.emit('message.complete', const {'text': 'PUBLIC_FENCE_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(FileDiffCard), findsNothing);
+      return chat;
+    }
+
+    Future<void> expectNothingAdmitted(
+      WidgetTester tester,
+      ActiveChat chat, {
+      required String transcriptBefore,
+      required int revisionBefore,
+      required String id,
+    }) async {
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(chat.toolOutputs[id], isNull);
+      expect(chat.toolOutputs.revision, revisionBefore);
+      expect(chat.messages.toString(), transcriptBefore);
+      expect(find.byType(FileDiffCard), findsNothing);
+      expect(find.byType(ChangedFilesCard), findsNothing);
+      expect(tester.takeException(), isNull);
+    }
+
+    testWidgets('un id que el turno cerrado no conoce no entra', (
+      tester,
+    ) async {
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway);
+      final before = chat.messages.toString();
+      final revision = chat.toolOutputs.revision;
+      gateway.emit('tool.complete', lateComplete('call-orphan'));
+      await expectNothingAdmitted(
+        tester,
+        chat,
+        transcriptBefore: before,
+        revisionBefore: revision,
+        id: 'call-orphan',
+      );
+      // A burst of orphans cannot evict a real record either.
+      for (var i = 0; i < chat.toolOutputs.capacity + 4; i++) {
+        gateway.emit('tool.complete', lateComplete('call-flood-$i'));
+      }
+      gateway.emit('tool.complete', lateComplete('call-fence'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(chat.toolOutputs['call-fence'], isNotNull);
+      expect(chat.toolOutputs['call-flood-0'], isNull);
+      expect(find.byType(FileDiffCard), findsOneWidget);
+      expect(chat.messages.toString(), before);
+    });
+
+    testWidgets('el mismo id con otro nombre de herramienta no entra', (
+      tester,
+    ) async {
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway);
+      final before = chat.messages.toString();
+      final revision = chat.toolOutputs.revision;
+      gateway.emit('tool.complete', {
+        ...lateComplete('call-fence'),
+        'name': 'write_file',
+      });
+      await expectNothingAdmitted(
+        tester,
+        chat,
+        transcriptBefore: before,
+        revisionBefore: revision,
+        id: 'call-fence',
+      );
+    });
+
+    testWidgets('sin orden de productor (sin secuencia) no entra', (
+      tester,
+    ) async {
+      final gateway = _UiRewindGateway();
+      final chat = await settleTurn(tester, gateway);
+      final before = chat.messages.toString();
+      final revision = chat.toolOutputs.revision;
+      gateway.emit('tool.complete', lateComplete('call-fence'));
+      await expectNothingAdmitted(
+        tester,
+        chat,
+        transcriptBefore: before,
+        revisionBefore: revision,
+        id: 'call-fence',
+      );
+    });
+
+    testWidgets('de otro transporte (repetición tras reconectar) no entra', (
+      tester,
+    ) async {
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway);
+      final before = chat.messages.toString();
+      final revision = chat.toolOutputs.revision;
+      gateway.transportGeneration = 2;
+      gateway.emit('tool.complete', lateComplete('call-fence'));
+      await expectNothingAdmitted(
+        tester,
+        chat,
+        transcriptBefore: before,
+        revisionBefore: revision,
+        id: 'call-fence',
+      );
+    });
+
+    testWidgets('una repetición no posterior al cierre no entra', (
+      tester,
+    ) async {
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway);
+      final before = chat.messages.toString();
+      final revision = chat.toolOutputs.revision;
+      // The terminal was the last event: replay at its own sequence.
+      gateway.sequence -= 1;
+      gateway.emit('tool.complete', lateComplete('call-fence'));
+      await expectNothingAdmitted(
+        tester,
+        chat,
+        transcriptBefore: before,
+        revisionBefore: revision,
+        id: 'call-fence',
+      );
+    });
+
+    testWidgets('tras salir del chat no crea filas ni falla', (tester) async {
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway);
+      final before = chat.messages.toString();
+      await tester.pumpWidget(const SizedBox.shrink());
+      gateway.emit('tool.complete', lateComplete('call-orphan'));
+      gateway.emit('tool.complete', lateComplete('call-fence'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(chat.toolOutputs['call-orphan'], isNull);
+      expect(chat.messages.toString(), before);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('con un turno nuevo en marcha no crea filas en él', (
+      tester,
+    ) async {
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway, toolId: 'call-old');
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_FENCE_NEXT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-new',
+        'name': 'patch',
+        'args': {'path': 'lib/late.dart'},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      List<Object?> stepIds() => [
+        for (final message in chat.messages)
+          if (message['role'] == 'assistant')
+            for (final step
+                in (message['_activity_trace'] as List?) ?? const [])
+              if (step is Map) '${step['id']}:${step['status']}',
+      ];
+      final stepsBefore = stepIds();
+      expect(stepsBefore, contains('call-new:running'));
+      final revision = chat.toolOutputs.revision;
+
+      // The settled turn's tool completes while the next turn runs.
+      gateway.emit('tool.complete', lateComplete('call-old'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(stepIds(), stepsBefore);
+      expect(chat.toolOutputs['call-old'], isNull);
+      expect(chat.toolOutputs.revision, revision);
+      expect(find.byType(FileDiffCard), findsNothing);
+      // The running turn's own step still settles normally.
+      gateway.emit('tool.complete', {
+        ...lateComplete('call-new'),
+        'args': const {'path': 'lib/late.dart'},
+      });
+      gateway.emit('message.complete', const {
+        'text': 'PUBLIC_FENCE_NEXT_DONE',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(stepIds(), ['call-new:completed', 'call-old:completed']);
+      expect(chat.toolOutputs['call-new'], isNotNull);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('un id reutilizado por el turno en marcha sigue siendo suyo', (
+      tester,
+    ) async {
+      // Some providers number calls per turn (`call_0` again).
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway, toolId: 'call_0');
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_FENCE_REUSE',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'tool_id': 'call_0',
+        'name': 'patch',
+        'args': {'path': 'lib/late.dart'},
+      });
+      gateway.emit('tool.complete', lateComplete('call_0'));
+      gateway.emit('message.complete', const {'text': 'PUBLIC_REUSE_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final newest = chat.messages.firstWhere((m) => m['role'] == 'assistant');
+      expect(
+        [
+          for (final step in (newest['_activity_trace'] as List?) ?? const [])
+            if (step is Map) '${step['id']}:${step['status']}',
+        ],
+        ['call_0:completed'],
+      );
+      expect(chat.toolOutputs['call_0'], isNotNull);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  testWidgets(
+    'pt1215: la salida de terminal en color aparece plegada en la traza',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-pt1215-term'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_TERM_PARENT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-pt-term',
+        'name': 'terminal',
+        'args': {'command': 'make test'},
+      });
+      gateway.emit('tool.complete', const {
+        'tool_id': 'call-pt-term',
+        'name': 'terminal',
+        'args': {'command': 'make test'},
+        'result': {
+          'output': 'one\ntwo\nthree\nfour\nfive\n\x1B[31mFAILED\x1B[0m',
+          'exit_code': 2,
+        },
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      gateway.emit('message.complete', const {'text': 'PUBLIC_TERM_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(TerminalOutputCard), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(TerminalOutputCard), findsOneWidget);
+      expect(find.text('exit 2'), findsOneWidget);
+      expect(find.textContaining('FAILED', findRichText: true), findsOneWidget);
+      expect(
+        find.textContaining('two\nthree', findRichText: true),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'pt1215: el último turno con ediciones cierra con «archivos cambiados»',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-pt1215-changed'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_CHANGED_PARENT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      for (final (id, path, diff) in const [
+        ('call-ch-1', 'lib/a.dart', '@@ -1 +1,2 @@\n-a\n+b\n+c'),
+        ('call-ch-2', 'README.md', '@@ -1 +1 @@\n-x\n+y'),
+        ('call-ch-3', 'lib/a.dart', '@@ -5 +5 @@\n-d\n+e'),
+      ]) {
+        gateway.emit('tool.start', {
+          'tool_id': id,
+          'name': 'patch',
+          'args': {'path': path},
+        });
+        gateway.emit('tool.complete', {
+          'tool_id': id,
+          'name': 'patch',
+          'args': {'path': path},
+          'inline_diff': diff,
+          'result': const {'success': true},
+        });
+      }
+      // Every edit finished but no reply text yet: no summary in this frame.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.textContaining('PUBLIC_CHANGED_PARTIAL'), findsNothing);
+      expect(find.byType(ChangedFilesCard), findsNothing);
+      gateway.emit('message.delta', const {'text': 'PUBLIC_CHANGED_PARTIAL'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      // Still working (the reply is streaming): no summary yet.
+      expect(find.textContaining('PUBLIC_CHANGED_PARTIAL'), findsWidgets);
+      expect(find.byType(ChangedFilesCard), findsNothing);
+      gateway.emit('message.complete', const {'text': 'PUBLIC_CHANGED_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(ChangedFilesCard), findsOneWidget);
+      expect(find.text('2 archivos cambiados'), findsOneWidget);
+      // lib/a.dart +3 −2 across two edits, README.md +1 −1.
+      expect(find.text('+04 −03'), findsOneWidget);
+      expect(find.byType(FileDiffCard), findsNothing);
+
+      final row = find.byKey(const ValueKey('changed-files-row'));
+      await tester.ensureVisible(row);
+      await tester.pump();
+      await tester.tap(row);
+      await tester.pump();
+      expect(find.byType(FileDiffCard), findsNWidgets(2));
+      expect(find.text('+03 −02 · a.dart'), findsOneWidget);
+      expect(find.text('+01 −01 · README.md'), findsOneWidget);
+      expect(find.byType(FileDiffBody), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

@@ -9,6 +9,7 @@ import '../companion/state/companion_controller.dart';
 import '../models/activity_snapshot.dart';
 import '../models/agent_task_list.dart';
 import '../models/deferred_tool_call.dart';
+import '../models/tool_output.dart';
 import '../services/approval_policy.dart';
 import '../services/command_risk.dart';
 import '../services/connection_manager.dart';
@@ -16,6 +17,7 @@ import '../theme/app_theme.dart';
 import '../theme/component_profile.dart';
 import 'activity_sections.dart';
 import 'agent_task_widgets.dart';
+import 'chat/tool_output_cards.dart';
 import 'hermes_premium_ui.dart';
 import 'hermes_spark_mascot.dart';
 import 'hermes_pill.dart';
@@ -1932,6 +1934,10 @@ class ChatTraceEvent {
   /// gateway's own args/result. Only [MemoryWrite.landed] earns a marker.
   final MemoryWrite? memory;
 
+  /// What the finished tool left to review (a file diff, terminal output),
+  /// when the server sent it. Rendered only inside the unfolded trace.
+  final ToolOutputRecord? output;
+
   ChatTraceEvent({
     required this.id,
     required this.label,
@@ -1943,6 +1949,7 @@ class ChatTraceEvent {
     this.startedAt,
     this.duration,
     this.memory,
+    this.output,
   });
 
   bool get isDone => status == 'completed' || status == 'finished';
@@ -2448,6 +2455,10 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
           ),
         )
         .toList(growable: false);
+    final outputs = <String, ToolOutputRecord>{
+      for (final event in _visibleEvents)
+        if (event.output != null) event.id: event.output!,
+    };
     return Padding(
       padding: EdgeInsets.only(left: muted ? 50 : 40, top: 2),
       child: Column(
@@ -2466,6 +2477,21 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
               now: now,
               dense: true,
               muted: muted,
+              trailingFor: outputs.isEmpty
+                  ? null
+                  : (step) {
+                      final card = toolOutputCard(outputs[step.id]);
+                      return card == null
+                          ? null
+                          : Padding(
+                              padding: const EdgeInsets.only(
+                                left: 20,
+                                top: 2,
+                                bottom: 4,
+                              ),
+                              child: card,
+                            );
+                    },
             ),
           const SizedBox(height: 6),
           Semantics(
