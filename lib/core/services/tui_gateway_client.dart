@@ -40,6 +40,7 @@ import 'connection_manager.dart';
 import 'desktop_control_gateway.dart';
 import 'desktop_gateway_capabilities.dart';
 import 'json_rpc_wire.dart';
+import 'prompt_client_surface.dart';
 import 'recovery_proof.dart';
 import 'replay_batch_proof.dart';
 import 'replay_coordinator.dart';
@@ -417,6 +418,45 @@ enum DesktopRedirectDisposition { redirected, queued, rejected }
 /// permanece intacto.
 abstract class HermesDesktopInterruptedPromptGateway {
   Future<void> submitInterruptedPrompt(String runtimeSessionId, String text);
+}
+
+/// Submit with surface metadata (`surface` / `voice_context`).
+///
+/// Optional, separate capability: a gateway without it receives the turn as
+/// before and the metadata is dropped. Typed sends never use it, so the server
+/// clears the surface on every ordinary submit.
+abstract class HermesDesktopClientSurfacePromptGateway {
+  Future<void> submitPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  );
+
+  Future<DesktopTurnAck> submitPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  );
+
+  Future<void> submitInterruptedPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  );
+
+  Future<void> submitQueuedPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  );
+
+  Future<DesktopTurnAck> submitQueuedPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  );
 }
 
 /// Lifecycle moderno y explícito de sesión.
@@ -1357,6 +1397,7 @@ class TuiGatewayClient
         BotAvatarGenerationGateway,
         HermesDesktopRedirectGateway,
         HermesDesktopInterruptedPromptGateway,
+        HermesDesktopClientSurfacePromptGateway,
         HermesDesktopSessionLifecycleGateway,
         HermesDesktopSessionHistoryGateway,
         HermesDesktopSessionCloseGateway,
@@ -6759,28 +6800,72 @@ class TuiGatewayClient
   }
 
   @override
-  Future<void> submitQueuedPrompt(String runtimeSessionId, String text) async {
-    await _requestPromptSubmit({
-      'session_id': runtimeSessionId,
-      'text': text,
-      'queued': true,
-    });
+  Future<void> submitPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  ) async {
+    await _requestPromptSubmit(
+      mergePromptSubmitParams({
+        'session_id': runtimeSessionId,
+        'text': text,
+      }, surface.toParams()),
+    );
     _markWatchdogRuntimeBusy(runtimeSessionId);
   }
 
   @override
-  Future<void> submitInterruptedPrompt(
+  Future<void> submitQueuedPrompt(String runtimeSessionId, String text) =>
+      _submitQueued(runtimeSessionId, text, const {});
+
+  @override
+  Future<void> submitQueuedPromptWithSurface(
     String runtimeSessionId,
     String text,
+    PromptClientSurface surface,
+  ) => _submitQueued(runtimeSessionId, text, surface.toParams());
+
+  Future<void> _submitQueued(
+    String runtimeSessionId,
+    String text,
+    Map<String, dynamic> extraParams,
+  ) async {
+    await _requestPromptSubmit(
+      mergePromptSubmitParams({
+        'session_id': runtimeSessionId,
+        'text': text,
+        'queued': true,
+      }, extraParams),
+    );
+    _markWatchdogRuntimeBusy(runtimeSessionId);
+  }
+
+  @override
+  Future<void> submitInterruptedPrompt(String runtimeSessionId, String text) =>
+      _submitInterrupted(runtimeSessionId, text, const {});
+
+  @override
+  Future<void> submitInterruptedPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  ) => _submitInterrupted(runtimeSessionId, text, surface.toParams());
+
+  Future<void> _submitInterrupted(
+    String runtimeSessionId,
+    String text,
+    Map<String, dynamic> extraParams,
   ) async {
     final deadline = DateTime.now().add(const Duration(seconds: 6));
     while (true) {
       try {
-        await _requestPromptSubmit({
-          'session_id': runtimeSessionId,
-          'text': text,
-          'interrupted': true,
-        });
+        await _requestPromptSubmit(
+          mergePromptSubmitParams({
+            'session_id': runtimeSessionId,
+            'text': text,
+            'interrupted': true,
+          }, extraParams),
+        );
         _markWatchdogRuntimeBusy(runtimeSessionId);
         return;
       } on TuiGatewayRpcError catch (error) {
@@ -6797,12 +6882,36 @@ class TuiGatewayClient
     String runtimeSessionId,
     String text,
     String clientTurnId,
-  ) async {
-    final result = await _requestPromptSubmit({
-      'session_id': runtimeSessionId,
-      'text': text,
-      'client_turn_id': clientTurnId,
-    });
+  ) => _submitIdempotent(runtimeSessionId, text, clientTurnId, const {});
+
+  @override
+  Future<DesktopTurnAck> submitPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  ) => _submitIdempotent(
+    runtimeSessionId,
+    text,
+    clientTurnId,
+    surface.toParams(),
+  );
+
+  Future<DesktopTurnAck> _submitIdempotent(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    Map<String, dynamic> extraParams, {
+    bool queued = false,
+  }) async {
+    final result = await _requestPromptSubmit(
+      mergePromptSubmitParams({
+        'session_id': runtimeSessionId,
+        'text': text,
+        'client_turn_id': clientTurnId,
+        if (queued) 'queued': true,
+      }, extraParams),
+    );
     final ack = DesktopTurnAck.fromJson(
       result,
       expectedClientTurnId: clientTurnId,
@@ -6816,20 +6925,27 @@ class TuiGatewayClient
     String runtimeSessionId,
     String text,
     String clientTurnId,
-  ) async {
-    final result = await _requestPromptSubmit({
-      'session_id': runtimeSessionId,
-      'text': text,
-      'client_turn_id': clientTurnId,
-      'queued': true,
-    });
-    final ack = DesktopTurnAck.fromJson(
-      result,
-      expectedClientTurnId: clientTurnId,
-    );
-    _markWatchdogRuntimeBusy(runtimeSessionId);
-    return ack;
-  }
+  ) => _submitIdempotent(
+    runtimeSessionId,
+    text,
+    clientTurnId,
+    const {},
+    queued: true,
+  );
+
+  @override
+  Future<DesktopTurnAck> submitQueuedPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  ) => _submitIdempotent(
+    runtimeSessionId,
+    text,
+    clientTurnId,
+    surface.toParams(),
+    queued: true,
+  );
 
   @override
   Future<DesktopTurnStatus> getTurnStatus(

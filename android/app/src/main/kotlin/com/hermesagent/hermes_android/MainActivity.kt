@@ -202,6 +202,12 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             },
         )
+        val liveAudioEvents = HermesLiveAudioEvents(applicationContext)
+        liveAudioEvents.installFocusListener()
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "hermes/live_audio_events",
+        ).setStreamHandler(liveAudioEvents)
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             platformInfoChannelName,

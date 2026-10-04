@@ -62,10 +62,16 @@ import 'core/services/sftp_transfer_service.dart';
 import 'core/services/ssh_manager.dart';
 import 'core/services/ssh_session_service.dart';
 import 'core/services/tui_gateway_client.dart';
+import 'core/services/voice/conversation/gpt_live_voice_conversation_controller.dart';
 import 'core/services/voice/conversation/local_voice_conversation_controller.dart';
+import 'core/services/voice/conversation/voice_conversation_coordinator.dart';
+import 'core/services/voice/live/flutter_webrtc_transport.dart';
+import 'core/services/voice/live/live_audio_environment.dart';
+import 'core/services/voice/live/voice_live_api.dart';
 import 'core/services/voice/read_aloud_session.dart';
 import 'core/services/voice/voice_phase.dart';
 import 'core/services/voice/voice_latency_trace.dart';
+import 'core/services/voice/voice_lang.dart';
 import 'core/services/voice/voice_service.dart';
 import 'core/services/voice/voice_settings.dart';
 import 'core/theme/app_theme.dart';
@@ -735,8 +741,29 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// perezosos, así que el servicio NO se instancia mientras nadie lo lea.
   /// Todos los accesos de esta clase están condicionados al gate; los de la
   /// pantalla de chat también. Con el gate en false, nunca llega a existir.
-  late final LocalVoiceConversationController voiceConvo =
-      LocalVoiceConversationController(voice);
+  late final VoiceConversationCoordinator voiceConvo =
+      VoiceConversationCoordinator(
+        chained: LocalVoiceConversationController(voice),
+        liveFactory: () => GptLiveVoiceConversationController(
+          apiFactory: (chat) =>
+              DashboardVoiceLiveApi(DashboardClient.lazy(chat.connection)),
+          transportFactory: FlutterWebRtcTransport.new,
+          audioEvents: platformLiveAudioEvents,
+          languageCode: () => effectiveVoiceLang(widget.connManager.prefs),
+        ),
+        gptLiveEnabled: () => voice.settings.gptLiveEnabled,
+        apiFactory: (chat) =>
+            DashboardVoiceLiveApi(DashboardClient.lazy(chat.connection)),
+        languageCode: () => effectiveVoiceLang(widget.connManager.prefs),
+        visibleSession: widget.notifications.visibleSession,
+        profileWatch: (chat) => (
+          changes: widget.connManager.activeProfileRevisionFor(
+            chat.connection.id,
+          ),
+          current: () =>
+              widget.connManager.activeProfileFor(chat.connection.id),
+        ),
+      );
 
   AppLifecycleState _appLifecycle =
       WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
