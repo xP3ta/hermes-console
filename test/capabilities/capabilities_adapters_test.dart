@@ -93,6 +93,8 @@ void main() {
       'connectors.accounts',
       'connectors.operation.status',
       'mcp.servers.status',
+      'connectors.tools',
+      'connectors.policy.get',
     ]) {
       expect(
         TuiGatewayClient.capabilitiesRpcAllowed(method, readOnly: true),
@@ -105,6 +107,7 @@ void main() {
       'connectors.operation.wake',
       'connectors.accounts.remove',
       'connection.respond',
+      'connectors.policy.set',
     ]) {
       expect(
         TuiGatewayClient.capabilitiesRpcAllowed(method, readOnly: false),
@@ -121,7 +124,7 @@ void main() {
       'prompt.submit',
       'session.activate',
       'plugins.manage',
-      'connectors.policy.set',
+      'connectors.policy.reset',
     ]) {
       expect(
         TuiGatewayClient.capabilitiesRpcAllowed(method, readOnly: false),
