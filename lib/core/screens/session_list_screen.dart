@@ -118,7 +118,9 @@ bool sessionMatchesSearchText(
 /// Desktop `mergeSearchResults`: the ranked server hits keep their order and
 /// loaded rows the server did not return follow, in list order, once per
 /// owner and lineage. When several loaded segments of one lineage match, the
-/// newest one (the lineage tip) takes the slot of the first.
+/// newest one (the lineage tip) takes the slot of the first; on equal
+/// timestamps the segment that continues the other one wins, so the tip is
+/// shown whatever the input order.
 @visibleForTesting
 List<Session> appendLoadedSearchMatches(
   List<Session> hits,
@@ -127,6 +129,22 @@ List<Session> appendLoadedSearchMatches(
   Iterable<(String, String)> keys(Session row) {
     final owner = Session.profileOwner(row.profile);
     return row.identityIds.map((id) => (owner, id));
+  }
+
+  // `row` continues `earlier` when its chain names `earlier` before itself.
+  bool continues(Session row, Session earlier) {
+    if (row.id == earlier.id) return false;
+    if (earlier.id == row.lineageRootId) return true;
+    if (earlier.id == row.parentSessionId) return true;
+    final at = row.lineageIds.indexOf(earlier.id);
+    final self = row.lineageIds.indexOf(row.id);
+    return at >= 0 && (self < 0 || at < self);
+  }
+
+  bool supersedes(Session row, Session current) {
+    final delta = row.lastActivityAt.compareTo(current.lastActivityAt);
+    if (delta != 0) return delta > 0;
+    return continues(row, current) && !continues(current, row);
   }
 
   final seen = <(String, String)>{for (final hit in hits) ...keys(hit)};
@@ -138,7 +156,7 @@ List<Session> appendLoadedSearchMatches(
     final slot = rowKeys.map((key) => slotByKey[key]).nonNulls.firstOrNull;
     if (slot == null) {
       appended.add(row);
-    } else if (row.lastActivityAt > appended[slot].lastActivityAt) {
+    } else if (supersedes(row, appended[slot])) {
       appended[slot] = row;
     }
     for (final key in rowKeys) {

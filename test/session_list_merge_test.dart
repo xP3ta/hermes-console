@@ -205,6 +205,46 @@ void main() {
     );
   });
 
+  test(
+    'equal timestamps still collapse a lineage to its tip, in any order',
+    () {
+      final root = Session(
+        id: 'root-a',
+        title: 'QA 9485',
+        model: 'm',
+        source: 'mobile',
+        messageCount: 2,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+        updatedAt: 20,
+      );
+      final tip = Session(
+        id: 'tip-a',
+        title: 'QA 9485',
+        model: 'm',
+        source: 'mobile',
+        messageCount: 4,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+        updatedAt: 20,
+        lineageRootId: 'root-a',
+        lineageIds: const ['root-a', 'tip-a'],
+      );
+      expect(root.lastActivityAt, tip.lastActivityAt);
+
+      for (final order in [
+        [root, tip],
+        [tip, root],
+      ]) {
+        expect(appendLoadedSearchMatches(const [], order).map((s) => s.id), [
+          'tip-a',
+        ], reason: order.map((s) => s.id).join(' → '));
+      }
+    },
+  );
+
   test('a new draft is included when no remote session has its id', () {
     final freshDraft = _session(
       id: 'draft-id',
