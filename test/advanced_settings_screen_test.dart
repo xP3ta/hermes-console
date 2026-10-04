@@ -77,7 +77,6 @@ void main() {
   late ConnectionManager manager;
   late FakeToolsetsServer server;
   late _Store store;
-  late int storesMade;
 
   setUp(() async {
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
@@ -91,7 +90,6 @@ void main() {
     );
     server = FakeToolsetsServer();
     store = _Store(_schema());
-    storesMade = 0;
   });
 
   tearDown(() {
@@ -123,10 +121,7 @@ void main() {
           connection: _connection(),
           connManager: manager,
           initialSchema: initialSchema,
-          storeFor: (profile, {required writable}) {
-            storesMade++;
-            return store;
-          },
+          storeFor: (profile, {required writable}) => store,
           toolsetsFor: (profile, {required writable}) =>
               ServerToolsetsRepository(
                 server.dashboard,
