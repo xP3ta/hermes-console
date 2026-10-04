@@ -172,28 +172,36 @@ void main() {
       },
     );
 
-    test(
-      'a timeout or a cut socket is a failed read, not an absence',
-      () async {
-        for (final failure in <Object>[
-          TimeoutException('active_list timed out'),
-          StateError('Hermes Desktop WebSocket closed'),
-          const TuiGatewayRpcError('session.active_list', 'boom', code: -32000),
-        ]) {
-          final wire = _Wire()..activeList = () => Future.error(failure);
-          final repository = wire.repository();
+    test('a timeout or a cut socket is a failed read, not an absence', () async {
+      for (final failure in <Object>[
+        TimeoutException('active_list timed out'),
+        StateError('Hermes Desktop WebSocket closed'),
+        const TuiGatewayRpcError('session.active_list', 'boom', code: -32000),
+        // Messages that merely mention a 404 or 405 are not «method not found».
+        const TuiGatewayRpcError(
+          'session.active_list',
+          'HTTP 404 from upstream',
+          code: -32000,
+        ),
+        const TuiGatewayRpcError(
+          'session.active_list',
+          'http 405 method not allowed',
+        ),
+        Exception('http 404'),
+      ]) {
+        final wire = _Wire()..activeList = () => Future.error(failure);
+        final repository = wire.repository();
 
-          final full = await repository.load();
-          final roster = await repository.loadRoster();
+        final full = await repository.load();
+        final roster = await repository.loadRoster();
 
-          expect(full.activeSessionsAuthoritative, isFalse, reason: '$failure');
-          expect(full.activeSessionsObservedAt, isNull);
-          expect(roster.activeSessionsAuthoritative, isFalse);
-          expect(roster.activeSessionsObservedAt, isNull);
-          expect(full.failures, isEmpty, reason: 'still no noisy failure');
-        }
-      },
-    );
+        expect(full.activeSessionsAuthoritative, isFalse, reason: '$failure');
+        expect(full.activeSessionsObservedAt, isNull);
+        expect(roster.activeSessionsAuthoritative, isFalse);
+        expect(roster.activeSessionsObservedAt, isNull);
+        expect(full.failures, isEmpty, reason: 'still no noisy failure');
+      }
+    });
 
     test(
       'an empty answer is authoritative and sealed with its read time',
