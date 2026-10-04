@@ -119,6 +119,53 @@ void main() {
     expect(merged.map((session) => session.id), ['remote-id', 'draft-id']);
   });
 
+  test(
+    'search keeps server hits first and appends loaded matches the '
+    'server did not return, once per lineage (Desktop mergeSearchResults)',
+    () {
+      final hit = _session(
+        id: 'tip-a',
+        title: 'Server hit',
+        source: 'mobile',
+        updatedAt: 10,
+      );
+      final sameLineage = Session(
+        id: 'old-a',
+        title: 'QA 9485 old segment',
+        model: 'm',
+        source: 'mobile',
+        messageCount: 2,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+        lineageRootId: 'tip-a',
+      );
+      final loaded = _session(
+        id: 'b',
+        title: 'QA 9485',
+        source: 'mobile',
+        updatedAt: 20,
+      );
+      final other = _session(
+        id: 'c',
+        title: 'Unrelated',
+        source: 'mobile',
+        updatedAt: 30,
+      );
+
+      bool matches(Session s) =>
+          sessionMatchesSearchText(s, '9485', title: s.title);
+      expect(matches(loaded), isTrue);
+      expect(matches(other), isFalse);
+      expect(
+        appendLoadedSearchMatches([
+          hit,
+        ], [sameLineage, loaded, other].where(matches)).map((s) => s.id),
+        ['tip-a', 'b'],
+      );
+    },
+  );
+
   test('a new draft is included when no remote session has its id', () {
     final freshDraft = _session(
       id: 'draft-id',

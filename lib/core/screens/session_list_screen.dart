@@ -93,6 +93,49 @@ List<Session> mergeRemoteSessionsWithDrafts(
   return byId.values.toList(growable: false);
 }
 
+/// Desktop `sessionMatchesSearch` (`lib/session-search.ts`): case-insensitive
+/// substring over the fields a loaded row carries. Hermes' search endpoint
+/// only matches ids and FTS5 message tokens by prefix (never titles), so
+/// Desktop finds a chat titled "QA 9485" by "9485" only through this.
+@visibleForTesting
+bool sessionMatchesSearchText(
+  Session session,
+  String needle, {
+  required String title,
+}) {
+  if (needle.isEmpty) return true;
+  return <String>[
+    session.id,
+    session.lineageRootId ?? '',
+    title,
+    session.preview,
+    session.cwd ?? '',
+    session.gitBranch ?? '',
+    session.source,
+  ].any((value) => value.toLowerCase().contains(needle));
+}
+
+/// Desktop `mergeSearchResults`: the ranked server hits keep their order and
+/// loaded rows the server did not return follow, in list order.
+@visibleForTesting
+List<Session> appendLoadedSearchMatches(
+  List<Session> hits,
+  Iterable<Session> loadedMatches,
+) {
+  final seen = <(String, String)>{
+    for (final hit in hits)
+      for (final id in hit.identityIds) (Session.profileOwner(hit.profile), id),
+  };
+  return [
+    ...hits,
+    for (final row in loadedMatches)
+      if (!row.identityIds.any(
+        (id) => seen.contains((Session.profileOwner(row.profile), id)),
+      ))
+        row,
+  ];
+}
+
 /// Identifica filas cuyo estado durable cambió dentro del mismo owner y
 /// lineage. `sessions.changed` no promete un session id en el payload, por lo
 /// que esta comparación se hace después de la lectura REST autoritativa.
@@ -1051,8 +1094,18 @@ class _SessionListScreenState extends State<SessionListScreen>
       );
       await _migrateLineagePreferences(sessions);
       if (!mounted || requestEpoch != _searchRequestEpoch) return;
+      final withLoaded = appendLoadedSearchMatches(
+        sessions,
+        _sessions.where(
+          (session) => sessionMatchesSearchText(
+            session,
+            needle,
+            title: _titleFor(session),
+          ),
+        ),
+      );
       setState(() {
-        _searchResults = _withoutDeleted(sessions);
+        _searchResults = _withoutDeleted(withLoaded);
         _searchExhaustive = result.exhaustive;
         _searching = false;
       });
