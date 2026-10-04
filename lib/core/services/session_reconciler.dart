@@ -8,6 +8,7 @@ import '../models/provider_auth_failure.dart';
 import '../models/transcript_privacy_state.dart';
 import '../utils/assistant_content.dart';
 import '../utils/chat_turn.dart';
+import 'agent_preview_extractor.dart' show agentPreviewEvidenceArguments;
 import 'terminal_transcript_authority.dart';
 
 final _unsafeDisplayTextPattern = RegExp(
@@ -240,10 +241,17 @@ List<Map<String, dynamic>> coalesceAssistantTurnsNewestFirst(
         toolCalls.any((call) => call['id']?.toString() == id)) {
       return;
     }
+    // Arguments never ride the loaded transcript, except the three fields of
+    // a `desktop_preview` call: they are what the conversation's previews
+    // list is replayed from.
+    final previewArguments = agentPreviewEvidenceArguments(
+      label,
+      function is Map ? function['arguments'] : raw['arguments'],
+    );
     toolCalls.add({
       if (id != null && id.isNotEmpty && id.length <= 180) 'id': id,
       'type': 'function',
-      'function': {'name': label},
+      'function': {'name': label, 'arguments': ?previewArguments},
     });
   }
 
