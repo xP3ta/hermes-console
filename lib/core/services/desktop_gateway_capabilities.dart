@@ -18,6 +18,8 @@ enum DesktopGatewayCapability {
   profileAssets,
   profilePets,
   sessionControl,
+  turnSide,
+  turnBranch,
 }
 
 enum DesktopGatewayCapabilityState { unknown, supported, unsupported, invalid }

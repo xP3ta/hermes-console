@@ -59,6 +59,7 @@ import '../models/transcript_privacy_state.dart';
 import '../screens/chat_render_projection.dart';
 import '../utils/assistant_content.dart';
 import '../utils/chat_turn.dart';
+import '../utils/turn_control.dart';
 import 'approval_policy.dart';
 import 'artifact_index.dart';
 import 'attachment_uploader.dart';
@@ -530,9 +531,15 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
   final role = rawRole.trim().toLowerCase();
   final isPrivateTransportRole = role == 'tool';
   final isLocalError = role == 'assistant_error' && retainProjectionState;
+  final isLocalSideAnswer =
+      role == 'system' &&
+      retainProjectionState &&
+      message['_local'] == true &&
+      message['display_kind'] == 'side_answer';
   if (role != 'user' &&
       role != 'assistant' &&
       !isLocalError &&
+      !isLocalSideAnswer &&
       !(retainMediaEvidence && isPrivateTransportRole)) {
     return null;
   }
@@ -673,7 +680,10 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
           rawDisplayKind == 'auto_continue' ||
           rawDisplayKind == 'async_delegation_complete' ||
           rawDisplayKind == 'compression_result' ||
-          rawDisplayKind == 'process_complete'
+          rawDisplayKind == 'process_complete' ||
+          (rawDisplayKind == 'side_answer' &&
+              retainProjectionState &&
+              message['_local'] == true)
       ? rawDisplayKind
       : effectiveUserDisplayKind(normalized);
   if (displayKind == 'model_switch' ||
@@ -689,6 +699,20 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
     if (metadata?.isNotEmpty == true) {
       normalized['display_metadata'] = metadata;
     }
+  } else if (displayKind == 'side_answer') {
+    final raw = message['display_metadata'];
+    final question = raw is Map ? raw['question'] : null;
+    final answer = raw is Map ? raw['answer'] : null;
+    normalized['display_kind'] = displayKind;
+    normalized['display_metadata'] = <String, dynamic>{
+      'kind': raw is Map && raw['kind'] == 'bg' ? 'bg' : 'btw',
+      'question': question is String ? question : '',
+      'answer': answer is String ? answer : content,
+      'is_error': raw is Map && raw['is_error'] == true,
+    };
+    normalized['_local'] = true;
+    final taskId = message['_btwTaskId'];
+    if (taskId is String && taskId.isNotEmpty) normalized['_btwTaskId'] = taskId;
   } else if (displayKind == 'compression_result') {
     final metadata = _compressionResultDisplayMetadata(
       message['display_metadata'],
@@ -1932,6 +1956,7 @@ bool _isKnownLocalTranscriptProjection(
       message['_pipeline'] == true ||
       message['_desktopInterim'] == true ||
       message['_desktopSnapshotKind'] == 'inflight' ||
+      (message['display_kind'] == 'side_answer' && message['_local'] == true) ||
       message[_localCompactedTerminalProjectionKey] != null ||
       message['_cancelled'] == true ||
       message['_cancelledUser'] == true) {
@@ -2896,6 +2921,33 @@ class ActiveTurnDelivery {
     return true;
   }
 
+  /// Stores a new durable queue position for a turn that has not started its
+  /// transport. Used by the panel's move actions, which swap two existing
+  /// orders; a negative order (only ever held in memory after a promote) can
+  /// not be stored and is refused.
+  Future<bool> updateQueueOrder(int queueOrder) => _serializeMutation(() async {
+    if (_discarded ||
+        _transportStarted ||
+        _acknowledged ||
+        queueOrder < 0 ||
+        _current.queueOrder == null) {
+      return false;
+    }
+    if (_current.queueOrder == queueOrder) return true;
+    final next = _current.copyWith(
+      updatedAtMs: _nowMs(),
+      queueOrder: queueOrder,
+    );
+    try {
+      await _store.save(next);
+      _current = next;
+      return true;
+    } catch (_) {
+      _persistenceFailed = true;
+      return false;
+    }
+  });
+
   Future<bool> persistPrepared() => _serializeMutation(() async {
     if (_discarded || _transportStarted || _acknowledged) return false;
     try {
@@ -3498,10 +3550,15 @@ class QueuedEntryView {
     this.stopWaitingAvailable = false,
     this.missingAttachment = false,
     this.persistenceFailed = false,
+    this.sending = false,
   });
 
   final String id;
   final QueuedEntryKind kind;
+
+  /// The drain has taken this row and is sending it: it can be neither edited
+  /// nor moved, and nothing may overtake it.
+  final bool sending;
   final int queueOrder;
   final String text;
   final List<AttachmentDraft> attachments;
@@ -7974,6 +8031,16 @@ class ActiveChat {
   int _queueGeneration = 0;
   int _queueParkGeneration = 0;
   bool _preparedTurnDrainInFlight = false;
+
+  /// Queue id of the head the drain has taken and is still sending. While it
+  /// is set that row cannot be edited, moved or overtaken: the drain removes
+  /// its head by identity once the send settles, so replacing the object or
+  /// putting another row in front of it would send the turn a second time.
+  String? _queueDrainInFlightId;
+
+  /// Queue id the open editor holds. The drain waits on a held head instead of
+  /// sending it, and no other row may overtake it meanwhile.
+  String? _queueEditHeldId;
   bool _queueDrainSuspended = false;
   bool _queueAdmissionFrozen = false;
   QueueLease _queueLease = QueueLease.active;
@@ -8070,6 +8137,7 @@ class ActiveChat {
           kind: QueuedEntryKind.text,
           queueOrder: item.queueOrder,
           text: stripBotMentionNote(item.text),
+          sending: item.id == _queueDrainInFlightId,
         ),
       ),
       ..._preparedTurnQueue.map(
@@ -8089,6 +8157,8 @@ class ActiveChat {
           persistenceFailed: _queuedTurnsNotStored.contains(
             item.turn.clientTurnId,
           ),
+          sending:
+              'prepared:${item.turn.clientTurnId}' == _queueDrainInFlightId,
         ),
       ),
     ]..sort((left, right) => left.queueOrder.compareTo(right.queueOrder));
@@ -14900,6 +14970,28 @@ class ActiveChat {
     );
   }
 
+  /// True while the rows from the oldest one through the edited message are the
+  /// very ones the edit started from.
+  bool _rewriteTargetPrefixIntact(List<Map<String, dynamic>> prefix) {
+    final current = _messages.reversed.toList(growable: false);
+    if (current.length < prefix.length) return false;
+    for (var i = 0; i < prefix.length; i++) {
+      if (!identical(current[i], prefix[i])) return false;
+    }
+    return true;
+  }
+
+  /// The same checks `_send` makes before writing a prompt: a connected socket
+  /// and the runtime the edit was planned against.
+  Future<bool> _proveRewriteAdmission(HermesDesktopGateway gateway) async {
+    try {
+      await gateway.connect().timeout(const Duration(seconds: 5));
+    } catch (_) {
+      return false;
+    }
+    return !_disposed && gateway.isConnected;
+  }
+
   /// Rebobina hasta un prompt visible y lo vuelve a ejecutar. El ordinal usa el
   /// mismo índice de usuarios (0-based, de antiguo a nuevo) que Hermes Desktop.
   /// La conversación visible se recorta de forma optimista; si el transporte
@@ -14954,6 +15046,10 @@ class ActiveChat {
         throw StateError('The message is no longer in this conversation');
       }
       var target = chronological[targetIndex];
+      // Rows from the oldest one up to the target. Tokens of the running turn
+      // only touch rows after it, so an edit survives them; any other change
+      // to this prefix means the message being edited is no longer the same.
+      final targetPrefix = chronological.take(targetIndex + 1).toList();
       final sourceText = (target['content'] ?? '').toString();
       final sourceWasNewestUser =
           userOrdinal == chronological.where(isRealUserTurn).length - 1;
@@ -15008,20 +15104,36 @@ class ActiveChat {
       }
       final truncatesDurably = truncateBeforeRowId != null;
       if (!identical(_activeRewrite, reservation) ||
-          _transcriptRevision != reservation.transcriptRevision ||
           _turnEpoch != reservation.turnEpoch ||
-          _desktopRuntimeSessionId != reservation.runtimeSessionId) {
+          _desktopRuntimeSessionId != reservation.runtimeSessionId ||
+          (_transcriptRevision != reservation.transcriptRevision &&
+              !_rewriteTargetPrefixIntact(targetPrefix))) {
         // Nothing was rewound, but the caller must hear it: a silent return
         // left the editor on "saving" and dropped the edit without a word.
         _rewindRestoredOnError = true;
         return;
       }
+      reservation.transcriptRevision = _transcriptRevision;
       if (truncatesDurably && gateway is! HermesDesktopDurableRewindGateway) {
         throw const TuiGatewayRpcError(
           'prompt.submit',
           'Durable conversation rewind is unavailable',
           code: -32601,
         );
+      }
+
+      // The running reply is only interrupted once the new prompt can be
+      // written: with the socket down the edit fails with the old reply alive.
+      if (isStreaming && runtimeId != null && gateway != null) {
+        final admitted = await _proveRewriteAdmission(gateway);
+        if (!admitted ||
+            !identical(_activeRewrite, reservation) ||
+            _turnEpoch != reservation.turnEpoch ||
+            _desktopRuntimeSessionId != runtimeId) {
+          _rewindRestoredOnError = true;
+          return;
+        }
+        reservation.transcriptRevision = _transcriptRevision;
       }
 
       if (isStreaming) {
@@ -16147,6 +16259,261 @@ class ActiveChat {
       runtimeId,
       command,
     );
+  }
+
+  // ── Side agents (/btw, /bg) ────────────────────────────────────────────
+
+  /// Whether `/btw` and `/bg` may be offered: a writable connection whose
+  /// gateway speaks `prompt.btw` / `prompt.background` and has not answered
+  /// method-not-found.
+  bool get canRunSideAgents {
+    final gateway = _desktopGateway;
+    return !connection.readOnly &&
+        !mutationsBlockedByOwnershipConflict &&
+        gateway is HermesDesktopTurnSideGateway &&
+        !(gateway as HermesDesktopTurnSideGateway).turnSideKnownUnsupported;
+  }
+
+  /// `/btw <question>`: a side question over the live conversation. It never
+  /// queues, never touches the running turn and never acquires a runtime for a
+  /// busy chat; the answer lands as a local row when `btw.complete` arrives.
+  Future<SideCommandOutcome> askSideQuestion(String text) =>
+      _runSideAgent(text, background: false);
+
+  /// `/bg <prompt>`: a detached task on a fresh agent. The result arrives as
+  /// `background.complete` and shows in the background strip.
+  Future<SideCommandOutcome> startBackgroundPrompt(String text) =>
+      _runSideAgent(text, background: true);
+
+  Future<SideCommandOutcome> _runSideAgent(
+    String text, {
+    required bool background,
+  }) async {
+    final prompt = text.trim();
+    if (prompt.isEmpty) return SideCommandOutcome.usage;
+    if (connection.readOnly) return SideCommandOutcome.readOnly;
+    if (_disposed || mutationsBlockedByOwnershipConflict) {
+      return SideCommandOutcome.failed;
+    }
+    final gateway = _desktopGateway;
+    if (gateway is! HermesDesktopTurnSideGateway ||
+        (gateway as HermesDesktopTurnSideGateway).turnSideKnownUnsupported) {
+      return SideCommandOutcome.unsupported;
+    }
+    final side = gateway as HermesDesktopTurnSideGateway;
+    var runtimeId = _desktopRuntimeSessionId;
+    if (runtimeId == null) {
+      // A busy chat without a bound runtime has nothing to snapshot, and
+      // acquiring one now could disturb the running turn: use the slash path.
+      if (isStreaming) return SideCommandOutcome.unsupported;
+      if (!await ensureDesktopRuntime(acquireForExplicitAction: true)) {
+        return SideCommandOutcome.unsupported;
+      }
+      runtimeId = _desktopRuntimeSessionId;
+      if (_disposed || runtimeId == null) return SideCommandOutcome.failed;
+    }
+    try {
+      if (background) {
+        await side.startBackgroundPrompt(runtimeId, prompt);
+      } else {
+        await side.askSideQuestion(runtimeId, prompt);
+      }
+      return SideCommandOutcome.started;
+    } on DesktopControlFailure catch (failure) {
+      return switch (failure.kind) {
+        DesktopControlFailureKind.unsupported => SideCommandOutcome.unsupported,
+        DesktopControlFailureKind.forbidden => SideCommandOutcome.readOnly,
+        _ => SideCommandOutcome.failed,
+      };
+    } catch (_) {
+      return SideCommandOutcome.failed;
+    }
+  }
+
+  /// `btw.complete {task_id, text, question?}` becomes a local system row in
+  /// the Desktop format `[btw "question" (task_id)]` + newline + answer. Like
+  /// Desktop it lives in the session's messages only; a transcript refresh
+  /// keeps it, a reopened chat does not have it.
+  void _applySideQuestionAnswer(Map<String, dynamic> payload) {
+    final taskId = payload['task_id']?.toString().trim() ?? '';
+    final answer = payload['text']?.toString() ?? '';
+    if (taskId.isEmpty || answer.trim().isEmpty) return;
+    final question = payload['question']?.toString().trim() ?? '';
+    final header = question.isEmpty
+        ? '[btw ($taskId)]'
+        : '[btw "$question" ($taskId)]';
+    _insertSideAnswerRow(
+      taskId: taskId,
+      kind: 'btw',
+      content: '$header\n$answer',
+      question: question,
+      answer: answer,
+    );
+  }
+
+  /// `background.complete {task_id, text}` becomes `[bg task_id]` + newline +
+  /// result, next to the existing result strip.
+  void _applyBackgroundAnswer(String taskId, String text) {
+    if (text.trim().isEmpty) return;
+    _insertSideAnswerRow(
+      taskId: taskId,
+      kind: 'bg',
+      content: taskId.isEmpty ? text : '[bg $taskId]\n$text',
+      question: '',
+      answer: text,
+    );
+  }
+
+  void _insertSideAnswerRow({
+    required String taskId,
+    required String kind,
+    required String content,
+    required String question,
+    required String answer,
+  }) {
+    if (taskId.isNotEmpty) {
+      _messages.removeWhere(
+        (message) =>
+            message['_btwTaskId'] == taskId &&
+            (message['display_metadata'] as Map?)?['kind'] == kind,
+      );
+    }
+    _messages.insert(0, <String, dynamic>{
+      'role': 'system',
+      'content': content,
+      'display_kind': 'side_answer',
+      'display_metadata': <String, dynamic>{
+        'kind': kind,
+        'question': question,
+        'answer': answer,
+        'is_error': answer.startsWith('error:'),
+      },
+      '_local': true,
+      if (taskId.isNotEmpty) '_btwTaskId': taskId,
+    });
+    _emit(ActiveChatEvent.backgroundTaskComplete);
+  }
+
+  // ── Branch ─────────────────────────────────────────────────────────────
+
+  bool _branchInFlight = false;
+
+  /// One key per branch attempt. It is kept after a lost response so the retry
+  /// of the same attempt returns the same child, and dropped once the server
+  /// gave a definitive answer.
+  final Map<String, String> _branchKeys = {};
+
+  /// Whether the branch entries may be offered.
+  bool get canBranchChat {
+    final gateway = _desktopGateway;
+    return !connection.readOnly &&
+        gateway is HermesDesktopTurnSideGateway &&
+        !(gateway as HermesDesktopTurnSideGateway).turnBranchKnownUnsupported;
+  }
+
+  /// Forks the live chat into a child chat; the parent stays untouched. With
+  /// [fromMessage] only the rows up to and including it are kept, counted in
+  /// the server's user/assistant row space against the durable transcript.
+  Future<BranchOutcome> branchChat({Map<String, dynamic>? fromMessage}) async {
+    if (connection.readOnly) return const BranchOutcome(BranchStatus.readOnly);
+    if (_disposed) return const BranchOutcome(BranchStatus.failed);
+    if (_branchInFlight) return const BranchOutcome(BranchStatus.inFlight);
+    final gateway = _desktopGateway;
+    if (gateway is! HermesDesktopTurnSideGateway ||
+        (gateway as HermesDesktopTurnSideGateway).turnBranchKnownUnsupported) {
+      return const BranchOutcome(BranchStatus.unsupported);
+    }
+    final side = gateway as HermesDesktopTurnSideGateway;
+    if (isStreaming) return const BranchOutcome(BranchStatus.busy);
+    final runtimeId = _desktopRuntimeSessionId;
+    if (runtimeId == null) return const BranchOutcome(BranchStatus.noRuntime);
+    _branchInFlight = true;
+    try {
+      int? count;
+      if (fromMessage != null) {
+        // Every earlier page first: the count is over the whole history.
+        var guard = 0;
+        while (hasEarlierMessages && guard++ < 200) {
+          if (!await loadEarlierMessages() || _disposed) {
+            return const BranchOutcome(BranchStatus.failed);
+          }
+        }
+        if (hasEarlierMessages) return const BranchOutcome(BranchStatus.failed);
+        if (isStreaming || _desktopRuntimeSessionId != runtimeId) {
+          return const BranchOutcome(BranchStatus.busy);
+        }
+        final position = branchPositionOf(
+          _messages.reversed.toList(growable: false),
+          fromMessage,
+        );
+        if (position == null) {
+          return const BranchOutcome(BranchStatus.targetNotFound);
+        }
+        count = position.isLatest ? null : position.count;
+      }
+      final signature = count == null ? 'whole' : 'count:$count';
+      final key = _branchKeys[signature] ??= newBranchIdempotencyKey();
+      Future<DesktopBranchResult> once() async {
+        if (count == null) {
+          try {
+            return await side.branchWholeSession(
+              runtimeId,
+              idempotencyKey: key,
+            );
+          } on DesktopControlFailure catch (failure) {
+            if (failure.kind != DesktopControlFailureKind.unsupported ||
+                failure.code != -32601) {
+              rethrow;
+            }
+            return side.branchSession(runtimeId, idempotencyKey: key);
+          }
+        }
+        return side.branchSession(
+          runtimeId,
+          count: count,
+          idempotencyKey: key,
+        );
+      }
+
+      try {
+        DesktopBranchResult result;
+        try {
+          result = await once();
+        } on DesktopControlFailure catch (failure) {
+          // A lost response may still have created the child: retry the same
+          // attempt once, with the same key, after the socket is back.
+          if (failure.kind != DesktopControlFailureKind.unavailable ||
+              failure.code != null) {
+            rethrow;
+          }
+          await _desktopGateway?.connect();
+          result = await once();
+        }
+        _branchKeys.remove(signature);
+        return BranchOutcome(
+          BranchStatus.opened,
+          storedSessionId: result.storedSessionId,
+          title: result.title,
+          messageCount: result.messageCount,
+        );
+      } on DesktopControlFailure catch (failure) {
+        final ambiguous =
+            failure.kind == DesktopControlFailureKind.unavailable &&
+            failure.code == null;
+        if (!ambiguous) _branchKeys.remove(signature);
+        return BranchOutcome(switch (failure.kind) {
+          DesktopControlFailureKind.unsupported => BranchStatus.unsupported,
+          DesktopControlFailureKind.forbidden => BranchStatus.readOnly,
+          DesktopControlFailureKind.rejected when failure.code == 4008 =>
+            BranchStatus.nothingToBranch,
+          _ => BranchStatus.failed,
+        });
+      } catch (_) {
+        return const BranchOutcome(BranchStatus.failed);
+      }
+    } finally {
+      _branchInFlight = false;
+    }
   }
 
   String get _compressionRestoreProfile => Session.profileOwner(
@@ -20887,14 +21254,22 @@ class ActiveChat {
       _applyDesktopStatusUpdate(payload);
       return;
     }
+    if (event.type == 'btw.complete') {
+      _applySideQuestionAnswer(payload);
+      return;
+    }
     if (event.type == 'background.complete') {
       final taskId = payload['task_id']?.toString().trim() ?? '';
-      if (taskId.isNotEmpty) {
+      final rawText = payload['text']?.toString().trim() ?? '';
+      if (taskId.isEmpty) {
+        // Desktop still keeps the text of an anonymous completion, without a
+        // `[bg …]` header; there is no task to show in the strip or notify.
+        _applyBackgroundAnswer('', rawText);
+      } else {
         _signalAdaptiveRefresh(processes: true);
-        final rawText = payload['text']?.toString() ?? '';
         final isError = rawText.startsWith('error:');
         _backgroundTaskOutcomes[taskId] = (text: rawText, isError: isError);
-        _emit(ActiveChatEvent.backgroundTaskComplete);
+        _applyBackgroundAnswer(taskId, rawText);
         unawaited(
           _notifications
                   ?.backgroundTaskFinished(
@@ -23767,6 +24142,7 @@ class ActiveChat {
 
   bool promoteQueuedTurn(String id) {
     if (mutationsBlockedByOwnershipConflict || _disposed) return false;
+    if (_queueDrainInFlightId != null || _queueEditHeldId != null) return false;
     final occupiedOrders = <int>[
       ..._messageQueue.map((item) => item.queueOrder),
       ..._preparedTurnQueue.map((item) => item.queueOrder),
@@ -23820,10 +24196,218 @@ class ActiveChat {
     return true;
   }
 
+  /// Opening the editor on a queued row holds it: the drain skips a held head
+  /// and waits, so the text being edited is the text that gets sent. Refused
+  /// when the drain already took the row, when its transport started, or when
+  /// it is not in the queue. Pair every successful hold with
+  /// [releaseQueuedTurn].
+  bool holdQueuedTurn(String id) {
+    if (mutationsBlockedByOwnershipConflict ||
+        _disposed ||
+        id == _queueDrainInFlightId ||
+        (_queueEditHeldId != null && _queueEditHeldId != id)) {
+      return false;
+    }
+    final matches = queuedEntries.where((entry) => entry.id == id);
+    if (matches.isEmpty ||
+        matches.first.kind == QueuedEntryKind.desktopAccepted) {
+      return false;
+    }
+    final delivery = _preparedDeliveryFor(id);
+    if (matches.first.kind == QueuedEntryKind.prepared &&
+        (delivery == null ||
+            delivery.transportStarted ||
+            delivery.acknowledged)) {
+      return false;
+    }
+    _queueEditHeldId = id;
+    return true;
+  }
+
+  void releaseQueuedTurn(String id) {
+    if (_queueEditHeldId != id) return;
+    _queueEditHeldId = null;
+    if (!_disposed && !_queueDrainSuspended && !isStreaming) {
+      Timer.run(_drainQueue);
+    }
+  }
+
+  bool _queueMoveInFlight = false;
+
+  /// Swaps the queue position of [id] with the row above ([up]) or below it.
+  /// The two existing `queueOrder` values trade places (no new order is
+  /// minted) and prepared rows store theirs, so the order survives a restart.
+  /// Refused for the head the drain has taken and for any row whose transport
+  /// already started; nothing is changed when a store write fails.
+  Future<bool> moveQueuedTurn(String id, {required bool up}) async {
+    if (mutationsBlockedByOwnershipConflict ||
+        _disposed ||
+        _queueMoveInFlight ||
+        _queueDrainInFlightId != null ||
+        _queueEditHeldId != null) {
+      return false;
+    }
+    final entries = queuedEntries
+        .where((entry) => entry.kind != QueuedEntryKind.desktopAccepted)
+        .toList(growable: false);
+    final index = entries.indexWhere((entry) => entry.id == id);
+    final other = up ? index - 1 : index + 1;
+    if (index < 0 || other < 0 || other >= entries.length) return false;
+    final moved = entries[index];
+    final neighbour = entries[other];
+    final movedDelivery = _preparedDeliveryFor(moved.id);
+    final neighbourDelivery = _preparedDeliveryFor(neighbour.id);
+    if (!_isMovableQueueEntry(moved, movedDelivery) ||
+        !_isMovableQueueEntry(neighbour, neighbourDelivery)) {
+      return false;
+    }
+    _queueMoveInFlight = true;
+    final storedMoved = movedDelivery?.current.queueOrder;
+    final storedNeighbour = neighbourDelivery?.current.queueOrder;
+    try {
+      if (!await _persistOrders(
+        movedDelivery,
+        neighbour.queueOrder,
+        neighbourDelivery,
+        moved.queueOrder,
+      )) {
+        return false;
+      }
+      // The drain may have taken a head while the stores were written.
+      if (_disposed ||
+          _queueDrainInFlightId != null ||
+          !_swapQueueOrders(moved, neighbour)) {
+        await _persistOrders(
+          movedDelivery,
+          storedMoved,
+          neighbourDelivery,
+          storedNeighbour,
+        );
+        return false;
+      }
+      _emit(ActiveChatEvent.queueChanged);
+      return true;
+    } finally {
+      _queueMoveInFlight = false;
+    }
+  }
+
+  /// Stores [first] at [firstOrder] and [second] at [secondOrder] (either may
+  /// be null for a text row, which has nothing stored). Two stored rows trade
+  /// places through a spare order nobody holds, so no crash between the writes
+  /// leaves two rows with the same order: after a restart the queue is always a
+  /// total order. A failed write rolls the earlier ones back the same way.
+  Future<bool> _persistOrders(
+    ActiveTurnDelivery? first,
+    int? firstOrder,
+    ActiveTurnDelivery? second,
+    int? secondOrder,
+  ) async {
+    if (first != null && second != null) {
+      final firstStored = first.current.queueOrder;
+      final secondStored = second.current.queueOrder;
+      if (firstOrder == null ||
+          secondOrder == null ||
+          firstStored == null ||
+          secondStored == null) {
+        return false;
+      }
+      if (!await first.updateQueueOrder(_nextQueueOrder++)) return false;
+      if (!await second.updateQueueOrder(secondOrder)) {
+        await first.updateQueueOrder(firstStored);
+        return false;
+      }
+      if (!await first.updateQueueOrder(firstOrder)) {
+        await second.updateQueueOrder(secondStored);
+        await first.updateQueueOrder(firstStored);
+        return false;
+      }
+      return true;
+    }
+    final single = first ?? second;
+    final order = first != null ? firstOrder : secondOrder;
+    if (single == null) return true;
+    return order != null && await single.updateQueueOrder(order);
+  }
+
+  ActiveTurnDelivery? _preparedDeliveryFor(String id) {
+    if (!id.startsWith('prepared:')) return null;
+    final clientTurnId = id.substring('prepared:'.length);
+    for (final item in _preparedTurnQueue) {
+      if (item.turn.clientTurnId == clientTurnId) return item.delivery;
+    }
+    return null;
+  }
+
+  bool _isMovableQueueEntry(
+    QueuedEntryView entry,
+    ActiveTurnDelivery? delivery,
+  ) {
+    if (entry.kind == QueuedEntryKind.text) return true;
+    if (delivery == null) return false;
+    final clientTurnId = delivery.current.clientTurnId;
+    return !delivery.transportStarted &&
+        !delivery.acknowledged &&
+        !delivery.discarded &&
+        _preparedTurnOwners[clientTurnId]?.state ==
+            _PreparedTurnOwnershipState.queued &&
+        !_preparedTurnCancellationsInFlight.contains(clientTurnId);
+  }
+
+  /// Trades the two orders in memory. Returns false, changing nothing, when
+  /// either row left the queue while the stores were written.
+  bool _swapQueueOrders(QueuedEntryView first, QueuedEntryView second) {
+    bool present(QueuedEntryView entry) => entry.kind == QueuedEntryKind.text
+        ? _messageQueue.any((item) => item.id == entry.id)
+        : _preparedTurnQueue.any(
+            (item) => 'prepared:${item.turn.clientTurnId}' == entry.id,
+          );
+    if (!present(first) || !present(second)) return false;
+    final newOrders = {
+      first.id: second.queueOrder,
+      second.id: first.queueOrder,
+    };
+    final texts =
+        _messageQueue
+            .map(
+              (item) => newOrders.containsKey(item.id)
+                  ? _QueuedTextTurn(
+                      item.text,
+                      newOrders[item.id]!,
+                      id: item.id,
+                      allowTransportFallback: item.allowTransportFallback,
+                    )
+                  : item,
+            )
+            .toList()
+          ..sort((left, right) => left.queueOrder.compareTo(right.queueOrder));
+    final prepared =
+        _preparedTurnQueue.map((item) {
+            final order = newOrders['prepared:${item.turn.clientTurnId}'];
+            if (order == null) return item;
+            final owner = _preparedTurnOwners[item.turn.clientTurnId];
+            if (owner != null) owner.queueOrder = order;
+            return QueuedPreparedTurn(
+              item.delivery,
+              queueOrder: order,
+              allowTransportFallback: item.allowTransportFallback,
+            );
+          }).toList()
+          ..sort((left, right) => left.queueOrder.compareTo(right.queueOrder));
+    _messageQueue
+      ..clear()
+      ..addAll(texts);
+    _preparedTurnQueue
+      ..clear()
+      ..addAll(prepared);
+    return true;
+  }
+
   Future<bool> editQueuedTurn(String id, String text) async {
     if (mutationsBlockedByOwnershipConflict ||
         _disposed ||
-        text.trim().isEmpty) {
+        text.trim().isEmpty ||
+        id == _queueDrainInFlightId) {
       return false;
     }
     final textItems = _messageQueue.toList(growable: false);
@@ -23872,6 +24456,10 @@ class ActiveChat {
     }
     // The drain would re-block it at once: report it instead of pretending.
     if (matches.first.missingAttachment) return false;
+    // The head the drain already took is on its way: nothing to do for it, and
+    // nothing may overtake it.
+    final inFlightId = _queueDrainInFlightId;
+    if (inFlightId != null) return id == inFlightId;
     final preparedId = id.startsWith('prepared:')
         ? id.substring('prepared:'.length)
         : null;
@@ -24030,6 +24618,9 @@ class ActiveChat {
     unawaited(cancelQueuedByIdentity(entries[index].id));
   }
 
+  @visibleForTesting
+  void clearQueueForTesting() => _clearQueue();
+
   void _clearQueue() {
     final hasAcceptedOptimistic = _messages.any(
       (message) => message['_desktopAcceptedQueued'] == true,
@@ -24042,12 +24633,31 @@ class ActiveChat {
       return;
     }
     _queueGeneration++;
+    _queueEditHeldId = null;
     _messageQueue.clear();
     final prepared = _preparedTurnQueue.toList(growable: false);
     _preparedTurnQueue.clear();
     _blockedPreparedTurnId = null;
     for (final item in prepared) {
-      unawaited(item.delivery.discardPrepared());
+      // A row whose transport started may already be running on the server:
+      // retiring it here would hide it only until the outbox restores it.
+      // It stays visible and keeps its "Stop waiting" action.
+      if (item.delivery.transportStarted || item.delivery.acknowledged) {
+        _preparedTurnQueue.addLast(item);
+        continue;
+      }
+      unawaited(
+        item.delivery.discardPrepared().then((discarded) {
+          if (discarded || _disposed) return;
+          // The store refused the delete (or the transport started meanwhile):
+          // the row is still durable, so it must stay visible.
+          if (_preparedTurnQueue.any((queued) => identical(queued, item))) {
+            return;
+          }
+          _insertPreparedTurnByOrder(item);
+          _emit(ActiveChatEvent.queueChanged);
+        }),
+      );
     }
     _desktopAcceptedQueuedPrompt = null;
     _messages.removeWhere(
@@ -24285,6 +24895,7 @@ class ActiveChat {
     if (preparedComesFirst) {
       final next = _preparedTurnQueue.first;
       if (_queuedRetriesExhausted.contains(next.turn.clientTurnId)) return;
+      if (_queueEditHeldId == 'prepared:${next.turn.clientTurnId}') return;
       final owner = _preparedTurnOwners[next.turn.clientTurnId];
       if (owner?.state == _PreparedTurnOwnershipState.cancelling ||
           _blockedPreparedTurnId == next.turn.clientTurnId ||
@@ -24315,6 +24926,7 @@ class ActiveChat {
         return;
       }
       _preparedTurnDrainInFlight = true;
+      _queueDrainInFlightId = 'prepared:${turn.clientTurnId}';
       try {
         final accepted = await send(
           fullText: turn.fullText,
@@ -24346,17 +24958,20 @@ class ActiveChat {
         }
       } finally {
         _preparedTurnDrainInFlight = false;
+        _queueDrainInFlightId = null;
       }
       return;
     }
     if (_messageQueue.isEmpty) return;
     final next = _messageQueue.first;
     if (_queuedRetriesExhausted.contains(next.id)) return;
+    if (_queueEditHeldId == next.id) return;
     // La rama prepared ya se serializa con esta misma bandera. La de texto no
     // lo hacía: `send()` tarda varios `await` en publicar `connecting`, así que
     // dos drenajes solapados (terminal, retry, park levantado, inventario
     // pasivo) podían leer la misma cabeza y enviarla dos veces.
     _preparedTurnDrainInFlight = true;
+    _queueDrainInFlightId = next.id;
     final bool accepted;
     try {
       accepted = await send(
@@ -24370,6 +24985,7 @@ class ActiveChat {
       );
     } finally {
       _preparedTurnDrainInFlight = false;
+      _queueDrainInFlightId = null;
     }
     if (_messageQueue.isEmpty || !identical(_messageQueue.first, next)) {
       return;

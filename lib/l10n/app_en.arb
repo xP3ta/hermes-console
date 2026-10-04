@@ -7367,7 +7367,7 @@
   "cq1215QueuedUntilCompacted": "Message queued: it will be sent when the compaction finishes.",
   "cq1215CommandWaitsForCompaction": "Commands wait until the compaction finishes. Normal messages are queued.",
   "cq1215QueueParkedAfterCompaction": "paused: the compaction did not finish",
-  "qp1215QueueNotStored": "This phone could not store it safely, so it was not sent. It stays in the queue: tap Send next to try again.",
+  "qp1215QueueNotStored": "This phone could not store it safely, so it was not sent. It stays in the queue: retry it from its row.",
 "tp1216PillCompacting": "Compacting…",
   "tp1216PillCompacted": "Compacted",
   "tp1216PillNothingToCompact": "No changes",
@@ -7720,5 +7720,57 @@
   "profileSwitcherHint": "Switch profile",
   "profileSwitcherBody": "Each profile has its own chats, memory, SOUL, skills and model.",
   "profileSwitcherLoadFailed": "Couldn't load the profiles. Tap to retry.",
-  "profileSwitcherManage": "Manage profiles"
+  "profileSwitcherManage": "Manage profiles",
+  "tc1215SlashDescBtw": "Ask a side question without interrupting",
+  "tc1215SlashArgBtw": "<question>",
+  "tc1215SlashDescBg": "Run a task in the background",
+  "tc1215SlashArgBg": "<task>",
+  "tc1215SlashDescBranch": "Branch this chat into a new one",
+  "tc1215BtwUsage": "Usage: /btw <question>",
+  "tc1215BgUsage": "Usage: /bg <task>",
+  "tc1215BgStarted": "Background task started",
+  "tc1215BtwStarted": "Question sent",
+  "tc1215SideFailed": "Could not send that. Try again.",
+  "tc1215QueueMoveUp": "Move up",
+  "tc1215QueueMoveDown": "Move down",
+  "tc1215QueueMoveFailed": "The message could not be moved.",
+  "tc1215QueueSending": "Sending…",
+  "tc1215QueueStopAndSend": "Stop and send now",
+  "tc1215QueueStopAndSendTitle": "Stop the reply?",
+  "tc1215QueueStopAndSendBody": "This will stop the current reply and send this message now.",
+  "tc1215EditStopsReplyTitle": "Stop the reply?",
+  "tc1215EditStopsReplyBody": "This will stop the current reply.",
+  "tc1215EditStopsReplyConfirm": "Stop",
+  "tc1215BranchFromHere": "Branch from here",
+  "tc1215BranchChat": "Branch chat",
+  "tc1215BranchStopFirst": "Stop the current reply first.",
+  "tc1215BranchNoRuntime": "This chat is not live right now.",
+  "tc1215BranchNothing": "Nothing to branch yet",
+  "tc1215BranchTargetMissing": "That message was not found in the saved history.",
+  "tc1215BranchFailed": "The chat could not be branched.",
+  "tc1215BtwAnswerNoQuestion": "btw",
+  "tc1215EditLaterTurns": "{count, plural, one {The later turn will be removed} other {The {count} later turns will be removed}}",
+  "@tc1215EditLaterTurns": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "tc1215BgAnswerTitle": "bg {taskId}",
+  "@tc1215BgAnswerTitle": {
+    "placeholders": {
+      "taskId": {
+        "type": "String"
+      }
+    }
+  },
+  "tc1215BtwAnswerTitle": "btw \"{question}\"",
+  "@tc1215BtwAnswerTitle": {
+    "placeholders": {
+      "question": {
+        "type": "String"
+      }
+    }
+  }
 }

@@ -406,4 +406,89 @@ void main() {
     expect(await open.abandonUncertain(), isTrue);
     expect(store.rows.values.map((t) => t.clientTurnId), ['A']);
   });
+
+  for (final uncertainState in <PreparedTurnState>[
+    PreparedTurnState.submitting,
+    PreparedTurnState.ambiguous,
+  ]) {
+    testWidgets(
+      'reconnect mid-drain: a restored $uncertainState head is never resent '
+      'and holds the queue after Resume',
+      (tester) async {
+        final gateway = _RecoveryGateway(
+          const DesktopTurnStatus(known: false, clientTurnId: 'A'),
+        );
+        final chat = _chat(gateway: gateway);
+        addTearDown(chat.dispose);
+        final store = _MemoryOutbox();
+        final head = _ordered('A', uncertainState, 10);
+        final follower = _ordered('B', PreparedTurnState.prepared, 11);
+        await store.save(head);
+        await store.save(follower);
+        await chat.restoreQueuedTurns(
+          [head, follower],
+          store,
+          scheduleDrain: true,
+        );
+
+        // The queue of an earlier process comes back paused and sends nothing.
+        expect(chat.queueParked, isTrue);
+        for (var i = 0; i < 10; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        expect(gateway.submitted, isEmpty);
+
+        // Resume must not turn the uncertain head into a fresh send: the
+        // server may already have it, so it blocks B until the user decides.
+        expect(chat.resumeParkedQueue(), isTrue);
+        for (var i = 0; i < 20; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        expect(gateway.submitted, isEmpty);
+        expect(_queuedIds(chat), ['A', 'B']);
+
+        expect(await chat.abandonUncertainQueuedTurn('prepared:A'), isTrue);
+        for (var i = 0; i < 50 && gateway.submitted.isEmpty; i++) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+        expect(gateway.submitted, ['B']);
+        await _settle(tester, chat);
+      },
+    );
+  }
+
+  testWidgets('a restored accepted row offers Stop waiting, paused, and the '
+      'next prepared row sends once after abandon and Resume', (tester) async {
+    final gateway = _RecoveryGateway(
+      const DesktopTurnStatus(known: false, clientTurnId: 'A'),
+    );
+    final chat = _chat(gateway: gateway);
+    addTearDown(chat.dispose);
+    final store = _MemoryOutbox();
+    final head = _ordered('A', PreparedTurnState.accepted, 1);
+    final follower = _ordered('B', PreparedTurnState.prepared, 2);
+    await store.save(head);
+    await store.save(follower);
+    await chat.restoreQueuedTurns([head, follower], store, scheduleDrain: true);
+
+    expect(chat.queueParked, isTrue);
+    final a = chat.queuedEntries.singleWhere((e) => e.id == 'prepared:A');
+    final b = chat.queuedEntries.singleWhere((e) => e.id == 'prepared:B');
+    expect(a.stopWaitingAvailable, isTrue);
+    expect(b.stopWaitingAvailable, isFalse);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(gateway.submitted, isEmpty);
+
+    expect(await chat.abandonUncertainQueuedTurn('prepared:A'), isTrue);
+    // Abandoning does not resume a paused queue.
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(gateway.submitted, isEmpty);
+
+    expect(chat.resumeParkedQueue(), isTrue);
+    for (var i = 0; i < 50 && gateway.submitted.isEmpty; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(gateway.submitted, ['B']);
+    await _settle(tester, chat);
+  });
 }

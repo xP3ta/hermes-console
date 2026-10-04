@@ -261,6 +261,20 @@ final Map<String, _Effect> _handled = {
     );
     return _emits(emitted, ActiveChatEvent.backgroundTaskComplete, label);
   }),
+  'btw.complete': _Effect((chat, payload, emitted, label) {
+    final taskId = payload['task_id'];
+    if (!_nonEmpty(taskId) || !_nonEmpty(payload['text'])) return false;
+    expect(
+      chat.messages.any(
+        (message) =>
+            message['display_kind'] == 'side_answer' &&
+            message['_btwTaskId'] == (taskId as String).trim(),
+      ),
+      isTrue,
+      reason: label,
+    );
+    return _emits(emitted, ActiveChatEvent.backgroundTaskComplete, label);
+  }),
   'agent.terminal.output': _emitsAlways(ActiveChatEvent.subagentActivity),
   'terminal.close': _emitsAlways(ActiveChatEvent.subagentActivity),
   for (final type in const [
@@ -298,7 +312,6 @@ const Map<String, String> _ignored = {
   'connection.request': 'connector OAuth runs on Desktop',
   'connection.update': 'connector OAuth runs on Desktop',
   'bot_relay.outbox.pending': 'bot relay is a gateway-side queue',
-  'btw.complete': 'side-question answers are rendered by Desktop only',
   'message.reaction': 'reactions are not rendered by Console',
   'reaction': 'reactions are not rendered by Console',
   'review.summary': 'review panes are Desktop-only',

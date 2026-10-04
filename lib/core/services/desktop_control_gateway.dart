@@ -194,6 +194,61 @@ abstract class HermesProjectFileWritesGateway {
   Future<void> deleteProjectEntry(String path);
 }
 
+/// The child chat `session.branch` / `session.branch_whole` created. Only the
+/// identity travels: the child chat loads its own transcript when opened.
+final class DesktopBranchResult {
+  final String runtimeSessionId;
+  final String storedSessionId;
+  final String title;
+  final int messageCount;
+
+  const DesktopBranchResult({
+    required this.runtimeSessionId,
+    required this.storedSessionId,
+    required this.title,
+    required this.messageCount,
+  });
+}
+
+/// Side agents and live branching, as Hermes Desktop issues them:
+/// `prompt.btw`, `prompt.background`, `session.branch` and
+/// `session.branch_whole`. Optional, so legacy fakes and servers keep working;
+/// a method-not-found answer turns the matching `*KnownUnsupported` flag on
+/// and the entries that need it disappear.
+abstract class HermesDesktopTurnSideGateway {
+  /// `prompt.btw` / `prompt.background` answered `-32601` on this connection.
+  bool get turnSideKnownUnsupported;
+
+  /// `session.branch` answered `-32601` on this connection.
+  bool get turnBranchKnownUnsupported;
+
+  /// `prompt.btw {session_id, text}`: a side question over a snapshot of the
+  /// live conversation. Safe while a turn runs; the answer arrives later as
+  /// `btw.complete`. Returns the task id.
+  Future<String> askSideQuestion(String runtimeSessionId, String text);
+
+  /// `prompt.background {session_id, text}`: a detached task on a fresh agent;
+  /// the answer arrives as `background.complete`. Returns the task id.
+  Future<String> startBackgroundPrompt(String runtimeSessionId, String text);
+
+  /// `session.branch`: forks the live session into a new stored child keeping
+  /// the first [count] user/assistant rows (all of them when null). The same
+  /// [idempotencyKey] returns the same child.
+  Future<DesktopBranchResult> branchSession(
+    String runtimeSessionId, {
+    int? count,
+    String? name,
+    required String idempotencyKey,
+  });
+
+  /// `session.branch_whole`: [branchSession] of the whole history.
+  Future<DesktopBranchResult> branchWholeSession(
+    String runtimeSessionId, {
+    String? name,
+    required String idempotencyKey,
+  });
+}
+
 abstract class HermesDesktopSessionControlGateway {
   Future<SessionControlSnapshot> readSessionControl(String runtimeSessionId);
 

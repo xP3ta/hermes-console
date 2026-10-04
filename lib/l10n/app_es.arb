@@ -8891,7 +8891,7 @@
   "cq1215QueuedUntilCompacted": "Mensaje en cola: se enviará cuando termine la compactación.",
   "cq1215CommandWaitsForCompaction": "Los comandos esperan a que termine la compactación. Los mensajes normales se ponen en cola.",
   "cq1215QueueParkedAfterCompaction": "en pausa: la compactación no terminó",
-  "qp1215QueueNotStored": "No se ha podido guardar de forma segura en este móvil y no se ha enviado. Sigue en la cola: pulsa Enviar siguiente para reintentarlo.",
+  "qp1215QueueNotStored": "No se ha podido guardar de forma segura en este móvil y no se ha enviado. Sigue en la cola: reinténtalo desde su fila.",
 "tp1216PillCompacting": "Compactando…",
   "@tp1216PillCompacting": {
     "description": "Short label in the context pill under the composer while the conversation is being compacted."
@@ -9405,5 +9405,57 @@
   "profileSwitcherHint": "Cambiar de perfil",
   "profileSwitcherBody": "Cada perfil tiene sus propios chats, memoria, SOUL, skills y modelo.",
   "profileSwitcherLoadFailed": "No se pudieron cargar los perfiles. Toca para reintentar.",
-  "profileSwitcherManage": "Gestionar perfiles"
+  "profileSwitcherManage": "Gestionar perfiles",
+  "tc1215SlashDescBtw": "Pregunta algo sin interrumpir la respuesta",
+  "tc1215SlashArgBtw": "<pregunta>",
+  "tc1215SlashDescBg": "Lanza una tarea en segundo plano",
+  "tc1215SlashArgBg": "<tarea>",
+  "tc1215SlashDescBranch": "Ramifica este chat en uno nuevo",
+  "tc1215BtwUsage": "Uso: /btw <pregunta>",
+  "tc1215BgUsage": "Uso: /bg <tarea>",
+  "tc1215BgStarted": "Tarea en segundo plano iniciada",
+  "tc1215BtwStarted": "Pregunta enviada",
+  "tc1215SideFailed": "No se pudo enviar. Inténtalo de nuevo.",
+  "tc1215QueueMoveUp": "Subir",
+  "tc1215QueueMoveDown": "Bajar",
+  "tc1215QueueMoveFailed": "No se pudo mover el mensaje.",
+  "tc1215QueueSending": "Enviando…",
+  "tc1215QueueStopAndSend": "Detener y enviar ahora",
+  "tc1215QueueStopAndSendTitle": "¿Detener la respuesta?",
+  "tc1215QueueStopAndSendBody": "Esto detendrá la respuesta en curso y enviará este mensaje ahora.",
+  "tc1215EditStopsReplyTitle": "¿Detener la respuesta?",
+  "tc1215EditStopsReplyBody": "Esto detendrá la respuesta en curso.",
+  "tc1215EditStopsReplyConfirm": "Parar",
+  "tc1215BranchFromHere": "Ramificar desde aquí",
+  "tc1215BranchChat": "Ramificar chat",
+  "tc1215BranchStopFirst": "Detén primero la respuesta en curso.",
+  "tc1215BranchNoRuntime": "Este chat no está activo ahora mismo.",
+  "tc1215BranchNothing": "Aún no hay nada que ramificar",
+  "tc1215BranchTargetMissing": "No se encontró ese mensaje en el historial guardado.",
+  "tc1215BranchFailed": "No se pudo ramificar el chat.",
+  "tc1215BtwAnswerNoQuestion": "btw",
+  "tc1215EditLaterTurns": "{count, plural, one {Se borrará la respuesta posterior} other {Se borrarán las {count} respuestas posteriores}}",
+  "@tc1215EditLaterTurns": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "tc1215BgAnswerTitle": "bg {taskId}",
+  "@tc1215BgAnswerTitle": {
+    "placeholders": {
+      "taskId": {
+        "type": "String"
+      }
+    }
+  },
+  "tc1215BtwAnswerTitle": "btw \"{question}\"",
+  "@tc1215BtwAnswerTitle": {
+    "placeholders": {
+      "question": {
+        "type": "String"
+      }
+    }
+  }
 }
