@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -1179,6 +1180,264 @@ void main() {
         'value': TerminalReadResponsePolicy.noOwnedTerminalText,
       });
       expect(answersTo(id), hasLength(1));
+    });
+
+    bool hasPrompt(ActiveChat chat, String id) => chat
+        .interactivePrompts
+        .entries
+        .values
+        .any((entry) => entry.key.requestId == id && entry.needsInput);
+
+    /// Frames are handled in order: once this question shows, every frame
+    /// pushed before it has been processed.
+    Future<void> clarifyBarrier(ActiveChat chat, String id) async {
+      gateway.pushServerRequest(id, 'clarify', {
+        'question': 'Otra?',
+        'choices': ['si', 'no'],
+      });
+      await _eventually(() => hasPrompt(chat, id));
+    }
+
+    test('a bare approval choice that Hermes then settles with request.cancel '
+        'stays closed after a drop and a stale resume', () async {
+      const srq = 'srq-cancelappr01';
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _clientFor(gateway);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushServerRequest(srq, 'approval', approvalParams);
+      await _eventually(() => chat.pendingApproval != null);
+      await chat.resolveApproval('once');
+      await gateway.nextFrame((frame) => frame['id'] == srq);
+      // Hermes had already settled the request elsewhere and says so.
+      gateway.pushSessionEvent('request.cancel', {
+        'id': srq,
+        'method': 'approval',
+        'reason': 'resolved',
+      });
+      await clarifyBarrier(chat, 'srq-barrier00001');
+
+      gateway.resumeResult = (_) =>
+          waiting([openApproval(srq), _openClarify('srq-nextquest001')]);
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+      await gateway.sockets.single.close(1001);
+      await awaitReattach(chat, resumesBefore);
+      await _eventually(() => hasPrompt(chat, 'srq-nextquest001'));
+      expect(chat.pendingApproval, isNull);
+      expect(answersTo(srq), hasLength(1));
+    });
+
+    test('an approval another client settled closes the card and never '
+        'reopens from a stale replay, before or after a drop', () async {
+      const srq = 'srq-elsewhere002';
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _clientFor(gateway);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushServerRequest(srq, 'approval', approvalParams);
+      await _eventually(() => chat.pendingApproval != null);
+
+      gateway.pushSessionEvent('request.cancel', {
+        'id': srq,
+        'method': 'approval',
+        'reason': 'resolved',
+      });
+      await clarifyBarrier(chat, 'srq-barrier00001');
+      expect(chat.pendingApproval, isNull);
+
+      // A replay computed before the settlement, on the same socket.
+      gateway.pushSessionEvent('approval.request', approvalParams);
+      await clarifyBarrier(chat, 'srq-barrier00002');
+      expect(chat.pendingApproval, isNull);
+
+      gateway.resumeResult = (_) =>
+          waiting([openApproval(srq), _openClarify('srq-nextquest001')]);
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+      await gateway.sockets.single.close(1001);
+      await awaitReattach(chat, resumesBefore);
+      await _eventually(() => hasPrompt(chat, 'srq-nextquest001'));
+      expect(chat.pendingApproval, isNull);
+      expect(answersTo(srq), isEmpty);
+      expect(gateway.rpcCalls('approval.respond'), isEmpty);
+    });
+
+    test('a request.cancel that lands before the outcome of a bare approval '
+        'choice keeps it closed after a drop and a stale resume', () async {
+      const srq = 'srq-cancelfirst1';
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _GatedClient(
+        _connectionFor(gateway),
+        dashboard: _TicketDashboardClient(),
+      );
+      addTearDown(client.close);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushServerRequest(srq, 'approval', approvalParams);
+      await _eventually(() => chat.pendingApproval != null);
+      final outcomeGate = client.approvalOutcomeGate = Completer<void>();
+      final choice = chat.resolveApproval('once');
+      await gateway.nextFrame((frame) => frame['id'] == srq);
+      gateway.pushSessionEvent('request.cancel', {
+        'id': srq,
+        'method': 'approval',
+        'reason': 'resolved',
+      });
+      await clarifyBarrier(chat, 'srq-barrier00001');
+      client.approvalOutcomeGate = null;
+      outcomeGate.complete();
+      await choice;
+
+      gateway.resumeResult = (_) =>
+          waiting([openApproval(srq), _openClarify('srq-nextquest001')]);
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+      await gateway.sockets.single.close(1001);
+      await awaitReattach(chat, resumesBefore);
+      await _eventually(() => hasPrompt(chat, 'srq-nextquest001'));
+      expect(chat.pendingApproval, isNull);
+      expect(answersTo(srq), hasLength(1));
+    });
+
+    test('an approval answer whose outcome lands after its turn ended does '
+        'not hide the same id in the next turn', () async {
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _GatedClient(
+        _connectionFor(gateway),
+        dashboard: _TicketDashboardClient(),
+      );
+      addTearDown(client.close);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushSessionEvent('approval.request', approvalParams);
+      await _eventually(() => chat.pendingApproval != null);
+      final outcomeGate = client.approvalOutcomeGate = Completer<void>();
+      final choice = chat.resolveApproval('once');
+      await gateway.nextFrame((frame) => frame['method'] == 'approval.respond');
+
+      gateway.pushSessionEvent('message.complete', {
+        'text': 'done',
+        'status': 'complete',
+      });
+      await _eventually(() => !chat.isStreaming);
+      chat.beginExternallyObservedDesktopTurnForTesting(
+        const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-1',
+          storedSessionId: 'stored-1',
+          created: false,
+          running: true,
+        ),
+      );
+      client.approvalOutcomeGate = null;
+      outcomeGate.complete();
+      await choice;
+
+      gateway.pushSessionEvent('approval.request', approvalParams);
+      await clarifyBarrier(chat, 'srq-barrier00001');
+      expect(chat.pendingApproval?['request_id'], 'appr-lost000001');
+    });
+
+    test('a request.cancel for an approval answered by a response frame names '
+        'the approval; only the latest answers are remembered', () async {
+      final client = _clientFor(gateway);
+      final requests = <String>[];
+      final settled = <String>[];
+      final subscription = client.events.listen((event) {
+        if (event.type == 'approval.request') {
+          requests.add(event.payload['request_id'] as String);
+        } else if (event.type == 'approval.responded') {
+          settled.add(event.payload['request_id'] as String);
+        }
+      }, onError: (Object _) {});
+      addTearDown(subscription.cancel);
+      await client.connect();
+      String srq(int i) => 'srq-cap${i.toString().padLeft(9, '0')}';
+      String appr(int i) => 'appr-cap$i';
+      const answered = 33;
+      for (var i = 0; i < answered; i++) {
+        gateway.pushServerRequest(srq(i), 'approval', {
+          ...approvalParams,
+          'request_id': appr(i),
+        });
+      }
+      await _eventually(() => requests.length == answered);
+      for (var i = 0; i < answered; i++) {
+        final result = await client.resolveApprovalChecked(
+          'runtime-1',
+          'once',
+          requestId: appr(i),
+        );
+        expect(result.deliveryAcknowledged, isFalse);
+      }
+      for (final i in const [0, answered - 1]) {
+        gateway.pushSessionEvent('request.cancel', {
+          'id': srq(i),
+          'method': 'approval',
+          'reason': 'resolved',
+        });
+      }
+      await _eventually(() => settled.length == 2);
+      // The oldest answer fell out of the bounded memory; the latest still
+      // maps its frame back to the approval.
+      expect(settled, [srq(0), appr(answered - 1)]);
+    });
+
+    test('an approval id answered in one turn is shown again when a later '
+        'turn asks with the same id', () async {
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _clientFor(gateway);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushSessionEvent('approval.request', approvalParams);
+      await _eventually(() => chat.pendingApproval != null);
+      await chat.resolveApproval('once');
+      expect(gateway.rpcCalls('approval.respond'), hasLength(1));
+      expect(chat.pendingApproval, isNull);
+
+      gateway.pushSessionEvent('message.complete', {
+        'text': 'done',
+        'status': 'complete',
+      });
+      await _eventually(() => !chat.isStreaming);
+      chat.beginExternallyObservedDesktopTurnForTesting(
+        const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-1',
+          storedSessionId: 'stored-1',
+          created: false,
+          running: true,
+        ),
+      );
+      gateway.pushSessionEvent('approval.request', approvalParams);
+      await clarifyBarrier(chat, 'srq-barrier00001');
+      expect(chat.pendingApproval?['request_id'], 'appr-lost000001');
     });
   });
 }

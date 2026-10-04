@@ -1479,6 +1479,12 @@ class TuiGatewayClient
   final Map<String, _OpenServerRequest> _openServerRequests = {};
   // Approval queue `request_id` → JSON-RPC server request id (`srq-…`).
   final Map<String, String> _approvalServerRequestIds = {};
+  // Server request id → approval `request_id` of approvals this socket
+  // answered by a bare response frame. Hermes may still withdraw one it had
+  // settled first; its `request.cancel` must name the approval, not the frame.
+  // That race is immediate, so only the latest answers are kept.
+  final Map<String, String> _answeredApprovalServerRequestIds = {};
+  static const _answeredApprovalServerRequestLimit = 32;
   int _nextId = 1;
   bool _connected = false;
   bool _closed = false;
@@ -2194,6 +2200,7 @@ class TuiGatewayClient
     if (method is! String) return event;
     var requestId = id;
     if (method == 'approval') {
+      requestId = _answeredApprovalServerRequestIds.remove(id) ?? id;
       for (final entry in _approvalServerRequestIds.entries) {
         if (entry.value == id) {
           requestId = entry.key;
@@ -2228,6 +2235,15 @@ class TuiGatewayClient
         'reason': event.payload['reason'],
       }),
     );
+  }
+
+  void _rememberAnsweredApproval(String serverRequestId, String requestId) {
+    final answered = _answeredApprovalServerRequestIds
+      ..remove(serverRequestId)
+      ..[serverRequestId] = requestId;
+    while (answered.length > _answeredApprovalServerRequestLimit) {
+      answered.remove(answered.keys.first);
+    }
   }
 
   /// Answers an open server request over the socket it arrived on. False when
@@ -2314,6 +2330,7 @@ class TuiGatewayClient
     _pending.clear();
     _openServerRequests.clear();
     _approvalServerRequestIds.clear();
+    _answeredApprovalServerRequestIds.clear();
     if (wasConnected && !_events.isClosed) {
       _events.addError(
         TuiGatewayRpcError(
@@ -2943,6 +2960,7 @@ class TuiGatewayClient
     _pending.clear();
     _openServerRequests.clear();
     _approvalServerRequestIds.clear();
+    _answeredApprovalServerRequestIds.clear();
   }
 
   Future<Map<String, dynamic>> _request(
@@ -7416,6 +7434,7 @@ class TuiGatewayClient
             if (resolveAll) 'all': true,
           })) {
         _approvalServerRequestIds.remove(requestId);
+        _rememberAnsweredApproval(serverRequestId, requestId);
         return;
       }
     } else if (resolveAll) {
@@ -7464,6 +7483,7 @@ class TuiGatewayClient
       // The response frame is the first-wins answer by construction: it can
       // only settle the request it was minted for.
       _approvalServerRequestIds.remove(request);
+      _rememberAnsweredApproval(serverRequestId, request);
       return const DesktopApprovalResult(
         resolved: 1,
         deliveryAcknowledged: false,

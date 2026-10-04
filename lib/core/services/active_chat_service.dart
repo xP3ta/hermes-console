@@ -4783,15 +4783,17 @@ class ActiveChat {
   /// outcome lands after a loss cannot tell whether Hermes read it.
   int _desktopTransportLosses = 0;
 
-  /// Approval request ids already answered with `resolved: 1`. A replay of
-  /// one of them (stale snapshot, `open_requests` racing the answer) must not
-  /// bring the card back and invite a second answer.
-  final Set<String> _answeredApprovalRequestIds = <String>{};
-
-  /// The subset of [_answeredApprovalRequestIds] answered by a bare response
-  /// frame. A transport loss forgets them: the resume decides whether Hermes
-  /// read the choice (no longer listed) or still waits on it (re-offered).
-  final Set<String> _unacknowledgedApprovalRequestIds = <String>{};
+  /// Approval request ids settled in [_settledApprovalsTurnEpoch] (answered
+  /// here with `resolved: 1`, or withdrawn by Hermes with `request.cancel`),
+  /// mapped to whether Hermes acknowledged the settlement. A replay of one
+  /// (stale snapshot, `open_requests` racing the answer) must not bring the
+  /// card back and invite a second answer. A choice sent as a bare response
+  /// frame stays unacknowledged until Hermes confirms it; a transport loss
+  /// forgets those, and the resume decides whether Hermes read the choice (no
+  /// longer listed) or still waits on it (re-offered). Entries hold only for
+  /// the turn they were settled in: a later turn may reuse an id.
+  final Map<String, bool> _settledApprovals = <String, bool>{};
+  int _settledApprovalsTurnEpoch = 0;
   final Map<InteractivePromptKey, Future<DesktopPromptResponse>> _batchLocks =
       {};
   SubagentActivityState? _subagentActivities;
@@ -18743,10 +18745,7 @@ class ActiveChat {
           );
         }
         _unacknowledgedPromptAnswers.clear();
-        _answeredApprovalRequestIds.removeAll(
-          _unacknowledgedApprovalRequestIds,
-        );
-        _unacknowledgedApprovalRequestIds.clear();
+        _settledApprovals.removeWhere((_, acknowledged) => !acknowledged);
         _usingDesktopGateway = false;
         _retireDesktopRuntime(reason: _RuntimeRetirement.transportLoss);
         // The retirement moved the bind/session epochs, so an automatic
@@ -21168,6 +21167,8 @@ class ActiveChat {
       case 'approval.request':
         _flushTokenBuffer();
         _handleApprovalRequest(payload);
+      case 'approval.responded':
+        _handleDesktopApprovalSettled(payload);
       case 'message.complete':
         _clearDesktopCompactingIndicator();
         final completeText = payload['text'] ?? payload['rendered'];
@@ -24795,8 +24796,8 @@ class ActiveChat {
   void _handleApprovalRequest(Map<String, dynamic> event) {
     final answeredId = _approvalRequestId(event);
     if (answeredId != null &&
-        _answeredApprovalRequestIds.contains(answeredId)) {
-      // Already answered: a replay must not reopen the card.
+        _currentTurnSettledApprovals.containsKey(answeredId)) {
+      // Already settled: a replay must not reopen the card.
       return;
     }
     // User input may legitimately take longer than the transport watchdog.
@@ -24893,6 +24894,34 @@ class ActiveChat {
     return _resolveApprovalRequest(choice, approval);
   }
 
+  Map<String, bool> get _currentTurnSettledApprovals {
+    if (_settledApprovalsTurnEpoch != _turnEpoch) {
+      _settledApprovals.clear();
+      _settledApprovalsTurnEpoch = _turnEpoch;
+    }
+    return _settledApprovals;
+  }
+
+  void _recordSettledApproval(String requestId, {required bool acknowledged}) {
+    final settled = _currentTurnSettledApprovals;
+    settled[requestId] = acknowledged || (settled[requestId] ?? false);
+  }
+
+  /// Hermes settled an approval (`request.cancel`, adapted by the client):
+  /// answered on any surface, timed out or interrupted. Its card closes, and
+  /// a replay of it stays closed for this turn, even after a drop.
+  void _handleDesktopApprovalSettled(Map<String, dynamic> payload) {
+    final settledId = _approvalRequestId(payload);
+    if (settledId == null) return;
+    _recordSettledApproval(settledId, acknowledged: true);
+    final approval = pendingApproval;
+    if (approval == null || _approvalRequestId(approval) != settledId) return;
+    _cancelApprovalNotification(approval, terminal: false);
+    pendingApproval = null;
+    _armActivityWatchdog();
+    _emit(ActiveChatEvent.toolProgress);
+  }
+
   String? _approvalRequestId(Map<String, dynamic>? approval) {
     final value = (approval?['request_id'] ?? approval?['approval_id'])
         ?.toString()
@@ -24939,6 +24968,7 @@ class ActiveChat {
     if (currentRunId == null && desktop != null && runtimeId != null) {
       final requestBindEpoch = _desktopBindEpoch;
       final requestSessionEpoch = _desktopSessionEpoch;
+      final requestTurnEpoch = _turnEpoch;
       var resolved = 1;
       var acknowledged = true;
       if (desktop is HermesDesktopApprovalResultGateway) {
@@ -24954,15 +24984,13 @@ class ActiveChat {
           _desktopRuntimeSessionId == runtimeId &&
           _desktopBindEpoch == requestBindEpoch &&
           _desktopSessionEpoch == requestSessionEpoch;
-      if (resolved > 0) {
+      if (resolved > 0 && !_disposed && requestTurnEpoch == _turnEpoch) {
         if (acknowledged) {
-          _answeredApprovalRequestIds.add(approvalId);
-          _unacknowledgedApprovalRequestIds.remove(approvalId);
+          _recordSettledApproval(approvalId, acknowledged: true);
         } else if (authorityStillCurrent) {
           // The socket that carried it is still current; a later loss of it
-          // forgets this tombstone.
-          _answeredApprovalRequestIds.add(approvalId);
-          _unacknowledgedApprovalRequestIds.add(approvalId);
+          // forgets this tombstone unless Hermes confirms it first.
+          _recordSettledApproval(approvalId, acknowledged: false);
         }
       }
       if (!authorityStillCurrent || !requestStillCurrent()) return;
