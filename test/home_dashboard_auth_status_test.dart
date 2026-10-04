@@ -141,4 +141,11 @@ void main() {
     expect(find.text('online · QA'), findsOneWidget);
     await unmount(tester);
   });
+
+  testWidgets('Home says the connection is online in Spanish', (tester) async {
+    await pumpHome(tester, DashboardAuthCheck.ok, locale: const Locale('es'));
+    expect(find.text('en línea · QA'), findsOneWidget);
+    expect(find.textContaining('online'), findsNothing);
+    await unmount(tester);
+  });
 }
