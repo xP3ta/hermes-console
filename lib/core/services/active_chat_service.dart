@@ -93,6 +93,7 @@ import 'transcript_publication_coordinator.dart';
 import 'subagent_activity_reducer.dart';
 import 'subagent_transcript_projection.dart';
 import 'terminal_transcript_authority.dart';
+import 'prompt_client_surface.dart';
 import 'tui_gateway_client.dart';
 import 'turn_outbox_store.dart';
 
@@ -14116,6 +14117,7 @@ class ActiveChat {
     List<AttachmentDraft> nativeAttachments = const [],
     String? desktopText,
     bool voicePlaybackInterrupted = false,
+    PromptClientSurface? clientSurface,
     bool queued = false,
     int? truncateBeforeUserOrdinal,
     ActiveTurnDelivery? delivery,
@@ -14175,6 +14177,7 @@ class ActiveChat {
           nativeAttachments: nativeAttachments,
           desktopText: desktopText,
           voicePlaybackInterrupted: voicePlaybackInterrupted,
+          clientSurface: clientSurface,
           queued: queued,
           truncateBeforeUserOrdinal: truncateBeforeUserOrdinal,
           delivery: delivery,
@@ -14229,6 +14232,7 @@ class ActiveChat {
       nativeAttachments: nativeAttachments,
       desktopText: desktopText,
       voicePlaybackInterrupted: voicePlaybackInterrupted,
+      clientSurface: clientSurface,
       queued: queued,
       truncateBeforeUserOrdinal: truncateBeforeUserOrdinal,
       delivery: delivery,
@@ -14260,6 +14264,7 @@ class ActiveChat {
     required List<AttachmentDraft> nativeAttachments,
     required String? desktopText,
     required bool voicePlaybackInterrupted,
+    required PromptClientSurface? clientSurface,
     required bool queued,
     required int? truncateBeforeUserOrdinal,
     required ActiveTurnDelivery? delivery,
@@ -14282,6 +14287,7 @@ class ActiveChat {
       nativeAttachments: nativeAttachments,
       desktopText: desktopText,
       voicePlaybackInterrupted: voicePlaybackInterrupted,
+      clientSurface: clientSurface,
       queued: queued,
       truncateBeforeUserOrdinal: truncateBeforeUserOrdinal,
       delivery: delivery,
@@ -14333,6 +14339,7 @@ class ActiveChat {
     List<AttachmentDraft> nativeAttachments = const [],
     String? desktopText,
     bool voicePlaybackInterrupted = false,
+    PromptClientSurface? clientSurface,
     bool queued = false,
     int? truncateBeforeUserOrdinal,
     int? truncateBeforeRowId,
@@ -14597,6 +14604,7 @@ class ActiveChat {
       nativeAttachments: nativeAttachments,
       desktopText: desktopText,
       voicePlaybackInterrupted: voicePlaybackInterrupted,
+      clientSurface: clientSurface,
       queued: queued,
       truncateBeforeUserOrdinal: truncateBeforeUserOrdinal,
       truncateBeforeRowId: truncateBeforeRowId,
@@ -17762,6 +17770,7 @@ class ActiveChat {
     List<AttachmentDraft> nativeAttachments = const [],
     String? desktopText,
     bool voicePlaybackInterrupted = false,
+    PromptClientSurface? clientSurface,
     bool queued = false,
     int? truncateBeforeUserOrdinal,
     int? truncateBeforeRowId,
@@ -17792,6 +17801,7 @@ class ActiveChat {
       nativeAttachments: nativeAttachments,
       desktopText: desktopText,
       voicePlaybackInterrupted: voicePlaybackInterrupted,
+      clientSurface: clientSurface,
       queued: queued,
       truncateBeforeUserOrdinal: truncateBeforeUserOrdinal,
       truncateBeforeRowId: truncateBeforeRowId,
@@ -17897,6 +17907,7 @@ class ActiveChat {
     List<AttachmentDraft> nativeAttachments = const [],
     String? desktopText,
     bool voicePlaybackInterrupted = false,
+    PromptClientSurface? clientSurface,
     bool queued = false,
     int? truncateBeforeUserOrdinal,
     int? truncateBeforeRowId,
@@ -18413,12 +18424,28 @@ class ActiveChat {
                 await _canUseTurnIdempotency(gateway)
             ? gateway as HermesDesktopIdempotentGateway
             : null;
+        // Sin la capacidad el turno sale igual que hoy: los metadatos se
+        // descartan, nunca se rechaza el envío.
+        final surface = clientSurface;
+        final surfaceGateway =
+            surface != null &&
+                gateway is HermesDesktopClientSurfacePromptGateway
+            ? gateway as HermesDesktopClientSurfacePromptGateway
+            : null;
         Future<void> submitPrompt(String targetRuntimeId) async {
           captureRuntimeAttempt(targetRuntimeId);
           if (voicePlaybackInterrupted &&
               gateway is HermesDesktopInterruptedPromptGateway) {
-            await (gateway as HermesDesktopInterruptedPromptGateway)
-                .submitInterruptedPrompt(targetRuntimeId, promptText);
+            if (surfaceGateway != null) {
+              await surfaceGateway.submitInterruptedPromptWithSurface(
+                targetRuntimeId,
+                promptText,
+                surface!,
+              );
+            } else {
+              await (gateway as HermesDesktopInterruptedPromptGateway)
+                  .submitInterruptedPrompt(targetRuntimeId, promptText);
+            }
           } else if (idempotentGateway != null) {
             idempotentSubmission = true;
             final ack = queued && gateway is HermesDesktopQueuedPromptGateway
@@ -18428,6 +18455,13 @@ class ActiveChat {
                         promptText,
                         delivery!.current.clientTurnId,
                       )
+                : surfaceGateway != null
+                ? await surfaceGateway.submitPromptIdempotentWithSurface(
+                    targetRuntimeId,
+                    promptText,
+                    delivery!.current.clientTurnId,
+                    surface!,
+                  )
                 : await idempotentGateway.submitPromptIdempotent(
                     targetRuntimeId,
                     promptText,
@@ -18449,6 +18483,12 @@ class ActiveChat {
           } else if (queued && gateway is HermesDesktopQueuedPromptGateway) {
             await (gateway as HermesDesktopQueuedPromptGateway)
                 .submitQueuedPrompt(targetRuntimeId, promptText);
+          } else if (surfaceGateway != null) {
+            await surfaceGateway.submitPromptWithSurface(
+              targetRuntimeId,
+              promptText,
+              surface!,
+            );
           } else {
             await gateway.submitPrompt(targetRuntimeId, promptText);
           }

@@ -40,6 +40,7 @@ import 'connection_manager.dart';
 import 'desktop_control_gateway.dart';
 import 'desktop_gateway_capabilities.dart';
 import 'json_rpc_wire.dart';
+import 'prompt_client_surface.dart';
 import 'recovery_proof.dart';
 import 'replay_batch_proof.dart';
 import 'replay_coordinator.dart';
@@ -417,6 +418,32 @@ enum DesktopRedirectDisposition { redirected, queued, rejected }
 /// permanece intacto.
 abstract class HermesDesktopInterruptedPromptGateway {
   Future<void> submitInterruptedPrompt(String runtimeSessionId, String text);
+}
+
+/// Envío con metadatos de superficie (`surface` / `voice_context`).
+///
+/// Capacidad opcional y separada: un gateway sin ella recibe el turno igual
+/// que hoy y los metadatos se descartan. Los envíos escritos nunca la usan, de
+/// modo que el servidor limpia la superficie en cada submit ordinario.
+abstract class HermesDesktopClientSurfacePromptGateway {
+  Future<void> submitPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  );
+
+  Future<DesktopTurnAck> submitPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  );
+
+  Future<void> submitInterruptedPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  );
 }
 
 /// Lifecycle moderno y explícito de sesión.
@@ -1357,6 +1384,7 @@ class TuiGatewayClient
         BotAvatarGenerationGateway,
         HermesDesktopRedirectGateway,
         HermesDesktopInterruptedPromptGateway,
+        HermesDesktopClientSurfacePromptGateway,
         HermesDesktopSessionLifecycleGateway,
         HermesDesktopSessionHistoryGateway,
         HermesDesktopSessionCloseGateway,
@@ -6759,6 +6787,20 @@ class TuiGatewayClient
   }
 
   @override
+  Future<void> submitPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  ) async {
+    await _requestPromptSubmit({
+      'session_id': runtimeSessionId,
+      'text': text,
+      ...surface.toParams(),
+    });
+    _markWatchdogRuntimeBusy(runtimeSessionId);
+  }
+
+  @override
   Future<void> submitQueuedPrompt(String runtimeSessionId, String text) async {
     await _requestPromptSubmit({
       'session_id': runtimeSessionId,
@@ -6769,9 +6811,20 @@ class TuiGatewayClient
   }
 
   @override
-  Future<void> submitInterruptedPrompt(
+  Future<void> submitInterruptedPrompt(String runtimeSessionId, String text) =>
+      _submitInterrupted(runtimeSessionId, text, const {});
+
+  @override
+  Future<void> submitInterruptedPromptWithSurface(
     String runtimeSessionId,
     String text,
+    PromptClientSurface surface,
+  ) => _submitInterrupted(runtimeSessionId, text, surface.toParams());
+
+  Future<void> _submitInterrupted(
+    String runtimeSessionId,
+    String text,
+    Map<String, dynamic> extraParams,
   ) async {
     final deadline = DateTime.now().add(const Duration(seconds: 6));
     while (true) {
@@ -6780,6 +6833,7 @@ class TuiGatewayClient
           'session_id': runtimeSessionId,
           'text': text,
           'interrupted': true,
+          ...extraParams,
         });
         _markWatchdogRuntimeBusy(runtimeSessionId);
         return;
@@ -6797,11 +6851,32 @@ class TuiGatewayClient
     String runtimeSessionId,
     String text,
     String clientTurnId,
+  ) => _submitIdempotent(runtimeSessionId, text, clientTurnId, const {});
+
+  @override
+  Future<DesktopTurnAck> submitPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  ) => _submitIdempotent(
+    runtimeSessionId,
+    text,
+    clientTurnId,
+    surface.toParams(),
+  );
+
+  Future<DesktopTurnAck> _submitIdempotent(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    Map<String, dynamic> extraParams,
   ) async {
     final result = await _requestPromptSubmit({
       'session_id': runtimeSessionId,
       'text': text,
       'client_turn_id': clientTurnId,
+      ...extraParams,
     });
     final ack = DesktopTurnAck.fromJson(
       result,
