@@ -549,8 +549,12 @@ void main() {
         'missing_env': ['WEATHER_KEY'],
       }
       ..puts['env'] = {'ok': true};
-    rest.putProbe = const DashboardHttpException(422);
-    await _pump(tester, _weatherCatalog, rest);
+    // An earlier credential save on this server confirmed the route.
+    final repo = repoOf(rest);
+    await repo.setPluginEnv({'EARLIER': 'x'}, declared: const ['EARLIER']);
+    rest.calls.clear();
+    rest.bodies.clear();
+    await _pump(tester, _weatherCatalog, rest, repository: repo);
     await tester.tap(find.byKey(const ValueKey('cph-primary')));
     await tester.pumpAndSettle();
 
@@ -572,10 +576,7 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('cph-env-submit')));
     await tester.pumpAndSettle();
-    expect(rest.calls.where((c) => c.startsWith('PUT')), [
-      'PUT env',
-      'PUT env',
-    ]);
+    expect(rest.calls.where((c) => c.startsWith('PUT')), ['PUT env']);
     expect(rest.bodies.last, {'key': 'WEATHER_KEY', 'value': secret});
     expect(find.textContaining(secret), findsNothing);
   });
@@ -597,12 +598,8 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Añadir credenciales'), findsNothing);
-    // The probe carries no value, so no secret can reach a server that lacks
-    // the route.
-    expect(
-      rest.bodies.whereType<Map>().where((b) => b.containsKey('value')),
-      isEmpty,
-    );
+    // Nothing was written to learn whether the route exists.
+    expect(rest.calls.where((c) => c.startsWith('PUT')), isEmpty);
   });
 
   test('install confirmation repeats the essentials', () {

@@ -6,21 +6,6 @@ import 'package:hermes_android/core/services/connection_manager.dart'
 import 'package:hermes_android/core/services/tui_gateway_client.dart'
     show TuiGatewayRpcError, TuiGatewayRpcFailureKind;
 
-/// Answers every `PUT` with [reply], to model the value-less route probe.
-class _ProbeRest extends FakeRest {
-  _ProbeRest(this.reply);
-  final Exception reply;
-
-  @override
-  Future<Map<String, dynamic>> put(
-    String endpoint,
-    Map<String, dynamic> body,
-  ) async {
-    bodies.add(body);
-    throw reply;
-  }
-}
-
 class FakeRest implements CapabilitiesRest {
   final Map<String, Object> gets = {};
   final Map<String, Object> posts = {};
@@ -854,27 +839,5 @@ void main() {
       );
       expect(missing.supports(CapabilityFeature.envSet), isFalse);
     });
-
-    test(
-      'the env route is confirmed by a value-less validation reply',
-      () async {
-        final rest = _ProbeRest(const DashboardHttpException(422));
-        final repo = CapabilitiesRepository(rest: rest);
-        expect(repo.supports(CapabilityFeature.envSet), isNull);
-        expect(await repo.confirmEnvSupport(), isTrue);
-        expect(repo.supports(CapabilityFeature.envSet), isTrue);
-        expect(rest.bodies.single, isNot(contains('value')));
-
-        final absent = CapabilitiesRepository(rest: FakeRest());
-        expect(await absent.confirmEnvSupport(), isFalse);
-        expect(absent.supports(CapabilityFeature.envSet), isFalse);
-
-        final unknown = CapabilitiesRepository(
-          rest: _ProbeRest(const DashboardHttpException(500)),
-        );
-        expect(await unknown.confirmEnvSupport(), isFalse);
-        expect(unknown.supports(CapabilityFeature.envSet), isNull);
-      },
-    );
   });
 }

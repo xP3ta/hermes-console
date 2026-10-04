@@ -173,6 +173,17 @@ void main() {
       expect(take(), isNull);
     });
 
+    test('every distinct link held while locked opens, none dropped', () {
+      for (var i = 0; i < 8; i++) {
+        inbox.offer(Uri.parse('hermes://skill/install?identifier=a/b$i'));
+      }
+      var opened = 0;
+      while (take() != null) {
+        opened++;
+      }
+      expect(opened, 8);
+    });
+
     test('distinct links held while locked all open, in order', () {
       inbox.offer(link);
       inbox.offer(Uri.parse('hermes://skill/install?identifier=a/b'));

@@ -240,11 +240,12 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
       }
       if (outcome.message.isNotEmpty) {
         final missing = outcome.missingEnv;
+        // Only on a route an earlier server response already confirmed: no
+        // probe, so nothing is written to learn whether it exists.
         final canAddCredentials =
             missing.isNotEmpty &&
             !widget.readOnly &&
-            await _repo.confirmEnvSupport();
-        if (!mounted) return;
+            _repo.supports(CapabilityFeature.envSet) == true;
         notices.show(
           message: outcome.message,
           kind: outcome.ok

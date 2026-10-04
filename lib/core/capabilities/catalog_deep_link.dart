@@ -98,14 +98,11 @@ final class CatalogDestination {
 
 /// Holds catalog links until the app can show them: never while App Lock is
 /// locked, onboarding runs or no server is connected. Distinct links are kept
-/// in arrival order (a request is never replaced by a later one), and a link
-/// delivered twice (initial link + stream) is queued once. The queue is
-/// bounded; links past [maxPending] are refused.
+/// in arrival order (a request is never replaced or dropped), and a link
+/// delivered twice (initial link + stream) is queued once.
 final class CatalogDeepLinkInbox {
   CatalogDeepLinkInbox({PairingLinkDeliveryGate? gate})
     : _gate = gate ?? PairingLinkDeliveryGate();
-
-  static const maxPending = 5;
 
   final PairingLinkDeliveryGate _gate;
   final List<(String, CatalogDeepLinkAction)> _pending = [];
@@ -120,7 +117,6 @@ final class CatalogDeepLinkInbox {
     final key = uri.toString();
     if (!_gate.shouldHandle(uri)) return true;
     if (_pending.any((entry) => entry.$1 == key)) return true;
-    if (_pending.length >= maxPending) return true;
     _pending.add((key, action));
     return true;
   }
