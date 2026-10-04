@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../services/action_follower.dart';
 import '../../l10n/app_localizations.dart';
 import '../services/connection_manager.dart';
 import '../services/voice/tts_toolset_config.dart';
@@ -341,22 +342,16 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
       );
       if (started['ok'] != true) throw StateError('setup not started');
       final actionName = started['name']?.toString() ?? 'tools-post-setup';
-      for (var attempt = 0; attempt < 150 && mounted; attempt += 1) {
-        await Future<void>.delayed(const Duration(milliseconds: 1200));
-        if (!mounted) return;
-        final status = await widget.dashboard.getActionStatus(actionName);
-        if (!mounted) return;
-        final rawLines = status['lines'];
-        setState(() {
-          _setupLines = rawLines is List
-              ? rawLines.map((line) => line.toString()).toList(growable: false)
-              : const [];
-        });
-        if (status['running'] != true) {
-          ok = status['exit_code'] == 0;
-          break;
-        }
-      }
+      final outcome =
+          await ActionFollower(read: widget.dashboard.getActionStatus).follow(
+            actionName,
+            keepGoing: () => mounted,
+            onLines: (lines) {
+              if (mounted) setState(() => _setupLines = lines);
+            },
+          );
+      if (outcome.state == ActionFollowState.cancelled) return;
+      ok = outcome.succeeded;
       if (!mounted) return;
       _snack(ok ? s.voiceServerSetupComplete : s.voiceServerSetupFailed);
       widget.onServerChanged();
@@ -397,9 +392,7 @@ class _ServerVoiceControlSurfaceState extends State<ServerVoiceControlSurface> {
   }
 
   void _snack(String message) {
-    HermesNotice.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    HermesNotice.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
