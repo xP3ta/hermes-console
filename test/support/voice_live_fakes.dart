@@ -139,6 +139,7 @@ class FakeVoiceLiveApi implements VoiceLiveApi {
     available: true,
   );
   Object? statusError;
+  Completer<VoiceLiveStatus?>? statusGate;
   int statusCalls = 0;
   final List<String> statusProfiles = [];
   final List<({String sdp, List<Map<String, dynamic>> history, String profile})>
@@ -159,6 +160,8 @@ class FakeVoiceLiveApi implements VoiceLiveApi {
   Future<VoiceLiveStatus?> fetchStatus({String profile = ''}) async {
     statusCalls++;
     statusProfiles.add(profile);
+    final gate = statusGate;
+    if (gate != null) return gate.future;
     final error = statusError;
     if (error != null) throw error;
     return status;
