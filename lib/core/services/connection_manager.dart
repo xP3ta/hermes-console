@@ -3728,8 +3728,9 @@ class DashboardClient {
             (provider) => provider.cast<String, dynamic>(),
           );
     final result = providers.map(ModelProvider.fromJson).toList();
-    // Only a catalog that parsed counts as the server being well again.
-    _noteRestartRecovered();
+    // Only a catalog the server actually sent (a map or a list of providers)
+    // counts as it being well again; an absent member is not a catalog.
+    if (rawProviders is Map || rawProviders is List) _noteRestartRecovered();
     return result;
   }
 
