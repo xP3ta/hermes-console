@@ -701,4 +701,52 @@ void main() {
     expect(byName['renamed']!.disclosure.removedReason, 'Malicious');
     expect(byName['fine']!.disclosure.removedReason, isEmpty);
   });
+
+  group('plugin credentials through PUT /api/env', () {
+    test('only the declared names are sent, with the hub profile', () async {
+      final rest = FakeRest()..puts['env'] = {'ok': true};
+      final repo = CapabilitiesRepository(rest: rest, profile: 'work');
+      await repo.setPluginEnv(
+        {'WEATHER_KEY': 'v1', 'ROGUE': 'v2', 'bad name': 'v3'},
+        declared: const ['WEATHER_KEY', 'OTHER'],
+      );
+      expect(rest.calls, ['PUT env']);
+      expect(rest.bodies.single, {
+        'key': 'WEATHER_KEY',
+        'value': 'v1',
+        'profile': 'work',
+      });
+    });
+
+    test('a failure never carries the value and 404 is unsupported', () async {
+      const secret = 'sentinel-secret-value-123';
+      final rest = FakeRest()
+        ..puts['env'] = DashboardHttpException(
+          400,
+          body: '{"detail":"bad $secret"}',
+        );
+      final repo = CapabilitiesRepository(rest: rest);
+      try {
+        await repo.setPluginEnv(
+          {'WEATHER_KEY': secret},
+          declared: const ['WEATHER_KEY'],
+        );
+        fail('expected a failure');
+      } on CapabilityFailure catch (error) {
+        expect('$error ${error.detail}', isNot(contains(secret)));
+      }
+      final missing = CapabilitiesRepository(rest: FakeRest());
+      await expectLater(
+        missing.setPluginEnv({'A': 'b'}, declared: const ['A']),
+        throwsA(
+          isA<CapabilityFailure>().having(
+            (e) => e.kind,
+            'kind',
+            CapabilityFailureKind.unsupported,
+          ),
+        ),
+      );
+      expect(missing.supports(CapabilityFeature.envSet), isFalse);
+    });
+  });
 }

@@ -242,10 +242,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('No instalada'), findsOneWidget);
-    expect(
-      find.textContaining('fatal: network unreachable'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('fatal: network unreachable'), findsOneWidget);
     expect(find.byKey(const ValueKey('cph-progress')), findsNothing);
   });
 
@@ -487,6 +484,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(rest.mutations, isEmpty);
     expect(find.byKey(const ValueKey('cph-env-sheet')), findsOneWidget);
+  });
+
+  testWidgets('plugin install with missing env offers the credentials', (
+    tester,
+  ) async {
+    const secret = 'sentinel-secret-value-123';
+    final rest = ScriptedRest()
+      ..posts['dashboard/agent-plugins/install'] = {
+        'ok': true,
+        'missing_env': ['WEATHER_KEY'],
+      }
+      ..puts['env'] = {'ok': true};
+    await _pump(tester, _weatherCatalog, rest);
+    await tester.tap(find.byKey(const ValueKey('cph-primary')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Faltan credenciales: WEATHER_KEY'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Añadir credenciales'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('cph-env-sheet')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('cph-env-field-WEATHER_KEY')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('cph-env-field-OTHER')), findsNothing);
+    await tester.enterText(
+      find.byKey(const ValueKey('cph-env-field-WEATHER_KEY')),
+      secret,
+    );
+    await tester.tap(find.byKey(const ValueKey('cph-env-submit')));
+    await tester.pumpAndSettle();
+    expect(rest.calls.where((c) => c.startsWith('PUT')), ['PUT env']);
+    expect(rest.bodies.last, {'key': 'WEATHER_KEY', 'value': secret});
+    expect(find.textContaining(secret), findsNothing);
   });
 
   test('install confirmation repeats the essentials', () {

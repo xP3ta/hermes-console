@@ -54,6 +54,7 @@ class ScriptedRest implements CapabilitiesRest {
     Map<String, dynamic> body,
   ) async {
     calls.add('PUT $endpoint');
+    bodies.add(body);
     final value = _resolve(puts, endpoint);
     if (value is Exception) throw value;
     return Map<String, dynamic>.from(value as Map);
