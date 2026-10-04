@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/provider_auth_failure.dart';
 import 'package:hermes_android/core/models/turn_error_surface.dart';
@@ -77,6 +79,34 @@ void main() {
         'unknown',
       );
       expect(TurnErrorSurface.parse({'layer': 'provider'})!.code, 'unknown');
+    });
+
+    test('an oversized code is dropped to unknown, never stored', () {
+      final surface = TurnErrorSurface.parse({
+        'layer': 'provider',
+        'code': 'x' * 10000000,
+        'retryable': true,
+      })!;
+      expect(surface.code, 'unknown');
+      expect(jsonEncode(surface.toJson()).length, lessThan(200));
+    });
+
+    test('a code at the limit is kept, one more is not', () {
+      expect(surfaceOf('c' * 64).code, 'c' * 64);
+      expect(surfaceOf('c' * 65).code, 'unknown');
+    });
+
+    test('an oversized code cannot grow the copied details', () {
+      final text = formatErrorDiagnostics(
+        now: DateTime.utc(2026, 10, 4),
+        surface: surfaceOf('x' * 5000000),
+        composerProvider: null,
+        composerModel: null,
+        appVersion: '1.2.15',
+        error: 'Boom',
+      );
+      expect(text.length, lessThan(400));
+      expect(text, contains('code: unknown'));
     });
 
     test('retryable is true unless the gateway says false', () {
