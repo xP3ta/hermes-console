@@ -394,6 +394,27 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     );
   }
 
+  /// Re-attaches to doctor / the audit after the screen was left: reads the
+  /// state and follows a run in progress, or returns the finished one. It
+  /// never launches anything.
+  Future<CapabilityActionStatus?> attachOps(
+    OpsAction action, {
+    void Function(CapabilityActionStatus)? onProgress,
+    bool Function()? shouldStop,
+  }) async {
+    if (shouldStop?.call() ?? false) return null;
+    final current = await opsStatus(action);
+    onProgress?.call(current);
+    if (!current.running) return current;
+    return _followAction(
+      _opsFeature(action),
+      action.actionName,
+      onProgress,
+      shouldStop,
+      throwOnFailure: false,
+    );
+  }
+
   /// `mcp.servers.status` over [call] (a connected gateway socket): the cached
   /// runtime state of every MCP server, never connecting or probing.
   Future<List<McpServerStatus>> mcpLiveStatus(CapabilitiesRpc call) =>

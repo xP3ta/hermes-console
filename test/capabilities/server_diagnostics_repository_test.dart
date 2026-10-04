@@ -122,6 +122,29 @@ void main() {
       expect(rest.mutations, isEmpty);
     });
 
+    test('attachOps follows a run in progress and never posts', () async {
+      final rest = ScriptedRest();
+      rest.statusQueue.addAll([
+        _status(running: true, lines: ['=== doctor started t ===', 'a']),
+        _status(running: true),
+        _status(exitCode: 0, lines: ['=== doctor started t ===', 'a', 'b']),
+      ]);
+      final result = await _repo(rest).attachOps(OpsAction.doctor);
+      expect(result!.exitCode, 0);
+      expect(rest.mutations, isEmpty);
+    });
+
+    test('attachOps on a finished run returns it without launching', () async {
+      final rest = ScriptedRest();
+      rest.statusQueue.add(
+        _status(exitCode: 2, lines: ['=== doctor started t ===', 'warn']),
+      );
+      final result = await _repo(rest).attachOps(OpsAction.doctor);
+      expect(result!.exitCode, 2);
+      expect(rest.mutations, isEmpty);
+      expect(rest.calls, ['GET actions/doctor/status?lines=200']);
+    });
+
     test('the profile travels on the launch', () async {
       final rest = ScriptedRest()
         ..posts['ops/security-audit?profile=work'] = {
