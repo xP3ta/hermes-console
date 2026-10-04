@@ -90,10 +90,12 @@ ServerConfigRepository _repo(
   _Server server, {
   String? profile,
   bool writable = true,
+  bool Function()? isCurrent,
 }) => ServerConfigRepository(
   server.dashboard,
   profile: profile,
   writable: writable,
+  isCurrent: isCurrent,
 );
 
 Future<ServerConfigException> _failure(Future<Object?> future) async {
@@ -317,6 +319,49 @@ void main() {
       await _failure(repo.save('agent.max_turns', 10));
       server.putStatus = null;
       expect(await repo.save('agent.max_turns', 10), 10);
+    });
+
+    test('closing while a save waits behind a held one sends only the '
+        'write already in flight', () async {
+      final server = _Server()..holdPut = Completer<void>();
+      final repo = _repo(server);
+
+      final first = repo.save('agent.max_turns', 10);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      final second = repo.save('agent.max_turns', 20);
+      final secondFailure = _failure(second);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      repo.close();
+      final held = server.holdPut!;
+      server.holdPut = null;
+      held.complete();
+
+      expect(await first, 10, reason: 'the sent write still finishes');
+      expect((await secondFailure).kind, ServerConfigFailureKind.closed);
+      expect(server.puts, 1, reason: 'the queued write is never sent');
+    });
+
+    test('a queued save whose profile went stale sends no PUT', () async {
+      final server = _Server()..holdPut = Completer<void>();
+      var current = true;
+      final repo = _repo(server, isCurrent: () => current);
+
+      final first = repo.save('agent.max_turns', 10);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      final secondFailure = _failure(repo.save('agent.max_turns', 20));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      current = false;
+      final held = server.holdPut!;
+      server.holdPut = null;
+      held.complete();
+
+      await first;
+      expect((await secondFailure).kind, ServerConfigFailureKind.closed);
+      expect(server.puts, 1, reason: 'the old profile is not mutated again');
     });
 
     test('closing refuses new work', () async {

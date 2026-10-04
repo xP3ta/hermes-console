@@ -153,6 +153,53 @@ void main() {
     });
   });
 
+  group('field types', () {
+    test('only boolean, number, string, list and select are editable', () {
+      for (final type in <Object?>[
+        'mystery',
+        'object',
+        'integer',
+        'Boolean',
+        '',
+        null,
+        7,
+        ['boolean'],
+      ]) {
+        expect(
+          serverConfigFieldsOf(
+            ServerConfigPage.projects,
+            _schema({
+              'terminal.cwd': {'type': type},
+            }),
+          ),
+          isEmpty,
+          reason: 'type $type',
+        );
+      }
+      for (final type in const [
+        'boolean',
+        'number',
+        'string',
+        'list',
+        'select',
+      ]) {
+        expect(
+          serverConfigFieldsOf(
+            ServerConfigPage.projects,
+            _schema({
+              'terminal.cwd': {
+                'type': type,
+                'options': ['a'],
+              },
+            }),
+          ).map((f) => f.path),
+          ['terminal.cwd'],
+          reason: 'type $type',
+        );
+      }
+    });
+  });
+
   group('fields of a page', () {
     test('exactly the ones the schema brings, in schema order', () {
       final fields = serverConfigFieldsOf(
