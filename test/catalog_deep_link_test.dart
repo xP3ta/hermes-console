@@ -1,6 +1,8 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/catalog_deep_link.dart';
+import 'package:hermes_android/core/capabilities/catalog_deep_link_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart'
     show DashboardHttpException;
 import 'package:hermes_android/core/services/pairing_link_delivery_gate.dart';
@@ -446,6 +448,47 @@ void main() {
         reasonOf(await resolve(ScriptedRest(), 'official/docker')),
         CatalogLinkLeaveReason.unavailable,
       );
+    });
+  });
+
+  group('reportCatalogOverflow', () {
+    CatalogDeepLinkInbox overflowed() {
+      final inbox = CatalogDeepLinkInbox();
+      for (var i = 0; i <= CatalogDeepLinkInbox.maxPending; i++) {
+        inbox.offer(Uri.parse('hermes://skill/install?identifier=a/b$i'));
+      }
+      return inbox;
+    }
+
+    testWidgets('is kept until the notice can be shown, then shown once', (
+      tester,
+    ) async {
+      final inbox = overflowed();
+      final key = GlobalKey<NavigatorState>();
+      bool report() => reportCatalogOverflow(
+        inbox,
+        navigator: key.currentState,
+        locked: false,
+        onboarding: false,
+        connected: true,
+      );
+      // No navigator yet (cold start): nothing is shown and nothing consumed.
+      expect(report(), isFalse);
+      await tester.pumpWidget(
+        spanishApp(
+          Navigator(
+            key: key,
+            onGenerateRoute: (_) => MaterialPageRoute<void>(
+              builder: (_) => const SizedBox.shrink(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(report(), isTrue);
+      await tester.pump();
+      expect(find.textContaining('enlaces de catálogo'), findsOneWidget);
+      expect(report(), isFalse);
     });
   });
 }

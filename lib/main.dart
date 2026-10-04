@@ -2513,17 +2513,13 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     final onboarding = _showSplash || _showOnboarding;
     final connected = nav != null && active != null;
     // A refused link is reported once the app can show it, never lost.
-    if (nav != null &&
-        _catalogLinks.takeOverflow(
-          locked: locked,
-          onboarding: onboarding,
-          connected: connected,
-        )) {
-      HermesNotice.ofNavigator(nav)?.show(
-        message: Strings.of(nav.context).cphLinkQueueFull,
-        kind: HermesNoticeKind.warning,
-      );
-    }
+    reportCatalogOverflow(
+      _catalogLinks,
+      navigator: nav,
+      locked: locked,
+      onboarding: onboarding,
+      connected: connected,
+    );
     final action = _catalogLinks.take(
       locked: locked,
       onboarding: onboarding,

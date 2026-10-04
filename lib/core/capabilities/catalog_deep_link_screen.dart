@@ -18,6 +18,32 @@ import 'capability_detail_screen.dart';
 import 'capability_models.dart';
 import 'catalog_deep_link.dart';
 
+/// Tells the user a catalog link was refused, once the app can show it. The
+/// notice controller is resolved first and the inbox's flag is consumed only
+/// when it exists, so a navigator still being built never swallows the report.
+bool reportCatalogOverflow(
+  CatalogDeepLinkInbox inbox, {
+  required NavigatorState? navigator,
+  required bool locked,
+  required bool onboarding,
+  required bool connected,
+}) {
+  final notices = HermesNotice.ofNavigator(navigator);
+  if (navigator == null || notices == null) return false;
+  if (!inbox.takeOverflow(
+    locked: locked,
+    onboarding: onboarding,
+    connected: connected,
+  )) {
+    return false;
+  }
+  notices.show(
+    message: Strings.of(navigator.context).cphLinkQueueFull,
+    kind: HermesNoticeKind.warning,
+  );
+  return true;
+}
+
 /// Shows [action] on [navigator]. Notices (invalid / Git links) are only an
 /// explanation: nothing is read or sent.
 Future<void> openCatalogDeepLink({
