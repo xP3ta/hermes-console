@@ -1916,8 +1916,6 @@
   "setSecuritySub": "Bloqueo, privacidad y protección de credenciales",
   "setPermissions": "Permisos / Aprobaciones",
   "setPermissionsSub": "Cómo pide permiso Hermes: YOLO, interactivo, conservador o solo lectura",
-  "setServerConfig": "Config del servidor (solo lectura)",
-  "setServerConfigSub": "Ver el config.yaml real del agente vía Mobile Bridge, con los secretos enmascarados",
   "setActivePrefix": "Activo: ",
   "setFontStyle": "Estilo de fuente",
   "setAppliesInstantly": "Se aplica a toda la app al instante",
