@@ -327,6 +327,19 @@ void main() {
     expect(find.byKey(const ValueKey('cph-primary')), findsOneWidget);
   });
 
+  testWidgets('unknown profile state offers no install and says so', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _weatherCatalog.copyWith(stateUnknown: true),
+      ScriptedRest(),
+    );
+    expect(find.byKey(const ValueKey('cph-primary')), findsNothing);
+    expect(find.text('Estado no disponible'), findsWidgets);
+    expect(find.text('No instalada'), findsNothing);
+  });
+
   testWidgets('a removed entry shows the reason and no install', (
     tester,
   ) async {

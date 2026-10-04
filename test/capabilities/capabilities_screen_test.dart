@@ -331,9 +331,12 @@ void main() {
         final weather = snapshot.catalog.firstWhere(
           (i) => i.installId == 'weather',
         );
+        // Unknown, not "not installed": nothing may offer an install.
+        expect(weather.stateUnknown, isTrue);
         expect(weather.installed, isFalse);
         expect(weather.updateAvailable, isFalse);
         expect(snapshot.partial, isTrue);
+        expect(capabilityActions(weather, readOnly: false), isEmpty);
       });
     }
 
@@ -348,6 +351,7 @@ void main() {
         (i) => i.installId == 'weather',
       );
       expect(weather.installed, isTrue);
+      expect(weather.stateUnknown, isFalse);
       expect(snapshot.partial, isFalse);
     });
   });
