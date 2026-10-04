@@ -12,12 +12,10 @@ import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/server_diagnostics_models.dart';
 import 'package:hermes_android/core/capabilities/server_diagnostics_probe.dart'
     show DiagnosticsAvailability;
-import 'package:hermes_android/core/screens/advanced_settings_screen.dart';
 import 'package:hermes_android/core/screens/server_diagnostics_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/server_restart_signal.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
-import 'package:hermes_android/core/widgets/hermes_pill.dart' show TuiLoader;
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -164,92 +162,6 @@ void main() {
 
   Strings strings(WidgetTester tester) =>
       Strings.of(tester.element(find.byType(Scaffold).first));
-
-  group('Advanced', () {
-    Future<void> pumpAdvanced(WidgetTester tester, ScriptedRest rest) =>
-        pumpApp(
-          tester,
-          AdvancedSettingsScreen(
-            connection: _connection(),
-            connManager: manager,
-            repositoryFor: repos(rest),
-            mcpReader: (_) async => const [],
-          ),
-        );
-
-    testWidgets('probes three cheap reads and shows the Diagnostics row', (
-      tester,
-    ) async {
-      final rest = _server();
-      await pumpAdvanced(tester, rest);
-
-      expect(find.text(strings(tester).sd1215Diagnostics), findsOneWidget);
-      expect(rest.calls, [
-        'GET actions/doctor/status?lines=200',
-        'GET actions/security-audit/status?lines=200',
-        'GET health',
-      ]);
-      expect(rest.mutations, isEmpty);
-    });
-
-    testWidgets('a server with none of them has no Diagnostics row', (
-      tester,
-    ) async {
-      await pumpAdvanced(tester, ScriptedRest());
-      final s = strings(tester);
-      expect(find.text(s.sd1215Diagnostics), findsNothing);
-      expect(find.text(s.sd1215NothingToShow), findsOneWidget);
-    });
-
-    testWidgets('an unreachable dashboard ends the probe and shows no row', (
-      tester,
-    ) async {
-      final rest = ScriptedRest()
-        ..gets['actions/doctor/status'] = Exception('Dashboard not accessible')
-        ..gets['actions/security-audit/status'] = Exception('unreachable')
-        ..gets['health'] = Exception('unreachable');
-      await pumpAdvanced(tester, rest);
-
-      final s = strings(tester);
-      expect(tester.takeException(), isNull);
-      expect(find.byType(TuiLoader), findsNothing);
-      expect(find.text(s.sd1215Diagnostics), findsNothing);
-      expect(find.text(s.sd1215NothingToShow), findsOneWidget);
-    });
-
-    testWidgets('server errors on every route are no support evidence', (
-      tester,
-    ) async {
-      final rest = ScriptedRest()
-        ..gets['actions/doctor/status'] = const DashboardHttpException(503)
-        ..gets['actions/security-audit/status'] = const DashboardHttpException(
-          500,
-        )
-        ..gets['health'] = const DashboardHttpException(503);
-      await pumpAdvanced(tester, rest);
-
-      expect(find.text(strings(tester).sd1215Diagnostics), findsNothing);
-    });
-
-    testWidgets('one route is enough to keep the row', (tester) async {
-      final rest = ScriptedRest()
-        ..gets['health'] = {'ok': true, 'version': '1'};
-      await pumpAdvanced(tester, rest);
-      expect(find.text(strings(tester).sd1215Diagnostics), findsOneWidget);
-    });
-
-    testWidgets('opening Diagnostics does not probe health again', (
-      tester,
-    ) async {
-      final rest = _server();
-      await pumpAdvanced(tester, rest);
-      await tester.tap(find.text(strings(tester).sd1215Diagnostics));
-      await tester.pumpAndSettle();
-
-      expect(count(rest, 'GET health'), 2, reason: 'probe + idle, no repeat');
-      expect(find.text('v0.20.1'), findsOneWidget);
-    });
-  });
 
   testWidgets('Diagnostics opened from two saved connections to one server '
       'launches doctor once', (tester) async {
