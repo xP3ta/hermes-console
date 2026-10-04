@@ -8688,6 +8688,27 @@ class ActiveChat {
     if (sessionProfile != null) _bindSessionProfile(sessionProfile);
     bindKnownStoredSession(initialStoredSessionId);
     unawaited(_restoreCompressionFromRecord());
+    _reactionsWereEnabled = MessageReactionPrefs.shared.enabled;
+    _watchedReactionPrefs = MessageReactionPrefs.shared
+      ..addListener(_onReactionPrefChanged);
+  }
+
+  MessageReactionPrefs? _watchedReactionPrefs;
+  bool _reactionsWereEnabled = false;
+
+  /// Turning reactions on is when a live chat asks the server whether it
+  /// takes them, whether or not a chat screen is mounted at that moment. A
+  /// store loaded later replaces the shared one, so the watch follows it.
+  void _onReactionPrefChanged() {
+    if (_disposed) return;
+    final current = MessageReactionPrefs.shared;
+    if (!identical(current, _watchedReactionPrefs)) {
+      _watchedReactionPrefs?.removeListener(_onReactionPrefChanged);
+      _watchedReactionPrefs = current..addListener(_onReactionPrefChanged);
+    }
+    final turnedOn = current.enabled && !_reactionsWereEnabled;
+    _reactionsWereEnabled = current.enabled;
+    if (turnedOn) Timer.run(() => unawaited(confirmReactions()));
   }
 
   /// Adopts a durable state.db identity without ever retargeting a live runtime.
@@ -28932,6 +28953,8 @@ class ActiveChat {
     _restoredCompressionProbeTimer?.cancel();
     _restoredCompressionProbeTimer = null;
     _disposed = true;
+    _watchedReactionPrefs?.removeListener(_onReactionPrefChanged);
+    _watchedReactionPrefs = null;
     _messageLoadEpoch++;
     _storedMessagesRestFlights.clear();
     final stop = _stopTransition;

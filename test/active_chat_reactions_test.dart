@@ -225,6 +225,46 @@ void main() {
     },
   );
 
+  test(
+    'turning reactions on while no screen is mounted probes the live chat',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await MessageReactionPrefs.load();
+      addTearDown(() async {
+        SharedPreferences.setMockInitialValues({});
+        await MessageReactionPrefs.load();
+      });
+      final gateway = _FakeDesktopGateway()..available = false;
+      final chat = await _liveChat(gateway);
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.confirmCalls, 0, reason: 'reactions were off');
+      await prefs.setEnabled(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.confirmCalls, 1);
+      expect(chat.canReact, isTrue);
+      await prefs.setEnabled(false);
+      await prefs.setEnabled(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(gateway.confirmCalls, 1, reason: 'already confirmed');
+    },
+  );
+
+  test('a preference store loaded later is watched too', () async {
+    SharedPreferences.setMockInitialValues({});
+    await MessageReactionPrefs.load();
+    final gateway = _FakeDesktopGateway()..available = false;
+    final chat = await _liveChat(gateway);
+    SharedPreferences.setMockInitialValues({MessageReactionPrefs.key: true});
+    addTearDown(() async {
+      SharedPreferences.setMockInitialValues({});
+      await MessageReactionPrefs.load();
+    });
+    await MessageReactionPrefs.load();
+    await Future<void>.delayed(Duration.zero);
+    expect(gateway.confirmCalls, 1);
+    expect(chat.canReact, isTrue);
+  });
+
   test('an explicit retry asks again and is single-flight', () async {
     final gateway = _FakeDesktopGateway()
       ..available = false
