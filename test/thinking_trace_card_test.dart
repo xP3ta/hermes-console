@@ -30,6 +30,48 @@ Widget _cardHost({
 );
 
 void main() {
+  testWidgets('connection card is attached to its matching live tool row', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _cardHost(
+        card: ThinkingTraceCard(
+          events: [
+            ChatTraceEvent(
+              id: 'other-tool',
+              label: 'other',
+              status: 'completed',
+            ),
+            ChatTraceEvent(
+              id: 'tool-connect',
+              label: 'connector',
+              status: 'running',
+            ),
+          ],
+          active: true,
+          rowAttachments: const {
+            'tool-connect': Text('Connection request card'),
+          },
+          headerBuilder: (context, summary, details) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [summary, details],
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Connection request card'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('activity-step-attachment-tool-connect')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('activity-step-attachment-other-tool')),
+      findsNothing,
+    );
+  });
+
   testWidgets('actividad muestra el estado limpio sin puntos ni LIVE', (
     tester,
   ) async {

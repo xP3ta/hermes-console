@@ -173,6 +173,7 @@ import '../widgets/generated_image_card.dart';
 import '../widgets/generated_video_card.dart';
 import '../widgets/generated_artifact_viewer.dart';
 import '../widgets/callout_card.dart';
+import '../widgets/chat_connection_card.dart';
 import '../widgets/chat_event_cards.dart';
 import '../widgets/chat_control_sheet.dart';
 import '../widgets/hermes_drawer.dart';
@@ -1066,9 +1067,9 @@ String friendlyModelName(String id) {
       RegExp(
         r'^claude-(opus|sonnet|haiku)-(\d+)(?:[.-](\d{1,2})(?!\d))?',
       ).firstMatch(lower) ??
-      RegExp(r'^claude-(\d+)(?:[.-](\d))?-(opus|sonnet|haiku)').firstMatch(
-        lower,
-      );
+      RegExp(
+        r'^claude-(\d+)(?:[.-](\d))?-(opus|sonnet|haiku)',
+      ).firstMatch(lower);
   if (claude != null) {
     final legacy = RegExp(r'^\d').hasMatch(claude.group(1)!);
     final family = legacy ? claude.group(3)! : claude.group(1)!;
@@ -1076,7 +1077,9 @@ String friendlyModelName(String id) {
     final minor = legacy ? claude.group(2) : claude.group(3);
     final capitalized = family[0].toUpperCase() + family.substring(1);
     final version = minor == null ? major : '$major.$minor';
-    final rest = lower.substring(claude.end).replaceFirst(RegExp(r'-\d{8}'), '');
+    final rest = lower
+        .substring(claude.end)
+        .replaceFirst(RegExp(r'-\d{8}'), '');
     final variant = RegExp(
       r'^-(fast|thinking|preview|latest|flash)\b',
     ).firstMatch(rest)?.group(1);
@@ -6731,6 +6734,19 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// Resuelve la aprobación pendiente del agente desde el chat
   /// (once|session|always|deny). Respeta solo-lectura y App Lock como en runs.
+  Future<void> _openConnectionLink(Uri uri) async {
+    _chat.noteConnectionLinkOpened();
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } on Object {
+      // The card keeps its Open link action; nothing to undo.
+    }
+  }
+
+  void _answerConnection(Future<void> Function() answer) {
+    unawaited(answer().catchError((Object _) {}));
+  }
+
   Future<void> _resolveChatApproval(String choice) async {
     if (_resolvingApproval) return;
     final app = context.findAncestorStateOfType<HermesAppState>();
@@ -7036,6 +7052,10 @@ class _ChatScreenState extends State<ChatScreen>
     final wasInForeground = _appInForeground;
     _appInForeground = state == AppLifecycleState.resumed;
     if (_chatBound) _syncTransportVisibility();
+    // Coming back from the browser leg of a connector: read the accounts now.
+    if (!wasInForeground && _appInForeground && _chatBound) {
+      _chat.connectionAppResumed();
+    }
     if (wasInForeground != _appInForeground) {
       _viewerAttachGeneration += 1;
       _cancelSessionContextBootstrapRetry();
@@ -12182,6 +12202,8 @@ class _ChatScreenState extends State<ChatScreen>
                                                 canSteer:
                                                     _chat.canSteerSubagent,
                                                 canTail: _chat.canTailSubagent,
+                                                delegationControl:
+                                                    _chat.delegationControl,
                                                 parentTitle:
                                                     widget.session.title,
                                                 acquirePresentation:
@@ -16007,7 +16029,30 @@ class _ChatScreenState extends State<ChatScreen>
       onSuggestionSelected: suggestionsEnabled
           ? (suggestion) => _useAssistantSuggestion(msg, suggestion)
           : null,
+      connectionCard: role == 'assistant'
+          ? _connectionCardFor(metadataMsg)
+          : null,
       compact: compact,
+    );
+  }
+
+  _ConnectionCardBinding? _connectionCardFor(Map<String, dynamic> metadata) {
+    final request = _chat.connectionRequest;
+    if (request == null) return null;
+    final belongsToMessage = normalizeAssistantActivityTrace(
+      metadata[assistantActivityTraceKey],
+    ).any((step) => step['id']?.toString() == request.toolCallId);
+    if (!belongsToMessage) return null;
+    return _ConnectionCardBinding(
+      toolCallId: request.toolCallId,
+      card: ChatConnectionCard(
+        request: request,
+        canAct: _chat.canActOnConnection,
+        onOpenLink: _openConnectionLink,
+        onSkip: (name) =>
+            _answerConnection(() => _chat.skipConnectionTarget(name)),
+        onContinue: () => _answerConnection(_chat.continueConnection),
+      ),
     );
   }
 
@@ -16101,6 +16146,7 @@ class _ChatScreenState extends State<ChatScreen>
       isStreaming: frame.isStreaming,
       companionMood: frame.isStreaming ? _liveCompanionMood() : null,
       waitingForUser: frame.isStreaming && _turnWaitsForUser,
+      connectionCard: _connectionCardFor(metadata),
       compact: compact,
       performanceProbe: widget.performanceProbe,
     );
@@ -17666,6 +17712,7 @@ class _MessageBubble extends StatelessWidget {
   final ValueChanged<String>? onSaveEdit;
   final VoidCallback? onRegenerate;
   final AssistantSuggestionCallback? onSuggestionSelected;
+  final _ConnectionCardBinding? connectionCard;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
 
@@ -17698,6 +17745,7 @@ class _MessageBubble extends StatelessWidget {
     this.onSaveEdit,
     this.onRegenerate,
     this.onSuggestionSelected,
+    this.connectionCard,
     this.compact = false,
     this.performanceProbe,
   });
@@ -17739,6 +17787,7 @@ class _MessageBubble extends StatelessWidget {
             technicalDetails: technicalDetails,
             onRegenerate: onRegenerate,
             onSuggestionSelected: onSuggestionSelected,
+            connectionCard: connectionCard,
             compact: compact,
             performanceProbe: performanceProbe,
           );
@@ -19076,6 +19125,13 @@ class _AssistantLiveHeader extends StatelessWidget {
   }
 }
 
+final class _ConnectionCardBinding {
+  final String toolCallId;
+  final Widget card;
+
+  const _ConnectionCardBinding({required this.toolCallId, required this.card});
+}
+
 class _AssistantMessage extends StatelessWidget {
   final String content;
   final bool verbose;
@@ -19096,6 +19152,7 @@ class _AssistantMessage extends StatelessWidget {
   final List<String> technicalDetails;
   final VoidCallback? onRegenerate;
   final AssistantSuggestionCallback? onSuggestionSelected;
+  final _ConnectionCardBinding? connectionCard;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
 
@@ -19119,6 +19176,7 @@ class _AssistantMessage extends StatelessWidget {
     this.technicalDetails = const [],
     this.onRegenerate,
     this.onSuggestionSelected,
+    this.connectionCard,
     this.compact = false,
     this.performanceProbe,
   });
@@ -19430,6 +19488,9 @@ class _AssistantMessage extends StatelessWidget {
               waitingForUser: activityActive && waitingForUser,
               stopped: stopped,
               duration: _assistantActivityDuration(metadata),
+              rowAttachments: connectionCard == null
+                  ? const {}
+                  : {connectionCard!.toolCallId: connectionCard!.card},
               headerBuilder: (context, summary, details) => Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [

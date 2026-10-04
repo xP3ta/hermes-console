@@ -7480,6 +7480,29 @@
       }
     }
   },
+  "memStatusReady": "Listo",
+  "memStatusNeedsConfig": "Falta configurar",
+  "memStatusUnavailable": "No disponible",
+  "memStatusMissing": "No instalado",
+  "memResetFile": "Restablecer",
+  "memResetConfirmTitle": "¿Borrar {file}?",
+  "@memResetConfirmTitle": {
+    "placeholders": {
+      "file": {
+        "type": "String"
+      }
+    }
+  },
+  "memResetConfirmBody": "No se puede deshacer.",
+  "memResetDone": "Borrado: {files}",
+  "@memResetDone": {
+    "placeholders": {
+      "files": {
+        "type": "String"
+      }
+    }
+  },
+  "memResetFailed": "No se pudo restablecer la memoria.",
   "memoryProviderNotConfigured": "No configurado",
   "bridgeLogTitle": "Log del bridge",
   "bridgeViewLog": "Ver log del bridge",
@@ -8826,6 +8849,54 @@
   },
   "cphFilterClear": "Quitar",
   "cphStatusUpdateShort": "Actualizable",
+  "cphMcpStatusConnected": "Conectado",
+  "cphMcpStatusFailed": "Con error",
+  "cphMcpStatusConnecting": "Conectando",
+  "cphMcpStatusLazy": "Bajo demanda",
+  "cphMcpStatusConfigured": "Configurado",
+  "cphMcpToolCount": "{count, plural, =1{1 herramienta} other{{count} herramientas}}",
+  "@cphMcpToolCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cphRowStatus": "Estado",
+  "cphLogsTitle": "Registros",
+  "cphLogsSourceServer": "Servidor",
+  "cphLogsSourceAgent": "Agente",
+  "cphLogsEmpty": "No hay registros para este servidor.",
+  "cphLogsRefresh": "Actualizar registros",
+  "cphConnectorEnabled": "Activo",
+  "cphConnectorLockedByOrg": "Bloqueado por tu organización.",
+  "cphConnectorPolicyManaged": "Tu organización gestiona estas reglas; aquí solo se pueden ver.",
+  "cphConnectorPolicyForbidden": "No tienes permiso para cambiar estas reglas.",
+  "cphConnectorToolsFailed": "No se pudieron cargar las herramientas.",
+  "cphToolFacetRead": "Lectura",
+  "cphToolFacetWrite": "Escritura",
+  "cphToolFacetDestructive": "Destructivas",
+  "cphToolFacetUnclassified": "Sin clasificar",
+  "cphToolLockedByOrg": "Bloqueada por tu organización",
+  "cphConnectorSaved": "Cambios guardados",
+  "cphConnectorConflictTitle": "Las reglas cambiaron",
+  "cphConnectorConflictBody": "Se modificaron en otro sitio mientras editabas. Tus cambios siguen aquí.",
+  "cphConnectorConflictChanged": "Cambiado fuera: {names}",
+  "@cphConnectorConflictChanged": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConnectorKeepMine": "Mantener los míos",
+  "cphConnectorDiscard": "Descartar",
+  "subagentUiPauseNew": "Pausar nuevos subagentes",
+  "subagentUiResumeNew": "Reanudar nuevos subagentes",
+  "subagentUiPauseScope": "Afecta a todo el servidor. Los subagentes en marcha continúan.",
+  "subagentUiPausedNotice": "Nuevos subagentes en pausa",
+  "subagentUiResumedNotice": "Nuevos subagentes reanudados",
+  "subagentUiPauseFailed": "No se pudo cambiar la pausa.",
   "cphRowAuth": "Autenticación",
   "v1215VoiceServerError": "El servidor de Hermes respondió: {detail}",
   "@v1215VoiceServerError": {
@@ -9405,5 +9476,16 @@
   "profileSwitcherHint": "Cambiar de perfil",
   "profileSwitcherBody": "Cada perfil tiene sus propios chats, memoria, SOUL, skills y modelo.",
   "profileSwitcherLoadFailed": "No se pudieron cargar los perfiles. Toca para reintentar.",
-  "profileSwitcherManage": "Gestionar perfiles"
+  "profileSwitcherManage": "Gestionar perfiles",
+  "cxnTitle": "Conecta tus cuentas",
+  "cxnOpen": "Abrir enlace",
+  "cxnSkip": "Ahora no",
+  "cxnContinue": "Continuar",
+  "cxnStatePending": "Pendiente",
+  "cxnStateInitiated": "En curso",
+  "cxnStateConnected": "Conectado",
+  "cxnStateSkipped": "Omitido",
+  "cxnStateFailed": "Falló",
+  "cxnStateExpired": "Caducó",
+  "cxnStateNotConnected": "No conectado"
 }

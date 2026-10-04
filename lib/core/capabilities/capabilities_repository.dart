@@ -11,8 +11,10 @@
 //   MCP      GET /api/mcp/{catalog,servers} · POST /api/mcp/catalog/install
 //            PUT /api/mcp/servers/{n}/enabled · DELETE /api/mcp/servers/{n}
 //            POST /api/mcp/servers[/{n}/test|/{n}/auth] · GET /api/mcp/oauth/flows/{id}
+//   MCP live RPC mcp.servers.status · GET /api/logs (on demand, one read)
 //   hosted   RPC connectors.{list,catalog,accounts,connect,operation.status,
-//            operation.wake,accounts.remove} · connection.respond
+//            operation.wake,accounts.remove,tools,policy.get,policy.set}
+//            · connection.respond
 //
 // Every capability is detected per server: a 404/405 (REST) or -32601 (RPC)
 // marks it unsupported for this repository's lifetime and the UI hides it
@@ -26,6 +28,9 @@ import '../services/connection_manager.dart'
 import '../services/desktop_control_gateway.dart';
 import '../services/tui_gateway_client.dart' show TuiGatewayRpcError;
 import 'capability_models.dart';
+import 'connector_policy.dart';
+import 'mcp_log_filter.dart';
+import 'mcp_runtime_status.dart';
 
 /// Minimal REST surface (implemented by `DashboardClient`).
 abstract interface class CapabilitiesRest {
@@ -59,7 +64,11 @@ enum CapabilityFeature {
   pluginMutations,
   mcpCatalog,
   mcpServers,
+  mcpStatus,
+  mcpLogs,
   hostedConnectors,
+  connectorPolicy,
+  connectorTools,
 }
 
 enum CapabilityFailureKind {
@@ -415,6 +424,39 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
             .toList(growable: false);
       });
 
+  /// Cached runtime state per configured server, keyed by name. One RPC;
+  /// `-32601` marks it unsupported and callers keep today's static rows.
+  Future<Map<String, McpRuntimeRow>> mcpRuntimeStatus() =>
+      _call(CapabilityFeature.mcpStatus, () async {
+        final result = await _rpc(
+          'mcp.servers.status',
+          const {},
+          feature: CapabilityFeature.mcpStatus,
+        );
+        final servers = result['servers'];
+        if (servers is! List) throw const FormatException('list expected');
+        return {
+          for (final row in servers.map(McpRuntimeRow.tryParse).nonNulls)
+            row.name: row,
+        };
+      });
+
+  /// One read of the server's log for [server]. stdio servers log into the
+  /// shared MCP stderr file (cut to their own sections); others are found in
+  /// the agent log by name. Lines are returned to the caller and never kept.
+  Future<List<String>> mcpLogLines(String server, {required bool stdio}) =>
+      _call(CapabilityFeature.mcpLogs, () async {
+        final query = stdio
+            ? 'logs?file=mcp&lines=500'
+            : 'logs?file=agent&lines=300'
+                  '&search=${Uri.encodeQueryComponent(server)}';
+        final result = await rest.get(_withProfile(query));
+        final lines = result['lines'];
+        if (lines is! List) throw const FormatException('list expected');
+        final text = lines.whereType<String>().toList(growable: false);
+        return stdio ? filterStdioSections(text, server) : text;
+      });
+
   Future<void> installMcp(
     String name, {
     Map<String, String> environment = const {},
@@ -523,10 +565,14 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
 
   static const Map<String, String> _account = {'type': 'account'};
 
-  Future<Map<String, dynamic>> _rpc(String method, Map<String, dynamic> p) {
+  Future<Map<String, dynamic>> _rpc(
+    String method,
+    Map<String, dynamic> p, {
+    CapabilityFeature feature = CapabilityFeature.hostedConnectors,
+  }) {
     final call = rpc;
     if (call == null) {
-      _support[CapabilityFeature.hostedConnectors] = false;
+      _support[feature] = false;
       throw const CapabilityFailure(CapabilityFailureKind.unsupported);
     }
     final value = profile.trim();
@@ -626,4 +672,67 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     CapabilityFeature.hostedConnectors,
     () => _rpc('connectors.accounts.remove', {'connection_id': connectionId}),
   );
+
+  // ── Connector policy (member rules, org locks) ──────────────────────────
+
+  Future<ConnectorPolicy> connectorPolicy() =>
+      _call(CapabilityFeature.connectorPolicy, () async {
+        final result = await _rpc(
+          'connectors.policy.get',
+          const {},
+          feature: CapabilityFeature.connectorPolicy,
+        );
+        return ConnectorPolicy.fromJson(result);
+      });
+
+  Future<List<ConnectorTool>> connectorTools(String slug) =>
+      _call(CapabilityFeature.connectorTools, () async {
+        final result = await _rpc('connectors.tools', {
+          'slug': slug.trim(),
+        }, feature: CapabilityFeature.connectorTools);
+        final tools = result['tools'];
+        if (tools is! List) throw const FormatException('list expected');
+        return [
+          for (final row in tools.whereType<Map>())
+            ConnectorTool.fromJson(Map<String, dynamic>.from(row)),
+        ].where((tool) => tool.slug.isNotEmpty).toList(growable: false);
+      });
+
+  /// Saves the member's full `disabled_tools` list for [slug]. Returns the
+  /// member layer's new revision. A stale [expectedRevision] fails with
+  /// detail `POLICY_CONFLICT`.
+  Future<String> setConnectorTools(
+    String slug,
+    List<String> disabledTools, {
+    required String expectedRevision,
+  }) => _policySet({
+    'type': 'tools',
+    'connector': slug.trim(),
+    'disabled_tools': disabledTools,
+  }, expectedRevision);
+
+  Future<String> setConnectorEnabled(
+    String slug,
+    bool enabled, {
+    required String expectedRevision,
+  }) => _policySet({
+    'type': 'connector',
+    'connector': slug.trim(),
+    'enabled': enabled,
+  }, expectedRevision);
+
+  Future<String> _policySet(
+    Map<String, dynamic> change,
+    String expectedRevision,
+  ) => _call(CapabilityFeature.connectorPolicy, () async {
+    final result = await _rpc('connectors.policy.set', {
+      'change': change,
+      'expected_revision': expectedRevision,
+    }, feature: CapabilityFeature.connectorPolicy);
+    final revision = result['revision'];
+    if (revision is! String || revision.isEmpty) {
+      throw const FormatException('revision expected');
+    }
+    return revision;
+  });
 }

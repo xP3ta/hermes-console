@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/capability_models.dart';
+import 'package:hermes_android/core/capabilities/connector_policy.dart';
+import 'package:hermes_android/core/capabilities/mcp_runtime_status.dart';
 import 'package:hermes_android/core/services/connection_manager.dart'
     show DashboardHttpException;
 import 'package:hermes_android/core/services/tui_gateway_client.dart'
@@ -391,5 +393,278 @@ void main() {
       ['b'],
     );
     expect(capabilityCategories(items).first, ('research', 2));
+  });
+
+  group('mcp runtime status', () {
+    Map<String, dynamic> row(String name, String status, int tools) => {
+      'name': name,
+      'transport': 'stdio',
+      'tools': tools,
+      'connected': status == 'connected',
+      'disabled': status == 'disabled',
+      'status': status,
+      'source': 'config',
+      'plugin': null,
+    };
+
+    test('keys rows by server name and tolerates unknown values', () async {
+      final calls = <String>[];
+      final repo = CapabilitiesRepository(
+        rest: FakeRest(),
+        rpc: (method, params) async {
+          calls.add(method);
+          return {
+            'servers': [
+              row('files', 'connected', 4),
+              row('broken', 'failed', 0),
+              row('odd', 'quantum', 2),
+              {'status': 'connected'},
+            ],
+            'checked_at': 1,
+          };
+        },
+      );
+      final status = await repo.mcpRuntimeStatus();
+      expect(calls, ['mcp.servers.status']);
+      expect(status.keys, unorderedEquals(['files', 'broken', 'odd']));
+      expect(status['files']!.status, McpRuntimeStatus.connected);
+      expect(status['files']!.tools, 4);
+      expect(status['broken']!.status, McpRuntimeStatus.failed);
+      expect(status['odd']!.status, McpRuntimeStatus.configured);
+    });
+
+    test('-32601 marks it unsupported and is not asked twice', () async {
+      var calls = 0;
+      final repo = CapabilitiesRepository(
+        rest: FakeRest(),
+        rpc: (method, _) async {
+          calls++;
+          throw TuiGatewayRpcError(method, 'nope', code: -32601);
+        },
+      );
+      await expectLater(
+        repo.mcpRuntimeStatus(),
+        throwsA(
+          isA<CapabilityFailure>().having(
+            (e) => e.kind,
+            'kind',
+            CapabilityFailureKind.unsupported,
+          ),
+        ),
+      );
+      expect(repo.supports(CapabilityFeature.mcpStatus), isFalse);
+      await expectLater(
+        repo.mcpRuntimeStatus(),
+        throwsA(isA<CapabilityFailure>()),
+      );
+      expect(calls, 1);
+    });
+  });
+
+  group('mcp logs', () {
+    test(
+      'stdio reads the mcp log once, scoped to profile, and filters',
+      () async {
+        final rest = FakeRest()
+          ..gets['logs'] = {
+            'file': 'mcp',
+            'lines': [
+              "===== [10:00:05] starting MCP server 'git' =====",
+              'git: cloning',
+              "2026-10-04 10:01:00,000 ===== starting MCP server 'files' =====",
+              'files: ready',
+            ],
+          };
+        final repo = CapabilitiesRepository(rest: rest, profile: 'work');
+        final lines = await repo.mcpLogLines('files', stdio: true);
+        expect(lines, [
+          "2026-10-04 10:01:00,000 ===== starting MCP server 'files' =====",
+          'files: ready',
+        ]);
+        expect(rest.calls, ['GET logs?file=mcp&lines=500&profile=work']);
+      },
+    );
+
+    test('the agent log is searched by server name', () async {
+      final rest = FakeRest()
+        ..gets['logs'] = {
+          'file': 'agent',
+          'lines': ['agent: mcp files connected'],
+        };
+      final repo = CapabilitiesRepository(rest: rest);
+      final lines = await repo.mcpLogLines('my server', stdio: false);
+      expect(lines, ['agent: mcp files connected']);
+      expect(rest.calls, ['GET logs?file=agent&lines=300&search=my+server']);
+    });
+
+    test('404 marks logs unsupported and is not asked again', () async {
+      final rest = FakeRest();
+      final repo = CapabilitiesRepository(rest: rest);
+      await expectLater(
+        repo.mcpLogLines('files', stdio: true),
+        throwsA(isA<CapabilityFailure>()),
+      );
+      expect(repo.supports(CapabilityFeature.mcpLogs), isFalse);
+      await expectLater(
+        repo.mcpLogLines('files', stdio: true),
+        throwsA(isA<CapabilityFailure>()),
+      );
+      expect(rest.calls, hasLength(1));
+    });
+  });
+
+  group('connector policy', () {
+    const memberRev = '01HZX0000000000000000000MM';
+    final policyJson = {
+      'layers': [
+        {
+          'kind': 'org',
+          'revision': '01HZX0000000000000000000OO',
+          'body': {'mode': 'unrestricted'},
+        },
+        {
+          'kind': 'member',
+          'revision': memberRev,
+          'body': {
+            'mode': 'deny',
+            'disabled_connectors': <String>[],
+            'tools': {
+              'github': ['create_issue'],
+            },
+          },
+        },
+      ],
+      'effective': {'mode': 'unrestricted'},
+    };
+
+    test('get parses the layers and sends the profile', () async {
+      final calls = <(String, Map<String, dynamic>)>[];
+      final repo = CapabilitiesRepository(
+        rest: FakeRest(),
+        profile: 'work',
+        rpc: (method, params) async {
+          calls.add((method, params));
+          return policyJson;
+        },
+      );
+      final policy = await repo.connectorPolicy();
+      expect(calls.single.$1, 'connectors.policy.get');
+      expect(calls.single.$2, {'profile': 'work'});
+      expect(policy.memberRevision, memberRev);
+      expect(policy.memberDisabledTools('github'), {'create_issue'});
+    });
+
+    test('tools are read per connector slug', () async {
+      final calls = <(String, Map<String, dynamic>)>[];
+      final repo = CapabilitiesRepository(
+        rest: FakeRest(),
+        rpc: (method, params) async {
+          calls.add((method, params));
+          return {
+            'connector': 'github',
+            'tools': [
+              {
+                'slug': 'create_issue',
+                'name': 'Create issue',
+                'facet': 'write',
+              },
+              {'name': 'no slug'},
+            ],
+          };
+        },
+      );
+      final tools = await repo.connectorTools('github');
+      expect(calls.single.$1, 'connectors.tools');
+      expect(calls.single.$2, {'slug': 'github'});
+      expect(tools.map((t) => t.slug), ['create_issue']);
+      expect(tools.single.facet, ToolFacet.write);
+    });
+
+    test(
+      'saving tools sends one change with the full list and revision',
+      () async {
+        final calls = <(String, Map<String, dynamic>)>[];
+        final repo = CapabilitiesRepository(
+          rest: FakeRest(),
+          rpc: (method, params) async {
+            calls.add((method, params));
+            return {'revision': '01HZX0000000000000000000NN', 'effective': {}};
+          },
+        );
+        final next = await repo.setConnectorTools('github', const [
+          'a',
+          'b',
+        ], expectedRevision: memberRev);
+        expect(next, '01HZX0000000000000000000NN');
+        expect(calls.single.$1, 'connectors.policy.set');
+        expect(calls.single.$2, {
+          'change': {
+            'type': 'tools',
+            'connector': 'github',
+            'disabled_tools': ['a', 'b'],
+          },
+          'expected_revision': memberRev,
+        });
+      },
+    );
+
+    test('the connector switch is one change with the revision', () async {
+      final calls = <Map<String, dynamic>>[];
+      final repo = CapabilitiesRepository(
+        rest: FakeRest(),
+        rpc: (method, params) async {
+          calls.add(params);
+          return {'revision': memberRev};
+        },
+      );
+      await repo.setConnectorEnabled(
+        'github',
+        false,
+        expectedRevision: memberRev,
+      );
+      expect(calls.single, {
+        'change': {
+          'type': 'connector',
+          'connector': 'github',
+          'enabled': false,
+        },
+        'expected_revision': memberRev,
+      });
+    });
+
+    test('a stale revision surfaces as POLICY_CONFLICT', () async {
+      final repo = CapabilitiesRepository(
+        rest: FakeRest(),
+        rpc: (method, _) async => throw TuiGatewayRpcError(
+          method,
+          'Connector policy changed. Refresh and try again.',
+          code: 4090,
+          data: const {'reason': 'POLICY_CONFLICT'},
+        ),
+      );
+      await expectLater(
+        repo.setConnectorTools('github', const [], expectedRevision: memberRev),
+        throwsA(
+          isA<CapabilityFailure>().having(
+            (e) => e.detail,
+            'detail',
+            'POLICY_CONFLICT',
+          ),
+        ),
+      );
+    });
+
+    test('-32601 on policy.get marks it unsupported', () async {
+      final repo = CapabilitiesRepository(
+        rest: FakeRest(),
+        rpc: (method, _) async =>
+            throw TuiGatewayRpcError(method, 'nope', code: -32601),
+      );
+      await expectLater(
+        repo.connectorPolicy(),
+        throwsA(isA<CapabilityFailure>()),
+      );
+      expect(repo.supports(CapabilityFeature.connectorPolicy), isFalse);
+    });
   });
 }

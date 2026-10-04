@@ -6,6 +6,7 @@ import '../../l10n/app_localizations.dart';
 import '../design/hermes_design.dart';
 import '../models/subagent_activity.dart';
 import '../screens/subagent_detail_screen.dart';
+import '../services/delegation_control.dart';
 import '../theme/app_theme.dart';
 import 'activity_pill.dart' show formatTurnElapsed;
 
@@ -70,6 +71,9 @@ class SubagentActivityCard extends StatefulWidget {
   final SubagentSteerSender? onSteer;
   final SubagentTailLoader? onTail;
   final SubagentTailScheduler? scheduleTailPoll;
+
+  /// Server-wide pause switch, handed to the detail's overflow.
+  final HermesDelegationGateway? delegationControl;
   final DateTime? now;
   final bool background;
   final bool appForeground;
@@ -100,6 +104,7 @@ class SubagentActivityCard extends StatefulWidget {
     this.onSteer,
     this.onTail,
     this.scheduleTailPoll,
+    this.delegationControl,
     this.now,
     this.background = false,
     this.appForeground = true,
@@ -222,6 +227,7 @@ class _SubagentActivityCardState extends State<SubagentActivityCard> {
           isOpenPending: widget.isOpenPending,
           acquirePresentation: widget.acquirePresentation,
           scheduleTailPoll: widget.scheduleTailPoll,
+          delegationControl: widget.delegationControl,
           clock: widget.now == null ? null : () => widget.now!,
           hideGoal: !_ownerWired,
         ),

@@ -37,6 +37,8 @@ import '../models/profile_pet.dart';
 import '../models/project_files.dart';
 import 'capability_payload_sanitizer.dart';
 import 'connection_manager.dart';
+import 'connection_request_gateway.dart';
+import 'delegation_control.dart';
 import 'desktop_control_gateway.dart';
 import 'desktop_gateway_capabilities.dart';
 import 'json_rpc_wire.dart';
@@ -274,6 +276,8 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
     super.pendingClarifyProvided,
     super.pendingApproval,
     super.pendingApprovalProvided,
+    super.pendingConnection,
+    super.pendingConnectionProvided,
     super.openRequests,
     super.todoState,
     super.running,
@@ -304,6 +308,8 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
       pendingClarifyProvided: snapshot.pendingClarifyProvided,
       pendingApproval: snapshot.pendingApproval,
       pendingApprovalProvided: snapshot.pendingApprovalProvided,
+      pendingConnection: snapshot.pendingConnection,
+      pendingConnectionProvided: snapshot.pendingConnectionProvided,
       openRequests: snapshot.openRequests,
       todoState: snapshot.todoState,
       running: snapshot.running,
@@ -1346,6 +1352,8 @@ final class _SessionRosterSocketLease {
 
 class TuiGatewayClient
     implements
+        HermesConnectionRequestGateway,
+        HermesDelegationGateway,
         HermesDesktopGateway,
         HermesDesktopOpenRequestsGateway,
         HermesDesktopCompressionStatusGateway,
@@ -4194,6 +4202,9 @@ class TuiGatewayClient
     'connectors.catalog',
     'connectors.accounts',
     'connectors.operation.status',
+    'mcp.servers.status',
+    'connectors.tools',
+    'connectors.policy.get',
   };
 
   static const Set<String> _capabilityWrites = {
@@ -4201,6 +4212,7 @@ class TuiGatewayClient
     'connectors.operation.wake',
     'connectors.accounts.remove',
     'connection.respond',
+    'connectors.policy.set',
   };
 
   static bool capabilitiesRpcAllowed(String method, {required bool readOnly}) =>
@@ -5518,6 +5530,69 @@ class TuiGatewayClient
         'Hermes returned an invalid subagent interrupt result',
       );
     }
+  }
+
+  @override
+  Future<void> respondToConnection(
+    String runtimeSessionId,
+    String opId,
+    Map<String, dynamic> result,
+  ) async {
+    const method = 'connection.respond';
+    await _request(method, {
+      'op_id': opId,
+      'owner': {
+        'type': 'session',
+        'session_id': _validatedRuntimeId(method, runtimeSessionId),
+      },
+      'result': result,
+    });
+  }
+
+  @override
+  Future<void> wakeConnectionOperation(
+    String runtimeSessionId,
+    String opId,
+  ) async {
+    const method = 'connectors.operation.wake';
+    await _request(method, {
+      'op_id': opId,
+      'owner': {
+        'type': 'session',
+        'session_id': _validatedRuntimeId(method, runtimeSessionId),
+      },
+    });
+  }
+
+  @override
+  Future<bool> delegationPaused() =>
+      _delegationCall('delegation.status', const <String, dynamic>{});
+
+  @override
+  Future<bool> setDelegationPaused(bool paused) =>
+      _delegationCall('delegation.pause', {'paused': paused});
+
+  Future<bool> _delegationCall(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    final result = await _requestOptionalCapability(
+      DesktopGatewayCapability.delegationControl,
+      method,
+      params,
+    );
+    final paused = result['paused'];
+    if (paused is! bool) {
+      _capabilityCache.mark(
+        DesktopGatewayCapability.delegationControl,
+        DesktopGatewayCapabilityState.invalid,
+      );
+      throw TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid delegation state',
+      );
+    }
+    return paused;
   }
 
   String _validatedControlValue(String value, {required int maxLength}) {
