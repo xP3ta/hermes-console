@@ -14937,6 +14937,28 @@ class ActiveChat {
     );
   }
 
+  /// True while the rows from the oldest one through the edited message are the
+  /// very ones the edit started from.
+  bool _rewriteTargetPrefixIntact(List<Map<String, dynamic>> prefix) {
+    final current = _messages.reversed.toList(growable: false);
+    if (current.length < prefix.length) return false;
+    for (var i = 0; i < prefix.length; i++) {
+      if (!identical(current[i], prefix[i])) return false;
+    }
+    return true;
+  }
+
+  /// The same checks `_send` makes before writing a prompt: a connected socket
+  /// and the runtime the edit was planned against.
+  Future<bool> _proveRewriteAdmission(HermesDesktopGateway gateway) async {
+    try {
+      await gateway.connect().timeout(const Duration(seconds: 5));
+    } catch (_) {
+      return false;
+    }
+    return !_disposed && gateway.isConnected;
+  }
+
   /// Rebobina hasta un prompt visible y lo vuelve a ejecutar. El ordinal usa el
   /// mismo índice de usuarios (0-based, de antiguo a nuevo) que Hermes Desktop.
   /// La conversación visible se recorta de forma optimista; si el transporte
@@ -14991,6 +15013,10 @@ class ActiveChat {
         throw StateError('The message is no longer in this conversation');
       }
       var target = chronological[targetIndex];
+      // Rows from the oldest one up to the target. Tokens of the running turn
+      // only touch rows after it, so an edit survives them; any other change
+      // to this prefix means the message being edited is no longer the same.
+      final targetPrefix = chronological.take(targetIndex + 1).toList();
       final sourceText = (target['content'] ?? '').toString();
       final sourceWasNewestUser =
           userOrdinal == chronological.where(isRealUserTurn).length - 1;
@@ -15045,20 +15071,36 @@ class ActiveChat {
       }
       final truncatesDurably = truncateBeforeRowId != null;
       if (!identical(_activeRewrite, reservation) ||
-          _transcriptRevision != reservation.transcriptRevision ||
           _turnEpoch != reservation.turnEpoch ||
-          _desktopRuntimeSessionId != reservation.runtimeSessionId) {
+          _desktopRuntimeSessionId != reservation.runtimeSessionId ||
+          (_transcriptRevision != reservation.transcriptRevision &&
+              !_rewriteTargetPrefixIntact(targetPrefix))) {
         // Nothing was rewound, but the caller must hear it: a silent return
         // left the editor on "saving" and dropped the edit without a word.
         _rewindRestoredOnError = true;
         return;
       }
+      reservation.transcriptRevision = _transcriptRevision;
       if (truncatesDurably && gateway is! HermesDesktopDurableRewindGateway) {
         throw const TuiGatewayRpcError(
           'prompt.submit',
           'Durable conversation rewind is unavailable',
           code: -32601,
         );
+      }
+
+      // The running reply is only interrupted once the new prompt can be
+      // written: with the socket down the edit fails with the old reply alive.
+      if (isStreaming && runtimeId != null && gateway != null) {
+        final admitted = await _proveRewriteAdmission(gateway);
+        if (!admitted ||
+            !identical(_activeRewrite, reservation) ||
+            _turnEpoch != reservation.turnEpoch ||
+            _desktopRuntimeSessionId != runtimeId) {
+          _rewindRestoredOnError = true;
+          return;
+        }
+        reservation.transcriptRevision = _transcriptRevision;
       }
 
       if (isStreaming) {
