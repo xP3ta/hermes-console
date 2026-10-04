@@ -10,6 +10,14 @@ import 'live_rtc_transport.dart';
 /// No ICE servers are configured: the vendor answer carries its own
 /// candidates and no third-party endpoint is baked into the app.
 class FlutterWebRtcTransport implements LiveRtcTransport {
+  /// [peerFactory] exists for tests; production uses `createPeerConnection`.
+  FlutterWebRtcTransport({
+    Future<RTCPeerConnection> Function(Map<String, dynamic> configuration)?
+    peerFactory,
+  }) : _peerFactory = peerFactory ?? createPeerConnection;
+
+  final Future<RTCPeerConnection> Function(Map<String, dynamic> configuration)
+  _peerFactory;
   final StreamController<void> _remoteAudio =
       StreamController<void>.broadcast();
   final StreamController<LiveRtcConnectionState> _state =
@@ -61,7 +69,7 @@ class FlutterWebRtcTransport implements LiveRtcTransport {
   Future<RTCPeerConnection> _ensurePeer() async {
     final existing = _peer;
     if (existing != null) return existing;
-    final peer = await createPeerConnection(<String, dynamic>{
+    final peer = await _peerFactory(<String, dynamic>{
       'iceServers': <Map<String, dynamic>>[],
       'sdpSemantics': 'unified-plan',
     });
@@ -212,8 +220,11 @@ class FlutterWebRtcTransport implements LiveRtcTransport {
     try {
       await channel?.close();
     } catch (_) {}
+    // Independent cleanups: a failing close must not skip the native dispose.
     try {
       await peer?.close();
+    } catch (_) {}
+    try {
       await peer?.dispose();
     } catch (_) {}
     await Future.wait([
