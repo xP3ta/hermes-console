@@ -112,7 +112,11 @@ Object? _ok(Map<String, dynamic> frame) => switch (frame['method']) {
   List<Map<String, dynamic>> requests,
   List<_Channel> channels,
 })
-_client({bool readOnly = false, _Responder respond = _ok}) {
+_client({
+  bool readOnly = false,
+  _Responder respond = _ok,
+  GatewayReconnectBackoff? reconnectBackoff,
+}) {
   final requests = <Map<String, dynamic>>[];
   final channels = <_Channel>[];
   final client = TuiGatewayClient(
@@ -125,6 +129,7 @@ _client({bool readOnly = false, _Responder respond = _ok}) {
       readOnly: readOnly,
     ),
     dashboard: _Dashboard(),
+    reconnectBackoff: reconnectBackoff,
     channelFactory: (_, _) {
       final channel = _Channel(requests, respond);
       channels.add(channel);
@@ -298,9 +303,15 @@ void main() {
   });
 
   test('a socket drop during the move fails once and never retries', () async {
+    // A 5 ms base keeps the whole backoff ladder far below the waits below, so
+    // a replay scheduled after the reconnect would be seen.
     final h = _client(
       respond: (frame) =>
           frame['method'] == 'session.workspace.move' ? null : _ok(frame),
+      reconnectBackoff: GatewayReconnectBackoff(
+        base: const Duration(milliseconds: 5),
+        random: () => 1,
+      ),
     );
     final pending = h.client.moveSessionWorkspace(
       sessionKey: 'stored-1',
@@ -319,8 +330,13 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 50));
     h.channels.single.drop();
     await outcome;
-    await Future<void>.delayed(const Duration(milliseconds: 100));
 
+    // Wait well past the reconnect backoff (at most 7.5 ms here, 20 times
+    // more below) and past any short replay delay, then count the moves on
+    // every socket generation.
+    for (var i = 0; i < 6; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
     expect(_moves(h.requests), hasLength(1));
   });
 }
