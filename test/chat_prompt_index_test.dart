@@ -56,6 +56,29 @@ void main() {
       expect(entries.map((e) => e.preview), ['real']);
     });
 
+    test('process-notification carrier rows are not prompts', () {
+      final entries = deriveChatPromptEntries([
+        _msg(
+          'user',
+          '[IMPORTANT: Background process proc_0b5fab8a4839 exited '
+              '(exit code 1).\nCommand: echo hi\nOutput:\nhi\n]',
+        ),
+        _msg('user', '[IMPORTANT: Background process 7 finished]'),
+        _msg('user', 'pregunta real'),
+      ]);
+      expect(entries.map((e) => e.preview), ['pregunta real']);
+      expect(entries.single.messageIndex, 2);
+    });
+
+    test('a carrier row does not open a turn for the sticky prompt', () {
+      final rows = [
+        _msg('assistant', 'respuesta'),
+        _msg('user', '[IMPORTANT: Background process 7 finished]'),
+        _msg('user', 'pregunta real'),
+      ];
+      expect(stickyPromptIndex(rows, 0), 2);
+    });
+
     test('empty transcript has no entries', () {
       expect(deriveChatPromptEntries(const []), isEmpty);
     });
