@@ -62,6 +62,10 @@ List<MessageReaction> applyReaction(
 /// A persisted row names [rowId]; a live row that has no id yet names
 /// [newestRole] (`user` or `assistant`). A null [emoji] clears.
 abstract class HermesMessageReactionGateway {
+  /// False once the server is known not to take reactions (or the connection
+  /// is read-only); reactions are neither offered nor sent then.
+  bool get messageReactionsAvailable;
+
   Future<({int rowId, List<MessageReaction> reactions})> reactToMessage(
     String runtimeSessionId, {
     int? rowId,

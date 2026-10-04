@@ -6430,6 +6430,7 @@ class TuiGatewayClient
 
   /// False once `message.react` answered -32601 on this connection (or for a
   /// read-only one): reactions are then not offered.
+  @override
   bool get messageReactionsAvailable =>
       !_connection.readOnly &&
       _capabilityCache.canAttempt(DesktopGatewayCapability.messageReactions);

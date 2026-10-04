@@ -16,6 +16,11 @@ import 'support/in_memory_compression_restore_storage.dart';
 class _FakeDesktopGateway
     implements HermesDesktopGateway, HermesMessageReactionGateway {
   final List<Map<String, Object?>> calls = [];
+  bool available = true;
+
+  @override
+  bool get messageReactionsAvailable => available;
+
   Completer<({int rowId, List<MessageReaction> reactions})>? pending;
 
   @override
@@ -149,6 +154,50 @@ void main() {
     expect(chat.reactionsFor(5), isNotEmpty);
     done.completeError(StateError('no'));
     await failure;
+    expect(chat.reactionsFor(5), isEmpty);
+  });
+
+  test(
+    'reactions are offered only while the gateway says it can take them',
+    () async {
+      final gateway = _FakeDesktopGateway();
+      final chat = await _liveChat(gateway);
+      expect(chat.canReact, isTrue);
+      gateway.available = false;
+      expect(chat.canReact, isFalse);
+    },
+  );
+
+  test(
+    'a refusal that ends the capability repaints the chat without it',
+    () async {
+      final gateway = _FakeDesktopGateway();
+      final chat = await _liveChat(gateway);
+      final emitted = <ActiveChatEvent>[];
+      final sub = chat.changes.listen(emitted.add);
+      addTearDown(sub.cancel);
+      final done = Completer<({int rowId, List<MessageReaction> reactions})>();
+      gateway.pending = done;
+      final future = chat.reactToMessage(rowId: 5, emoji: '👍');
+      final failure = expectLater(future, throwsA(isA<StateError>()));
+      emitted.clear();
+      gateway.available = false;
+      done.completeError(StateError('method not found'));
+      await failure;
+      expect(chat.canReact, isFalse);
+      expect(emitted, contains(ActiveChatEvent.reactionsChanged));
+    },
+  );
+
+  test('without a confirmed capability a reaction is not even sent', () async {
+    final gateway = _FakeDesktopGateway();
+    final chat = await _liveChat(gateway);
+    gateway.available = false;
+    await expectLater(
+      chat.reactToMessage(rowId: 5, emoji: '👍'),
+      throwsA(isA<TuiGatewayRpcError>()),
+    );
+    expect(gateway.calls, isEmpty);
     expect(chat.reactionsFor(5), isEmpty);
   });
 

@@ -4545,8 +4545,13 @@ class ActiveChat {
   List<MessageReaction> reactionsFor(int rowId) =>
       _reactions[rowId] ?? const <MessageReaction>[];
 
-  /// True when the bound gateway can store reactions at all.
-  bool get canReact => _desktopGateway is HermesMessageReactionGateway;
+  /// True while the bound gateway can store reactions: it implements them and
+  /// has not learned that the server (or this connection) refuses them.
+  bool get canReact {
+    final gateway = _desktopGateway as Object?;
+    return gateway is HermesMessageReactionGateway &&
+        gateway.messageReactionsAvailable;
+  }
 
   /// Sets, replaces or retracts the user's reaction. A persisted row (with
   /// [rowId]) shows it at once and rolls back if the gateway refuses; a live
@@ -4557,8 +4562,10 @@ class ActiveChat {
     required String? emoji,
   }) async {
     final runtimeId = _desktopRuntimeSessionId;
-    final gateway = _desktopGateway;
-    if (runtimeId == null || gateway is! HermesMessageReactionGateway) {
+    final gateway = _desktopGateway as Object?;
+    if (runtimeId == null ||
+        gateway is! HermesMessageReactionGateway ||
+        !gateway.messageReactionsAvailable) {
       throw const TuiGatewayRpcError(
         'message.react',
         'Reactions are unavailable',
@@ -4577,7 +4584,7 @@ class ActiveChat {
       );
     }
     try {
-      final result = await (gateway as HermesMessageReactionGateway)
+      final result = await gateway
           .reactToMessage(
             runtimeId,
             rowId: rowId,
@@ -4588,8 +4595,13 @@ class ActiveChat {
       if (_disposed) return;
       _setReactions(result.rowId, result.reactions);
     } catch (_) {
-      if (!_disposed && rowId != null) {
-        _setReactions(rowId, before ?? const <MessageReaction>[]);
+      if (!_disposed) {
+        if (rowId != null) {
+          _setReactions(rowId, before ?? const <MessageReaction>[]);
+        }
+        // The refusal may have ended the capability; repaint so the reaction
+        // controls disappear instead of waiting for the next unrelated event.
+        _emit(ActiveChatEvent.reactionsChanged);
       }
       rethrow;
     }
