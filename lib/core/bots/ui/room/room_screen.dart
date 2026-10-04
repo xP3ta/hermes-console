@@ -306,6 +306,60 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     final visible = status == AnimationStatus.dismissed;
     if (visible && !_poller.active) _restartStaleClock();
     _poller.setVisible(visible);
+    _syncAgoTick();
+  }
+
+  /// Start of the idle status line's relative age ("… · 8 min ago"), as
+  /// last painted; null when the line shows no age.
+  DateTime? _agoSince;
+  DateTime? _agoTimerSince;
+  Timer? _agoTimer;
+
+  /// Whether the relative-age repaint is scheduled.
+  @visibleForTesting
+  bool get ageTickArmed => _agoTimer?.isActive ?? false;
+
+  Duration? _agoTickDelay;
+  int _agoTicks = 0;
+
+  /// Delay of the last armed repaint (null before the first).
+  @visibleForTesting
+  Duration? get ageTickDelay => _agoTickDelay;
+
+  /// Age repaints fired so far.
+  @visibleForTesting
+  int get ageTicks => _agoTicks;
+
+  /// Repaints the relative age when its label next changes (a minute, an
+  /// hour or a day later), only while the room is on screen: no timer runs
+  /// in the background or under another route.
+  void _armAgoTick() {
+    final since = _agoSince;
+    if (since == null || !_poller.active) {
+      _agoTimer?.cancel();
+      _agoTimer = null;
+      return;
+    }
+    if (_agoTimer != null && _agoTimerSince == since) return;
+    _agoTimer?.cancel();
+    _agoTimerSince = since;
+    final delay = _agoTickDelay = roomAgoNextChange(_now.difference(since));
+    _agoTimer = Timer(delay, () {
+      _agoTimer = null;
+      _agoTicks += 1;
+      if (mounted && _poller.active) setState(() {});
+    });
+  }
+
+  /// Visibility changed: stop the age timer, or repaint a fresh age (which
+  /// arms it again) when the room is back on screen.
+  void _syncAgoTick() {
+    if (!_poller.active) {
+      _agoTimer?.cancel();
+      _agoTimer = null;
+    } else if (_agoSince != null && mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -315,6 +369,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     _foreground = foreground;
     if (foreground) _restartStaleClock();
     _poller.setForeground(foreground);
+    _syncAgoTick();
     if (!foreground) {
       _flushDraft();
       _markSeen();
@@ -690,6 +745,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _coverAnimation?.removeStatusListener(_onCoverChanged);
+    _agoTimer?.cancel();
     _poller.dispose();
     if (_heldDraft != null && _draftDirty) {
       _typedWhileHeld = _composer.text;
@@ -1527,6 +1583,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   // ── Build ────────────────────────────────────────────────────────────
 
   String _statusLine(Strings s, RoomRoundModel? round) {
+    _agoSince = null;
     final driver = _driver;
     if (driver != null && driver.approvals.isNotEmpty) {
       return s.roomStatusNeedsApproval;
@@ -1564,7 +1621,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     }
     final events = _events;
     if (events.isEmpty) return '';
-    final ago = roomAgo(s, _now.difference(roomEventTime(events.last)));
+    final since = _agoSince = roomEventTime(events.last);
+    final ago = roomAgo(s, _now.difference(since));
     // Idle room with a finished round: ONE line, "Round 1 finished · 17 h
     // ago", instead of a round panel stacked over a last-activity bar.
     if (round != null && !_roundNeedsPanel(round)) {
@@ -2405,6 +2463,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       nameOf: nameOf,
       now: _now,
     );
+    _armAgoTick();
     final next = roomStripNext(s, round: round, nameOf: nameOf);
     final detailOpen = _detailOpen && round != null;
     return Scaffold(
