@@ -569,6 +569,11 @@ abstract final class MissionProjector {
       liveByProfile.putIfAbsent(chat.profileName, () => []).add(chat);
     }
 
+    final ambiguousSessionIds = BotPresence.ambiguousSessionIds(
+      snapshot.profiles,
+    );
+    final activeObservedAt =
+        snapshot.activeSessionsObservedAt ?? snapshot.loadedAt;
     final agents = <MissionAgent>[];
     final approvals = <MissionApproval>[];
     final approvalSessions = <String>{};
@@ -599,6 +604,19 @@ abstract final class MissionProjector {
                 worker.lastActive > sessionActivitySeconds
           ? worker.lastActive
           : sessionActivitySeconds;
+      // What the server says this bot is doing, whichever client moves its
+      // chat. A row the bot's own open chat already speaks for is dropped.
+      final liveRows = snapshot.activeSessions
+          .where((row) => !_chatSpeaksFor(row, chats, activeObservedAt))
+          .toList(growable: false);
+      final liveRow = BotPresence.liveSessionFor(
+        profile,
+        liveRows,
+        ambiguousSessionIds: ambiguousSessionIds,
+      );
+      // Only the row speaks here: a fresh worker already feeds `status`, and
+      // its freshness is judged again whenever the roster is drawn.
+      final livePresence = BotPresence.ofLiveStatus(liveRow?.status);
       final currentSession =
           _pinnedBotChat(profile) ??
           _sessionForChat(sessions, chat) ??
@@ -634,6 +652,10 @@ abstract final class MissionProjector {
             task?.providerOverride,
             profile.provider,
           ]),
+          livePresence: livePresence,
+          livePresenceTitle: liveRow == null
+              ? null
+              : _liveRowTitle(profile, liveRow),
         ),
       );
     }
@@ -654,6 +676,44 @@ abstract final class MissionProjector {
       missingProfileCount: missing,
       unattributedSessionCount: unattributedSessionCount,
     );
+  }
+
+  /// The open chat of the same session speaks for it: a working chat always,
+  /// an idle one unless the row was read after the chat settled its turn.
+  static bool _chatSpeaksFor(
+    DesktopActiveSession row,
+    List<MissionLiveChat> chats,
+    DateTime observedAt,
+  ) {
+    for (final chat in chats) {
+      if (chat.sessionId != row.storedSessionId) continue;
+      if (chat.phase != MissionLivePhase.idle) return true;
+      final settled = chat.settledAt;
+      if (settled != null && !observedAt.isAfter(settled)) return true;
+    }
+    return false;
+  }
+
+  /// The row's own title, else the bot's stored title for that session.
+  static String? _liveRowTitle(AgentProfile profile, DesktopActiveSession row) {
+    final own = _firstNonEmpty([row.title]);
+    if (own != null) return own;
+    final id = row.storedSessionId;
+    for (final summary in [
+      profile.canonicalSession,
+      profile.lastSession,
+      profile.preferredSession,
+    ]) {
+      if (summary == null || (summary.id != id && summary.resolvedId != id)) {
+        continue;
+      }
+      final title = _firstNonEmpty([summary.title, summary.rootTitle]);
+      if (title != null) return title;
+    }
+    final worker = profile.workerSession;
+    return worker != null && worker.id == id
+        ? _firstNonEmpty([worker.title])
+        : null;
   }
 
   /// The canonical Bot Chat (`canonical_session`, spec 070 T206). The legacy
