@@ -399,7 +399,13 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
   /// Event-driven tail read, coalesced: a burst during an in-flight read
   /// yields exactly one follow-up read when it lands.
   void _tailOnChildEvent() {
-    if (_watch != null) return;
+    if (_watch != null) {
+      // The watch is the source, but the roster still decides whether the
+      // child is alive: a child that ended without message.complete must not
+      // keep the runtime and the listener.
+      _syncTail();
+      return;
+    }
     if (!_visible || !_canTailNow(_find())) {
       _syncTail();
       return;
