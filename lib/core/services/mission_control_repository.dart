@@ -537,6 +537,14 @@ abstract interface class MissionLiveRefreshDataSource {
   );
 }
 
+/// One `session.active_list` read: its rows and whether it was an answer.
+final class _ActiveSessionsRead {
+  const _ActiveSessionsRead(this.rows, this.authoritative);
+
+  final List<DesktopActiveSession> rows;
+  final bool authoritative;
+}
+
 final class MissionControlRepository
     implements
         MissionControlDataSource,
@@ -654,7 +662,7 @@ final class MissionControlRepository
     final sessionsResult = results[1] as _MissionLoadResult<List<Session>>;
     final boardResult = results[2] as _MissionLoadResult<KanbanBoard>;
     final groupsResult = results[3] as _MissionLoadResult<HostedGroupsSnapshot>;
-    final activeSessions = results[4] as List<DesktopActiveSession>;
+    final active = results[4] as _ActiveSessionsRead;
     final failures = <String, Object>{
       'profiles': ?profilesResult.error,
       'sessions': ?sessionsResult.error,
@@ -676,20 +684,23 @@ final class MissionControlRepository
           : _capability(groupsResult),
       failures: failures,
       loadedAt: DateTime.now(),
-      activeSessions: activeSessions,
-      activeSessionsObservedAt: activeObservedAt,
+      activeSessions: active.rows,
+      activeSessionsObservedAt: active.authoritative ? activeObservedAt : null,
+      activeSessionsAuthoritative: active.authoritative,
     );
   }
 
-  /// `session.active_list` of the read in progress. A refusal or failure is
-  /// the legacy behaviour (an empty list), never an error of the read.
-  Future<List<DesktopActiveSession>> _loadActiveSessions() async {
+  /// `session.active_list` of the read in progress, never an error of the
+  /// read. An answer (even an empty one) and a server that lacks the method
+  /// are authoritative; a timeout, a cut socket or any other failure proves
+  /// nothing about absence, so the caller keeps what it last confirmed.
+  Future<_ActiveSessionsRead> _loadActiveSessions() async {
     final loader = activeSessionsLoader;
-    if (loader == null) return const [];
+    if (loader == null) return const _ActiveSessionsRead([], true);
     try {
-      return (await loader()).sessions;
-    } catch (_) {
-      return const [];
+      return _ActiveSessionsRead((await loader()).sessions, true);
+    } catch (error) {
+      return _ActiveSessionsRead(const [], _isUnsupported(error));
     }
   }
 
@@ -716,7 +727,7 @@ final class MissionControlRepository
     ]);
     final profiles = results[0] as _MissionLoadResult<List<AgentProfile>>;
     final sessions = results[1] as _MissionLoadResult<List<Session>>;
-    final activeSessions = results[2] as List<DesktopActiveSession>;
+    final active = results[2] as _ActiveSessionsRead;
     return MissionRosterRead(
       profiles: profiles.value ?? const [],
       sessions: sessions.value ?? const [],
@@ -724,8 +735,9 @@ final class MissionControlRepository
       sessionsCapability: _capability(sessions),
       profilesError: profiles.error,
       sessionsError: sessions.error,
-      activeSessions: activeSessions,
-      activeSessionsObservedAt: activeObservedAt,
+      activeSessions: active.rows,
+      activeSessionsObservedAt: active.authoritative ? activeObservedAt : null,
+      activeSessionsAuthoritative: active.authoritative,
     );
   }
 
