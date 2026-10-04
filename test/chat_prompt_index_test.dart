@@ -224,6 +224,22 @@ void main() {
       expect(items, hasLength(2));
     });
 
+    test('identical previews with different row ids are distinct prompts', () {
+      final items = mergeChatPromptItems(loaded, [
+        (rowId: 12, preview: 'igual'),
+        (rowId: 8, preview: 'igual'),
+        (rowId: 6, preview: 'carga 2'),
+      ]);
+      expect(items.map((i) => i.rowId), [30, 20, 12, 8, 6]);
+      expect(items.map((i) => i.preview), [
+        'carga 3',
+        'carga 2',
+        'igual',
+        'igual',
+        'carga 2',
+      ]);
+    });
+
     test('remote rows newer than the oldest loaded prompt are ignored', () {
       final items = mergeChatPromptItems(loaded, [
         (rowId: 25, preview: 'intermedio'),
