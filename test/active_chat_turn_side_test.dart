@@ -285,22 +285,59 @@ void main() {
       },
     );
 
+    test('a completion for another runtime is ignored', () async {
+      final gateway = FakeTurnSideGateway();
+      final chat = await _streamingChat(gateway);
+
+      gateway.emit('background.complete', {
+        'task_id': 'bg-other',
+        'text': 'no es mío',
+      }, sessionId: 'runtime-elsewhere');
+      await _pump();
+
+      expect(chat.backgroundTaskOutcomes, isEmpty);
+      expect(
+        chat.messages.where((m) => m['display_kind'] == 'side_answer'),
+        isEmpty,
+      );
+    });
+
     test(
-      'a completion for another runtime or without an id is ignored',
+      'a completion without a task id keeps the trimmed text as a system row',
       () async {
         final gateway = FakeTurnSideGateway();
         final chat = await _streamingChat(gateway);
 
-        gateway.emit('background.complete', {
-          'task_id': 'bg-other',
-          'text': 'no es mío',
-        }, sessionId: 'runtime-elsewhere');
-        gateway.emit('background.complete', {'text': 'sin id'});
+        gateway.emit('background.complete', {'text': '  la respuesta \n'});
+        gateway.emit('background.complete', {'text': '   '});
         await _pump();
 
+        final rows = chat.messages.where(
+          (message) => message['display_kind'] == 'side_answer',
+        );
+        expect(rows, hasLength(1));
+        expect(rows.single['role'], 'system');
+        expect(rows.single['content'], 'la respuesta');
         expect(chat.backgroundTaskOutcomes, isEmpty);
       },
     );
+
+    test('the task text is trimmed before it is stored', () async {
+      final gateway = FakeTurnSideGateway();
+      final chat = await _streamingChat(gateway);
+
+      gateway.emit('background.complete', {
+        'task_id': 'bg-trim',
+        'text': '\n  Hecho.  \n',
+      });
+      await _pump();
+
+      expect(chat.backgroundTaskOutcomes['bg-trim']!.text, 'Hecho.');
+      expect(
+        chat.messages.any((m) => m['content'] == '[bg bg-trim]\nHecho.'),
+        isTrue,
+      );
+    });
 
     test('empty, unsupported and read-only send nothing more', () async {
       final gateway = FakeTurnSideGateway()

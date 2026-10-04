@@ -1073,9 +1073,9 @@ String friendlyModelName(String id) {
       RegExp(
         r'^claude-(opus|sonnet|haiku)-(\d+)(?:[.-](\d{1,2})(?!\d))?',
       ).firstMatch(lower) ??
-      RegExp(r'^claude-(\d+)(?:[.-](\d))?-(opus|sonnet|haiku)').firstMatch(
-        lower,
-      );
+      RegExp(
+        r'^claude-(\d+)(?:[.-](\d))?-(opus|sonnet|haiku)',
+      ).firstMatch(lower);
   if (claude != null) {
     final legacy = RegExp(r'^\d').hasMatch(claude.group(1)!);
     final family = legacy ? claude.group(3)! : claude.group(1)!;
@@ -1083,7 +1083,9 @@ String friendlyModelName(String id) {
     final minor = legacy ? claude.group(2) : claude.group(3);
     final capitalized = family[0].toUpperCase() + family.substring(1);
     final version = minor == null ? major : '$major.$minor';
-    final rest = lower.substring(claude.end).replaceFirst(RegExp(r'-\d{8}'), '');
+    final rest = lower
+        .substring(claude.end)
+        .replaceFirst(RegExp(r'-\d{8}'), '');
     final variant = RegExp(
       r'^-(fast|thinking|preview|latest|flash)\b',
     ).firstMatch(rest)?.group(1);
@@ -18183,7 +18185,9 @@ _timelineSystemEventPresentation(
       final isBackground = metadata['kind'] == 'bg';
       return (
         title: isBackground
-            ? strings.tc1215BgAnswerTitle(taskId is String ? taskId : '')
+            ? (taskId is String && taskId.isNotEmpty
+                  ? strings.tc1215BgAnswerTitle(taskId)
+                  : 'bg')
             : asked.isEmpty
             ? strings.tc1215BtwAnswerNoQuestion
             : strings.tc1215BtwAnswerTitle(asked),

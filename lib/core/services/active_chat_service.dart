@@ -16358,7 +16358,7 @@ class ActiveChat {
     _insertSideAnswerRow(
       taskId: taskId,
       kind: 'bg',
-      content: '[bg $taskId]\n$text',
+      content: taskId.isEmpty ? text : '[bg $taskId]\n$text',
       question: '',
       answer: text,
     );
@@ -16371,11 +16371,13 @@ class ActiveChat {
     required String question,
     required String answer,
   }) {
-    _messages.removeWhere(
-      (message) =>
-          message['_btwTaskId'] == taskId &&
-          (message['display_metadata'] as Map?)?['kind'] == kind,
-    );
+    if (taskId.isNotEmpty) {
+      _messages.removeWhere(
+        (message) =>
+            message['_btwTaskId'] == taskId &&
+            (message['display_metadata'] as Map?)?['kind'] == kind,
+      );
+    }
     _messages.insert(0, <String, dynamic>{
       'role': 'system',
       'content': content,
@@ -16387,7 +16389,7 @@ class ActiveChat {
         'is_error': answer.startsWith('error:'),
       },
       '_local': true,
-      '_btwTaskId': taskId,
+      if (taskId.isNotEmpty) '_btwTaskId': taskId,
     });
     _emit(ActiveChatEvent.backgroundTaskComplete);
   }
@@ -21258,9 +21260,13 @@ class ActiveChat {
     }
     if (event.type == 'background.complete') {
       final taskId = payload['task_id']?.toString().trim() ?? '';
-      if (taskId.isNotEmpty) {
+      final rawText = payload['text']?.toString().trim() ?? '';
+      if (taskId.isEmpty) {
+        // Desktop still keeps the text of an anonymous completion, without a
+        // `[bg …]` header; there is no task to show in the strip or notify.
+        _applyBackgroundAnswer('', rawText);
+      } else {
         _signalAdaptiveRefresh(processes: true);
-        final rawText = payload['text']?.toString() ?? '';
         final isError = rawText.startsWith('error:');
         _backgroundTaskOutcomes[taskId] = (text: rawText, isError: isError);
         _applyBackgroundAnswer(taskId, rawText);
