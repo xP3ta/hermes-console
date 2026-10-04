@@ -1,6 +1,9 @@
 import 'dart:async';
 
+// ignore: depend_on_referenced_packages
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -132,13 +135,6 @@ class _SurfaceGateway
   );
 
   @override
-  Future<DesktopTurnAck> submitQueuedPromptIdempotent(
-    String runtimeSessionId,
-    String text,
-    String clientTurnId,
-  ) async => _ack(clientTurnId);
-
-  @override
   Future<void> steer(String runtimeSessionId, String text) async {}
   @override
   Future<void> interrupt(String runtimeSessionId) async {}
@@ -186,6 +182,8 @@ const _voiceLive = PromptClientSurface.voiceLive(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues(const {}));
   late _SurfaceGateway gateway;
   late ActiveChat chat;
 
@@ -249,6 +247,33 @@ void main() {
         'voice_context': 'User: hola\nVoice assistant: dime',
       },
     ]);
+  });
+
+  test('a gateway without session lifecycle keeps the surface under a '
+      'non-default profile', () {
+    // Without the lifecycle capability a profile turn goes through the
+    // profile dispatch, which probes the bridge before degrading to the
+    // gateway; the metadata must survive that detour.
+    fakeAsync((async) {
+      unawaited(
+        chat.send(
+          fullText: 'abre el calendario',
+          model: 'hermes-agent',
+          history: const [],
+          profile: 'ops',
+          clientSurface: _voiceLive,
+        ),
+      );
+      async.elapse(const Duration(seconds: 10));
+      expect(gateway.submits, [
+        {
+          'path': 'plain',
+          'text': 'abre el calendario',
+          'surface': 'voice-live',
+          'voice_context': 'User: hola\nVoice assistant: dime',
+        },
+      ]);
+    });
   });
 
   test('typed submits never carry surface or voice_context', () async {
