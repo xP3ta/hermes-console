@@ -206,4 +206,15 @@ void main() {
       );
     });
   });
+
+  test('a named profile without Dashboard access has its own kind', () {
+    expect(
+      classifyChatError(const ProfileTranscriptAccessRequired().toString()),
+      ChatErrorKind.profileDashboardAccess,
+    );
+    expect(
+      classifyChatError('HTTP 401'),
+      isNot(ChatErrorKind.profileDashboardAccess),
+    );
+  });
 }

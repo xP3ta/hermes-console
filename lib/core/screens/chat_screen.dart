@@ -6793,8 +6793,14 @@ class _ChatScreenState extends State<ChatScreen>
         break;
       case ActiveChatEvent.earlierMessagesLoaded:
       case ActiveChatEvent.responseMetrics:
-      case ActiveChatEvent.sessionInfo:
       case ActiveChatEvent.dashboardAuthChanged:
+        // A background read (resume, settle, recovery) found the profile
+        // unreachable on both routes.
+        if (_chat.profileTranscriptAccessBlocked) {
+          _showProfileTranscriptAccessError();
+        }
+        break;
+      case ActiveChatEvent.sessionInfo:
       case ActiveChatEvent.goalUpdated:
       // The generic setState above already repaints _buildGoalStrip; no
       // extra behavior (scrolling, etc.) is needed for a status change.
@@ -8027,6 +8033,12 @@ class _ChatScreenState extends State<ChatScreen>
   Future<bool> _fetchMessages({bool passiveOnly = false}) async {
     await _profileReady;
     if (_disposed || !mounted) return false;
+    // Neither the profile's gateway route nor the Dashboard serves this
+    // transcript: polling stops until the user retries.
+    if (passiveOnly && _chat.profileTranscriptAccessBlocked) {
+      _showProfileTranscriptAccessError();
+      return false;
+    }
     // No recargues sobre un stream en curso: clobbearía el parcial que llega.
     if (_chat.isStreaming) {
       if (!passiveOnly && mounted) {
@@ -8094,6 +8106,10 @@ class _ChatScreenState extends State<ChatScreen>
       if (_disposed || !mounted || refreshEpoch != _messageRefreshEpoch) {
         return false;
       }
+      // Rows already on screen can survive a refused read: the error stays.
+      if (_chat.profileTranscriptAccessBlocked) {
+        _showProfileTranscriptAccessError();
+      }
       if (!passiveOnly) {
         // Una carga interactiva puede enlazar una sesión durable anterior. El
         // observador pasivo nunca intenta enlazar, reanudar ni adquirir runtime.
@@ -8115,6 +8131,10 @@ class _ChatScreenState extends State<ChatScreen>
         return false;
       }
       _cancelMessageRefreshViewportAnchor();
+      if (e is ProfileTranscriptAccessRequired) {
+        _showProfileTranscriptAccessError();
+        return false;
+      }
       if (passiveOnly) return false;
       final errStr = e.toString();
       if (errStr.contains('404') || errStr.contains('not found')) {
@@ -8197,6 +8217,25 @@ class _ChatScreenState extends State<ChatScreen>
         if (!_disposed && mounted) setState(() {});
       }
     }
+  }
+
+  /// One actionable error for a named profile whose transcript neither route
+  /// serves; repeated failures never stack notices.
+  void _showProfileTranscriptAccessError() {
+    if (_disposed || !mounted) return;
+    final marker = const ProfileTranscriptAccessRequired().toString();
+    if (_error == marker) return;
+    setState(() {
+      _error = marker;
+      _refreshErrorNoticeDismissed = false;
+    });
+  }
+
+  /// Retry from the load error: a blocked profile gets one more Dashboard
+  /// attempt; any other error simply reloads.
+  Future<bool> _retryMessagesAfterError() {
+    _chat.retryProfileTranscriptAccess();
+    return _fetchMessages();
   }
 
   /// The session's own row answers 404 too: deleted (here or on another
@@ -11170,7 +11209,6 @@ class _ChatScreenState extends State<ChatScreen>
       return;
     }
     final readOnlyConnection = widget.connection.copyWith(readOnly: true);
-    final profile = _chat.sessionProfile;
     final strings = Strings.of(context);
     final goal = activity.goalPreview?.trim() ?? '';
     // Spec 080: the child conversation opens as a read-only transcript page
@@ -11189,7 +11227,13 @@ class _ChatScreenState extends State<ChatScreen>
               connectionId: readOnlyConnection.id,
             );
             try {
-              return await client.getMessages(childSessionId, profile: profile);
+              // Opening (or retrying) the page is an explicit action: it may
+              // try the Dashboard once more for a blocked named profile.
+              _chat.retryProfileTranscriptAccess();
+              return await _chat.loadChildTranscript(
+                childSessionId,
+                gateway: client,
+              );
             } finally {
               client.close();
             }
@@ -15706,6 +15750,8 @@ class _ChatScreenState extends State<ChatScreen>
         ChatErrorKind.firstTokenTimeout => str.chaErrFirstTokenTimeout,
         ChatErrorKind.searchToolUnavailable => str.chaErrSearchToolUnavailable,
         ChatErrorKind.sessionTooLarge => str.chaErrSessionTooLarge,
+        ChatErrorKind.profileDashboardAccess =>
+          str.chaErrProfileDashboardAccess,
         ChatErrorKind.unknown => str.chaErrUnknown,
       };
       return Center(
@@ -15760,7 +15806,7 @@ class _ChatScreenState extends State<ChatScreen>
                   icon: Icons.refresh_rounded,
                   label: str.chaRetry,
                   color: colors.error,
-                  onTap: _fetchMessages,
+                  onTap: _retryMessagesAfterError,
                 ),
                 TextButton(
                   onPressed: () =>
@@ -15987,6 +16033,8 @@ class _ChatScreenState extends State<ChatScreen>
           : null,
       errorMessage: _error == null || _refreshErrorNoticeDismissed
           ? null
+          : classifyChatError(_error!) == ChatErrorKind.profileDashboardAccess
+          ? Strings.of(context).chaErrProfileDashboardAccess
           : Strings.of(context).chaMessagesError,
       onDismissError: () => setState(() => _refreshErrorNoticeDismissed = true),
       // Bajo el botón «cargar anteriores» (8 + 48 + 8) cuando está a la vista.
@@ -17820,6 +17868,7 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
     _ErrorKind.firstTokenTimeout => s.chaErrFirstTokenTimeout,
     _ErrorKind.searchToolUnavailable => s.chaErrSearchToolUnavailable,
     _ErrorKind.sessionTooLarge => s.chaErrSessionTooLarge,
+    _ErrorKind.profileDashboardAccess => s.chaErrProfileDashboardAccess,
     _ErrorKind.unknown => s.chaErrUnknown,
   };
 
@@ -17832,6 +17881,7 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
     _ErrorKind.firstTokenTimeout => s.chaErrHintFirstTokenTimeout,
     _ErrorKind.searchToolUnavailable => s.chaErrHintSearchToolUnavailable,
     _ErrorKind.sessionTooLarge => s.chaErrHintSessionTooLarge,
+    _ErrorKind.profileDashboardAccess => null,
     _ErrorKind.unknown => null,
   };
 

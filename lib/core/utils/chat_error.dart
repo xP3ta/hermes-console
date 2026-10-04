@@ -12,6 +12,7 @@ enum ChatErrorKind {
   firstTokenTimeout,
   searchToolUnavailable,
   sessionTooLarge,
+  profileDashboardAccess,
   unknown,
 }
 
@@ -25,6 +26,7 @@ extension ChatErrorKindMeta on ChatErrorKind {
         ChatErrorKind.firstTokenTimeout => Icons.hourglass_empty_rounded,
         ChatErrorKind.searchToolUnavailable => Icons.search_off_rounded,
         ChatErrorKind.sessionTooLarge => Icons.history_toggle_off_rounded,
+        ChatErrorKind.profileDashboardAccess => Icons.lock_outline_rounded,
         ChatErrorKind.unknown => Icons.error_outline_rounded,
       };
 }
@@ -42,6 +44,12 @@ ChatErrorKind classifyChatError(String raw) {
   //     de inactividad no emite este prefijo.
   if (e.startsWith('firsttokentimeout:') || has(['firsttokentimeout'])) {
     return ChatErrorKind.firstTokenTimeout;
+  }
+
+  // 1a''. Perfil con nombre sin clave propia en el gateway y sin acceso al
+  //       Dashboard: reintentar en bucle no sirve, hace falta acceso.
+  if (has(['profile_dashboard_access_required'])) {
+    return ChatErrorKind.profileDashboardAccess;
   }
 
   // 1a'. Sesión que ya no cabe en el contexto del modelo ni se puede compactar
