@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/subagent_live_watch.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
@@ -672,39 +673,60 @@ void main() {
     );
   });
 
-  test('a refused close after dispose is swallowed, not unhandled', () async {
-    final gateway = FakeWatchGateway()
-      ..closeGate = Completer<void>()
-      ..closeFails = true;
-    final watch = SubagentLiveWatch(
-      gateway: gateway,
-      childSessionId: _child,
-      profile: _parentProfile,
-      isCurrent: () => true,
-    )..start();
-    await pumpEventQueue();
+  // The ways `TuiGatewayClient.closeSession` really fails: a refused RPC, a
+  // lost transport, a malformed answer, a timeout, or a plain error.
+  final refusals = <String, Object>{
+    'rpc error': const TuiGatewayRpcError('session.close', 'refused'),
+    'transport lost': const TuiGatewayRpcError(
+      'session.close',
+      'Hermes Desktop connection lost',
+      failureKind: TuiGatewayRpcFailureKind.connectionLost,
+    ),
+    'malformed answer': const TuiGatewayRpcError(
+      'session.close',
+      'Hermes returned an invalid close response',
+      origin: CompressionFailureOrigin.malformed,
+    ),
+    'timeout': TimeoutException('session.close'),
+    'state error': StateError('close refused'),
+  };
 
-    watch.dispose();
-    await pumpEventQueue();
-    gateway.closeGate!.complete();
-    // An unhandled asynchronous error would fail this test.
-    await pumpEventQueue();
+  for (final MapEntry(key: name, value: error) in refusals.entries) {
+    test('a refused close ($name) after dispose is swallowed', () async {
+      final gateway = FakeWatchGateway()
+        ..closeGate = Completer<void>()
+        ..closeError = error;
+      final watch = SubagentLiveWatch(
+        gateway: gateway,
+        childSessionId: _child,
+        profile: _parentProfile,
+        isCurrent: () => true,
+      )..start();
+      await pumpEventQueue();
 
-    expect(gateway.closed, ['watch-1']);
-    expect(gateway.released, ['watch-1']);
-  });
+      watch.dispose();
+      await pumpEventQueue();
+      gateway.closeGate!.complete();
+      // An unhandled asynchronous error would fail this test.
+      await pumpEventQueue();
 
-  test('a refused close after a finish is swallowed, not unhandled', () async {
-    final gateway = FakeWatchGateway()..closeFails = true;
-    final watch = _watch(gateway)..start();
-    await pumpEventQueue();
+      expect(gateway.closed, ['watch-1']);
+      expect(gateway.released, ['watch-1']);
+    });
 
-    gateway.emit('watch-1', 'message.complete', {'text': 'listo'});
-    await pumpEventQueue();
+    test('a refused close ($name) after a finish is swallowed', () async {
+      final gateway = FakeWatchGateway()..closeError = error;
+      final watch = _watch(gateway)..start();
+      await pumpEventQueue();
 
-    expect(watch.value.status, SubagentLiveWatchStatus.finished);
-    expect(gateway.closed, ['watch-1']);
-  });
+      gateway.emit('watch-1', 'message.complete', {'text': 'listo'});
+      await pumpEventQueue();
+
+      expect(watch.value.status, SubagentLiveWatchStatus.finished);
+      expect(gateway.closed, ['watch-1']);
+      expect(gateway.released, ['watch-1']);
+    });
+  }
 
   test('a normal finish cancels the event subscription', () async {
     final gateway = FakeWatchGateway();
