@@ -42,6 +42,32 @@ void main() {
       expect(protectMarkdownMath(text), text);
     });
 
+    test('an even run of backslashes does not escape the closing dollar', () {
+      expect(
+        protectMarkdownMath(r'Sea $a\\$ fin.'),
+        r'Sea `a\\` fin.',
+      );
+    });
+
+    test('an odd run of backslashes escapes the dollar', () {
+      const text = r'Solo \\\$a_1 * b_2\\\$ literal.';
+      expect(protectMarkdownMath(text), text);
+    });
+
+    test('spaced delimiters still protect the formula', () {
+      expect(
+        protectMarkdownMath(r'valor $ 2 * 2 $ fin'),
+        r'valor `2 * 2` fin',
+      );
+    });
+
+    test('spaced delimiters do not confuse prefixed or spaced currency', () {
+      const reais = r'Entre R$ 12 e R$ 20 * 2 hoy.';
+      expect(protectMarkdownMath(reais), reais);
+      const spaced = r'Pago $ 5 and $ 10 en total.';
+      expect(protectMarkdownMath(spaced), spaced);
+    });
+
     test(r'\( ... \) is normalised to an inline span', () {
       expect(
         protectMarkdownMath(r'Vale \(a_1 * b_2\) aquí.'),
