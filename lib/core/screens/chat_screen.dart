@@ -5125,6 +5125,7 @@ class _ChatScreenState extends State<ChatScreen>
       final durableId = _chat.serverSessionId;
       notif.visibleSessionId = durableId;
       _markedNotificationSessionId = durableId;
+      _clearOwnChatNotifications();
     } else {
       final marked = _markedNotificationSessionId;
       if (marked != null && notif.visibleSessionId == marked) {
@@ -5132,6 +5133,23 @@ class _ChatScreenState extends State<ChatScreen>
       }
       _markedNotificationSessionId = null;
     }
+  }
+
+  /// The user sees this chat (on top, app in front): the reply
+  /// notifications it already has in the tray are read. A reply posted while
+  /// the app is in the background stays until the user comes back to it.
+  void _clearOwnChatNotifications() {
+    if (!_chatBound || !_appInForeground || !_chatRouteVisible) return;
+    final notif = _chatService.notifications;
+    final sessionId = _chat.serverSessionId;
+    if (notif == null || sessionId.isEmpty) return;
+    unawaited(
+      notif.clearChatNotifications(
+        connId: _chat.connection.id,
+        profile: _chat.sessionProfile,
+        sessionId: sessionId,
+      ),
+    );
   }
 
   void _syncSubagentPolling() {
@@ -7036,6 +7054,7 @@ class _ChatScreenState extends State<ChatScreen>
     final wasInForeground = _appInForeground;
     _appInForeground = state == AppLifecycleState.resumed;
     if (_chatBound) _syncTransportVisibility();
+    if (!wasInForeground && _appInForeground) _clearOwnChatNotifications();
     if (wasInForeground != _appInForeground) {
       _viewerAttachGeneration += 1;
       _cancelSessionContextBootstrapRetry();
