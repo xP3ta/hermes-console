@@ -143,6 +143,8 @@ Keystore; la caché en memoria no se persiste.
 | ACCESS_NETWORK_STATE | Reintento inmediato al recuperar conectividad  |
 | POST_NOTIFICATIONS   | Solo si se implementan notificaciones locales  |
 | RECORD_AUDIO         | Dictado y conversación iniciados por el usuario |
+| MODIFY_AUDIO_SETTINGS | Audio mode of the opt-in GPT-Live WebRTC session (flutter_webrtc); normal permission |
+| CHANGE_NETWORK_STATE | Network handling of the same WebRTC session; normal permission, no Bluetooth permission |
 | FOREGROUND_SERVICE_MICROPHONE | Continuidad de Voz con opt-in y notificación |
 | FOREGROUND_SERVICE_MEDIA_PLAYBACK | TTS y respuestas de Voz solicitados |
 | FOREGROUND_SERVICE_DATA_SYNC | SSH/SFTP y fallback de escucha opt-in en API ≤34 |

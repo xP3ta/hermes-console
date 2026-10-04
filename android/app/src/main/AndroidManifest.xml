@@ -14,6 +14,12 @@
          Ningún audio arranca desde boot ni desde un receiver; una conversación
          nunca se restaura tras process death. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- GPT-Live (opt-in voice over WebRTC): flutter_webrtc routes call audio
+         through the system audio mode and probes network changes while a
+         live session runs. Both are normal permissions without a dialog; no
+         Bluetooth permission is requested. See docs/PLAY_PERMISSIONS.md. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <!-- Cámara: solo se abre por acción del usuario para escanear un QR de
          emparejado o capturar una foto adjunta al chat. Nunca captura en
          background. Justificación: docs/SECURITY_POLICY.md -->

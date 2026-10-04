@@ -119,6 +119,10 @@ de los paquetes empaquetados).
 | xterm | MIT |
 | webview_flutter | BSD-3-Clause |
 | webview_flutter_android | BSD-3-Clause |
+| flutter_webrtc | MIT |
+| dart_webrtc | MIT |
+| webrtc_interface | MIT |
+| logger | MIT |
 
 ## Artwork propio y companions CC0
 
@@ -139,6 +143,12 @@ El texto legal completo CC0-1.0 aplicable a los companions está en
 - **AndroidX WebKit 1.15.0** — Apache License 2.0; capa de compatibilidad de
   `webview_flutter_android` sobre el WebView del sistema. El visor de
   artefactos no empaqueta motor web propio.
+- **libwebrtc (`io.github.webrtc-sdk:android` 150.7871.01)** — BSD 3-Clause;
+  WebRTC media stack used by `flutter_webrtc` for the opt-in GPT-Live voice.
+- **AudioSwitch (`com.github.davidliu:audioswitch`, fork of Twilio
+  AudioSwitch)** — Apache License 2.0; audio focus and routing for
+  `flutter_webrtc`. It is resolved from the JitPack repository that the plugin
+  declares.
 
 El escáner QR es local: no envía fotogramas, contenido, resultados ni métricas
 del escáner a XPeta Lab o a otro servicio.
