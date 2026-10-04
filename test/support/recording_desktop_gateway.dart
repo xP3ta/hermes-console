@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/prompt_client_surface.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
@@ -8,6 +9,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 class RecordingDesktopGateway
     implements
         HermesDesktopGateway,
+        HermesDesktopSessionLifecycleGateway,
         HermesDesktopInterruptedPromptGateway,
         HermesDesktopClientSurfacePromptGateway {
   final StreamController<TuiGatewayEvent> _events =
@@ -34,6 +36,29 @@ class RecordingDesktopGateway
     runtimeSessionId: 'runtime-live',
     storedSessionId: storedSessionId,
     created: false,
+  );
+
+  @override
+  Future<DesktopSessionSnapshot> resumeExisting(
+    String storedSessionId, {
+    String profile = '',
+    bool omitMessages = false,
+    bool deferHistory = false,
+  }) async => DesktopSessionBinding(
+    runtimeSessionId: 'runtime-live',
+    storedSessionId: storedSessionId,
+    created: false,
+  );
+
+  @override
+  Future<DesktopSessionSnapshot> createForFirstSubmit({
+    String profile = '',
+    List<Map<String, dynamic>> seedMessages = const [],
+    String model = '',
+  }) async => DesktopSessionBinding(
+    runtimeSessionId: 'runtime-live',
+    storedSessionId: 'session-live',
+    created: true,
   );
 
   void _submit(String text, PromptClientSurface? surface, {String? kind}) {

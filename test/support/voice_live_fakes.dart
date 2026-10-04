@@ -150,6 +150,11 @@ class FakeVoiceLiveApi implements VoiceLiveApi {
     sessionId: 'sess_1',
   );
 
+  int closeCalls = 0;
+
+  @override
+  void close() => closeCalls++;
+
   @override
   Future<VoiceLiveStatus?> fetchStatus({String profile = ''}) async {
     statusCalls++;

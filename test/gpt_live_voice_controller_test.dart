@@ -3,6 +3,7 @@ import 'dart:async';
 // ignore: depend_on_referenced_packages
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/voice/conversation/gpt_live_voice_conversation_controller.dart';
@@ -25,7 +26,7 @@ SavedConnection _connection() => SavedConnection(
 );
 
 class _Rig {
-  _Rig({this.profile = 'ops'}) {
+  _Rig() {
     chat = ActiveChat(
       compressionRestoreStore: testCompressionRestoreStore(),
       connection: _connection(),
@@ -35,6 +36,8 @@ class _Rig {
       onTerminal: () {},
       desktopGateway: desktop,
       initialStoredSessionId: 'session-live',
+      // The empty terminal of a silent turn waits for the stored transcript.
+      storedMessageLoader: (_, _) async => const [],
     )..state = ChatPipelineState.idle;
     controller = GptLiveVoiceConversationController(
       apiFactory: (_) => api,
@@ -47,7 +50,6 @@ class _Rig {
     );
   }
 
-  final String profile;
   final desktop = RecordingDesktopGateway();
   final audio = StreamController<LiveAudioEvent>.broadcast(sync: true);
   final log = <String>[];
@@ -65,6 +67,13 @@ class _Rig {
     );
     async.flushMicrotasks();
   }
+
+  /// The voice model answers between two utterances, as it does live; without
+  /// it consecutive user deltas are one utterance.
+  void voiceReplies() => transport.emitEvent({
+    'type': 'session.output_transcript.delta',
+    'delta': 'Claro.',
+  });
 
   void delegate(String id, {String said = 'abre el calendario'}) {
     transport.emitEvent({
@@ -96,6 +105,9 @@ class _Rig {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues(const {}));
+
   test('enter opens exactly one session with profile and chat history', () {
     fakeAsync((async) {
       final rig = _Rig();
@@ -180,6 +192,7 @@ void main() {
         rig.desktop.emit('message.start');
         async.flushMicrotasks();
         expect(rig.chat.isStreaming, isTrue);
+        rig.voiceReplies();
         rig.delegate('del_2', said: 'y ahora lo de mañana');
         async.flushMicrotasks();
         async.elapse(const Duration(seconds: 1));
@@ -247,7 +260,8 @@ void main() {
             .toList();
         expect(say.map((e) => e['content']), ['Primera frase.']);
         rig.desktop.emit('message.delta', {'text': 'da frase. Y la cola'});
-        async.flushMicrotasks();
+        // The chat publishes streamed text on a short flush timer.
+        async.elapse(const Duration(milliseconds: 200));
         say = rig.transport.sent
             .where((e) => e['type'] == 'session.commentary.append')
             .toList();
@@ -258,7 +272,7 @@ void main() {
         rig.desktop.emit('message.complete', {
           'text': 'Primera frase. Segunda frase. Y la cola',
         });
-        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 200));
         say = rig.transport.sent
             .where((e) => e['type'] == 'session.commentary.append')
             .toList();
@@ -287,6 +301,7 @@ void main() {
           rig.desktop.emit('message.start');
           rig.desktop.emit('message.delta', {'text': 'Vieja uno. Vieja dos. '});
           async.flushMicrotasks();
+          rig.voiceReplies();
           rig.delegate('del_new', said: 'otra cosa');
           async.flushMicrotasks();
           async.elapse(const Duration(seconds: 1));
@@ -352,7 +367,7 @@ void main() {
           async.flushMicrotasks();
           rig.desktop.emit('message.start');
           rig.desktop.emit('message.complete', {'text': ''});
-          async.flushMicrotasks();
+          async.elapse(const Duration(milliseconds: 200));
           expect(
             rig.transport.sent
                 .where((e) => e['type'] == 'session.thinking.append')
