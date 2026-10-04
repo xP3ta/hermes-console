@@ -7296,7 +7296,32 @@ class ActiveChat {
   /// gateway (never a new socket) and the profile that owns this chat; null
   /// when the child has no session of its own, is finished, is not the chat's
   /// current child, or the gateway cannot open a watch.
-  SubagentWatchLease? subagentWatchLease(SubagentActivity activity) => null;
+  SubagentWatchLease? subagentWatchLease(SubagentActivity activity) {
+    final gateway = _desktopGateway;
+    final runtimeId = _desktopRuntimeSessionId;
+    final current = _subagentActivities;
+    if (_disposed ||
+        gateway is! SubagentWatchGateway ||
+        runtimeId == null ||
+        current == null ||
+        current.scope.runtimeSessionId != runtimeId ||
+        current.scope != activity.key.scope ||
+        activity.isTerminal ||
+        (activity.childSessionId?.trim() ?? '').isEmpty) {
+      return null;
+    }
+    final bindEpoch = _desktopBindEpoch;
+    final sessionEpoch = _desktopSessionEpoch;
+    return SubagentWatchLease(
+      gateway: gateway as SubagentWatchGateway,
+      profile: sessionProfile,
+      isCurrent: () =>
+          !_disposed &&
+          _desktopRuntimeSessionId == runtimeId &&
+          _desktopBindEpoch == bindEpoch &&
+          _desktopSessionEpoch == sessionEpoch,
+    );
+  }
 
   bool canTailSubagent(SubagentActivity activity) =>
       !activity.isTerminal &&
