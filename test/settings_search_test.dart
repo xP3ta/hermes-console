@@ -119,8 +119,8 @@ void main() {
         contains('timezone'),
       );
       expect(
-        searchSettings(_index('es'), 'ejecucion').map((e) => e.page),
-        contains(ServerConfigPage.runtime),
+        searchSettings(_index('es'), 'COMPORTAMIENTO').map((e) => e.page),
+        contains(ServerConfigPage.behavior),
       );
     });
 
