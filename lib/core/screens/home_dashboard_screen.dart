@@ -1066,7 +1066,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     final client =
         widget.clientFactory?.call(conn) ??
-        ApiClient(baseUrl: conn.baseUrl, apiKey: conn.apiKey);
+        ApiClient(
+          baseUrl: conn.baseUrl,
+          apiKey: conn.apiKey,
+          // A named profile's list comes from the Dashboard, as on Desktop.
+          profileDashboard: DashboardClient.lazy(conn),
+        );
     final ownerProfile =
         _statusTicket?.owner ??
         Session.profileOwner(widget.connManager.activeProfileFor(conn.id));

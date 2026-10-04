@@ -741,6 +741,8 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
         ApiClient(
           baseUrl: widget.connection.baseUrl,
           apiKey: widget.connection.apiKey,
+          // A named profile's list comes from the Dashboard, as on Desktop.
+          profileDashboard: DashboardClient.lazy(widget.connection),
         );
     try {
       // Local-only archives (servers without a writable archived flag) must
