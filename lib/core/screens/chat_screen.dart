@@ -105,7 +105,9 @@ import '../services/turn_outbox_store.dart';
 import '../services/generated_image_service.dart';
 import '../services/generated_media_service.dart';
 import '../services/generated_artifact_registry.dart';
+import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
+import '../services/dashboard_session_timeline.dart';
 import '../services/session_archive.dart';
 import '../services/session_artifact_download_service.dart';
 import '../services/session_config_reducer.dart';
@@ -1259,6 +1261,12 @@ class ChatScreen extends StatefulWidget {
   final DashboardClient Function(SavedConnection connection)?
   providerReauthClientFactory;
 
+  /// Dashboard client for the optional prompt index read by the Prompts list;
+  /// tests inject a fake Dashboard.
+  @visibleForTesting
+  final DashboardClient Function(SavedConnection connection)?
+  promptTimelineClientFactory;
+
   /// Caché de identidad que Mission Control ya mantiene para Bot Chat.
   final MissionProfileAvatarCache? missionAvatarCache;
 
@@ -1303,6 +1311,7 @@ class ChatScreen extends StatefulWidget {
     this.restoredFromColdStart = false,
     this.newChatWorkspace,
     this.providerReauthClientFactory,
+    this.promptTimelineClientFactory,
     this.missionAvatarCache,
     this.missionBotProfile,
     this.performanceProbe,
@@ -10409,10 +10418,23 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  /// Lists the prompts of the loaded transcript and reveals the chosen one.
-  /// The entries are derived once per open, never per frame.
+  /// Epoch of the open prompt list: a read that answers after the sheet was
+  /// closed (or the screen left) is dropped.
+  int _promptSheetEpoch = 0;
+
+  /// Rows the "Prompts" backfill may load to reach an unloaded prompt, the
+  /// same bound as the new-since-you-left lookback.
+  static const int _promptBackfillRows = 500;
+
+  /// Pages of the Dashboard index one open of the list may read.
+  static const int _promptIndexMaxPages = 3;
+
+  /// Lists the chat's prompts and reveals the chosen one. The loaded ones are
+  /// derived once per open; when older history exists, the Dashboard prompt
+  /// index adds the unloaded ones (one read on open, more only on request).
   Future<void> _showPromptSheet() async {
     final strings = Strings.of(context);
+    final epoch = ++_promptSheetEpoch;
     final entries = deriveChatPromptEntries(_messages);
     final tops = <double?>[
       for (final entry in entries)
@@ -10420,6 +10442,70 @@ class _ChatScreenState extends State<ChatScreen>
           _messageAnchors[entry.message],
         ),
     ];
+    final active = activeChatPromptIndex(tops);
+    final oldestLoaded = _messages.isEmpty
+        ? null
+        : chatPromptRowId(_messages.last);
+    final remote = <({int rowId, String preview})>[];
+    var items = mergeChatPromptItems(
+      entries,
+      remote,
+      oldestLoadedRowId: oldestLoaded,
+    );
+    var hasMore = false;
+    var loading = _chat.hasEarlierMessages;
+    var pages = 0;
+    int? cursor;
+    bool open() => mounted && epoch == _promptSheetEpoch;
+
+    ChatPromptSheetModel snapshot() => ChatPromptSheetModel(
+      previews: [for (final item in items) item.preview],
+      activeIndex: active,
+      hasMore: hasMore,
+      loading: loading,
+    );
+
+    final model = ValueNotifier<ChatPromptSheetModel>(snapshot());
+
+    Future<void> readIndexPage() async {
+      loading = true;
+      model.value = snapshot();
+      try {
+        final client =
+            widget.promptTimelineClientFactory?.call(widget.connection) ??
+            DashboardClient.lazy(widget.connection);
+        final page = await client.getSessionTimelinePage(
+          _chat.storedSessionId ?? widget.session.id,
+          profile: ProfileReadTicket.fixed(widget.session.profile ?? '').name,
+          afterRowId: cursor,
+        );
+        if (!open()) return;
+        if (page == null) {
+          hasMore = false;
+        } else {
+          remote.addAll([
+            for (final entry in page.entries)
+              (rowId: entry.rowId, preview: entry.preview),
+          ]);
+          pages += 1;
+          cursor = page.nextCursor;
+          hasMore = page.hasMore && pages < _promptIndexMaxPages;
+        }
+      } on Object {
+        // An optional read: the loaded prompts stay usable.
+        if (!open()) return;
+        hasMore = false;
+      }
+      loading = false;
+      items = mergeChatPromptItems(
+        entries,
+        remote,
+        oldestLoadedRowId: oldestLoaded,
+      );
+      model.value = snapshot();
+    }
+
+    if (loading) unawaited(readIndexPage());
     final picked = await showHermesFloatingSurface<int>(
       context: context,
       surfaceKey: const ValueKey('chat-prompt-dialog'),
@@ -10427,23 +10513,63 @@ class _ChatScreenState extends State<ChatScreen>
       builder: (dialogContext) => ChatPromptSheet(
         title: strings.pj1215PromptsAction,
         emptyLabel: strings.pj1215PromptsEmpty,
-        previews: [for (final entry in entries) entry.preview],
-        activeIndex: activeChatPromptIndex(tops),
+        moreLabel: strings.chaLoadEarlierMessages,
+        model: model,
         onSelect: (index) => Navigator.of(dialogContext).pop(index),
+        onMore: () => unawaited(readIndexPage()),
       ),
     );
-    if (!mounted || picked == null || picked >= entries.length) return;
-    final target =
-        chatRefreshFindAnchorMessage(entries[picked].message, _messages) ??
-        entries[picked].message;
+    if (epoch == _promptSheetEpoch) _promptSheetEpoch++;
+    if (!mounted || picked == null || picked >= items.length) return;
+    final item = items[picked];
+    var target = item.message;
+    if (target == null) {
+      final rowId = item.rowId;
+      target = rowId == null ? null : await _loadPromptByRowId(rowId);
+      if (!mounted) return;
+      if (target == null) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).sa1215LoadOlderFailed)),
+          kind: HermesNoticeKind.warning,
+        );
+        return;
+      }
+    }
+    final live = chatRefreshFindAnchorMessage(target, _messages) ?? target;
     _freezeStreamingFollow();
-    final revealed = await _revealTranscriptMessage(target);
+    final revealed = await _revealTranscriptMessage(live);
     if (revealed == false && mounted) {
       HermesNotice.of(context).showSnackBar(
         SnackBar(content: Text(Strings.of(context).artifactSourceUnavailable)),
         kind: HermesNoticeKind.warning,
       );
     }
+  }
+
+  /// Loads earlier pages, contiguously and within [_promptBackfillRows], until
+  /// the row with the durable [rowId] is part of the transcript. Null when it
+  /// was not reached: the reader stays where they were.
+  Future<Map<String, dynamic>?> _loadPromptByRowId(int rowId) async {
+    Map<String, dynamic>? find() {
+      for (final message in _messages) {
+        if (chatPromptRowId(message) == rowId) return message;
+      }
+      return null;
+    }
+
+    final startLength = _messages.length;
+    while (mounted) {
+      final found = find();
+      if (found != null) return found;
+      if (!_chat.hasEarlierMessages ||
+          _messages.length - startLength >= _promptBackfillRows) {
+        return null;
+      }
+      final before = _messages.length;
+      await _loadEarlierMessages();
+      if (_messages.length <= before) return find();
+    }
+    return null;
   }
 
   Future<void> _releaseRuntimeForDesktop() async {
