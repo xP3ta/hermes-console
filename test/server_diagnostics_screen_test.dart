@@ -3,6 +3,7 @@
 // the Diagnostics row exists; Diagnostics reads each section once, follows
 // doctor and the audit only after a tap and only while on show.
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -198,7 +199,7 @@ void main() {
       expect(find.text(s.sd1215NothingToShow), findsOneWidget);
     });
 
-    testWidgets('an unreachable dashboard ends the probe and keeps the row', (
+    testWidgets('an unreachable dashboard ends the probe and shows no row', (
       tester,
     ) async {
       final rest = ScriptedRest()
@@ -210,10 +211,22 @@ void main() {
       final s = strings(tester);
       expect(tester.takeException(), isNull);
       expect(find.byType(TuiLoader), findsNothing);
-      // Unreachable proves nothing about support, like a 5xx: Diagnostics
-      // itself reports the sections as unavailable.
-      expect(find.text(s.sd1215Diagnostics), findsOneWidget);
-      expect(find.text(s.sd1215NothingToShow), findsNothing);
+      expect(find.text(s.sd1215Diagnostics), findsNothing);
+      expect(find.text(s.sd1215NothingToShow), findsOneWidget);
+    });
+
+    testWidgets('server errors on every route are no support evidence', (
+      tester,
+    ) async {
+      final rest = ScriptedRest()
+        ..gets['actions/doctor/status'] = const DashboardHttpException(503)
+        ..gets['actions/security-audit/status'] = const DashboardHttpException(
+          500,
+        )
+        ..gets['health'] = const DashboardHttpException(503);
+      await pumpAdvanced(tester, rest);
+
+      expect(find.text(strings(tester).sd1215Diagnostics), findsNothing);
     });
 
     testWidgets('one route is enough to keep the row', (tester) async {
@@ -233,6 +246,71 @@ void main() {
 
       expect(count(rest, 'GET health'), 2, reason: 'probe + idle, no repeat');
       expect(find.text('v0.20.1'), findsOneWidget);
+    });
+  });
+
+  group('Diagnostics: sections the server has not confirmed', () {
+    testWidgets('MCP and usage stay absent while their answers are pending', (
+      tester,
+    ) async {
+      final usage = Completer<Map<String, dynamic>>();
+      final mcp = Completer<List<McpServerStatus>?>();
+      final rest = _GatedRest(_server(), 'analytics/usage?days=30', usage);
+      await pumpApp(
+        tester,
+        ServerDiagnosticsScreen(
+          connection: _connection(),
+          connManager: manager,
+          repositoryFor: (profile) => CapabilitiesRepository(
+            rest: rest,
+            profile: profile,
+            sleep: (_) async {},
+            actionPollInterval: Duration.zero,
+          ),
+          mcpReader: (_) => mcp.future,
+        ),
+      );
+      final s = strings(tester);
+
+      expect(find.text(s.sd1215Mcp), findsNothing);
+      expect(find.text(s.sd1215Usage), findsNothing);
+      expect(find.byType(TuiLoader), findsWidgets, reason: 'one page loader');
+
+      // The server then says it has neither.
+      usage.completeError(const DashboardHttpException(404));
+      mcp.completeError(
+        const CapabilityFailure(CapabilityFailureKind.unsupported),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text(s.sd1215Mcp), findsNothing);
+      expect(find.text(s.sd1215Usage), findsNothing);
+    });
+
+    testWidgets('an unreachable answer shows no section either', (
+      tester,
+    ) async {
+      final rest = _server()
+        ..gets['analytics/usage?days=30'] = const SocketException('x');
+      await pumpDiagnostics(
+        tester,
+        rest,
+        mcp: (_) async =>
+            throw const CapabilityFailure(CapabilityFailureKind.unavailable),
+      );
+      final s = strings(tester);
+
+      expect(find.text(s.sd1215Usage), findsNothing);
+      expect(find.text(s.sd1215Mcp), findsNothing);
+      expect(find.text(s.sd1215HistoryUnavailable), findsNothing);
+      expect(find.text(s.sd1215Server), findsOneWidget);
+    });
+
+    testWidgets('a section appears when the server answers it', (tester) async {
+      await pumpDiagnostics(tester, _server());
+      expect(find.text(strings(tester).sd1215Usage), findsOneWidget);
+      expect(find.text(strings(tester).sd1215Mcp), findsOneWidget);
     });
   });
 
@@ -615,4 +693,35 @@ void main() {
       );
     });
   });
+}
+
+/// Holds one read of [inner] until [gate] completes.
+final class _GatedRest implements CapabilitiesRest {
+  _GatedRest(this.inner, this.endpoint, this.gate);
+  final ScriptedRest inner;
+  final String endpoint;
+  final Completer<Map<String, dynamic>> gate;
+
+  @override
+  Future<Map<String, dynamic>> get(String e) {
+    if (e == endpoint) {
+      inner.calls.add('GET $e');
+      return gate.future;
+    }
+    return inner.get(e);
+  }
+
+  @override
+  Future<Map<String, dynamic>> post(
+    String e, {
+    Map<String, dynamic>? body,
+    Duration? timeout,
+  }) => inner.post(e, body: body, timeout: timeout);
+
+  @override
+  Future<Map<String, dynamic>> put(String e, Map<String, dynamic> b) =>
+      inner.put(e, b);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

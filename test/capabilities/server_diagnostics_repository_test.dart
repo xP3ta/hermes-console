@@ -681,6 +681,66 @@ void main() {
     });
   });
 
+  group('probeDiagnostics', () {
+    ScriptedRest allFail(Exception error) => ScriptedRest()
+      ..gets['actions/doctor/status'] = error
+      ..gets['actions/security-audit/status'] = error
+      ..gets['health'] = error;
+
+    for (final (name, error) in [
+      ('an unreachable Dashboard', const SocketException('unreachable')),
+      ('a timeout', TimeoutException('slow')),
+      ('a raw error', Exception('Dashboard not accessible')),
+      ('HTTP 500', const DashboardHttpException(500)),
+      ('HTTP 503', const DashboardHttpException(503)),
+      ('HTTP 401', const DashboardHttpException(401)),
+    ]) {
+      test('$name on all three reads confirms nothing', () async {
+        final found = await probeDiagnostics(_repo(allFail(error)));
+        expect(found.any, isFalse);
+        expect(found.doctor, isFalse);
+        expect(found.audit, isFalse);
+        expect(found.healthExists, isFalse);
+      });
+    }
+
+    test('the canonical unavailable failure confirms nothing either', () async {
+      final repo = _ThrowingRepository(
+        const CapabilityFailure(CapabilityFailureKind.unavailable),
+      );
+      final found = await probeDiagnostics(repo);
+      expect(found.any, isFalse);
+    });
+
+    test('one good read is enough; failed ones stay unconfirmed', () async {
+      final rest = ScriptedRest()
+        ..gets['actions/doctor/status'] = const DashboardHttpException(503)
+        ..gets['actions/security-audit/status'] = const SocketException('x')
+        ..gets['health'] = {'ok': true, 'version': '1'};
+      final found = await probeDiagnostics(_repo(rest));
+      expect(found.any, isTrue);
+      expect(found.healthExists, isTrue);
+      expect(found.doctor, isFalse);
+      expect(found.audit, isFalse);
+      expect(found.health?.version, '1');
+    });
+
+    test('404 and 405 are absent, a good read is present', () async {
+      final rest = ScriptedRest()
+        ..gets['actions/doctor/status'] = {
+          'name': 'doctor',
+          'running': false,
+          'exit_code': 0,
+          'lines': <String>[],
+        };
+      final found = await probeDiagnostics(_repo(rest));
+      expect(found.doctor, isTrue);
+      expect(found.audit, isFalse);
+      expect(found.healthExists, isFalse);
+      expect(found.missing, {OpsAction.securityAudit});
+    });
+  });
+
   group('two launchers of the same action', () {
     CapabilitiesRepository launcher(
       _RacingRest rest, {
@@ -903,4 +963,18 @@ final class _RacingRest implements CapabilitiesRest {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A repository whose every read fails with [failure].
+final class _ThrowingRepository extends CapabilitiesRepository {
+  _ThrowingRepository(this.failure) : super(rest: ScriptedRest());
+
+  final CapabilityFailure failure;
+
+  @override
+  Future<CapabilityActionStatus> opsStatus(OpsAction action) async =>
+      throw failure;
+
+  @override
+  Future<ServerHealth> serverHealth() async => throw failure;
 }
