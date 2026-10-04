@@ -4,6 +4,7 @@ enum DesktopGatewayCapability {
   modelOptions,
   sessionContextBreakdown,
   subagentInterrupt,
+  delegationControl,
   recoveryCenter,
   extensionsCenter,
   agentCenter,

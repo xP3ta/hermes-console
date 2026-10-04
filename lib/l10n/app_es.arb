@@ -8891,6 +8891,12 @@
   },
   "cphConnectorKeepMine": "Mantener los míos",
   "cphConnectorDiscard": "Descartar",
+  "subagentUiPauseNew": "Pausar nuevos subagentes",
+  "subagentUiResumeNew": "Reanudar nuevos subagentes",
+  "subagentUiPauseScope": "Afecta a todo el servidor. Los subagentes en marcha continúan.",
+  "subagentUiPausedNotice": "Nuevos subagentes en pausa",
+  "subagentUiResumedNotice": "Nuevos subagentes reanudados",
+  "subagentUiPauseFailed": "No se pudo cambiar la pausa.",
   "cphRowAuth": "Autenticación",
   "v1215VoiceServerError": "El servidor de Hermes respondió: {detail}",
   "@v1215VoiceServerError": {

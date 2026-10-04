@@ -93,6 +93,7 @@ import 'transcript_publication_coordinator.dart';
 import 'subagent_activity_reducer.dart';
 import 'subagent_transcript_projection.dart';
 import 'terminal_transcript_authority.dart';
+import 'delegation_control.dart';
 import 'tui_gateway_client.dart';
 import 'turn_outbox_store.dart';
 
@@ -7289,6 +7290,14 @@ class ActiveChat {
       throw StateError('Subagent tail result is stale');
     }
     return result;
+  }
+
+  /// Server-wide "pause new subagents" switch, for the subagent detail's
+  /// overflow only. Null when it cannot be changed from here.
+  HermesDelegationGateway? get delegationControl {
+    final gateway = _desktopGateway;
+    if (connection.readOnly || gateway is! HermesDelegationGateway) return null;
+    return gateway as HermesDelegationGateway;
   }
 
   bool canTailSubagent(SubagentActivity activity) =>

@@ -12182,6 +12182,8 @@ class _ChatScreenState extends State<ChatScreen>
                                                 canSteer:
                                                     _chat.canSteerSubagent,
                                                 canTail: _chat.canTailSubagent,
+                                                delegationControl:
+                                                    _chat.delegationControl,
                                                 parentTitle:
                                                     widget.session.title,
                                                 acquirePresentation:

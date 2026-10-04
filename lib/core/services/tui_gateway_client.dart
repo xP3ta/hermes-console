@@ -37,6 +37,7 @@ import '../models/profile_pet.dart';
 import '../models/project_files.dart';
 import 'capability_payload_sanitizer.dart';
 import 'connection_manager.dart';
+import 'delegation_control.dart';
 import 'desktop_control_gateway.dart';
 import 'desktop_gateway_capabilities.dart';
 import 'json_rpc_wire.dart';
@@ -1346,6 +1347,7 @@ final class _SessionRosterSocketLease {
 
 class TuiGatewayClient
     implements
+        HermesDelegationGateway,
         HermesDesktopGateway,
         HermesDesktopOpenRequestsGateway,
         HermesDesktopCompressionStatusGateway,
@@ -5522,6 +5524,37 @@ class TuiGatewayClient
         'Hermes returned an invalid subagent interrupt result',
       );
     }
+  }
+
+  @override
+  Future<bool> delegationPaused() =>
+      _delegationCall('delegation.status', const <String, dynamic>{});
+
+  @override
+  Future<bool> setDelegationPaused(bool paused) =>
+      _delegationCall('delegation.pause', {'paused': paused});
+
+  Future<bool> _delegationCall(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    final result = await _requestOptionalCapability(
+      DesktopGatewayCapability.delegationControl,
+      method,
+      params,
+    );
+    final paused = result['paused'];
+    if (paused is! bool) {
+      _capabilityCache.mark(
+        DesktopGatewayCapability.delegationControl,
+        DesktopGatewayCapabilityState.invalid,
+      );
+      throw TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid delegation state',
+      );
+    }
+    return paused;
   }
 
   String _validatedControlValue(String value, {required int maxLength}) {

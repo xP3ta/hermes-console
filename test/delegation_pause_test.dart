@@ -1,6 +1,5 @@
 // Pause delegation: process-global `delegation.status` / `delegation.pause`,
 // offered only from the subagent detail overflow, read once per menu open.
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -63,19 +62,21 @@ Future<List<Map<String, dynamic>>> _serve(
         continue;
       }
       frames.add(frame);
-      socket.add(jsonEncode({'jsonrpc': '2.0', 'id': frame['id'], ...reply(frame)}));
+      socket.add(
+        jsonEncode({'jsonrpc': '2.0', 'id': frame['id'], ...reply(frame)}),
+      );
     }
   });
   return frames;
 }
 
 class _FakeDelegation implements HermesDelegationGateway {
-  bool paused;
+  bool paused = false;
   Object? statusError;
   int statuses = 0;
   final pauses = <bool>[];
 
-  _FakeDelegation({this.paused = false});
+  _FakeDelegation();
 
   @override
   Future<bool> delegationPaused() async {
@@ -111,7 +112,10 @@ final _activity = SubagentActivity(
   details: const SubagentActivityDetails(goalPreview: 'Revisar'),
 );
 
-Future<void> _pump(WidgetTester tester, HermesDelegationGateway? control) async {
+Future<void> _pump(
+  WidgetTester tester,
+  HermesDelegationGateway? control,
+) async {
   final roster = ValueNotifier<List<SubagentActivity>>([_activity]);
   addTearDown(roster.dispose);
   await tester.pumpWidget(
@@ -134,7 +138,7 @@ Future<void> _pump(WidgetTester tester, HermesDelegationGateway? control) async 
 }
 
 Future<void> _openMenu(WidgetTester tester) async {
-  await tester.tap(find.byKey(const ValueKey('subagent-detail-more')));
+  await tester.tap(find.byTooltip('Más opciones'));
   await tester.pumpAndSettle();
 }
 
@@ -178,7 +182,10 @@ void main() {
 
       expect(await client.setDelegationPaused(true), isTrue);
       expect(await client.setDelegationPaused(false), isFalse);
-      expect(frames.map((f) => f['method']), ['delegation.pause', 'delegation.pause']);
+      expect(frames.map((f) => f['method']), [
+        'delegation.pause',
+        'delegation.pause',
+      ]);
       expect(frames.map((f) => f['params']), [
         {'paused': true},
         {'paused': false},
@@ -197,8 +204,14 @@ void main() {
       final client = _clientFor(server);
       addTearDown(client.close);
 
-      await expectLater(client.delegationPaused(), throwsA(isA<TuiGatewayRpcError>()));
-      await expectLater(client.delegationPaused(), throwsA(isA<TuiGatewayRpcError>()));
+      await expectLater(
+        client.delegationPaused(),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
+      await expectLater(
+        client.delegationPaused(),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
       expect(frames, hasLength(1));
       expect(
         client.capabilityState(DesktopGatewayCapability.delegationControl),
@@ -209,11 +222,19 @@ void main() {
     test('a malformed answer invalidates only this capability', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(server.close);
-      await _serve(server, (_) => {'result': {'paused': 'yes'}});
+      await _serve(
+        server,
+        (_) => {
+          'result': {'paused': 'yes'},
+        },
+      );
       final client = _clientFor(server);
       addTearDown(client.close);
 
-      await expectLater(client.delegationPaused(), throwsA(isA<TuiGatewayRpcError>()));
+      await expectLater(
+        client.delegationPaused(),
+        throwsA(isA<TuiGatewayRpcError>()),
+      );
       expect(
         client.capabilityState(DesktopGatewayCapability.delegationControl),
         DesktopGatewayCapabilityState.invalid,
@@ -224,7 +245,7 @@ void main() {
   group('subagent detail overflow', () {
     testWidgets('no control, no menu', (tester) async {
       await _pump(tester, null);
-      expect(find.byKey(const ValueKey('subagent-detail-more')), findsNothing);
+      expect(find.byTooltip('Más opciones'), findsNothing);
     });
 
     testWidgets('status is read once per open, toggling sends the flag', (
@@ -264,7 +285,7 @@ void main() {
       await _openMenu(tester);
 
       expect(control.pauses, isEmpty);
-      expect(find.byKey(const ValueKey('subagent-detail-more')), findsNothing);
+      expect(find.byTooltip('Más opciones'), findsNothing);
       expect(find.text('Pausar nuevos subagentes'), findsNothing);
     });
   });

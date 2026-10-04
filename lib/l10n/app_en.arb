@@ -7367,6 +7367,12 @@
   },
   "cphConnectorKeepMine": "Keep mine",
   "cphConnectorDiscard": "Discard",
+  "subagentUiPauseNew": "Pause new subagents",
+  "subagentUiResumeNew": "Resume new subagents",
+  "subagentUiPauseScope": "Applies to the whole server. Running subagents continue.",
+  "subagentUiPausedNotice": "New subagents paused",
+  "subagentUiResumedNotice": "New subagents resumed",
+  "subagentUiPauseFailed": "The pause could not be changed.",
   "cphRowAuth": "Authentication",
   "v1215VoiceServerError": "Hermes server replied: {detail}",
   "@v1215VoiceServerError": {
