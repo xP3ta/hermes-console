@@ -119,7 +119,26 @@ List<BranchTreeEntry> flattenSessionsWithBranches(
   for (final list in children.values) {
     list.sort(byRecency);
   }
-  if (!preserveOrder) roots.sort(byRecency);
+  // A root ranks by the freshest activity anywhere in its subtree, so an old
+  // conversation with a live branch is not buried (Desktop folds group
+  // recency the same way). The visiting set keeps a parent cycle finite.
+  final subtreeAt = <Session, double>{};
+  double freshest(Session row, Set<Session> visiting) {
+    final known = subtreeAt[row];
+    if (known != null) return known;
+    if (!visiting.add(row)) return row.lastActivityAt;
+    var best = row.lastActivityAt;
+    for (final kid in children[row] ?? const <Session>[]) {
+      final at = freshest(kid, visiting);
+      if (at > best) best = at;
+    }
+    visiting.remove(row);
+    return subtreeAt[row] = best;
+  }
+
+  if (!preserveOrder) {
+    roots.sort((a, b) => freshest(b, {}).compareTo(freshest(a, {})));
+  }
 
   final out = <BranchTreeEntry>[];
   final seen = <Session>{};

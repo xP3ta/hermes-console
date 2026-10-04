@@ -71,6 +71,32 @@ void main() {
   });
 
   group('flattenSessionsWithBranches', () {
+    test(
+      'roots are ordered by the freshest activity anywhere in the subtree',
+      () {
+        final rows = flattenSessionsWithBranches([
+          _s('old-root', at: 1),
+          _s('moderate', at: 50),
+          _s('active-child', parent: 'old-root', at: 100),
+        ]);
+        expect(_ids(rows), ['old-root', 'active-child', 'moderate']);
+      },
+    );
+    test(
+      'a fresh grandchild lifts its whole family and a cycle cannot loop',
+      () {
+        final rows = flattenSessionsWithBranches([
+          _s('r', at: 1),
+          _s('c', parent: 'r', at: 2),
+          _s('g', parent: 'c', at: 90),
+          _s('other', at: 50),
+          _s('x', parent: 'y', at: 200),
+          _s('y', parent: 'x', at: 10),
+        ]);
+        expect(_ids(rows).take(4), ['r', 'c', 'g', 'other']);
+        expect(_ids(rows).toSet(), {'r', 'c', 'g', 'other', 'x', 'y'});
+      },
+    );
     test('/new children are not nested', () {
       final rows = flattenSessionsWithBranches([
         _s('a', at: 1),
