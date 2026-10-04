@@ -45,6 +45,7 @@ import 'json_rpc_wire.dart';
 import 'recovery_proof.dart';
 import 'replay_batch_proof.dart';
 import 'replay_coordinator.dart';
+import 'server_restart_signal.dart';
 import '../utils/transport_privacy.dart';
 
 class TuiGatewayRpcError implements Exception {
@@ -4251,6 +4252,7 @@ class TuiGatewayClient
     'connectors.catalog',
     'connectors.accounts',
     'connectors.operation.status',
+    'mcp.servers.status',
   };
 
   static const Set<String> _capabilityWrites = {
@@ -4259,6 +4261,15 @@ class TuiGatewayClient
     'connectors.accounts.remove',
     'connection.respond',
   };
+
+  /// Passive: a good `model.options` clears the note a 5098 left (no request).
+  void _noteRestartRecovered() =>
+      ServerRestartSignals.noteHealthy(_connection.host);
+
+  /// Passive: remembers RPC 5098 (`model.options` on a process older than its
+  /// checkout) so Diagnostics can say it. Never makes a request of its own.
+  void _noteRestartRequired(TuiGatewayRpcError error) =>
+      ServerRestartSignals.noteRpc(_connection.host, error.code, error.message);
 
   static bool capabilitiesRpcAllowed(String method, {required bool readOnly}) =>
       _capabilityReads.contains(method) ||
@@ -5280,17 +5291,23 @@ class TuiGatewayClient
   }) async {
     const method = 'model.options';
     final runtime = _validatedRuntimeId(method, runtimeSessionId);
-    final result = await _requestOptionalCapability(
-      DesktopGatewayCapability.modelOptions,
-      method,
-      {
-        'session_id': runtime,
-        'explicit_only': true,
-        'include_unconfigured': false,
-        'refresh': refresh,
-      },
-      connectedOnly: connectedOnly,
-    );
+    final Map<String, dynamic> result;
+    try {
+      result = await _requestOptionalCapability(
+        DesktopGatewayCapability.modelOptions,
+        method,
+        {
+          'session_id': runtime,
+          'explicit_only': true,
+          'include_unconfigured': false,
+          'refresh': refresh,
+        },
+        connectedOnly: connectedOnly,
+      );
+    } on TuiGatewayRpcError catch (error) {
+      _noteRestartRequired(error);
+      rethrow;
+    }
     if (result['providers'] is! List) {
       _capabilityCache.mark(
         DesktopGatewayCapability.modelOptions,
@@ -5301,7 +5318,13 @@ class TuiGatewayClient
         'Hermes returned an invalid model catalog',
       );
     }
-    return DesktopModelCatalog.fromJson(result);
+    final catalog = DesktopModelCatalog.fromJson(result);
+    // Every entry has to be a provider for this to count as the server being
+    // well again; a list with a bad entry is not a validated catalog.
+    if ((result['providers'] as List).every((entry) => entry is Map)) {
+      _noteRestartRecovered();
+    }
+    return catalog;
   }
 
   /// mk1215: `model.options` without `session_id`; the server resolves the
@@ -5348,6 +5371,7 @@ class TuiGatewayClient
         'refresh': refresh,
       }, timeout: remaining);
     } on TuiGatewayRpcError catch (error) {
+      _noteRestartRequired(error);
       if (error.code == -32601) {
         _capabilityCache.mark(
           DesktopGatewayCapability.modelOptions,
@@ -5366,7 +5390,13 @@ class TuiGatewayClient
       DesktopGatewayCapability.modelOptions,
       DesktopGatewayCapabilityState.supported,
     );
-    return DesktopModelCatalog.fromJson(result);
+    final catalog = DesktopModelCatalog.fromJson(result);
+    // Every entry has to be a provider for this to count as the server being
+    // well again; a list with a bad entry is not a validated catalog.
+    if ((result['providers'] as List).every((entry) => entry is Map)) {
+      _noteRestartRecovered();
+    }
+    return catalog;
   }
 
   @override

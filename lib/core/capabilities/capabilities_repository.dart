@@ -26,6 +26,7 @@ import '../services/connection_manager.dart'
 import '../services/desktop_control_gateway.dart';
 import '../services/tui_gateway_client.dart' show TuiGatewayRpcError;
 import 'capability_models.dart';
+import 'server_diagnostics_models.dart';
 
 /// Minimal REST surface (implemented by `DashboardClient`).
 abstract interface class CapabilitiesRest {
@@ -60,6 +61,12 @@ enum CapabilityFeature {
   mcpCatalog,
   mcpServers,
   hostedConnectors,
+  opsDoctor,
+  opsSecurityAudit,
+  mcpLiveStatus,
+  usageAnalytics,
+  serverHealth,
+  serverIdle,
 }
 
 enum CapabilityFailureKind {
@@ -91,6 +98,7 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
   final Duration actionPollInterval;
   final Duration actionTimeout;
   final Future<void> Function(Duration) _sleep;
+  final DateTime Function() _clock;
   final Map<CapabilityFeature, bool> _support = {};
 
   CapabilitiesRepository({
@@ -100,7 +108,16 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     this.actionPollInterval = const Duration(milliseconds: 1200),
     this.actionTimeout = const Duration(minutes: 10),
     Future<void> Function(Duration)? sleep,
-  }) : _sleep = sleep ?? Future<void>.delayed;
+    DateTime Function()? clock,
+    this.launchScope,
+  }) : _sleep = sleep ?? Future<void>.delayed,
+       _clock = clock ?? DateTime.now;
+
+  /// Names the server (connection and profile) this repository launches
+  /// doctor and the audit on. Repositories that share a scope never launch the
+  /// same action at the same time; without one, only this repository's own
+  /// launches are ordered.
+  final String? launchScope;
 
   /// `true` supported, `false` unsupported, `null` not probed yet.
   bool? supports(CapabilityFeature feature) => _support[feature];
@@ -170,6 +187,9 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     } on FormatException {
       throw const CapabilityFailure(CapabilityFailureKind.invalidResponse);
     } on TimeoutException {
+      throw const CapabilityFailure(CapabilityFailureKind.unavailable);
+    } on Exception {
+      // The dashboard could not be reached (socket error, no dashboard).
       throw const CapabilityFailure(CapabilityFailureKind.unavailable);
     }
   }
@@ -295,8 +315,23 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     if (started['ok'] != true || name.isEmpty) {
       throw const CapabilityFailure(CapabilityFailureKind.invalidResponse);
     }
-    final deadline = DateTime.now().add(actionTimeout);
+    return (await _followAction(feature, name, onProgress, null))!;
+  }
+
+  /// Polls `GET actions/{name}/status` until the action exits. [shouldStop]
+  /// is asked before every read: once true the follow ends with `null` and no
+  /// further request (the server process keeps running). Gives up after
+  /// [actionTimeout] of the repository clock.
+  Future<CapabilityActionStatus?> _followAction(
+    CapabilityFeature feature,
+    String name,
+    void Function(CapabilityActionStatus)? onProgress,
+    bool Function()? shouldStop, {
+    bool throwOnFailure = true,
+  }) async {
+    final deadline = _clock().add(actionTimeout);
     while (true) {
+      if (shouldStop?.call() ?? false) return null;
       final status = await _call(
         feature,
         () async => CapabilityActionStatus.fromJson(
@@ -305,7 +340,7 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
       );
       onProgress?.call(status);
       if (!status.running) {
-        if (status.succeeded) return status;
+        if (status.succeeded || !throwOnFailure) return status;
         throw CapabilityFailure(
           status.blockedByScan
               ? CapabilityFailureKind.blockedByScan
@@ -313,12 +348,147 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
           detail: status.tail,
         );
       }
-      if (DateTime.now().isAfter(deadline)) {
+      if (_clock().isAfter(deadline)) {
         throw const CapabilityFailure(CapabilityFailureKind.unavailable);
       }
       await _sleep(actionPollInterval);
     }
   }
+
+  // ── Server diagnostics (read-only) ──────────────────────────────────────
+
+  static CapabilityFeature _opsFeature(OpsAction action) => switch (action) {
+    OpsAction.doctor => CapabilityFeature.opsDoctor,
+    OpsAction.securityAudit => CapabilityFeature.opsSecurityAudit,
+  };
+
+  /// The state of doctor / the audit: `GET actions/<name>/status`.
+  Future<CapabilityActionStatus> opsStatus(OpsAction action) => _call(
+    _opsFeature(action),
+    () async => CapabilityActionStatus.fromJson(
+      await rest.get('actions/${action.actionName}/status?lines=200'),
+    ),
+  );
+
+  /// Runs doctor or the security audit and follows it to its exit, or attaches
+  /// to a run already in progress. The server has no single-run guard (two
+  /// launches would write the same log), so the state is read first and
+  /// nothing is posted while `running`. A non-zero exit is a result, not an
+  /// error. [shouldStop] ends the follow with `null`; the server process keeps
+  /// going and a later call attaches to it.
+  Future<CapabilityActionStatus?> runOps(
+    OpsAction action, {
+    void Function(CapabilityActionStatus)? onProgress,
+    bool Function()? shouldStop,
+  }) async {
+    final feature = _opsFeature(action);
+    if (shouldStop?.call() ?? false) return null;
+    // The read of the state and the launch are one step for every launcher in
+    // this app that shares the scope: a second one waits for the first launch
+    // to land, then reads `running` and attaches instead of launching again.
+    var stopped = false;
+    await _exclusiveLaunch(action, () async {
+      final current = await opsStatus(action);
+      onProgress?.call(current);
+      if (current.running) return;
+      if (shouldStop?.call() ?? false) {
+        stopped = true;
+        return;
+      }
+      final started = await _call(
+        feature,
+        () => rest.post(_withProfile(action.endpoint)),
+      );
+      if (started['ok'] != true) {
+        throw const CapabilityFailure(CapabilityFailureKind.invalidResponse);
+      }
+    });
+    if (stopped) return null;
+    return _followAction(
+      feature,
+      action.actionName,
+      onProgress,
+      shouldStop,
+      throwOnFailure: false,
+    );
+  }
+
+  /// Launches of one action on one server, in this process, one at a time.
+  /// Another device or client cannot be ordered from here: the server has no
+  /// guard of its own.
+  static final Map<String, Future<void>> _launches = {};
+
+  Future<void> _exclusiveLaunch(
+    OpsAction action,
+    Future<void> Function() step,
+  ) async {
+    final key =
+        '${launchScope ?? 'rest-${identityHashCode(rest)}'}|${action.actionName}';
+    final previous = _launches[key];
+    final done = Completer<void>();
+    final mine = done.future;
+    _launches[key] = mine;
+    try {
+      if (previous != null) await previous;
+      await step();
+    } finally {
+      done.complete();
+      if (identical(_launches[key], mine)) _launches.remove(key);
+    }
+  }
+
+  /// Re-attaches to doctor / the audit after the screen was left: reads the
+  /// state and follows a run in progress, or returns the finished one. It
+  /// never launches anything.
+  Future<CapabilityActionStatus?> attachOps(
+    OpsAction action, {
+    void Function(CapabilityActionStatus)? onProgress,
+    bool Function()? shouldStop,
+  }) async {
+    if (shouldStop?.call() ?? false) return null;
+    final current = await opsStatus(action);
+    onProgress?.call(current);
+    if (!current.running) return current;
+    return _followAction(
+      _opsFeature(action),
+      action.actionName,
+      onProgress,
+      shouldStop,
+      throwOnFailure: false,
+    );
+  }
+
+  /// `mcp.servers.status` over [call] (a connected gateway socket): the cached
+  /// runtime state of every MCP server, never connecting or probing.
+  Future<List<McpServerStatus>> mcpLiveStatus(CapabilitiesRpc call) =>
+      _call(CapabilityFeature.mcpLiveStatus, () async {
+        final result = await call('mcp.servers.status', _profileBody());
+        return [
+          for (final row in _list(result['servers']))
+            ?McpServerStatus.tryParse(row),
+        ];
+      });
+
+  /// `GET analytics/usage?days=` for one of [UsageAnalytics.presets].
+  Future<UsageAnalytics> usage(int days) async {
+    if (!UsageAnalytics.presets.contains(days)) {
+      throw ArgumentError.value(days, 'days', 'not a usage preset');
+    }
+    return _call(CapabilityFeature.usageAnalytics, () async {
+      final result = await rest.get(_withProfile('analytics/usage?days=$days'));
+      return UsageAnalytics.fromJson(result, days: days);
+    });
+  }
+
+  Future<ServerHealth> serverHealth() => _call(
+    CapabilityFeature.serverHealth,
+    () async => ServerHealth.fromJson(await rest.get('health')),
+  );
+
+  Future<ServerIdle> serverIdle() => _call(
+    CapabilityFeature.serverIdle,
+    () async => ServerIdle.fromJson(await rest.get('health/idle')),
+  );
 
   // ── Plugins ─────────────────────────────────────────────────────────────
 
