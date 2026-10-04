@@ -99,7 +99,7 @@ void main() {
     expect(scope, contains('hermes.example.test'));
   });
 
-  test('without a Dashboard URL the gateway host and port stand in', () {
+  test('without a Dashboard URL the gateway host stands in', () {
     expect(
       diagnosticsLaunchScope(_conn('a', dashboardUrl: null), ''),
       diagnosticsLaunchScope(_conn('b', dashboardUrl: null), ''),
@@ -107,7 +107,10 @@ void main() {
     expect(
       diagnosticsLaunchScope(_conn('a', dashboardUrl: null), ''),
       isNot(
-        diagnosticsLaunchScope(_conn('a', dashboardUrl: null, port: 1), ''),
+        diagnosticsLaunchScope(
+          _conn('a', dashboardUrl: null, host: 'other.example.test'),
+          '',
+        ),
       ),
     );
   });

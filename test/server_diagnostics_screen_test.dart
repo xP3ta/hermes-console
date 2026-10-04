@@ -10,6 +10,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/server_diagnostics_models.dart';
+import 'package:hermes_android/core/capabilities/server_diagnostics_probe.dart'
+    show DiagnosticsAvailability;
 import 'package:hermes_android/core/screens/advanced_settings_screen.dart';
 import 'package:hermes_android/core/screens/server_diagnostics_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -247,6 +249,54 @@ void main() {
       expect(count(rest, 'GET health'), 2, reason: 'probe + idle, no repeat');
       expect(find.text('v0.20.1'), findsOneWidget);
     });
+  });
+
+  testWidgets('Diagnostics opened from two saved connections to one server '
+      'launches doctor once', (tester) async {
+    final rest = RacingOpsRest();
+    SavedConnection connection(String id) => SavedConnection(
+      id: id,
+      label: id,
+      host: 'hermes.example.test',
+      port: 8642,
+      apiKey: '',
+      dashboardUrl: 'http://hermes.example.test:9119',
+    );
+    Widget screen(String id) => ServerDiagnosticsScreen(
+      connection: connection(id),
+      connManager: manager,
+      availability: const DiagnosticsAvailability(
+        doctor: true,
+        audit: false,
+        healthExists: true,
+      ),
+      restFor: (_) => rest,
+      mcpReader: (_) async => const [],
+    );
+    await pumpApp(
+      tester,
+      Column(
+        children: [
+          Expanded(child: screen('conn-a')),
+          Expanded(child: screen('conn-b')),
+        ],
+      ),
+    );
+
+    final runs = find.byKey(const ValueKey('sd1215-run-doctor'));
+    expect(runs, findsNWidgets(2));
+    await tester.tap(runs.at(0));
+    await tester.tap(runs.at(1));
+    await tester.pump();
+    await tester.pump();
+    rest.releasePost();
+    await tester.pump();
+    await tester.pump();
+
+    expect(rest.posts, 1, reason: 'the second launcher attached instead');
+    // Leave; the follows end at their next check.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 5));
   });
 
   group('Diagnostics: sections the server has not confirmed', () {

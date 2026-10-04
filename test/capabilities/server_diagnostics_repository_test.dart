@@ -11,9 +11,10 @@ import 'package:hermes_android/core/capabilities/capabilities_adapters.dart'
 import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/capability_models.dart';
 import 'package:hermes_android/core/capabilities/server_diagnostics_models.dart';
+import 'package:hermes_android/core/capabilities/server_diagnostics_scope.dart';
 import 'package:hermes_android/core/capabilities/server_diagnostics_probe.dart';
 import 'package:hermes_android/core/services/connection_manager.dart'
-    show DashboardClient, DashboardHttpException;
+    show DashboardClient, DashboardHttpException, SavedConnection;
 import 'package:hermes_android/core/services/tui_gateway_client.dart'
     show TuiGatewayClient, TuiGatewayRpcError;
 
@@ -743,7 +744,7 @@ void main() {
 
   group('two launchers of the same action', () {
     CapabilitiesRepository launcher(
-      _RacingRest rest, {
+      RacingOpsRest rest, {
       String? scope = 'conn-1|work',
     }) => CapabilitiesRepository(
       rest: rest,
@@ -754,7 +755,7 @@ void main() {
     );
 
     test('launch doctor once when both read "not running" first', () async {
-      final rest = _RacingRest();
+      final rest = RacingOpsRest();
       final first = launcher(rest).runOps(OpsAction.doctor);
       final second = launcher(rest).runOps(OpsAction.doctor);
       await Future<void>.delayed(Duration.zero);
@@ -766,7 +767,7 @@ void main() {
     });
 
     test('also with several separate repository instances', () async {
-      final rest = _RacingRest();
+      final rest = RacingOpsRest();
       final runs = [
         for (var i = 0; i < 4; i++) launcher(rest).runOps(OpsAction.doctor),
       ];
@@ -777,7 +778,7 @@ void main() {
     });
 
     test('different actions do not wait for each other', () async {
-      final rest = _RacingRest();
+      final rest = RacingOpsRest();
       final doctor = launcher(rest).runOps(OpsAction.doctor);
       final audit = launcher(rest).runOps(OpsAction.securityAudit);
       await Future<void>.delayed(Duration.zero);
@@ -787,9 +788,35 @@ void main() {
       await Future.wait([doctor, audit]);
     });
 
+    test('two saved connections to one server launch doctor once', () async {
+      final rest = RacingOpsRest();
+      CapabilitiesRepository forConnection(String id) => launcher(
+        rest,
+        scope: diagnosticsLaunchScope(
+          SavedConnection(
+            id: id,
+            label: id,
+            host: 'hermes.example.test',
+            port: 8642,
+            apiKey: '',
+            dashboardUrl: 'http://hermes.example.test:9119',
+          ),
+          'work',
+        ),
+      );
+      final first = forConnection('conn-a').runOps(OpsAction.doctor);
+      final second = forConnection('conn-b').runOps(OpsAction.doctor);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      rest.releasePost();
+      await Future.wait([first, second]);
+
+      expect(rest.posts, 1);
+    });
+
     test('different servers do not wait for each other', () async {
-      final a = _RacingRest();
-      final b = _RacingRest();
+      final a = RacingOpsRest();
+      final b = RacingOpsRest();
       final first = launcher(a, scope: 'conn-1|').runOps(OpsAction.doctor);
       final second = launcher(b, scope: 'conn-2|').runOps(OpsAction.doctor);
       await Future<void>.delayed(Duration.zero);
@@ -801,7 +828,7 @@ void main() {
     });
 
     test('a failed launch does not block the next one', () async {
-      final rest = _RacingRest()..failNextPost = true;
+      final rest = RacingOpsRest()..failNextPost = true;
       await expectLater(
         launcher(rest).runOps(OpsAction.doctor),
         throwsA(isA<CapabilityFailure>()),
@@ -902,67 +929,6 @@ void main() {
       isEmpty,
     );
   });
-}
-
-/// A Dashboard whose launches are held until [releasePost]; once launched the
-/// action reads as running for a few reads, then finishes.
-final class _RacingRest implements CapabilitiesRest {
-  final Map<String, Completer<void>> _gates = {};
-  final Set<String> _running = {};
-  final Map<String, int> _reads = {};
-  int posts = 0;
-  bool failNextPost = false;
-
-  Completer<void> _gate(String name) =>
-      _gates.putIfAbsent(name, () => Completer<void>());
-
-  void releasePost() {
-    for (final name in ['doctor', 'security-audit']) {
-      final gate = _gate(name);
-      if (!gate.isCompleted) gate.complete();
-    }
-  }
-
-  @override
-  Future<Map<String, dynamic>> get(String endpoint) async {
-    final name = endpoint.split('?').first.split('/')[1];
-    if (_running.contains(name)) {
-      final reads = _reads[name] = (_reads[name] ?? 0) + 1;
-      if (reads > 100) _running.remove(name);
-      return {
-        'name': name,
-        'running': reads <= 100,
-        'exit_code': reads <= 100 ? null : 0,
-        'lines': <String>[],
-      };
-    }
-    return {
-      'name': name,
-      'running': false,
-      'exit_code': null,
-      'lines': <String>[],
-    };
-  }
-
-  @override
-  Future<Map<String, dynamic>> post(
-    String endpoint, {
-    Map<String, dynamic>? body,
-    Duration? timeout,
-  }) async {
-    final name = endpoint.split('?').first.split('/').last;
-    posts++;
-    if (failNextPost) {
-      failNextPost = false;
-      throw const DashboardHttpException(500);
-    }
-    await _gate(name).future;
-    _running.add(name);
-    return {'ok': true, 'name': name};
-  }
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 /// A repository whose every read fails with [failure].

@@ -9,6 +9,7 @@ import '../capabilities/capabilities_adapters.dart';
 import '../capabilities/capabilities_repository.dart';
 import '../capabilities/server_diagnostics_controller.dart';
 import '../capabilities/server_diagnostics_models.dart';
+import '../capabilities/server_diagnostics_scope.dart';
 import '../capabilities/server_diagnostics_probe.dart';
 import '../design/page.dart';
 import '../services/active_profile_scope.dart';
@@ -36,6 +37,10 @@ class ServerDiagnosticsScreen extends StatefulWidget {
   @visibleForTesting
   final CapabilitiesRepository Function(String profile)? repositoryFor;
 
+  /// Replaces the Dashboard transport only (the launch scope stays real).
+  @visibleForTesting
+  final CapabilitiesRest Function(SavedConnection connection)? restFor;
+
   /// Reads the live MCP state; null when no chat socket is connected.
   @visibleForTesting
   final Future<List<McpServerStatus>?> Function(CapabilitiesRepository repo)?
@@ -47,6 +52,7 @@ class ServerDiagnosticsScreen extends StatefulWidget {
     required this.connManager,
     this.availability,
     this.repositoryFor,
+    this.restFor,
     this.mcpReader,
   });
 
@@ -64,16 +70,19 @@ class _ServerDiagnosticsScreenState extends State<ServerDiagnosticsScreen>
   CapabilitiesRepository _repoFor(String profile) {
     final custom = widget.repositoryFor;
     if (custom != null) return custom(profile);
-    final client = _client ??= DashboardClient.lazy(widget.connection);
+    final restFor = widget.restFor;
     return CapabilitiesRepository(
-      rest: DashboardCapabilitiesRest(
-        client,
-        readOnly: widget.connection.readOnly,
-      ),
+      rest: restFor != null
+          ? restFor(widget.connection)
+          : DashboardCapabilitiesRest(
+              _client ??= DashboardClient.lazy(widget.connection),
+              readOnly: widget.connection.readOnly,
+            ),
       profile: profile,
-      // Every Diagnostics screen of this server and profile shares one launch
-      // order for doctor and the audit.
-      launchScope: '${widget.connection.id}|$profile',
+      // Every Diagnostics screen that reaches this Dashboard and profile, from
+      // whichever saved connection, shares one launch order for doctor and the
+      // audit.
+      launchScope: diagnosticsLaunchScope(widget.connection, profile),
     );
   }
 
