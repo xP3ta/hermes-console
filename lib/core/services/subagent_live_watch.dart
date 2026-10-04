@@ -155,7 +155,7 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     }
     _history = _publicHistory(snapshot.messages);
     _liveRaw = '';
-    if (!snapshot.running) {
+    if (!snapshot.running && !childIsLive()) {
       // Nothing is mirrored for a finished child: read once, keep nothing.
       unawaited(_closeRemote(runtime));
       _stopListening();
