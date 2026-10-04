@@ -21,6 +21,7 @@ final class CompressionConfigRepository {
   bool _closed = false;
   bool _ownedDashboardClosed = false;
   int _activeOperations = 0;
+  Future<void>? _saveTail;
 
   factory CompressionConfigRepository(
     DashboardClient dashboard, {
@@ -101,56 +102,94 @@ final class CompressionConfigRepository {
   /// Como Hermes Desktop, el body contiene el registro redactado completo que
   /// se leyó. Dentro de `compression` solo se sustituyen los cuatro campos
   /// publicados; todos los hermanos se conservan.
+  ///
+  /// Dos guardados no se solapan: el segundo espera al primero (PUT y
+  /// re-lectura), de modo que la ultima intencion es el estado final. Si el
+  /// repositorio se cierra mientras espera, no envia nada.
   Future<CompressionConfigSnapshot> save(
     CompressionConfigSnapshot base,
     CompressionConfig configuration,
   ) async {
     _beginOperation();
+    final previous = _saveTail;
+    final done = Completer<void>();
+    _saveTail = done.future;
     try {
-      if (!_writable) {
-        throw const CompressionConfigException(
-          CompressionConfigFailureCode.readOnly,
-        );
+      if (previous != null) {
+        try {
+          await previous;
+        } catch (_) {}
+        _requireOpen();
       }
-      if (base.profile != _profile) {
-        throw const CompressionConfigException(
-          CompressionConfigFailureCode.invalidProfile,
-        );
-      }
-      final limits = base.limits;
-      final recordHandle = base.recordHandle;
-      if (!base.isSupported || limits == null || recordHandle == null) {
-        throw const CompressionConfigException(
-          CompressionConfigFailureCode.unsupported,
-        );
-      }
-      limits.requireValid(configuration);
-      base.optionalFields.requireCompatible(configuration);
-      final updatedRecord = recordHandle.buildRecordWith(configuration);
-      final response = await _dashboard.putServerConfigRecord(
-        updatedRecord,
-        profile: _profile,
-      );
-      if (response['ok'] == false) {
-        throw const CompressionConfigException(
-          CompressionConfigFailureCode.rejected,
-        );
-      }
-      return CompressionConfigSnapshot.supported(
-        profile: _profile,
-        configuration: configuration,
-        limits: limits,
-        optionalFields: base.optionalFields,
-        recordHandle: CompressionConfigRecordHandle.fromRedactedRecord(
-          updatedRecord,
-        ),
-        fetchedAt: DateTime.now().toUtc(),
-      );
+      return await _saveNow(base, configuration);
     } catch (error) {
       throw _sanitizeFailure(error);
     } finally {
+      done.complete();
+      if (identical(_saveTail, done.future)) _saveTail = null;
       _endOperation();
     }
+  }
+
+  Future<CompressionConfigSnapshot> _saveNow(
+    CompressionConfigSnapshot base,
+    CompressionConfig configuration,
+  ) async {
+    if (!_writable) {
+      throw const CompressionConfigException(
+        CompressionConfigFailureCode.readOnly,
+      );
+    }
+    if (base.profile != _profile) {
+      throw const CompressionConfigException(
+        CompressionConfigFailureCode.invalidProfile,
+      );
+    }
+    final limits = base.limits;
+    final recordHandle = base.recordHandle;
+    if (!base.isSupported || limits == null || recordHandle == null) {
+      throw const CompressionConfigException(
+        CompressionConfigFailureCode.unsupported,
+      );
+    }
+    limits.requireValid(configuration);
+    base.optionalFields.requireCompatible(configuration);
+    final updatedRecord = recordHandle.buildRecordWith(configuration);
+    final response = await _dashboard.putServerConfigRecord(
+      updatedRecord,
+      profile: _profile,
+    );
+    if (response['ok'] == false) {
+      throw const CompressionConfigException(
+        CompressionConfigFailureCode.rejected,
+      );
+    }
+    // El exito lo decide la re-lectura, no la respuesta del PUT.
+    final Map<String, dynamic> reread;
+    try {
+      reread = await _dashboard.getServerConfig(profile: _profile);
+    } catch (_) {
+      throw const CompressionConfigException(
+        CompressionConfigFailureCode.unconfirmed,
+      );
+    }
+    final held = _compressionOf(reread);
+    final sent = configuration.toDashboardPatch();
+    if (held == null || sent.entries.any((e) => held[e.key] != e.value)) {
+      throw const CompressionConfigException(
+        CompressionConfigFailureCode.notSaved,
+      );
+    }
+    return CompressionConfigSnapshot.supported(
+      profile: _profile,
+      configuration: configuration,
+      limits: limits,
+      optionalFields: base.optionalFields,
+      recordHandle: CompressionConfigRecordHandle.fromRedactedRecord(
+        updatedRecord,
+      ),
+      fetchedAt: DateTime.now().toUtc(),
+    );
   }
 
   /// Idempotente. Solo cierra el DashboardClient cuando fue creado por
@@ -200,6 +239,17 @@ final class CompressionConfigRepository {
       );
     }
   }
+}
+
+/// El bloque `compression` de una lectura de /api/config, plana o envuelta.
+Map<String, dynamic>? _compressionOf(Map<String, dynamic> response) {
+  final record = response['compression'] is Map
+      ? response
+      : response['config'] is Map
+      ? Map<String, dynamic>.from(response['config'] as Map)
+      : response;
+  final block = record['compression'];
+  return block is Map ? Map<String, dynamic>.from(block) : null;
 }
 
 String? _normalizeProfile(String? raw) {
