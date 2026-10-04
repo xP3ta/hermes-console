@@ -167,6 +167,27 @@ void main() {
     });
 
     test(
+      'Stop while the head is in flight: the late ACK sends nothing more',
+      () async {
+        final (chat, gateway) = await _idleChatWithQueue('stop-in-flight');
+        final headId = chat.queuedEntries.first.id;
+        gateway.gate = Completer<void>();
+
+        final sending = chat.sendQueuedNow(headId);
+        await _pump();
+        expect(gateway.submissions, ['initial', 'head']);
+
+        await chat.cancel();
+        gateway.gate!.complete();
+        await sending;
+        await _pump(60);
+
+        expect(gateway.submissions, ['initial', 'head']);
+        expect(chat.queueParked, isTrue);
+      },
+    );
+
+    test(
       'promoting the second row over the head in flight is refused',
       () async {
         final (chat, gateway) = await _idleChatWithQueue('promote-in-flight');
@@ -363,7 +384,6 @@ void main() {
     });
   });
 }
-
 
 class _FailingOutbox implements TurnOutboxPersistence {
   @override
