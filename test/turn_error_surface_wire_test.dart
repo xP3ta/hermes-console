@@ -335,4 +335,82 @@ void main() {
       );
     });
   });
+
+  group('provider wait notices', () {
+    const wait = '⏳ waiting on provider…';
+
+    Future<(_FakeDesktopGateway, ActiveChat)> live() async {
+      final gateway = _FakeDesktopGateway();
+      return (gateway, await _liveChat(gateway));
+    }
+
+    String reasoningOf(ActiveChat chat) => chat.messages
+        .where((row) => row['role'] == 'assistant')
+        .map(
+          (row) => [row['reasoning'], row[assistantActivityTraceKey]].join(' '),
+        )
+        .join(' ');
+
+    test('a wait notice becomes the turn status, never reasoning', () async {
+      final (gateway, chat) = await live();
+      gateway.emit('thinking.delta', {'text': wait});
+      await Future<void>.delayed(Duration.zero);
+
+      expect(reasoningOf(chat), isNot(contains('waiting on provider')));
+      expect(chat.providerWaitText, wait);
+    });
+
+    test(
+      'a decorative spinner phrase keeps going to the reasoning trace',
+      () async {
+        final (gateway, chat) = await live();
+        gateway.emit('thinking.delta', {'text': 'pondering…'});
+        await Future<void>.delayed(Duration.zero);
+
+        expect(chat.providerWaitText, isNull);
+        expect(reasoningOf(chat), contains('pondering…'));
+      },
+    );
+
+    for (final event in const {
+      'message.delta': {'text': 'Hola'},
+      'message.interim': {'text': 'Hola'},
+      'message.complete': {'text': 'Hola'},
+      'error': {'message': 'Boom'},
+      'tool.start': {'tool_id': 'call-1', 'name': 'read_file'},
+      'reasoning.delta': {'text': 'real reasoning'},
+    }.entries) {
+      test('${event.key} clears the wait notice', () async {
+        final (gateway, chat) = await live();
+        gateway.emit('thinking.delta', {'text': wait});
+        await Future<void>.delayed(Duration.zero);
+        expect(chat.providerWaitText, wait);
+
+        gateway.emit(event.key, event.value);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(chat.providerWaitText, isNull);
+      });
+    }
+
+    test('a new notice replaces the previous one', () async {
+      final (gateway, chat) = await live();
+      gateway.emit('thinking.delta', {'text': wait});
+      gateway.emit('thinking.delta', {'text': '⚠ no output for 30s'});
+      await Future<void>.delayed(Duration.zero);
+
+      expect(chat.providerWaitText, '⚠ no output for 30s');
+    });
+
+    test('a wait notice is announced to the screen', () async {
+      final (gateway, chat) = await live();
+      final emitted = <ActiveChatEvent>[];
+      final subscription = chat.changes.listen(emitted.add);
+      addTearDown(subscription.cancel);
+      gateway.emit('thinking.delta', {'text': wait});
+      await Future<void>.delayed(Duration.zero);
+
+      expect(emitted, contains(ActiveChatEvent.toolProgress));
+    });
+  });
 }

@@ -6059,6 +6059,9 @@ class ActiveChat {
   bool get activityWatchdogArmed => _activityWatchdogTimer != null;
   bool get noActivityHint => _noActivityHint;
 
+  /// Provider wait notice of the live turn, or null.
+  String? get providerWaitText => null;
+
   // Live control state refreshed by reads and `session.control.update` pushes.
   SessionGoalSnapshot? _goal;
   SessionLoopSnapshot? _loop;
