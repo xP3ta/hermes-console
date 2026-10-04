@@ -85,7 +85,12 @@ final class CapabilityFailure implements Exception {
   /// secret: only emitted for action logs and connector reasons.
   final String detail;
 
-  const CapabilityFailure(this.kind, {this.detail = ''});
+  /// Whether the server itself answered (an HTTP error status or an RPC
+  /// error), as opposed to no answer at all (unreachable, timeout). Only an
+  /// answer is evidence about what the server has.
+  final bool answered;
+
+  const CapabilityFailure(this.kind, {this.detail = '', this.answered = false});
 
   @override
   String toString() => 'CapabilityFailure(${kind.name})';
@@ -172,7 +177,10 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
           detail: _detailOf(error.body),
         );
       }
-      throw const CapabilityFailure(CapabilityFailureKind.unavailable);
+      throw const CapabilityFailure(
+        CapabilityFailureKind.unavailable,
+        answered: true,
+      );
     } on TuiGatewayRpcError catch (error) {
       if (error.code == -32601) {
         _support[feature] = false;

@@ -155,18 +155,33 @@ class _ServerDiagnosticsScreenState extends State<ServerDiagnosticsScreen>
       listenable: _controller,
       builder: (context, _) {
         final c = _controller;
-        final nothing =
-            c.serverPhase == DiagPhase.hidden &&
-            !c.doctorAvailable &&
-            !c.auditAvailable &&
-            c.mcpPhase == DiagPhase.hidden &&
-            c.usagePhase == DiagPhase.hidden;
+        final showServer = ServerDiagnosticsController.shows(c.serverPhase);
+        final showMcp = ServerDiagnosticsController.shows(c.mcpPhase);
+        final showUsage = ServerDiagnosticsController.shows(c.usagePhase);
+        final anyShown =
+            showServer ||
+            c.doctorAvailable ||
+            c.auditAvailable ||
+            showMcp ||
+            showUsage;
+        // Sections the server has not confirmed are not on screen; while
+        // nothing is confirmed yet there is only one loader for the page.
+        final waiting = const {
+          DiagPhase.idle,
+          DiagPhase.loading,
+        }.any({c.serverPhase, c.mcpPhase, c.usagePhase}.contains);
+        final nothing = !anyShown && !waiting;
         final note = c.restartNote;
         return HermesPage(
           title: s.sd1215Diagnostics,
           onRefresh: c.refresh,
           children: [
             if (nothing) HermesInfoBanner(s.sd1215NothingToShow),
+            if (!anyShown && waiting)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: TuiLoader()),
+              ),
             if (note != null) ...[
               HermesInfoBanner(
                 s.sd1215RestartRequired,
@@ -183,7 +198,7 @@ class _ServerDiagnosticsScreenState extends State<ServerDiagnosticsScreen>
                 ),
               ),
             ],
-            if (c.serverPhase != DiagPhase.hidden) ..._serverSection(s, c),
+            if (showServer) ..._serverSection(s, c),
             if (c.doctorAvailable)
               ..._opsSection(s, c, OpsAction.doctor, s.sd1215Doctor, 'doctor'),
             if (c.auditAvailable)
@@ -194,8 +209,8 @@ class _ServerDiagnosticsScreenState extends State<ServerDiagnosticsScreen>
                 s.sd1215Audit,
                 'audit',
               ),
-            if (c.mcpPhase != DiagPhase.hidden) ..._mcpSection(s, c),
-            if (c.usagePhase != DiagPhase.hidden) ..._usageSection(s, c),
+            if (showMcp) ..._mcpSection(s, c),
+            if (showUsage) ..._usageSection(s, c),
           ],
         );
       },

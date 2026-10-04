@@ -3,8 +3,9 @@ import 'server_diagnostics_models.dart';
 
 /// Which read-only diagnostics the server has, from three cheap reads
 /// (`actions/doctor/status`, `actions/security-audit/status`, `health`).
-/// Nothing is launched. A server error (not 404 / 405) still means the route
-/// exists.
+/// Nothing is launched. Only a good answer counts as support: a 404 / 405, an
+/// error status, an unreachable Dashboard or a timeout leave the route
+/// unconfirmed, and nothing is advertised until one read answers.
 final class DiagnosticsAvailability {
   final bool doctor;
   final bool audit;
@@ -36,8 +37,8 @@ Future<DiagnosticsAvailability> probeDiagnostics(
     try {
       await read;
       return true;
-    } on CapabilityFailure catch (failure) {
-      return failure.kind != CapabilityFailureKind.unsupported;
+    } on CapabilityFailure {
+      return false;
     }
   }
 

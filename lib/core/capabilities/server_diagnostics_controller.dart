@@ -26,7 +26,8 @@ enum DiagPhase {
   /// The server answered with an error: shown as "not available now".
   unavailable,
 
-  /// The server does not have it (404 / 405 / -32601): the section is hidden.
+  /// Nothing confirms the server has it (404 / 405 / -32601, or no answer at
+  /// all): the section is not shown.
   hidden,
 }
 
@@ -143,35 +144,54 @@ class ServerDiagnosticsController extends ChangeNotifier {
     ]);
   }
 
+  /// A failed read is shown ("not available now") only when the server itself
+  /// answered with an error; a missing route or no answer at all is nothing
+  /// to advertise.
+  static DiagPhase _failedPhase(CapabilityFailure failure) =>
+      switch (failure.kind) {
+        CapabilityFailureKind.unsupported => DiagPhase.hidden,
+        CapabilityFailureKind.unavailable when !failure.answered =>
+          DiagPhase.hidden,
+        _ => DiagPhase.unavailable,
+      };
+
+  /// Whether a section in [phase] is on screen: only after a positive answer
+  /// (or a server error answer); never while unknown or loading.
+  static bool shows(DiagPhase phase) =>
+      phase == DiagPhase.ready ||
+      phase == DiagPhase.noSocket ||
+      phase == DiagPhase.unavailable;
+
   Future<void> _loadServer(int generation, CapabilitiesRepository repo) async {
     serverPhase = DiagPhase.loading;
     _notify();
     ServerHealth? nextHealth = _knownHealth;
     _knownHealth = null;
     ServerIdle? nextIdle;
-    var healthMissing = false;
-    var idleMissing = false;
+    var healthPhase = DiagPhase.hidden;
+    var idlePhase = DiagPhase.hidden;
     if (nextHealth == null) {
       try {
         nextHealth = await repo.serverHealth();
       } on CapabilityFailure catch (failure) {
-        healthMissing = failure.kind == CapabilityFailureKind.unsupported;
+        healthPhase = _failedPhase(failure);
       }
     }
     try {
       nextIdle = await repo.serverIdle();
     } on CapabilityFailure catch (failure) {
-      idleMissing = failure.kind == CapabilityFailureKind.unsupported;
+      idlePhase = _failedPhase(failure);
     }
     if (_stale(generation)) return;
     health = nextHealth ?? health;
     idle = nextIdle;
-    idleSupported = !idleMissing;
+    idleSupported = idlePhase != DiagPhase.hidden || nextIdle != null;
     serverPhase = nextHealth != null || nextIdle != null
         ? DiagPhase.ready
-        : healthMissing && idleMissing
-        ? DiagPhase.hidden
-        : DiagPhase.unavailable;
+        : healthPhase == DiagPhase.unavailable ||
+              idlePhase == DiagPhase.unavailable
+        ? DiagPhase.unavailable
+        : DiagPhase.hidden;
     _notify();
   }
 
@@ -186,9 +206,7 @@ class ServerDiagnosticsController extends ChangeNotifier {
     } on CapabilityFailure catch (failure) {
       if (_stale(generation)) return;
       mcpServers = const [];
-      mcpPhase = failure.kind == CapabilityFailureKind.unsupported
-          ? DiagPhase.hidden
-          : DiagPhase.unavailable;
+      mcpPhase = _failedPhase(failure);
     }
     _notify();
   }
@@ -205,9 +223,7 @@ class ServerDiagnosticsController extends ChangeNotifier {
     } on CapabilityFailure catch (failure) {
       if (_stale(generation) || days != usageDays) return;
       usage = null;
-      usagePhase = failure.kind == CapabilityFailureKind.unsupported
-          ? DiagPhase.hidden
-          : DiagPhase.unavailable;
+      usagePhase = _failedPhase(failure);
     }
     _notify();
   }

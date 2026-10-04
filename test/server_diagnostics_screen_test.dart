@@ -274,7 +274,7 @@ void main() {
 
       expect(find.text(s.sd1215Mcp), findsNothing);
       expect(find.text(s.sd1215Usage), findsNothing);
-      expect(find.byType(TuiLoader), findsWidgets, reason: 'one page loader');
+      expect(find.text(s.sd1215Server), findsOneWidget, reason: 'confirmed');
 
       // The server then says it has neither.
       usage.completeError(const DashboardHttpException(404));
