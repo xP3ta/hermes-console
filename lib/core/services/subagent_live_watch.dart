@@ -67,6 +67,7 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     required this.childSessionId,
     required this.profile,
     required this.isCurrent,
+    this.childIsLive = _never,
   }) : super(const SubagentLiveWatchView());
 
   /// Upper bound of raw mirrored text kept in memory. The stored transcript
@@ -81,6 +82,11 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
 
   /// False once the owner (chat runtime, active profile) moved on.
   final bool Function() isCurrent;
+
+  /// Whether the parent's own roster still reports the child as working.
+  final bool Function() childIsLive;
+
+  static bool _never() => false;
 
   StreamSubscription<TuiGatewayEvent>? _subscription;
   bool _started = false;
