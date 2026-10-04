@@ -5,6 +5,13 @@ import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
+import 'package:hermes_android/core/services/connection_manager.dart'
+    show
+        DashboardAuthException,
+        DashboardAuthFailureCode,
+        DashboardWebSocketAuthException,
+        DashboardWebSocketAuthFailureCause,
+        DashboardWebSocketAuthFailureCode;
 import 'package:hermes_android/core/services/subagent_live_watch.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
@@ -700,6 +707,23 @@ void main() {
       'session.close',
       'Forbidden',
       code: 403,
+    ),
+    // What `webSocketAuth()` raises when the credential or ticket is gone.
+    'dashboard login required': const DashboardAuthException(
+      DashboardAuthFailureCode.loginRequired,
+      statusCode: 401,
+    ),
+    'dashboard invalid credentials': const DashboardAuthException(
+      DashboardAuthFailureCode.invalidCredentials,
+      statusCode: 403,
+    ),
+    'dashboard ticket unavailable': const DashboardWebSocketAuthException(
+      DashboardWebSocketAuthFailureCode.unavailable,
+      statusCode: 401,
+    ),
+    'dashboard ticket transport': const DashboardWebSocketAuthException(
+      DashboardWebSocketAuthFailureCode.unavailable,
+      cause: DashboardWebSocketAuthFailureCause.transport,
     ),
     'platform channel error': PlatformException(
       code: 'channel-error',
