@@ -123,7 +123,6 @@ List<SettingsSearchEntry> buildSettingsSearchIndex({
           if (section == SettingsSection.security) ...[
             s.setSecurity,
             s.setPermissions,
-            s.setServerConfig,
           ],
         ],
         settingsSection: section,
