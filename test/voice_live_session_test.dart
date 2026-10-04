@@ -548,6 +548,14 @@ void main() {
           (h.transport.sent.first['event_id'] as String).startsWith('mute_'),
           isTrue,
         );
+        expect(
+          (h.transport.sent.last['event_id'] as String).startsWith('unmute_'),
+          isTrue,
+        );
+        expect(
+          h.transport.sent.map((e) => e['event_id']).toSet(),
+          hasLength(2),
+        );
       });
     });
 

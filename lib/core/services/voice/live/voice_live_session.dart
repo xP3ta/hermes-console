@@ -315,7 +315,7 @@ class VoiceLiveSession {
     _transport.setMicEnabled(!muted);
     _send({
       'type': muted ? 'session.input_audio.mute' : 'session.input_audio.unmute',
-      'event_id': _nextId('mute'),
+      'event_id': _nextId(muted ? 'mute' : 'unmute'),
     });
   }
 
