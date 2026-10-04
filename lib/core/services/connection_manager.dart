@@ -1508,15 +1508,20 @@ class ApiClient {
     final pagesNewestFirst = <List<Map<String, dynamic>>>[];
     final signatures = <String>{};
     while (true) {
-      final page = await getMessagesPage(
-        sessionId,
-        profile: profile,
-        limit: limit,
-        offset: offset,
-        maxBodyBytes: maxJsonChars == null
-            ? null
-            : (maxJsonChars - jsonChars + 1) * _utf8BytesPerChar,
-      );
+      final page = maxJsonChars == null
+          ? await getMessagesPage(
+              sessionId,
+              profile: profile,
+              limit: limit,
+              offset: offset,
+            )
+          : await _readMessagesPage(
+              sessionId,
+              profile: profile,
+              limit: limit,
+              offset: offset,
+              maxBodyBytes: (maxJsonChars - jsonChars + 1) * _utf8BytesPerChar,
+            );
       if (!page.messagesFullyParsed || !page.paginationFullyParsed) {
         throw const CoreReadException(CoreReadErrorKind.malformed);
       }
@@ -1586,6 +1591,18 @@ class ApiClient {
     String? profile,
     int limit = 120,
     int offset = 0,
+  }) => _readMessagesPage(
+    sessionId,
+    profile: profile,
+    limit: limit,
+    offset: offset,
+  );
+
+  Future<SessionMessagesPage> _readMessagesPage(
+    String sessionId, {
+    String? profile,
+    required int limit,
+    required int offset,
     int? maxBodyBytes,
   }) async {
     if (offset < 0) {
