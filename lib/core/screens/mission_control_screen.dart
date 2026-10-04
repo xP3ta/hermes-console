@@ -437,6 +437,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       hostedGroupsCapability: snapshot.hostedGroupsCapability,
       failures: snapshot.failures,
       loadedAt: snapshot.loadedAt,
+      activeSessions: snapshot.activeSessions,
+      activeSessionsObservedAt: snapshot.activeSessionsObservedAt,
     );
   }
 
@@ -723,6 +725,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             hostedGroupsCapability: previous.hostedGroupsCapability,
             failures: failures,
             loadedAt: DateTime.now(),
+            activeSessions: roster.activeSessions,
+            activeSessionsObservedAt: roster.activeSessionsObservedAt,
           ),
         ),
       );
@@ -1052,6 +1056,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       hostedGroupsCapability: incoming.hostedGroupsCapability,
       failures: incoming.failures,
       loadedAt: incoming.loadedAt,
+      // A read without a row is authoritative about its absence: never kept.
+      activeSessions: incoming.activeSessions,
+      activeSessionsObservedAt: incoming.activeSessionsObservedAt,
     );
   }
 
@@ -1227,6 +1234,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             phase: _missionPhase(chat),
             approval: chat.pendingApproval,
             model: session?.model,
+            settledAt: chat.lastTerminalAt,
           );
         })
         .toList(growable: false);
@@ -2702,6 +2710,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           hostedGroupsCapability: snapshot.hostedGroupsCapability,
           failures: snapshot.failures,
           loadedAt: snapshot.loadedAt,
+          activeSessions: snapshot.activeSessions,
+          activeSessionsObservedAt: snapshot.activeSessionsObservedAt,
         );
       });
       return HostedGroupWorkspaceReadback(
