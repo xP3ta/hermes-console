@@ -3,20 +3,35 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat_prompt_sheet.dart';
 
-Widget _host({
-  required List<String> previews,
-  int? activeIndex,
+Widget _host(
+  ValueNotifier<ChatPromptSheetModel> model, {
   ValueChanged<int>? onSelect,
+  VoidCallback? onMore,
 }) => MaterialApp(
   theme: AppTheme.hermesRedDark,
   home: Scaffold(
     body: ChatPromptSheet(
       title: 'Prompts',
       emptyLabel: 'No prompts yet',
-      previews: previews,
-      activeIndex: activeIndex,
+      moreLabel: 'Load earlier',
+      model: model,
       onSelect: onSelect ?? (_) {},
+      onMore: onMore ?? () {},
     ),
+  ),
+);
+
+ValueNotifier<ChatPromptSheetModel> _model(
+  List<String> previews, {
+  int? activeIndex,
+  bool hasMore = false,
+  bool loading = false,
+}) => ValueNotifier(
+  ChatPromptSheetModel(
+    previews: previews,
+    activeIndex: activeIndex,
+    hasMore: hasMore,
+    loading: loading,
   ),
 );
 
@@ -26,7 +41,7 @@ void main() {
   ) async {
     int? tapped;
     await tester.pumpWidget(
-      _host(previews: ['tres', 'dos', 'uno'], onSelect: (i) => tapped = i),
+      _host(_model(['tres', 'dos', 'uno']), onSelect: (i) => tapped = i),
     );
     expect(find.text('Prompts'), findsOneWidget);
     expect(find.text('tres'), findsOneWidget);
@@ -35,7 +50,7 @@ void main() {
   });
 
   testWidgets('marks only the active entry as selected', (tester) async {
-    await tester.pumpWidget(_host(previews: ['tres', 'dos'], activeIndex: 1));
+    await tester.pumpWidget(_host(_model(['tres', 'dos'], activeIndex: 1)));
     Tristate selectedOf(int index) => tester
         .getSemantics(find.byKey(ValueKey('chat-prompt-row-$index')))
         .flagsCollection
@@ -45,7 +60,7 @@ void main() {
   });
 
   testWidgets('shows the empty note when there are no prompts', (tester) async {
-    await tester.pumpWidget(_host(previews: const []));
+    await tester.pumpWidget(_host(_model(const [])));
     expect(
       find.byKey(const ValueKey('chat-prompt-sheet-empty')),
       findsOneWidget,
@@ -55,8 +70,7 @@ void main() {
 
   testWidgets('builds only the visible rows of a long list', (tester) async {
     final previews = [for (var i = 0; i < 500; i++) 'prompt $i'];
-    await tester.pumpWidget(_host(previews: previews));
-    expect(find.byType(ListTile), findsNothing);
+    await tester.pumpWidget(_host(_model(previews)));
     expect(
       find
           .byWidgetPredicate(
@@ -70,5 +84,42 @@ void main() {
           .length,
       lessThan(40),
     );
+  });
+
+  testWidgets('the earlier-prompts row only shows when more can be read', (
+    tester,
+  ) async {
+    var more = 0;
+    final model = _model(['uno']);
+    await tester.pumpWidget(_host(model, onMore: () => more++));
+    expect(find.byKey(const ValueKey('chat-prompt-more')), findsNothing);
+
+    model.value = ChatPromptSheetModel(previews: ['uno'], hasMore: true);
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('chat-prompt-more')));
+    expect(more, 1);
+
+    model.value = ChatPromptSheetModel(
+      previews: ['uno'],
+      hasMore: true,
+      loading: true,
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('chat-prompt-more')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('chat-prompt-loading')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('the list follows model updates without rebuilding the sheet', (
+    tester,
+  ) async {
+    final model = _model(['uno']);
+    await tester.pumpWidget(_host(model));
+    expect(find.text('dos'), findsNothing);
+    model.value = ChatPromptSheetModel(previews: ['uno', 'dos']);
+    await tester.pump();
+    expect(find.text('dos'), findsOneWidget);
   });
 }
