@@ -11173,7 +11173,6 @@ class ActiveChat {
       }
       _compactedDisplayDashboardUnavailable = true;
     }
-    if (profileRoutes(owner)) _throwIfProfileTranscriptAccessBlocked();
     if (!profileRoutes(owner) || !_profileGatewayTranscriptUnauthorized) {
       try {
         final page = await _api.getMessagesPage(
