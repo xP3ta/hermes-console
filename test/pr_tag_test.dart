@@ -185,6 +185,22 @@ void main() {
     },
   );
 
+  test('five branches asked at once are each asked, none dropped', () async {
+    final names = ['feat/a', 'feat/b', 'feat/c', 'feat/d', 'feat/e'];
+    gateway.prsByBranch = {
+      for (var i = 0; i < names.length; i++) names[i]: _pr(names[i], i + 1),
+    };
+    final gate = Completer<void>();
+    gateway.hold = gate.future;
+    final futures = [for (final n in names) service.tagFor(_s(n, branch: n))];
+    await Future<void>.delayed(Duration.zero);
+    gate.complete();
+    final results = await Future.wait(futures);
+    expect([for (final r in results) r?.number], [1, 2, 3, 4, 5]);
+    final asked = {for (final c in gateway.listCalls) ...c.$2};
+    expect(asked, names.toSet());
+  });
+
   test('404 turns the capability off for good', () async {
     gateway.listError = _unsupported;
     expect(await service.tagFor(_s('a')), isNull);

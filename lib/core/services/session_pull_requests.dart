@@ -263,8 +263,11 @@ class PullRequestTagService {
   }) async {
     // One request per repo at a time, but a waiter whose key the finished
     // request did not carry asks again instead of being answered "none".
+    // Every waiter loops until it has either found its key already asked or
+    // sent its own request, so any fan-out is served; each pass waits for a
+    // request that finishes, so the loop cannot spin.
     var waited = false;
-    for (var turn = 0; turn < 4; turn++) {
+    while (true) {
       final pending = _inFlight[repo];
       if (pending != null) {
         await pending;
@@ -288,7 +291,6 @@ class PullRequestTagService {
       }
       return _read(_repos[repo], branch, number);
     }
-    return null;
   }
 
   Future<void> _refresh(
