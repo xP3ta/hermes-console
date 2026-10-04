@@ -219,11 +219,21 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
         return;
       }
       if (outcome.message.isNotEmpty) {
+        final missing = outcome.missingEnv;
         notices.show(
           message: outcome.message,
           kind: outcome.ok
               ? HermesNoticeKind.success
               : HermesNoticeKind.warning,
+          action:
+              missing.isNotEmpty &&
+                  !widget.readOnly &&
+                  _repo.supports(CapabilityFeature.envSet) != false
+              ? HermesNoticeAction(
+                  label: s.cphAddCredentials,
+                  onPressed: () => _addCredentials(missing),
+                )
+              : null,
         );
       }
       if (outcome.changed) widget.onChanged?.call();
@@ -282,6 +292,23 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
     maxHeightFactor: 0.9,
     builder: (_) => CapabilityEnvSheet(name: name, fields: fields),
   );
+
+  /// Credentials a fresh plugin install still needs: exactly those names.
+  Future<void> _addCredentials(List<String> names) async {
+    final notices = HermesNotice.of(context);
+    final s = Strings.of(context);
+    final values = await _askEnv(_item.name, [
+      for (final name in names) CapabilityEnvField(name: name),
+    ]);
+    if (values == null || !mounted) return;
+    try {
+      await _repo.setPluginEnv(values, declared: names);
+    } catch (error) {
+      if (mounted) _reportFailure(notices, s, error);
+    } finally {
+      values.clear();
+    }
+  }
 
   Future<void> _showScan() async {
     final s = Strings.of(context);
@@ -374,6 +401,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
             return _Outcome(
               message: '${s.cphDoneInstalled(name)}${pluginNotes(result)}',
               next: item.copyWith(installed: true, enabled: true),
+              missingEnv: result.missingEnv,
             );
           case CapabilityKind.mcp:
             await _repo.installMcp(
@@ -850,14 +878,16 @@ final class _Outcome {
   final CapabilityItem? next;
   final PluginMutationResult? consent;
   final bool changed;
+  final List<String> missingEnv;
 
-  const _Outcome({required this.message, this.next})
+  const _Outcome({required this.message, this.next, this.missingEnv = const []})
     : ok = true,
       consent = null,
       changed = true;
 
   const _Outcome.message(this.message, {this.ok = true})
     : next = null,
+      missingEnv = const [],
       consent = null,
       changed = false;
 
@@ -865,6 +895,7 @@ final class _Outcome {
     : message = '',
       ok = true,
       next = null,
+      missingEnv = const [],
       consent = result,
       changed = false;
 }

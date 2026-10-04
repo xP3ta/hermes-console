@@ -56,6 +56,7 @@ enum CapabilityFeature {
   skillInstall,
   skillPreview,
   skillScan,
+  envSet,
   skillsUpdate,
   pluginCatalog,
   pluginInstalled,
@@ -693,6 +694,42 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
       if (secret.isNotEmpty) out = out.replaceAll(secret, '…');
     }
     return out;
+  }
+
+  /// Sets the credentials a plugin install reported as missing, one
+  /// `PUT /api/env {key, value, profile}` per declared name. Values are
+  /// secrets: undeclared names are dropped and no error carries a value.
+  Future<void> setPluginEnv(
+    Map<String, String> values, {
+    required List<String> declared,
+  }) async {
+    final pending = <String, String>{
+      for (final entry in values.entries)
+        if (declared.contains(entry.key) &&
+            RegExp(r'^[A-Za-z_][A-Za-z0-9_]{0,127}$').hasMatch(entry.key))
+          entry.key: entry.value,
+    };
+    try {
+      for (final entry in pending.entries) {
+        await _call(CapabilityFeature.envSet, () async {
+          final result = await rest.put('env', {
+            'key': entry.key,
+            'value': entry.value,
+            if (!_defaultProfile) 'profile': profile.trim(),
+          });
+          if (result['ok'] != true) {
+            throw const CapabilityFailure(CapabilityFailureKind.rejected);
+          }
+        });
+      }
+    } on CapabilityFailure catch (error) {
+      throw CapabilityFailure(
+        error.kind,
+        detail: _redact(error.detail, pending.values),
+      );
+    } finally {
+      pending.clear();
+    }
   }
 
   Future<void> setMcpEnabled(String name, bool enabled) =>
