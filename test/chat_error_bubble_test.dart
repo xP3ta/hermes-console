@@ -37,9 +37,6 @@ Future<void> _openDetails(WidgetTester tester) async {
   await tester.pump();
 }
 
-Finder _action(String name) =>
-    find.byKey(ValueKey('te1215-error-action-$name'));
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -68,11 +65,11 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Compactar conversación'), findsOneWidget);
-      expect(find.text('Chat nuevo'), findsNothing);
+      expect(find.text('Nuevo chat'), findsNothing);
       expect(find.text(_retry), findsNothing);
 
       await _openDetails(tester);
-      expect(find.text('Chat nuevo'), findsOneWidget);
+      expect(find.text('Nuevo chat'), findsOneWidget);
       expect(find.text(_retry), findsNothing);
       expect(
         find.byKey(const ValueKey('te1215-error-primary')),
@@ -81,7 +78,7 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('te1215-error-primary')));
       expect(compressed, 1);
-      await tester.tap(find.text('Chat nuevo'));
+      await tester.tap(find.text('Nuevo chat'));
       expect(newChats, 1);
     });
 
