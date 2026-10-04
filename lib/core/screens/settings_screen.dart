@@ -18,6 +18,8 @@ import '../services/connection_manager.dart';
 
 import '../services/font_size_service.dart';
 import '../services/local_transcript_store.dart';
+import '../capabilities/capabilities_repository.dart'
+    show CapabilitiesRepository;
 import '../services/active_profile_scope.dart';
 import '../services/server_config_repository.dart';
 import '../settings/server_config_pages.dart';
@@ -149,11 +151,17 @@ class SettingsScreen extends StatelessWidget {
   /// Where the "Advanced" row reads the config schema (tests pass a fake).
   @visibleForTesting
   final ServerConfigStoreFactory? advancedStoreFor;
+
+  /// Where the Advanced screen gets its diagnostics repository (tests only).
+  @visibleForTesting
+  final CapabilitiesRepository Function(String profile)?
+  advancedRepositoryFor;
   const SettingsScreen({
     required this.connection,
     required this.connManager,
     @visibleForTesting this.verifyHistoryCleanupForTesting,
     @visibleForTesting this.advancedStoreFor,
+    @visibleForTesting this.advancedRepositoryFor,
     super.key,
   });
 
@@ -350,6 +358,7 @@ class SettingsScreen extends StatelessWidget {
                       connection: conn,
                       connManager: connManager,
                       storeFor: advancedStoreFor,
+                      repositoryFor: advancedRepositoryFor,
                     ),
                   ],
                 ),
@@ -404,12 +413,14 @@ class _AdvancedEntry extends StatefulWidget {
   final SavedConnection connection;
   final ConnectionManager connManager;
   final ServerConfigStoreFactory? storeFor;
+  final CapabilitiesRepository Function(String profile)? repositoryFor;
 
   const _AdvancedEntry({
     super.key,
     required this.connection,
     required this.connManager,
     this.storeFor,
+    this.repositoryFor,
   });
 
   @override
@@ -489,6 +500,7 @@ class _AdvancedEntryState extends State<_AdvancedEntry> {
                   connManager: widget.connManager,
                   initialSchema: schema,
                   storeFor: widget.storeFor,
+                  repositoryFor: widget.repositoryFor,
                 ),
               ),
             ),

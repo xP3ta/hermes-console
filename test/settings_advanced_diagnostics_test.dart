@@ -56,15 +56,20 @@ void main() {
   });
 
   // Building the "Data" block of Settings trips a framework assertion about a
-  // `ListTile` inside a `DecoratedBox`. It happens on the base too; only that
-  // message is let through, anything else still fails the test.
-  void letKnownAssertionThrough(WidgetTester tester) {
-    final error = tester.takeException();
-    if (error == null) return;
-    expect(
-      error.toString(),
-      contains('ListTile background color or ink splashes may be invisible'),
-    );
+  // `ListTile` inside a `DecoratedBox`, on every frame it is visible. It
+  // happens on the base too; only that message is let through, anything else
+  // still fails the test.
+  void ignoreKnownAssertion() {
+    final previous = FlutterError.onError;
+    FlutterError.onError = (details) {
+      if (details.exceptionAsString().contains(
+        'ListTile background color or ink splashes may be invisible',
+      )) {
+        return;
+      }
+      previous?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = previous);
   }
 
   Finder advancedRow() => find.byWidgetPredicate(
@@ -72,6 +77,7 @@ void main() {
   );
 
   Future<void> pumpSettings(WidgetTester tester, ScriptedRest rest) async {
+    ignoreKnownAssertion();
     SharedPreferences.setMockInitialValues({});
     final manager = await ConnectionManager.create(
       await SharedPreferences.getInstance(),
@@ -104,15 +110,13 @@ void main() {
       ),
     );
     await tester.pump();
-    letKnownAssertionThrough(tester);
     await tester.pump(const Duration(milliseconds: 50));
-    letKnownAssertionThrough(tester);
     await tester.scrollUntilVisible(
       advancedRow(),
       200,
       scrollable: find.byType(Scrollable).first,
     );
-    letKnownAssertionThrough(tester);
+    await tester.pump();
   }
 
   Future<void> openAdvanced(WidgetTester tester) async {
@@ -159,7 +163,6 @@ void main() {
     final rest = server();
     await pumpSettings(tester, rest);
     await tester.pump(const Duration(seconds: 30));
-    letKnownAssertionThrough(tester);
 
     expect(rest.calls, isEmpty, reason: 'nothing before the row is tapped');
 

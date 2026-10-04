@@ -9448,7 +9448,6 @@
   "sd1215UsageCalls": "Llamadas",
   "sd1215UsageByModel": "Por modelo",
   "sd1215UsageDaily": "Por día",
-  "sd1215UsageEmpty": "Sin uso en este periodo",
   "sd1215HistoryUnavailable": "Historial no disponible ahora",
   "sd1215Unavailable": "No disponible ahora",
   "sd1215ExitWarnings": "Terminó con avisos (código {code})",

@@ -7763,7 +7763,6 @@
   "sd1215UsageCalls": "Calls",
   "sd1215UsageByModel": "By model",
   "sd1215UsageDaily": "By day",
-  "sd1215UsageEmpty": "No usage in this period",
   "sd1215HistoryUnavailable": "History not available now",
   "sd1215Unavailable": "Not available now",
   "sd1215ExitWarnings": "Finished with warnings (code {code})",

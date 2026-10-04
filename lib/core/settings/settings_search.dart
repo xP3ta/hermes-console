@@ -31,10 +31,17 @@ String settingsSectionTitle(Strings s, SettingsSection section) =>
       SettingsSection.about => s.setSecAbout,
     };
 
-enum SettingsSearchKind { page, field, tools, toolset, settingsSection }
+enum SettingsSearchKind {
+  page,
+  field,
+  tools,
+  toolset,
+  diagnostics,
+  settingsSection,
+}
 
 /// One thing a search can lead to: an Advanced page, a field of one, the
-/// toolsets, a toolset, or a section of the main Settings screen.
+/// toolsets, a toolset, Diagnostics, or a section of the main Settings screen.
 final class SettingsSearchEntry {
   final SettingsSearchKind kind;
   final String title;
@@ -63,6 +70,7 @@ List<SettingsSearchEntry> buildSettingsSearchIndex({
   required Strings s,
   required Map<String, dynamic> schema,
   List<ServerToolset> toolsets = const [],
+  bool diagnostics = false,
 }) {
   final entries = <SettingsSearchEntry>[];
   for (final page in ServerConfigPage.values) {
@@ -111,6 +119,16 @@ List<SettingsSearchEntry> buildSettingsSearchIndex({
         subtitle: s.drawerTools,
         text: [?toolset.description, toolset.name, s.drawerTools],
         toolset: toolset.name,
+      ),
+    );
+  }
+  if (diagnostics) {
+    entries.add(
+      SettingsSearchEntry._(
+        kind: SettingsSearchKind.diagnostics,
+        title: s.sd1215Diagnostics,
+        subtitle: s.sd1215DiagnosticsSub,
+        text: [s.sd1215DiagnosticsSub],
       ),
     );
   }

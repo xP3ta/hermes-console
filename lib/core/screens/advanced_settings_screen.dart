@@ -3,6 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../capabilities/capabilities_adapters.dart';
+import '../capabilities/capabilities_repository.dart';
+import '../capabilities/server_diagnostics_models.dart';
+import '../capabilities/server_diagnostics_probe.dart';
 import '../design/page.dart';
 import '../models/server_toolset.dart';
 import '../services/active_profile_scope.dart';
@@ -17,14 +21,16 @@ import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_premium_ui.dart' show HermesSearchField;
 import '../widgets/hermes_ui.dart';
 import 'server_config_page_screen.dart';
+import 'server_diagnostics_screen.dart';
 import 'server_toolsets_screen.dart';
 
 /// Settings › Advanced: the server settings Desktop keeps on its
 /// configuration pages, out of the main Settings list.
 ///
-/// Opening it reads the config schema (unless the Settings entry already did)
-/// and the toolsets list, once each, to know which pages exist. The search at
-/// the top works on what is loaded; typing never touches the network.
+/// Opening it reads the config schema (unless the Settings entry already did),
+/// the toolsets list and three cheap Diagnostics routes, once each, to know
+/// which entries exist. Diagnostics is one of them. The search at the top works
+/// on what is loaded; typing never touches the network.
 class AdvancedSettingsScreen extends StatefulWidget {
   final SavedConnection connection;
   final ConnectionManager connManager;
@@ -38,6 +44,15 @@ class AdvancedSettingsScreen extends StatefulWidget {
   @visibleForTesting
   final ServerToolsetsFactory? toolsetsFor;
 
+  /// Repository for a profile; the default talks to the Dashboard.
+  @visibleForTesting
+  final CapabilitiesRepository Function(String profile)? repositoryFor;
+
+  /// Reader of the live MCP state, handed to Diagnostics.
+  @visibleForTesting
+  final Future<List<McpServerStatus>?> Function(CapabilitiesRepository repo)?
+  mcpReader;
+
   const AdvancedSettingsScreen({
     super.key,
     required this.connection,
@@ -45,6 +60,8 @@ class AdvancedSettingsScreen extends StatefulWidget {
     this.initialSchema,
     this.storeFor,
     this.toolsetsFor,
+    this.repositoryFor,
+    this.mcpReader,
   });
 
   @override
@@ -61,6 +78,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
 
   Map<String, dynamic>? _schema;
   List<ServerToolset> _toolsets = const [];
+  DiagnosticsAvailability? _diagnostics;
   ServerConfigFailureKind? _failure;
   bool _loading = true;
   Map<String, dynamic>? _seed;
@@ -93,12 +111,24 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     setState(() {
       _schema = null;
       _toolsets = const [];
+      _diagnostics = null;
       _failure = null;
       _loading = true;
       _index = const [];
     });
     unawaited(_load());
   }
+
+  CapabilitiesRepository _capabilitiesFor(String profile, DashboardClient c) {
+    final custom = widget.repositoryFor;
+    if (custom != null) return custom(profile);
+    return CapabilitiesRepository(
+      rest: DashboardCapabilitiesRest(c, readOnly: widget.connection.readOnly),
+      profile: profile,
+    );
+  }
+
+  bool get _hasDiagnostics => _diagnostics?.any ?? false;
 
   Future<void> _load() async {
     final ticket = _scope.capture();
@@ -121,7 +151,13 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     Map<String, dynamic>? schema = _seed;
     ServerConfigFailureKind? failure;
     var tools = const <ServerToolset>[];
+    DiagnosticsAvailability? diagnostics;
     await Future.wait([
+      () async {
+        diagnostics = await probeDiagnostics(
+          _capabilitiesFor(ticket.name, client),
+        );
+      }(),
       () async {
         if (schema != null) return;
         try {
@@ -143,6 +179,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     setState(() {
       _schema = loaded;
       _toolsets = tools;
+      _diagnostics = diagnostics;
       _failure = failure;
       _loading = false;
       _index = loaded == null
@@ -151,6 +188,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
               s: Strings.of(context),
               schema: loaded,
               toolsets: tools,
+              diagnostics: diagnostics?.any ?? false,
             );
     });
   }
@@ -190,6 +228,23 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     ),
   );
 
+  void _openDiagnostics() {
+    final availability = _diagnostics;
+    if (availability == null || !availability.any) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => ServerDiagnosticsScreen(
+          connection: widget.connection,
+          connManager: widget.connManager,
+          availability: availability,
+          repositoryFor: widget.repositoryFor,
+          mcpReader: widget.mcpReader,
+        ),
+      ),
+    );
+  }
+
   void _open(SettingsSearchEntry hit) {
     switch (hit.kind) {
       case SettingsSearchKind.page:
@@ -199,6 +254,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
       case SettingsSearchKind.tools:
       case SettingsSearchKind.toolset:
         _openTools();
+      case SettingsSearchKind.diagnostics:
+        _openDiagnostics();
       case SettingsSearchKind.settingsSection:
         SettingsDeepLink.request(hit.settingsSection!);
         Navigator.of(context).pop();
@@ -210,6 +267,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     SettingsSearchKind.field => 'adv1215-hit-${hit.path}',
     SettingsSearchKind.tools => 'adv1215-hit-tools',
     SettingsSearchKind.toolset => 'adv1215-hit-toolset-${hit.toolset}',
+    SettingsSearchKind.diagnostics => 'adv1215-hit-diagnostics',
     SettingsSearchKind.settingsSection =>
       'adv1215-hit-section-${hit.settingsSection!.name}',
   });
@@ -226,6 +284,14 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
     ServerConfigPage.runtime => Icons.speed,
   };
 
+  Widget _diagnosticsRow(Strings s) => HermesNavRow(
+    key: const ValueKey('adv1215-page-diagnostics'),
+    icon: Icons.monitor_heart_outlined,
+    title: s.sd1215Diagnostics,
+    subtitle: s.sd1215DiagnosticsSub,
+    onTap: _openDiagnostics,
+  );
+
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
@@ -239,17 +305,20 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
         ),
       );
     } else if (schema == null) {
+      // Without a readable config schema Diagnostics may still be there.
       children.add(
-        HermesInfoBanner(switch (_failure) {
-          ServerConfigFailureKind.authentication ||
-          ServerConfigFailureKind.permissionDenied => s.adv1215LoadDenied,
-          ServerConfigFailureKind.unsupported => s.adv1215Unreadable,
-          _ => s.adv1215LoadFailed,
-        }),
+        _hasDiagnostics
+            ? HermesGroup(children: [_diagnosticsRow(s)])
+            : HermesInfoBanner(switch (_failure) {
+                ServerConfigFailureKind.authentication ||
+                ServerConfigFailureKind.permissionDenied => s.adv1215LoadDenied,
+                ServerConfigFailureKind.unsupported => s.adv1215Unreadable,
+                _ => s.adv1215LoadFailed,
+              }),
       );
     } else {
       final pages = serverConfigPagesWithFields(schema);
-      if (pages.isEmpty && _toolsets.isEmpty) {
+      if (pages.isEmpty && _toolsets.isEmpty && !_hasDiagnostics) {
         children.add(HermesInfoBanner(s.adv1215Unreadable));
       } else {
         children.add(
@@ -277,6 +346,8 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                               Icons.settings_outlined,
                             SettingsSearchKind.tools ||
                             SettingsSearchKind.toolset => Icons.build_outlined,
+                            SettingsSearchKind.diagnostics =>
+                              Icons.monitor_heart_outlined,
                             _ => _pageIcon(hit.page!),
                           },
                           title: hit.title,
@@ -306,6 +377,7 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
                     subtitle: s.adv1215SubTools,
                     onTap: _openTools,
                   ),
+                if (_hasDiagnostics) _diagnosticsRow(s),
               ],
             ),
           );
