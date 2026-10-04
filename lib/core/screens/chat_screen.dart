@@ -10475,11 +10475,17 @@ class _ChatScreenState extends State<ChatScreen>
 
     final model = ValueNotifier<ChatPromptSheetModel>(snapshot());
 
+    // One client for the whole sheet, closed with it; one read at a time.
+    DashboardClient? indexClient;
+    var reading = false;
+
     Future<void> readIndexPage() async {
+      if (reading) return;
+      reading = true;
       loading = true;
       model.value = snapshot();
       try {
-        final client =
+        final client = indexClient ??=
             widget.promptTimelineClientFactory?.call(widget.connection) ??
             DashboardClient.lazy(widget.connection);
         final page = await client.getSessionTimelinePage(
@@ -10504,6 +10510,7 @@ class _ChatScreenState extends State<ChatScreen>
         if (!open()) return;
         hasMore = false;
       }
+      reading = false;
       loading = false;
       items = mergeChatPromptItems(
         entries,
@@ -10530,6 +10537,7 @@ class _ChatScreenState extends State<ChatScreen>
       ),
     );
     if (epoch == _promptSheetEpoch) _promptSheetEpoch++;
+    indexClient?.close();
     if (!mounted || picked == null || picked >= items.length) return;
     final item = items[picked];
     var target = item.message;
