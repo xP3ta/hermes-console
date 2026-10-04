@@ -4195,6 +4195,8 @@ class TuiGatewayClient
     'connectors.accounts',
     'connectors.operation.status',
     'mcp.servers.status',
+    'connectors.tools',
+    'connectors.policy.get',
   };
 
   static const Set<String> _capabilityWrites = {
@@ -4202,6 +4204,7 @@ class TuiGatewayClient
     'connectors.operation.wake',
     'connectors.accounts.remove',
     'connection.respond',
+    'connectors.policy.set',
   };
 
   static bool capabilitiesRpcAllowed(String method, {required bool readOnly}) =>

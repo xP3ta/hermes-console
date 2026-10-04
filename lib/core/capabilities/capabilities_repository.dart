@@ -13,7 +13,8 @@
 //            POST /api/mcp/servers[/{n}/test|/{n}/auth] · GET /api/mcp/oauth/flows/{id}
 //   MCP live RPC mcp.servers.status · GET /api/logs (on demand, one read)
 //   hosted   RPC connectors.{list,catalog,accounts,connect,operation.status,
-//            operation.wake,accounts.remove} · connection.respond
+//            operation.wake,accounts.remove,tools,policy.get,policy.set}
+//            · connection.respond
 //
 // Every capability is detected per server: a 404/405 (REST) or -32601 (RPC)
 // marks it unsupported for this repository's lifetime and the UI hides it
@@ -27,6 +28,7 @@ import '../services/connection_manager.dart'
 import '../services/desktop_control_gateway.dart';
 import '../services/tui_gateway_client.dart' show TuiGatewayRpcError;
 import 'capability_models.dart';
+import 'connector_policy.dart';
 import 'mcp_log_filter.dart';
 import 'mcp_runtime_status.dart';
 
@@ -65,6 +67,8 @@ enum CapabilityFeature {
   mcpStatus,
   mcpLogs,
   hostedConnectors,
+  connectorPolicy,
+  connectorTools,
 }
 
 enum CapabilityFailureKind {
@@ -668,4 +672,67 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     CapabilityFeature.hostedConnectors,
     () => _rpc('connectors.accounts.remove', {'connection_id': connectionId}),
   );
+
+  // ── Connector policy (member rules, org locks) ──────────────────────────
+
+  Future<ConnectorPolicy> connectorPolicy() =>
+      _call(CapabilityFeature.connectorPolicy, () async {
+        final result = await _rpc(
+          'connectors.policy.get',
+          const {},
+          feature: CapabilityFeature.connectorPolicy,
+        );
+        return ConnectorPolicy.fromJson(result);
+      });
+
+  Future<List<ConnectorTool>> connectorTools(String slug) =>
+      _call(CapabilityFeature.connectorTools, () async {
+        final result = await _rpc('connectors.tools', {
+          'slug': slug.trim(),
+        }, feature: CapabilityFeature.connectorTools);
+        final tools = result['tools'];
+        if (tools is! List) throw const FormatException('list expected');
+        return [
+          for (final row in tools.whereType<Map>())
+            ConnectorTool.fromJson(Map<String, dynamic>.from(row)),
+        ].where((tool) => tool.slug.isNotEmpty).toList(growable: false);
+      });
+
+  /// Saves the member's full `disabled_tools` list for [slug]. Returns the
+  /// member layer's new revision. A stale [expectedRevision] fails with
+  /// detail `POLICY_CONFLICT`.
+  Future<String> setConnectorTools(
+    String slug,
+    List<String> disabledTools, {
+    required String expectedRevision,
+  }) => _policySet({
+    'type': 'tools',
+    'connector': slug.trim(),
+    'disabled_tools': disabledTools,
+  }, expectedRevision);
+
+  Future<String> setConnectorEnabled(
+    String slug,
+    bool enabled, {
+    required String expectedRevision,
+  }) => _policySet({
+    'type': 'connector',
+    'connector': slug.trim(),
+    'enabled': enabled,
+  }, expectedRevision);
+
+  Future<String> _policySet(
+    Map<String, dynamic> change,
+    String expectedRevision,
+  ) => _call(CapabilityFeature.connectorPolicy, () async {
+    final result = await _rpc('connectors.policy.set', {
+      'change': change,
+      'expected_revision': expectedRevision,
+    }, feature: CapabilityFeature.connectorPolicy);
+    final revision = result['revision'];
+    if (revision is! String || revision.isEmpty) {
+      throw const FormatException('revision expected');
+    }
+    return revision;
+  });
 }
