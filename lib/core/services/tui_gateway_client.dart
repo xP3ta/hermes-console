@@ -46,6 +46,7 @@ import 'recovery_proof.dart';
 import 'replay_batch_proof.dart';
 import 'replay_coordinator.dart';
 import 'server_restart_signal.dart';
+import 'subagent_live_watch.dart';
 import '../utils/transport_privacy.dart';
 
 class TuiGatewayRpcError implements Exception {
@@ -1399,6 +1400,7 @@ class TuiGatewayClient
         HermesDesktopSessionLifecycleGateway,
         HermesDesktopSessionHistoryGateway,
         HermesDesktopSessionCloseGateway,
+        SubagentWatchGateway,
         HermesDesktopRecoverySessionLifecycleGateway,
         HermesDesktopRosterBoundRecoveryGateway,
         HermesDesktopTypedRecoveryGateway,
@@ -1567,6 +1569,7 @@ class TuiGatewayClient
   final Map<String, int> _runtimeReaders = <String, int>{};
 
   /// A chat bound [runtimeSessionId] on this multiplexed socket.
+  @override
   void retainSessionRuntime(String runtimeSessionId) {
     final runtime = runtimeSessionId.trim();
     if (runtime.isEmpty || _closed || !_multiplexed) return;
@@ -1590,6 +1593,7 @@ class TuiGatewayClient
   /// replay coordinator poisons every runtime past its bound). After a
   /// reconnect nobody resumes it, so Hermes detaches and reaps it exactly as
   /// when a per-chat socket closed.
+  @override
   void releaseSessionRuntime(String runtimeSessionId) {
     final runtime = runtimeSessionId.trim();
     if (runtime.isEmpty || _closed || !_multiplexed) return;
@@ -1614,6 +1618,12 @@ class TuiGatewayClient
   @visibleForTesting
   Set<String> get watchedRuntimesForTesting =>
       Set.unmodifiable(_watchdogs.keys);
+
+  /// The single runtime a legacy gateway's unscoped events are attributed to,
+  /// and whether binding a second one made that attribution ambiguous.
+  @visibleForTesting
+  ({String? runtime, bool ambiguous}) get legacyEventRuntimeForTesting =>
+      (runtime: _legacyEventRuntimeId, ambiguous: _legacyEventRuntimeAmbiguous);
 
   @visibleForTesting
   Map<String, int> get replayWatermarksForTesting =>
@@ -4800,6 +4810,29 @@ class TuiGatewayClient
       requestedStoredSessionId: storedSessionId,
       created: false,
       method: 'session.resume',
+    );
+  }
+
+  @override
+  Future<DesktopSessionSnapshot> resumeWatchSession(
+    String childSessionId, {
+    required String profile,
+  }) async {
+    // A watch must not become the socket's legacy event runtime nor replace
+    // the chat's watchdog anchor: it is read-only and owned by the page.
+    final result = await _requestExclusiveSessionMutation('session.resume', {
+      'session_id': childSessionId,
+      'source': 'desktop',
+      'cols': 96,
+      'lazy': true,
+      if (profile.trim().isNotEmpty) 'profile': profile.trim(),
+    }, preserveCapabilityFailure: true);
+    return _parseSessionSnapshot(
+      result,
+      requestedStoredSessionId: childSessionId,
+      created: false,
+      method: 'session.resume',
+      rememberLegacyRuntime: false,
     );
   }
 
