@@ -104,6 +104,48 @@ void main() {
       );
     });
 
+    test('the review header is chrome in every Hermes locale', () {
+      // Hermes localizes `display.diff.review_header` (locales/*.yaml).
+      for (final header in [
+        '  ┊ review diff',
+        '  ┊ revisar diff',
+        '  ┊ Review-Diff',
+        '  ┊ レビュー diff',
+      ]) {
+        final record = ToolOutputRecord.fromCompletePayload(
+          _complete(
+            inlineDiff: _inlineDiff.replaceFirst('┊ review diff', header),
+          ),
+        )!;
+        expect(record.files, hasLength(1), reason: header);
+        expect(record.files.single.path, 'lib/foo.dart');
+        expect(record.files.single.diff, isNot(contains('┊')));
+      }
+    });
+
+    test('a localized header before bare hunks stays out of the diff', () {
+      final record = ToolOutputRecord.fromCompletePayload(
+        _complete(inlineDiff: '  ┊ revisar diff\n@@ -1 +1 @@\n-a\n+b'),
+      )!;
+      expect(record.files.single.path, 'lib/foo.dart');
+      expect(record.files.single.diff, isNot(contains('┊')));
+    });
+
+    test('a section without any change or hunk is no diff card', () {
+      final record = ToolOutputRecord.fromCompletePayload(
+        _complete(inlineDiff: 'stray preamble\n$_inlineDiff'),
+      )!;
+      expect(record.files, hasLength(1));
+      expect(record.files.single.stats.isEmpty, isFalse);
+      // Nothing but chrome: no record at all.
+      expect(
+        ToolOutputRecord.fromCompletePayload(
+          _complete(inlineDiff: '  ┊ revisar diff\n'),
+        ),
+        isNull,
+      );
+    });
+
     test('the ledger keys by tool id and stays bounded', () {
       final ledger = ToolOutputLedger(capacity: 2);
       for (final id in ['a', 'b', 'c']) {

@@ -26,6 +26,8 @@ bool isFileEditToolName(String name) => fileEditToolNames.contains(name);
 const int _maxDiffChars = 200 * 1024;
 const int _maxOutputChars = 64 * 1024;
 
+final RegExp _hunkHeader = RegExp(r'^@@', multiLine: true);
+
 final class ToolOutputRecord {
   final String toolId;
   final String name;
@@ -105,8 +107,10 @@ final class ToolOutputRecord {
           _string(record['path']) ??
           _string(record['resolved_path']) ??
           '';
+      // A section with no change and no hunk (stray chrome) would fold
+      // into an empty «+00 −00» card: only real edits get one.
       final files = splitFileDiffs(cleaned, fallbackPath: path)
-          .where((f) => !f.stats.isEmpty || f.diff.trim().isNotEmpty)
+          .where((f) => !f.stats.isEmpty || _hunkHeader.hasMatch(f.diff))
           .toList(growable: false);
       if (files.isEmpty) return null;
       return ToolOutputRecord(toolId: id, name: name, files: files);

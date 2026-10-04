@@ -52,12 +52,12 @@ final class FileDiff {
   String get name => fileBasename(path);
 }
 
-final RegExp _reviewHeader = RegExp(
-  r'^\s*┊\s*review diff\s*$',
-  caseSensitive: false,
-);
+/// The CLI `┊ review diff` header. Hermes localizes its text
+/// (`display.diff.review_header`: «┊ revisar diff», «┊ Review-Diff»…), so
+/// only the `┊` gutter marks it; a diff's first line never starts with one.
+final RegExp _reviewHeader = RegExp(r'^\s*┊');
 
-/// Strips ANSI and the CLI `┊ review diff` header (Desktop
+/// Strips ANSI and the CLI `┊ review diff` header in any locale (Desktop
 /// `stripInlineDiffChrome`). Returns '' for blank input.
 String cleanInlineDiff(String raw) {
   if (raw.trim().isEmpty) return '';
