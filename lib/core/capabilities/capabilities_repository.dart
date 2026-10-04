@@ -109,8 +109,15 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     this.actionTimeout = const Duration(minutes: 10),
     Future<void> Function(Duration)? sleep,
     DateTime Function()? clock,
+    this.launchScope,
   }) : _sleep = sleep ?? Future<void>.delayed,
        _clock = clock ?? DateTime.now;
+
+  /// Names the server (connection and profile) this repository launches
+  /// doctor and the audit on. Repositories that share a scope never launch the
+  /// same action at the same time; without one, only this repository's own
+  /// launches are ordered.
+  final String? launchScope;
 
   /// `true` supported, `false` unsupported, `null` not probed yet.
   bool? supports(CapabilityFeature feature) => _support[feature];

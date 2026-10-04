@@ -1,6 +1,7 @@
 // Read-only server diagnostics over the Capabilities repository: doctor and
 // the security audit (attach when already running, never launch twice, follow
 // until exit, stop when told), live MCP status, usage analytics and health.
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -680,6 +681,77 @@ void main() {
     });
   });
 
+  group('two launchers of the same action', () {
+    CapabilitiesRepository launcher(
+      _RacingRest rest, {
+      String? scope = 'conn-1|work',
+    }) => CapabilitiesRepository(
+      rest: rest,
+      profile: 'work',
+      sleep: (_) async {},
+      actionPollInterval: Duration.zero,
+      launchScope: scope,
+    );
+
+    test('launch doctor once when both read "not running" first', () async {
+      final rest = _RacingRest();
+      final first = launcher(rest).runOps(OpsAction.doctor);
+      final second = launcher(rest).runOps(OpsAction.doctor);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      rest.releasePost();
+      await Future.wait([first, second]);
+
+      expect(rest.posts, 1, reason: 'the second one attached instead');
+    });
+
+    test('also with several separate repository instances', () async {
+      final rest = _RacingRest();
+      final runs = [
+        for (var i = 0; i < 4; i++) launcher(rest).runOps(OpsAction.doctor),
+      ];
+      await Future<void>.delayed(Duration.zero);
+      rest.releasePost();
+      await Future.wait(runs);
+      expect(rest.posts, 1);
+    });
+
+    test('different actions do not wait for each other', () async {
+      final rest = _RacingRest();
+      final doctor = launcher(rest).runOps(OpsAction.doctor);
+      final audit = launcher(rest).runOps(OpsAction.securityAudit);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(rest.posts, 2);
+      rest.releasePost();
+      await Future.wait([doctor, audit]);
+    });
+
+    test('different servers do not wait for each other', () async {
+      final a = _RacingRest();
+      final b = _RacingRest();
+      final first = launcher(a, scope: 'conn-1|').runOps(OpsAction.doctor);
+      final second = launcher(b, scope: 'conn-2|').runOps(OpsAction.doctor);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect([a.posts, b.posts], [1, 1]);
+      a.releasePost();
+      b.releasePost();
+      await Future.wait([first, second]);
+    });
+
+    test('a failed launch does not block the next one', () async {
+      final rest = _RacingRest()..failNextPost = true;
+      await expectLater(
+        launcher(rest).runOps(OpsAction.doctor),
+        throwsA(isA<CapabilityFailure>()),
+      );
+      rest.releasePost();
+      await launcher(rest).runOps(OpsAction.doctor);
+      expect(rest.posts, 2);
+    });
+  });
+
   test(
     'every diagnostics read and run stays on the known read routes',
     () async {
@@ -770,4 +842,65 @@ void main() {
       isEmpty,
     );
   });
+}
+
+/// A Dashboard whose launches are held until [releasePost]; once launched the
+/// action reads as running and finishes after one more read.
+final class _RacingRest implements CapabilitiesRest {
+  final Map<String, Completer<void>> _gates = {};
+  final Set<String> _running = {};
+  final Map<String, int> _reads = {};
+  int posts = 0;
+  bool failNextPost = false;
+
+  Completer<void> _gate(String name) =>
+      _gates.putIfAbsent(name, () => Completer<void>());
+
+  void releasePost() {
+    for (final name in ['doctor', 'security-audit']) {
+      final gate = _gate(name);
+      if (!gate.isCompleted) gate.complete();
+    }
+  }
+
+  @override
+  Future<Map<String, dynamic>> get(String endpoint) async {
+    final name = endpoint.split('?').first.split('/')[1];
+    if (_running.contains(name)) {
+      final reads = _reads[name] = (_reads[name] ?? 0) + 1;
+      if (reads > 1) _running.remove(name);
+      return {
+        'name': name,
+        'running': reads <= 1,
+        'exit_code': reads <= 1 ? null : 0,
+        'lines': <String>[],
+      };
+    }
+    return {
+      'name': name,
+      'running': false,
+      'exit_code': null,
+      'lines': <String>[],
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> post(
+    String endpoint, {
+    Map<String, dynamic>? body,
+    Duration? timeout,
+  }) async {
+    final name = endpoint.split('?').first.split('/').last;
+    posts++;
+    if (failNextPost) {
+      failNextPost = false;
+      throw const DashboardHttpException(500);
+    }
+    await _gate(name).future;
+    _running.add(name);
+    return {'ok': true, 'name': name};
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
