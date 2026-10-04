@@ -301,6 +301,39 @@ void main() {
     ]);
   });
 
+  test('typed sends never carry surface metadata on any path', () async {
+    for (final send in <Future<bool> Function()>[
+      () => chat.send(fullText: 'plain', model: 'm', history: const []),
+      () => chat.send(
+        fullText: 'interrupted',
+        model: 'm',
+        history: const [],
+        voicePlaybackInterrupted: true,
+      ),
+      () => chat.send(
+        fullText: 'queued',
+        model: 'm',
+        history: const [],
+        queued: true,
+      ),
+      () => chat.send(
+        fullText: 'queued idempotent',
+        model: 'm',
+        history: const [],
+        queued: true,
+        delivery: _delivery('turn-t', 'queued idempotent', queued: true),
+      ),
+    ]) {
+      await send();
+    }
+    expect(gateway.submits, [
+      {'path': 'plain', 'text': 'plain'},
+      {'path': 'interrupted', 'text': 'interrupted'},
+      {'path': 'queued', 'text': 'queued'},
+      {'path': 'queued-idempotent', 'text': 'queued idempotent'},
+    ]);
+  });
+
   test('interrupted submit carries surface and voice_context', () async {
     await chat.send(
       fullText: 'abre el calendario',

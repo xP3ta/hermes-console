@@ -420,11 +420,11 @@ abstract class HermesDesktopInterruptedPromptGateway {
   Future<void> submitInterruptedPrompt(String runtimeSessionId, String text);
 }
 
-/// Envío con metadatos de superficie (`surface` / `voice_context`).
+/// Submit with surface metadata (`surface` / `voice_context`).
 ///
-/// Capacidad opcional y separada: un gateway sin ella recibe el turno igual
-/// que hoy y los metadatos se descartan. Los envíos escritos nunca la usan, de
-/// modo que el servidor limpia la superficie en cada submit ordinario.
+/// Optional, separate capability: a gateway without it receives the turn as
+/// before and the metadata is dropped. Typed sends never use it, so the server
+/// clears the surface on every ordinary submit.
 abstract class HermesDesktopClientSurfacePromptGateway {
   Future<void> submitPromptWithSurface(
     String runtimeSessionId,
@@ -6805,11 +6805,12 @@ class TuiGatewayClient
     String text,
     PromptClientSurface surface,
   ) async {
-    await _requestPromptSubmit({
-      'session_id': runtimeSessionId,
-      'text': text,
-      ...surface.toParams(),
-    });
+    await _requestPromptSubmit(
+      mergePromptSubmitParams({
+        'session_id': runtimeSessionId,
+        'text': text,
+      }, surface.toParams()),
+    );
     _markWatchdogRuntimeBusy(runtimeSessionId);
   }
 
@@ -6829,12 +6830,13 @@ class TuiGatewayClient
     String text,
     Map<String, dynamic> extraParams,
   ) async {
-    await _requestPromptSubmit({
-      'session_id': runtimeSessionId,
-      'text': text,
-      'queued': true,
-      ...extraParams,
-    });
+    await _requestPromptSubmit(
+      mergePromptSubmitParams({
+        'session_id': runtimeSessionId,
+        'text': text,
+        'queued': true,
+      }, extraParams),
+    );
     _markWatchdogRuntimeBusy(runtimeSessionId);
   }
 
@@ -6857,12 +6859,13 @@ class TuiGatewayClient
     final deadline = DateTime.now().add(const Duration(seconds: 6));
     while (true) {
       try {
-        await _requestPromptSubmit({
-          'session_id': runtimeSessionId,
-          'text': text,
-          'interrupted': true,
-          ...extraParams,
-        });
+        await _requestPromptSubmit(
+          mergePromptSubmitParams({
+            'session_id': runtimeSessionId,
+            'text': text,
+            'interrupted': true,
+          }, extraParams),
+        );
         _markWatchdogRuntimeBusy(runtimeSessionId);
         return;
       } on TuiGatewayRpcError catch (error) {
@@ -6898,14 +6901,17 @@ class TuiGatewayClient
     String runtimeSessionId,
     String text,
     String clientTurnId,
-    Map<String, dynamic> extraParams,
-  ) async {
-    final result = await _requestPromptSubmit({
-      'session_id': runtimeSessionId,
-      'text': text,
-      'client_turn_id': clientTurnId,
-      ...extraParams,
-    });
+    Map<String, dynamic> extraParams, {
+    bool queued = false,
+  }) async {
+    final result = await _requestPromptSubmit(
+      mergePromptSubmitParams({
+        'session_id': runtimeSessionId,
+        'text': text,
+        'client_turn_id': clientTurnId,
+        if (queued) 'queued': true,
+      }, extraParams),
+    );
     final ack = DesktopTurnAck.fromJson(
       result,
       expectedClientTurnId: clientTurnId,
@@ -6919,9 +6925,13 @@ class TuiGatewayClient
     String runtimeSessionId,
     String text,
     String clientTurnId,
-  ) => _submitIdempotent(runtimeSessionId, text, clientTurnId, const {
-    'queued': true,
-  });
+  ) => _submitIdempotent(
+    runtimeSessionId,
+    text,
+    clientTurnId,
+    const {},
+    queued: true,
+  );
 
   @override
   Future<DesktopTurnAck> submitQueuedPromptIdempotentWithSurface(
@@ -6929,10 +6939,13 @@ class TuiGatewayClient
     String text,
     String clientTurnId,
     PromptClientSurface surface,
-  ) => _submitIdempotent(runtimeSessionId, text, clientTurnId, {
-    'queued': true,
-    ...surface.toParams(),
-  });
+  ) => _submitIdempotent(
+    runtimeSessionId,
+    text,
+    clientTurnId,
+    surface.toParams(),
+    queued: true,
+  );
 
   @override
   Future<DesktopTurnStatus> getTurnStatus(

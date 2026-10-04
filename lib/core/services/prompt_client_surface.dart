@@ -28,3 +28,18 @@ final class PromptClientSurface {
     };
   }
 }
+
+/// Merges optional [extra] metadata into the fixed `prompt.submit` [base].
+///
+/// The base keys (`session_id`, `text`, `client_turn_id`, `queued`,
+/// `interrupted`) always win and keep their position, so metadata can add keys
+/// but never replace or reorder what routing and idempotency rely on. With an
+/// empty [extra] the result is the base, key for key.
+Map<String, dynamic> mergePromptSubmitParams(
+  Map<String, dynamic> base,
+  Map<String, dynamic> extra,
+) => {
+  ...base,
+  for (final entry in extra.entries)
+    if (!base.containsKey(entry.key)) entry.key: entry.value,
+};
