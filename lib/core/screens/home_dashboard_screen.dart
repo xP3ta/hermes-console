@@ -22,6 +22,7 @@ import '../services/agent_runtime/agent_runtime.dart';
 import '../services/agent_runtime/local_termux_agent_provider.dart';
 import '../services/bridge_update_service.dart';
 import '../services/active_chat_service.dart';
+import '../services/app_lock.dart';
 import '../services/connection_manager.dart';
 import '../services/chat_draft_store.dart';
 import '../services/drawer_gesture_exclusion.dart';
@@ -107,6 +108,9 @@ class HomeDashboardScreen extends StatefulWidget {
   final SessionStateWriter Function(SavedConnection connection)?
   sessionStateWriterFactory;
 
+  /// App Lock (defaults to the app's).
+  final AppLockService? appLockOverride;
+
   const HomeDashboardScreen({
     required this.connManager,
     this.clientFactory,
@@ -119,6 +123,7 @@ class HomeDashboardScreen extends StatefulWidget {
     @visibleForTesting this.dashboardAuthProbe,
     @visibleForTesting this.missionPrewarm,
     @visibleForTesting this.sessionStateWriterFactory,
+    @visibleForTesting this.appLockOverride,
     super.key,
   });
 
@@ -182,6 +187,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       widget.activeChatsOverride ??
       context.findAncestorStateOfType<HermesAppState>()?.activeChats;
 
+  AppLockService? get _appLock =>
+      widget.appLockOverride ??
+      context.findAncestorStateOfType<HermesAppState>()?.appLock;
+
   // Banner de operación local en curso (visible si el usuario salió durante install/uninstall).
   bool _installInProgress = false;
   bool _uninstallInProgress = false;
@@ -218,6 +227,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     _detachStateWriter();
     _statusListRead?.end();
     _localStartPoll?.cancel();
+    _cancelColdStartUnlockRetry();
     super.dispose();
   }
 
@@ -707,13 +717,31 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   ) async {
     final store = _activeChats?.coldStartStore;
     if (connection == null || store == null || _initialLoadComplete) return;
-    // Under App Lock nothing private is decrypted before unlock.
-    final app = context.findAncestorStateOfType<HermesAppState>();
-    if (app?.appLock.locked.value == true) return;
+    _cancelColdStartUnlockRetry();
+    final lock = _appLock;
+    // Under App Lock nothing private is decrypted before unlock, and a
+    // lock engaged during the reads discards what they returned (checked
+    // again after the last await, right before painting; nothing is
+    // published in between). Unlocking retries from the cache only; the
+    // network read already in flight is not repeated.
+    bool lockedOrStale(ProfileReadTicket ticket) {
+      if (!mounted ||
+          _initialLoadComplete ||
+          epoch != _reloadEpoch ||
+          _active?.id != connection.id ||
+          !ticket.isCurrent) {
+        return true;
+      }
+      if (lock?.locked.value != true) return false;
+      _retryColdStartRecentsOnUnlock(lock!, connection, epoch);
+      return true;
+    }
+
     final ticket = ActiveProfileScope.of(
       widget.connManager,
       connection.id,
     ).capture();
+    if (lockedOrStale(ticket)) return;
     List<Session>? cached;
     SessionArchive archive;
     try {
@@ -729,13 +757,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       debugPrint('[home-dashboard] cold-start recents (${error.runtimeType})');
       return;
     }
-    if (!mounted ||
-        _initialLoadComplete ||
-        epoch != _reloadEpoch ||
-        _active?.id != connection.id ||
-        !ticket.isCurrent) {
-      return;
-    }
+    if (lockedOrStale(ticket)) return;
     final rows = (cached ?? const <Session>[])
         .where((s) => _isHomeRecentCandidate(s, archive))
         .toList();
@@ -745,6 +767,35 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _showingColdStartRecents = true;
     });
     _completeInitialLoad();
+  }
+
+  ValueNotifier<bool>? _coldStartLockWatched;
+  VoidCallback? _coldStartUnlockRetry;
+
+  /// Tries the cold-start recents again once App Lock is lifted;
+  /// [_paintColdStartRecents] skips them if the first list landed or
+  /// [epoch] is over by then.
+  void _retryColdStartRecentsOnUnlock(
+    AppLockService lock,
+    SavedConnection connection,
+    int epoch,
+  ) {
+    _cancelColdStartUnlockRetry();
+    // Registered while locked, so the first change is the unlock.
+    void retry() {
+      _cancelColdStartUnlockRetry();
+      if (mounted) unawaited(_paintColdStartRecents(connection, epoch));
+    }
+
+    _coldStartLockWatched = lock.locked..addListener(retry);
+    _coldStartUnlockRetry = retry;
+  }
+
+  void _cancelColdStartUnlockRetry() {
+    final retry = _coldStartUnlockRetry;
+    if (retry != null) _coldStartLockWatched?.removeListener(retry);
+    _coldStartLockWatched = null;
+    _coldStartUnlockRetry = null;
   }
 
   /// Saves what Home just read from the server for the next cold start.

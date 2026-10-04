@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
+import 'package:hermes_android/core/screens/lock_screen.dart';
+import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/cold_start_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -65,6 +67,30 @@ final class _Gateway {
     }
     return http.Response('{}', 404);
   });
+}
+
+/// Encrypted storage whose next Home recents read waits for [release],
+/// like a slow Keystore decrypt.
+final class _GatedRecentsStorage extends MemoryColdStartStorage {
+  Completer<void>? gate;
+  int recentsReads = 0;
+
+  void holdNextRecentsRead() => gate = Completer<void>();
+
+  void release() => gate?.complete();
+
+  @override
+  Future<String?> read(String key) async {
+    if (key.startsWith('cold_start_recents_v1.')) {
+      recentsReads += 1;
+      final held = gate;
+      if (held != null) {
+        await held.future;
+        gate = null;
+      }
+    }
+    return super.read(key);
+  }
 }
 
 void main() {
@@ -136,14 +162,25 @@ void main() {
     required _Gateway gateway,
     required VoidCallback onReady,
     Future<DesktopActiveSessionList> Function()? activity,
+    AppLockService? lock,
   }) async {
+    final navigatorKey = GlobalKey<NavigatorState>();
     await tester.pumpWidget(
       MaterialApp(
+        navigatorKey: navigatorKey,
         locale: const Locale('en'),
         theme: AppTheme.fromId('dark'),
         localizationsDelegates: Strings.localizationsDelegates,
         supportedLocales: Strings.supportedLocales,
+        builder: lock == null
+            ? null
+            : (context, child) => AppLockGate(
+                lock: lock,
+                navigatorKey: navigatorKey,
+                child: child!,
+              ),
         home: HomeDashboardScreen(
+          appLockOverride: lock,
           connManager: manager,
           activeChatsOverride: chats,
           clientFactory: (conn) => ApiClient(
@@ -303,5 +340,171 @@ void main() {
     expect(ready, isFalse);
     expect(find.byKey(const ValueKey('home-initial-loading')), findsOneWidget);
     await endProcess(tester, chats);
+  });
+
+  /// An App Lock that is on (and therefore locked at launch).
+  Future<AppLockService> appLock(WidgetTester tester) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('app_lock_enabled', true);
+    final lock = AppLockService(prefs);
+    await tester.pump();
+    return lock;
+  }
+
+  /// Cached rows anywhere in the tree, under the lock screen included.
+  Finder cachedRow() => find.text('Plan de la semana', skipOffstage: false);
+
+  testWidgets('a locked cold start paints no cached recents; unlocking '
+      'paints them without a second network read', (tester) async {
+    final storage = _GatedRecentsStorage();
+    final connManager = await manager(tester);
+    await previousRun(tester, connManager, storage);
+
+    final lock = await appLock(tester);
+    expect(lock.locked.value, isTrue);
+    final reads = storage.recentsReads;
+    final gateway = _Gateway(hang: true);
+    final chats = process(storage);
+    var ready = false;
+    await pumpHome(
+      tester,
+      manager: connManager,
+      chats: chats,
+      gateway: gateway,
+      lock: lock,
+      onReady: () => ready = true,
+    );
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(cachedRow(), findsNothing);
+    expect(storage.recentsReads, reads, reason: 'nothing decrypted locked');
+    expect(ready, isFalse);
+    expect(gateway.answered, 0);
+    final requests = gateway.paths.length;
+    expect(requests, isNonZero, reason: 'the refresh runs under the lock');
+
+    lock.unlock();
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(cachedRow(), findsOneWidget);
+    expect(find.text('Notas del viaje'), findsOneWidget);
+    expect(ready, isTrue, reason: 'the splash leaves over the cached rows');
+    expect(gateway.paths.length, requests, reason: 'no duplicate request');
+    await endProcess(tester, chats);
+  });
+
+  testWidgets('App Lock engaged while the snapshot is decrypting: the rows '
+      'are discarded, then painted after unlock', (tester) async {
+    final storage = _GatedRecentsStorage();
+    final connManager = await manager(tester);
+    await previousRun(tester, connManager, storage);
+
+    final lock = await appLock(tester);
+    lock.unlock();
+    storage.holdNextRecentsRead();
+    final reads = storage.recentsReads;
+    final gateway = _Gateway(hang: true);
+    final chats = process(storage);
+    var ready = false;
+    await pumpHome(
+      tester,
+      manager: connManager,
+      chats: chats,
+      gateway: gateway,
+      lock: lock,
+      onReady: () => ready = true,
+    );
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(storage.recentsReads, reads + 1, reason: 'the read is pending');
+    expect(cachedRow(), findsNothing);
+
+    lock.lockNow();
+    await tester.pump();
+    storage.release();
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(cachedRow(), findsNothing, reason: 'nothing painted under lock');
+    expect(ready, isFalse);
+    final requests = gateway.paths.length;
+
+    lock.unlock();
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(cachedRow(), findsOneWidget);
+    expect(ready, isTrue);
+    expect(gateway.paths.length, requests, reason: 'no duplicate request');
+    await endProcess(tester, chats);
+  });
+
+  testWidgets('a list that lands under App Lock is not replaced by the '
+      'cached recents on unlock', (tester) async {
+    final storage = _GatedRecentsStorage();
+    final connManager = await manager(tester);
+    await previousRun(tester, connManager, storage);
+    // The snapshot holds an older title than the server now lists.
+    final key = storage.values.keys.singleWhere(
+      (k) => k.startsWith('cold_start_recents_v1.'),
+    );
+    storage.values[key] = storage.values[key]!.replaceAll(
+      'Plan de la semana',
+      'Plan viejo',
+    );
+
+    final lock = await appLock(tester);
+    final reads = storage.recentsReads;
+    final chats = process(storage);
+    var ready = false;
+    await pumpHome(
+      tester,
+      manager: connManager,
+      chats: chats,
+      gateway: _Gateway(),
+      lock: lock,
+      onReady: () => ready = true,
+    );
+    for (var i = 0; i < 40 && !ready; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(ready, isTrue);
+    lock.unlock();
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(cachedRow(), findsOneWidget);
+    expect(find.text('Plan viejo', skipOffstage: false), findsNothing);
+    expect(storage.recentsReads, reads, reason: 'the list made it moot');
+    await endProcess(tester, chats);
+  });
+
+  testWidgets('leaving Home while locked drops the unlock retry', (
+    tester,
+  ) async {
+    final storage = _GatedRecentsStorage();
+    final connManager = await manager(tester);
+    await previousRun(tester, connManager, storage);
+
+    final lock = await appLock(tester);
+    final chats = process(storage);
+    await pumpHome(
+      tester,
+      manager: connManager,
+      chats: chats,
+      gateway: _Gateway(hang: true),
+      onReady: () {},
+      lock: lock,
+    );
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    await endProcess(tester, chats);
+    // Home and the gate are gone: nobody may still listen to the lock.
+    // ignore: invalid_use_of_protected_member
+    expect(lock.locked.hasListeners, isFalse);
   });
 }
