@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/session.dart';
 import 'package:hermes_android/core/services/notifications/chat_notification_read_sync.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
+import 'package:hermes_android/core/services/notifications/rich_notifications.dart';
 import 'package:hermes_android/core/services/session_archive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -385,6 +386,36 @@ void main() {
       expect(ids('cancel'), [shown.first]);
     });
 
+    test(
+      'a Bot Mode reply card is left to the tray, its fallback is not',
+      () async {
+        final notif = await service();
+        final rich = _RichSink();
+        notif.setRichForTesting(rich);
+        Future<void> botReply() => notif.replyReady(
+          preview: 'done',
+          session: 'Radar',
+          connId: 'c1',
+          sessionId: 's1',
+          profile: 'radar',
+          surface: NotificationChatSurface.bot,
+        );
+        await botReply();
+        // Posted as the Bot's conversation card, shared with its routines.
+        expect(rich.posts, hasLength(1));
+        expect(ids('show'), isEmpty);
+        await readList([_row('s1', profile: 'radar')]);
+        expect(calls.where((c) => c.method == 'cancel'), isEmpty);
+        // Without the rich renderer the plain card is a chat notification.
+        rich.accept = false;
+        await botReply();
+        final shown = ids('show');
+        expect(shown, hasLength(1));
+        await readList([_row('s1', profile: 'radar')]);
+        expect(ids('cancel'), shown);
+      },
+    );
+
     test('a read that ends while a repost is being shown spares it', () async {
       final notif = await service();
       await notif.replyReady(
@@ -466,4 +497,29 @@ void main() {
       },
     );
   });
+}
+
+final class _RichSink implements RichNotificationSink {
+  final posts = <Map<String, Object?>>[];
+  bool accept = true;
+  @override
+  Future<void> cancel({required int id, String? tag}) async {}
+  @override
+  Future<void> confirm({
+    required int id,
+    String? tag,
+    String? title,
+    required String text,
+    int timeoutMs = 4000,
+    bool onlyIfActive = false,
+  }) async {}
+  @override
+  Future<bool> postConversation(Map<String, Object?> args) async {
+    if (!accept) return false;
+    posts.add(args);
+    return true;
+  }
+
+  @override
+  Future<void> postLiveUpdate(Map<String, Object?> args) async {}
 }

@@ -1824,6 +1824,13 @@ class NotificationService
           hideSensitive: hideSensitiveContent,
           readOnly: _connectionReadOnly(connId),
         );
+        // Deliberately not recorded in [chatReadSync]: this card lives at the
+        // Bot's conversation address (conversation id + botTag), which Bot
+        // routine results also post to, from the background listener's
+        // isolate as well, where this ledger cannot see them. Retracting the
+        // address on a chat read could take down an unseen routine result,
+        // so the card stays until the user opens or dismisses it. The plain
+        // fallback below has its own per-chat address and is recorded.
         if (posted) return;
         await _replyFallback(
           t,
