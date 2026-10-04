@@ -24231,6 +24231,64 @@ void main() {
   );
 
   testWidgets(
+    'qa9485: una edición con la cabecera de diff localizada muestra una sola tarjeta',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-qa9485-diff'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_DIFF_PARENT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      for (final (id, name) in [
+        ('call-qa-patch', 'patch'),
+        ('call-qa-write', 'write_file'),
+      ]) {
+        gateway.emit('tool.start', {
+          'tool_id': id,
+          'name': name,
+          'args': const {'path': 'lib/foo.dart'},
+        });
+        // Hermes with `display.language: es` (locales/es.yaml).
+        gateway.emit('tool.complete', {
+          'tool_id': id,
+          'name': name,
+          'args': const {'path': 'lib/foo.dart'},
+          'inline_diff':
+              '  ┊ revisar diff\n'
+              '\x1B[36ma/lib/foo.dart → b/lib/foo.dart\x1B[0m\n'
+              '@@ -1 +1,2 @@\n-old\n+new\n+more',
+          'result': const {'success': true},
+        });
+      }
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      gateway.emit('message.complete', const {'text': 'PUBLIC_DIFF_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      // One card per edit, never an empty «+00 −00» one.
+      expect(find.byType(FileDiffCard), findsNWidgets(2));
+      expect(find.textContaining('+00', findRichText: true), findsNothing);
+      expect(find.textContaining('revisar diff'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'pt1215: un tool.complete tardío tras cerrar el turno rellena la misma tarjeta',
     (tester) async {
       final gateway = _SequencedSuccessorGateway();

@@ -2072,7 +2072,7 @@ class _SessionListScreenState extends State<SessionListScreen>
               children: [
                 _ConnectionDot(
                   connected: _health.healthy,
-                  checking: _health.checking,
+                  checking: _health.showsChecking,
                 ),
                 const SizedBox(width: 6),
                 Flexible(
@@ -2131,7 +2131,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         connManager: widget.connManager,
         current: DrawerSection.sessions,
         connected: _health.healthy,
-        checking: _health.checking,
+        checking: _health.showsChecking,
         onSectionReturn: _fetchSessions,
       ),
       // "Ver todas" es alcanzable en 1 salto desde Inicio: sin el dock aquí

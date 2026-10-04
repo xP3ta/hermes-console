@@ -20,6 +20,7 @@ import '../navigation/chat_route.dart';
 import '../services/active_profile_scope.dart';
 import '../services/agent_runtime/agent_runtime.dart';
 import '../services/agent_runtime/local_termux_agent_provider.dart';
+import '../services/bot_roster_store.dart';
 import '../services/bridge_update_service.dart';
 import '../services/active_chat_service.dart';
 import '../services/app_lock.dart';
@@ -139,6 +140,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   List<SavedConnection> _connections = [];
   SavedConnection? _active;
   bool _healthOk = false;
+
+  /// Connection whose last status check proved it online.
+  String? _healthOkConnectionId;
+
+  /// What the status line shows: «checking» only while nothing is known
+  /// for the active connection (first check, after a failure, another
+  /// connection). A background re-check of a healthy connection stays
+  /// «online» until it fails (Desktop keeps its status too).
+  bool get _statusChecking =>
+      _checking &&
+      !(_healthOk && _active != null && _healthOkConnectionId == _active!.id);
   bool _checking = false;
 
   /// Saved Dashboard login of a healthy remote instance; a rejected or
@@ -1171,6 +1183,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
       setState(() {
         _healthOk = false;
+        _healthOkConnectionId = null;
         _dashboardAuth = DashboardAuthCheck.unknown;
         _checking = false;
         _recentSessions = [];
@@ -1395,6 +1408,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     }
     setState(() {
       _healthOk = ok;
+      _healthOkConnectionId = ok ? conn.id : null;
       if (!ok) _dashboardAuth = DashboardAuthCheck.unknown;
       _checking = false;
       _listenArchive(archive, conn);
@@ -1911,7 +1925,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     final app = context.findAncestorStateOfType<HermesAppState>();
     final controller = app?.companion;
     final presence = app?.companionPresence;
-    final connectionMood = _checking
+    final connectionMood = _statusChecking
         ? HermesSparkMood.connecting
         : _healthOk
         ? HermesSparkMood.idle
@@ -2027,6 +2041,31 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     );
   }
 
+  /// Active profile as the chip names it (Desktop `profileLabel`), for the
+  /// status line: the connection label would name the wrong profile.
+  String _activeProfileLabel(BuildContext context) {
+    final conn = _active;
+    if (conn == null) return '';
+    return activeProfileDisplayLabel(
+      Strings.of(context),
+      ActiveProfileScope.of(widget.connManager, conn.id).name,
+      BotRosterRegistry.shared.store(conn.id).profiles,
+    );
+  }
+
+  /// Rebuilds [builder] when the active profile or its roster changes.
+  Widget _followsActiveProfile(WidgetBuilder builder) {
+    final conn = _active;
+    if (conn == null) return Builder(builder: builder);
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        ActiveProfileScope.of(widget.connManager, conn.id),
+        BotRosterRegistry.shared.store(conn.id),
+      ]),
+      builder: (context, _) => builder(context),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
@@ -2113,13 +2152,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                         height: 6,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: _checking || dashboardLoginIssue
+                          color: _statusChecking || dashboardLoginIssue
                               ? colors.warning
                               : _healthOk
                               ? colors.success
                               : colors.textDisabled,
                           boxShadow:
-                              _healthOk && !_checking && !dashboardLoginIssue
+                              _healthOk &&
+                                  !_statusChecking &&
+                                  !dashboardLoginIssue
                               ? [
                                   BoxShadow(
                                     color: colors.success.withValues(
@@ -2135,46 +2176,48 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                       // Flexible: con el selector de perfil en la barra, la línea
                       // de estado debe recortarse en vez de desbordar.
                       Flexible(
-                        child: Text(
-                          _checking
-                              ? Strings.of(context).homeStatusChecking(
-                                  _active?.label ??
-                                      Strings.of(
-                                        context,
-                                      ).homeStatusAgentConsole,
-                                )
-                              : _healthOk &&
-                                    _dashboardAuth ==
-                                        DashboardAuthCheck.invalidCredentials
-                              ? Strings.of(
-                                  context,
-                                ).m1215HomeDashboardWrongPassword(
-                                  _active?.label ?? '',
-                                )
-                              : _healthOk &&
-                                    _dashboardAuth ==
-                                        DashboardAuthCheck.loginRequired
-                              ? Strings.of(
-                                  context,
-                                ).m1215HomeDashboardLoginRequired(
-                                  _active?.label ?? '',
-                                )
-                              : _healthOk
-                              ? Strings.of(
-                                  context,
-                                ).homeStatusOnline(_active?.label ?? '')
-                              : _active == null
-                              ? Strings.of(context).homeStatusAgentConsole
-                              : Strings.of(
-                                  context,
-                                ).homeStatusOffline(_active!.label),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            // ≥11px: a 9.5px el estado era casi ilegible (A-110).
-                            fontSize: 11,
-                            letterSpacing: 0.6,
-                            color: colors.textSecondary,
+                        child: _followsActiveProfile(
+                          (context) => Text(
+                            _statusChecking
+                                ? Strings.of(context).homeStatusChecking(
+                                    _active?.label ??
+                                        Strings.of(
+                                          context,
+                                        ).homeStatusAgentConsole,
+                                  )
+                                : _healthOk &&
+                                      _dashboardAuth ==
+                                          DashboardAuthCheck.invalidCredentials
+                                ? Strings.of(
+                                    context,
+                                  ).m1215HomeDashboardWrongPassword(
+                                    _active?.label ?? '',
+                                  )
+                                : _healthOk &&
+                                      _dashboardAuth ==
+                                          DashboardAuthCheck.loginRequired
+                                ? Strings.of(
+                                    context,
+                                  ).m1215HomeDashboardLoginRequired(
+                                    _active?.label ?? '',
+                                  )
+                                : _healthOk
+                                ? Strings.of(context).homeStatusOnline(
+                                    _activeProfileLabel(context),
+                                  )
+                                : _active == null
+                                ? Strings.of(context).homeStatusAgentConsole
+                                : Strings.of(
+                                    context,
+                                  ).homeStatusOffline(_active!.label),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              // ≥11px: a 9.5px el estado era casi ilegible (A-110).
+                              fontSize: 11,
+                              letterSpacing: 0.6,
+                              color: colors.textSecondary,
+                            ),
                           ),
                         ),
                       ),
@@ -2201,7 +2244,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         connManager: widget.connManager,
         current: DrawerSection.home,
         connected: _healthOk,
-        checking: _checking,
+        checking: _statusChecking,
         onSectionReturn: _reload,
       ),
       body: Stack(

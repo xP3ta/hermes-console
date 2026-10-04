@@ -28,7 +28,10 @@ final class _Server {
   });
 
   int sessionsStatus;
-  final int healthStatus;
+  int healthStatus;
+
+  /// Delay of /health, so a status check stays in flight.
+  Duration healthDelay = Duration.zero;
 
   /// When set, /api/sessions serves this many rows newest first, paged like
   /// the Gateway (`limit` capped at 200, `has_more`). The first
@@ -48,6 +51,9 @@ final class _Server {
     paths.add(request.url.path);
     switch (request.url.path) {
       case '/health':
+        if (healthDelay > Duration.zero) {
+          await Future<void>.delayed(healthDelay);
+        }
         return http.Response('{"status":"ok"}', healthStatus);
       case '/api/sessions':
         if (sessionsDelay > Duration.zero) {
@@ -129,7 +135,7 @@ void main() {
         .setMockMethodCallHandler(secureChannel, null);
   });
 
-  Future<void> pumpHome(
+  Future<ConnectionManager> pumpHome(
     WidgetTester tester,
     _Server server, {
     MissionSnapshotPrewarm? prewarm,
@@ -171,6 +177,7 @@ void main() {
     for (var attempt = 0; attempt < 10; attempt++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
+    return manager;
   }
 
   Future<void> settleHome(WidgetTester tester) async {
@@ -191,7 +198,7 @@ void main() {
     final server = _Server();
     await pumpHome(tester, server);
     await settleHome(tester);
-    expect(find.text('online · QA'), findsOneWidget);
+    expect(find.text('online · Default'), findsOneWidget);
     expect(find.text('Hola'), findsWidgets);
     expect(server.count('/health'), 1);
     expect(server.count('/api/sessions'), 1);
@@ -207,7 +214,7 @@ void main() {
     final server = _Server(totalSessions: 1000);
     await pumpHome(tester, server);
     await settleHome(tester);
-    expect(find.text('online · QA'), findsOneWidget);
+    expect(find.text('online · Default'), findsOneWidget);
     expect(find.text('Chat 0'), findsWidgets);
     final first = server.count('/api/sessions');
     final state = tester.state(find.byType(HomeDashboardScreen));
@@ -246,7 +253,7 @@ void main() {
     final server = _Server(totalSessions: 1000, leadingAutomation: 1000);
     await pumpHome(tester, server);
     await settleHome(tester);
-    expect(find.text('online · QA'), findsOneWidget);
+    expect(find.text('online · Default'), findsOneWidget);
     expect(server.count('/api/sessions'), 3);
     await unmount(tester);
   });
@@ -257,7 +264,7 @@ void main() {
     final server = _Server(sessionsStatus: 401);
     await pumpHome(tester, server);
     await settleHome(tester);
-    expect(find.text('online · QA'), findsNothing);
+    expect(find.text('online · Default'), findsNothing);
     expect(server.count('/api/sessions'), 1);
     await unmount(tester);
   });
@@ -271,7 +278,7 @@ void main() {
       final server = _Server();
       await pumpHome(tester, server);
       await settleHome(tester);
-      expect(find.text('online · QA'), findsOneWidget);
+      expect(find.text('online · Default'), findsOneWidget);
       expect(find.text('Hola'), findsWidgets);
 
       if (failure == '503') {
@@ -296,7 +303,7 @@ void main() {
       print('[#1215] home $failure: seconds shown offline=$offlineSeconds');
       expect(offlineSeconds, 0);
       expect(find.text('offline · QA'), findsNothing);
-      expect(find.text('online · QA'), findsOneWidget);
+      expect(find.text('online · Default'), findsOneWidget);
       expect(find.text('Hola'), findsWidgets, reason: 'keep the known list');
       await unmount(tester);
     });
@@ -308,9 +315,132 @@ void main() {
     final server = _Server(healthStatus: 503);
     await pumpHome(tester, server);
     await settleHome(tester);
-    expect(find.text('online · QA'), findsNothing);
+    expect(find.text('online · Default'), findsNothing);
     expect(server.count('/api/sessions'), 0);
     await unmount(tester);
+  });
+
+  // qa9485 N2: every background re-check painted «checking · QA» and back,
+  // so a healthy Home blinked. Once online it stays online while a re-check
+  // runs; «checking» is only for a first check or after a failure.
+  group('status line during re-checks', () {
+    Future<void> recheck(WidgetTester tester) async {
+      final state = tester.state(find.byType(HomeDashboardScreen));
+      // Same entry point as a resume or a sessions.changed refresh.
+      (state as WidgetsBindingObserver).didChangeAppLifecycleState(
+        AppLifecycleState.resumed,
+      );
+    }
+
+    testWidgets('a slow re-check while online never shows checking', (
+      tester,
+    ) async {
+      final server = _Server();
+      await pumpHome(tester, server);
+      await settleHome(tester);
+      expect(find.text('online · Default'), findsOneWidget);
+      final healthReads = server.count('/health');
+
+      server.healthDelay = const Duration(seconds: 2);
+      await recheck(tester);
+      var checkingFrames = 0;
+      var onlineFrames = 0;
+      for (var frame = 0; frame < 30; frame++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        if (find.text('checking · QA').evaluate().isNotEmpty) {
+          checkingFrames += 1;
+        }
+        if (find.text('online · Default').evaluate().isNotEmpty) {
+          onlineFrames += 1;
+        }
+      }
+      expect(server.count('/health'), healthReads + 1, reason: 'it ran');
+      expect(checkingFrames, 0);
+      expect(onlineFrames, 30);
+
+      // The drawer reads the same status: open it and re-check again.
+      tester.state<ScaffoldState>(find.byType(Scaffold).first).openDrawer();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final drawer = find.byKey(const ValueKey('drawer-instance-menu'));
+      expect(drawer, findsOneWidget);
+      await recheck(tester);
+      var drawerChecking = 0;
+      for (var frame = 0; frame < 30; frame++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        if (find
+            .descendant(of: drawer, matching: find.textContaining('checking'))
+            .evaluate()
+            .isNotEmpty) {
+          drawerChecking += 1;
+        }
+      }
+      expect(server.count('/health'), healthReads + 2);
+      expect(drawerChecking, 0);
+      await unmount(tester);
+    });
+
+    testWidgets('a connection with no known state shows checking, '
+        'then online', (tester) async {
+      final server = _Server();
+      final manager = await pumpHome(tester, server);
+      await settleHome(tester);
+      expect(find.text('online · Default'), findsOneWidget);
+
+      await manager.saveConnection(
+        'QB',
+        '127.0.0.3',
+        8642,
+        'test-key',
+        kind: InstanceKind.vps,
+      );
+      final next = manager.getConnections().singleWhere((c) => c.label == 'QB');
+      server.healthDelay = const Duration(seconds: 1);
+      await manager.setActiveConnection(next.id);
+      var checkingFrames = 0;
+      var onlineEarly = 0;
+      for (var frame = 0; frame < 8; frame++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        if (find.text('checking · QB').evaluate().isNotEmpty) {
+          checkingFrames += 1;
+        }
+        if (find.text('online · Default').evaluate().isNotEmpty) {
+          onlineEarly += 1;
+        }
+      }
+      expect(checkingFrames, greaterThan(0));
+      expect(onlineEarly, 0, reason: 'QB is not proven online yet');
+      await tester.pump(const Duration(seconds: 1));
+      await settleHome(tester);
+      expect(find.text('checking · QB'), findsNothing);
+      expect(find.text('online · Default'), findsOneWidget);
+      await unmount(tester);
+    });
+
+    testWidgets('a failed re-check shows offline, and the next check after '
+        'it shows checking again', (tester) async {
+      final server = _Server();
+      await pumpHome(tester, server);
+      await settleHome(tester);
+      expect(find.text('online · Default'), findsOneWidget);
+
+      server.healthStatus = 503;
+      await recheck(tester);
+      await settleHome(tester);
+      expect(find.text('offline · QA'), findsOneWidget);
+      expect(find.text('online · Default'), findsNothing);
+
+      server
+        ..healthStatus = 200
+        ..healthDelay = const Duration(seconds: 1);
+      await recheck(tester);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('checking · QA'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      await settleHome(tester);
+      expect(find.text('online · Default'), findsOneWidget);
+      await unmount(tester);
+    });
   });
 
   group('Bot Mode prewarm from Home', () {
