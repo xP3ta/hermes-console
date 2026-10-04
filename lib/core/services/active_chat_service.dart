@@ -6000,6 +6000,10 @@ class ActiveChat {
     if (_desktopRuntimeSessionId == null) _stagedFirstSubmitConfig = config;
   }
 
+  @visibleForTesting
+  DesktopSessionCreateConfig get stagedFirstSubmitConfigForTesting =>
+      _stagedFirstSubmitConfig;
+
   InteractivePromptState get interactivePrompts => _interactivePrompts;
 
   /// First live prompt owned by the currently attached runtime. Other chats
