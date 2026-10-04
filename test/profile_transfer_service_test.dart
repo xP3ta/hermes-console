@@ -375,6 +375,53 @@ void main() {
     expect(transport.requests.last.method, 'DELETE');
   });
 
+  test('a failing cleanup DELETE keeps the original outcome', () async {
+    var downloadFails = false;
+    final transport = _Transport((request) {
+      if (request.method == 'POST') {
+        return _Response.json(200, {'ok': true, 'archive': '/srv/ops.tar.gz'});
+      }
+      if (request.method == 'GET') {
+        return downloadFails
+            ? _Response.json(500, {'detail': 'download boom'})
+            : _Response.bytes(200, utf8.encode('archive'));
+      }
+      return _Response.json(500, {'detail': 'cleanup boom'});
+    });
+
+    File? shared;
+    await _service(
+      transport,
+      temp,
+    ).exportProfile('ops', share: (file) async => shared = file);
+    expect(transport.requests.last.method, 'DELETE');
+    expect(await shared!.exists(), isFalse);
+
+    downloadFails = true;
+    transport.requests.clear();
+    await expectLater(
+      _service(transport, temp).exportProfile('ops', share: (_) async {}),
+      throwsA(
+        isA<ProfileTransferException>()
+            .having(
+              (error) => error.code,
+              'code',
+              ProfileTransferErrorCode.server,
+            )
+            .having(
+              (error) => error.detail,
+              'detail',
+              contains('download boom'),
+            ),
+      ),
+    );
+    expect(transport.requests.map((request) => request.method), [
+      'POST',
+      'GET',
+      'DELETE',
+    ]);
+  });
+
   test('read-only service sends nothing', () async {
     final transport = _Transport(
       (_) => _Response.json(500, {'detail': 'must not run'}),
