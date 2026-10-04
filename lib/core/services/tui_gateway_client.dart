@@ -7306,7 +7306,7 @@ class TuiGatewayClient
     required EphemeralSensitiveValue value,
   }) async {
     try {
-      late final Future<Map<String, dynamic>> pendingResponse;
+      late final Future<DesktopPromptResponse> pendingResponse;
       try {
         final opaqueRequestId = _interactiveRequestId(method, requestId);
         await _connectForRequest('gateway.connect');
@@ -7321,12 +7321,7 @@ class TuiGatewayClient
         // before awaiting a remote response.
         value.dispose();
       }
-      final result = await pendingResponse;
-      return DesktopPromptResponse.fromJson(
-        result,
-        method: method,
-        allowExpired: true,
-      );
+      return await pendingResponse;
     } catch (error) {
       if (SanitizedRpcFailureFactory.isCertified(error)) {
         rethrow;
@@ -7337,7 +7332,7 @@ class TuiGatewayClient
     }
   }
 
-  Future<Map<String, dynamic>> _sendSensitiveResponseConnected({
+  Future<DesktopPromptResponse> _sendSensitiveResponseConnected({
     required String method,
     required String requestId,
     required String valueKey,
@@ -7347,16 +7342,29 @@ class TuiGatewayClient
     if (_openServerRequests.containsKey(requestId)) {
       // v7 server requests answer every one-string prompt under `value`.
       if (!_respondServerRequest(requestId, {'value': ephemeralValue})) {
-        return Future<Map<String, dynamic>>.error(
+        return Future<DesktopPromptResponse>.error(
           TuiGatewayRpcError(method, 'Hermes Desktop WebSocket was replaced'),
         );
       }
-      return Future<Map<String, dynamic>>.value({'status': 'ok'});
+      // A bare response frame: nothing acknowledges it. The value is not
+      // kept; if it died with the socket the user enters it again.
+      return Future<DesktopPromptResponse>.value(
+        const DesktopPromptResponse._(
+          DesktopPromptResponseStatus.ok,
+          deliveryAcknowledged: false,
+        ),
+      );
     }
     return _requestConnected(method, {
       'request_id': requestId,
       valueKey: ephemeralValue,
-    }, redactRemoteError: true);
+    }, redactRemoteError: true).then(
+      (result) => DesktopPromptResponse.fromJson(
+        result,
+        method: method,
+        allowExpired: true,
+      ),
+    );
   }
 
   @override

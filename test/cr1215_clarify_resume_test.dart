@@ -693,6 +693,171 @@ void main() {
     expect(gateway.rpcCalls('session.resume').length, greaterThan(flips));
     expect(gateway.sockets.length, greaterThan(flips));
   });
+
+  group('unacknowledged sudo and secret answers', () {
+    Map<String, dynamic> openSudo(String id) => {
+      'id': id,
+      'method': 'sudo',
+      'params': {'session_id': 'runtime-1'},
+    };
+    Map<String, dynamic> openSecret(String id) => {
+      'id': id,
+      'method': 'secret',
+      'params': {
+        'session_id': 'runtime-1',
+        'env_var': 'API_TOKEN',
+        'prompt': 'Token?',
+      },
+    };
+    Map<String, dynamic> waiting(List<Map<String, dynamic>> open) => {
+      'session_id': 'runtime-1',
+      'stored_session_id': 'stored-1',
+      'running': true,
+      'status': 'waiting',
+      'open_requests': open,
+    };
+
+    Future<(ActiveChat, _FlakyProxy)> attachedThroughProxy() async {
+      final proxy = await _FlakyProxy.start(gateway.server.port);
+      addTearDown(proxy.close);
+      final client = TuiGatewayClient(
+        _connectionFor(
+          gateway,
+        ).copyWith(dashboardUrl: 'http://127.0.0.1:${proxy.port}'),
+        dashboard: _TicketDashboardClient(),
+      );
+      addTearDown(client.close);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      return (chat, proxy);
+    }
+
+    Future<void> awaitReattach(ActiveChat chat, int resumesBefore) =>
+        _waitUntil(
+          () =>
+              gateway.rpcCalls('session.resume').length > resumesBefore &&
+              chat.desktopRuntimeSessionId == 'runtime-1',
+          timeout: const Duration(seconds: 20),
+        );
+
+    /// A running turn whose resume asks nothing of the user keeps the viewer
+    /// detached by design; only the resume itself proves the reconnect.
+    Future<void> awaitResume(int resumesBefore) async {
+      await _waitUntil(
+        () => gateway.rpcCalls('session.resume').length > resumesBefore,
+        timeout: const Duration(seconds: 20),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+
+    Iterable<Map<String, dynamic>> answersTo(String id) =>
+        gateway.frames.where((frame) => frame['id'] == id);
+
+    for (final kind in const ['sudo', 'secret']) {
+      final id = kind == 'sudo' ? 'srq-lostsudo0001' : 'srq-lostsecret01';
+      Map<String, dynamic> open() =>
+          kind == 'sudo' ? openSudo(id) : openSecret(id);
+      Future<DesktopPromptResponse> answer(
+        ActiveChat chat,
+        EphemeralSensitiveValue value,
+      ) => kind == 'sudo'
+          ? chat.respondToSudo(chat.pendingInteractivePrompt!.key, value)
+          : chat.respondToSecret(chat.pendingInteractivePrompt!.key, value);
+
+      test('a $kind answer written into a socket that just died reopens the '
+          'card when the resume still lists it; the user re-enters it and '
+          'it reaches Hermes once', () async {
+        gateway.resumeResult = (_) => waiting([open()]);
+        final (chat, proxy) = await attachedThroughProxy();
+        await _waitUntil(() => chat.pendingInteractivePrompt != null);
+        expect(chat.pendingInteractivePrompt!.key.requestId, id);
+        final resumesBefore = gateway.rpcCalls('session.resume').length;
+
+        proxy.severAll();
+        final lostValue = EphemeralSensitiveValue('first-value');
+        final lost = await answer(chat, lostValue);
+        expect(lost.deliveryAcknowledged, isFalse);
+        // Nothing is kept for a resend: the holder is redacted and disposed.
+        expect(lostValue.hasValue, isFalse);
+        expect(lostValue.isDisposed, isTrue);
+        expect(chat.pendingInteractivePrompt, isNull);
+
+        await awaitReattach(chat, resumesBefore);
+        expect(chat.pendingInteractivePrompt?.key.requestId, id);
+        expect(
+          chat.pendingInteractivePrompt?.status,
+          InteractivePromptStatus.pending,
+        );
+        expect(answersTo(id), isEmpty);
+
+        await answer(chat, EphemeralSensitiveValue('second-value'));
+        final frame = await gateway
+            .nextFrame((frame) => frame['id'] == id)
+            .timeout(const Duration(seconds: 2));
+        expect(frame['result'], {'value': 'second-value'});
+        expect(answersTo(id), hasLength(1));
+        expect(
+          gateway.frames.any((f) => jsonEncode(f).contains('first-value')),
+          isFalse,
+        );
+        expect(chat.pendingInteractivePrompt, isNull);
+      });
+
+      test('a $kind answer lost with the socket stays closed when the resume '
+          'no longer lists it', () async {
+        gateway.resumeResult = (_) => waiting([open()]);
+        final (chat, proxy) = await attachedThroughProxy();
+        await _waitUntil(() => chat.pendingInteractivePrompt != null);
+        final resumesBefore = gateway.rpcCalls('session.resume').length;
+        gateway.resumeResult = (_) => {
+          'session_id': 'runtime-1',
+          'stored_session_id': 'stored-1',
+          'running': true,
+          'status': 'working',
+        };
+
+        proxy.severAll();
+        await answer(chat, EphemeralSensitiveValue('only-value'));
+        await awaitResume(resumesBefore);
+        expect(chat.pendingInteractivePrompt, isNull);
+        expect(
+          chat.interactivePrompts.entries.values.where((e) => e.needsInput),
+          isEmpty,
+        );
+      });
+
+      test('an acknowledged $kind answer never reopens from a stale replay '
+          'after a drop', () async {
+        gateway.resumeResult = (_) => {
+          'session_id': 'runtime-1',
+          'stored_session_id': 'stored-1',
+          'running': true,
+          'status': 'working',
+        };
+        final client = _clientFor(gateway);
+        final chat = _chatFor(gateway, client, attach: true);
+        await chat.loadMessages();
+        await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+        // Not registered on this socket: answered by the acknowledged RPC.
+        gateway.pushSessionEvent('$kind.request', {
+          'request_id': id,
+          if (kind == 'secret') ...{'env_var': 'API_TOKEN', 'prompt': 'T?'},
+        });
+        await _waitUntil(() => chat.pendingInteractivePrompt != null);
+        final acked = await answer(chat, EphemeralSensitiveValue('acked'));
+        expect(acked.deliveryAcknowledged, isTrue);
+        expect(gateway.rpcCalls('$kind.respond'), hasLength(1));
+
+        gateway.resumeResult = (_) => waiting([open()]);
+        final resumesBefore = gateway.rpcCalls('session.resume').length;
+        await gateway.sockets.single.close(1001);
+        await awaitReattach(chat, resumesBefore);
+        expect(chat.pendingInteractivePrompt, isNull);
+        expect(gateway.rpcCalls('$kind.respond'), hasLength(1));
+        expect(answersTo(id), isEmpty);
+      });
+    }
+  });
 }
 
 /// TCP forwarder whose connections can be killed at once, the way a
