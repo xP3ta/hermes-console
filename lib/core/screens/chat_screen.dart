@@ -1069,9 +1069,9 @@ String friendlyModelName(String id) {
       RegExp(
         r'^claude-(opus|sonnet|haiku)-(\d+)(?:[.-](\d{1,2})(?!\d))?',
       ).firstMatch(lower) ??
-      RegExp(r'^claude-(\d+)(?:[.-](\d))?-(opus|sonnet|haiku)').firstMatch(
-        lower,
-      );
+      RegExp(
+        r'^claude-(\d+)(?:[.-](\d))?-(opus|sonnet|haiku)',
+      ).firstMatch(lower);
   if (claude != null) {
     final legacy = RegExp(r'^\d').hasMatch(claude.group(1)!);
     final family = legacy ? claude.group(3)! : claude.group(1)!;
@@ -1079,7 +1079,9 @@ String friendlyModelName(String id) {
     final minor = legacy ? claude.group(2) : claude.group(3);
     final capitalized = family[0].toUpperCase() + family.substring(1);
     final version = minor == null ? major : '$major.$minor';
-    final rest = lower.substring(claude.end).replaceFirst(RegExp(r'-\d{8}'), '');
+    final rest = lower
+        .substring(claude.end)
+        .replaceFirst(RegExp(r'-\d{8}'), '');
     final variant = RegExp(
       r'^-(fast|thinking|preview|latest|flash)\b',
     ).firstMatch(rest)?.group(1);
@@ -19207,15 +19209,20 @@ class _AssistantMessage extends StatelessWidget {
   static final RegExp _markdownSyntax = RegExp(r'[`*#\[_|>~]');
 
   /// Cheap gate for the long-press menu: an earlier reply in the bubble or
-  /// any Markdown syntax. The scopes themselves are built on long press.
+  /// any Markdown syntax, indented code blocks included. The scopes
+  /// themselves are built on long press.
   bool _hasCopyScopes(String answer) =>
-      latestReplyText != null || _markdownSyntax.hasMatch(answer);
+      latestReplyText != null ||
+      _markdownSyntax.hasMatch(answer) ||
+      markdownMayHaveCodeBlock(answer);
 
   /// Long-press copy scopes; only those that differ from a plain copy and
   /// have data are offered (no dead entries).
   List<ChatCopyScope> _copyScopes(BuildContext context, String answer) {
     final s = Strings.of(context);
-    final raw = GeneratedMediaService.stripDirectives(answer).trim();
+    final raw = trimMarkdownBlankLines(
+      GeneratedMediaService.stripDirectives(answer),
+    );
     if (raw.isEmpty) return const [];
     final plain = markdownToClipboardText(raw);
     final latest = latestReplyText;

@@ -39,6 +39,16 @@ void main() {
     expect(markdownCodeBlocks('only `inline` code'), isEmpty);
   });
 
+  test('indented code blocks count wherever they start', () {
+    // At the very start of the message, tab-indented, and after a list.
+    expect(markdownCodeBlocks('    a = 1\n    b = 2'), ['a = 1\nb = 2']);
+    expect(markdownCodeBlocks('Run:\n\n\tmake all'), ['make all']);
+    expect(markdownCodeBlocks('Text\n\n    ls -la\n\nmore'), ['ls -la']);
+    expect(markdownMayHaveCodeBlock('    x'), isTrue);
+    expect(markdownMayHaveCodeBlock('a\n\tx'), isTrue);
+    expect(markdownMayHaveCodeBlock('plain words only'), isFalse);
+  });
+
   testWidgets('tap copies the default; long press lists the scopes', (
     tester,
   ) async {

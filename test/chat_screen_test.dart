@@ -23366,6 +23366,34 @@ void main() {
       });
     }
 
+    testWidgets(
+      'pt1215: mantener copiar ofrece «Copiar código» para código indentado',
+      (tester) async {
+        // A lone reply with no Markdown punctuation at all: only the
+        // indentation makes it code, and the block opens the message.
+        await pumpChat(
+          tester,
+          messages: [
+            {...turn[0], 'content': '    echo indented\n    ls'},
+            turn.last,
+          ],
+        );
+        await tester.longPress(assistantCopy);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byKey(const ValueKey('chat-copy-scopes')), findsOneWidget);
+        await tester.tap(find.text('Copiar código'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(
+          (await Clipboard.getData(Clipboard.kTextPlain))?.text,
+          'echo indented\nls',
+        );
+        await tester.pump(const Duration(seconds: 2));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     final patchTurn = <Map<String, dynamic>>[
       turn[0],
       {
