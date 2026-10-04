@@ -834,14 +834,14 @@ class _SessionListScreenState extends State<SessionListScreen>
     final scope = _libraryQuery;
     setState(() {
       _searchResults = null;
-      _searching = query.isNotEmpty && _repository != null;
-      _searchExhaustive = query.isEmpty || _repository == null;
+      _searching = query.isNotEmpty && _searchesServer;
+      _searchExhaustive = query.isEmpty || !_searchesServer;
     });
     // Categoría y archivo se resuelven en Agent antes de limit/offset. La
     // búsqueda se reinicia con el mismo scope para invalidar respuestas de la
     // categoría anterior aunque el texto no haya cambiado.
     unawaited(_fetchSessions());
-    if (query.isNotEmpty && _repository != null) {
+    if (query.isNotEmpty && _searchesServer) {
       unawaited(_runSearch(query, requestEpoch, scope));
     }
   }
@@ -977,6 +977,10 @@ class _SessionListScreenState extends State<SessionListScreen>
     return keep;
   }
 
+  /// Archive > Hidden filters its own list locally: no server search runs
+  /// there (its hits would also be applied as list reads).
+  bool get _searchesServer => _repository != null && !_hiddenView;
+
   void _onSearchChanged(String value) {
     _searchTimer?.cancel();
     final query = value.trim();
@@ -984,10 +988,10 @@ class _SessionListScreenState extends State<SessionListScreen>
     setState(() {
       _searchQuery = value;
       _searchResults = null;
-      _searching = query.isNotEmpty && _repository != null;
-      _searchExhaustive = query.isEmpty || _repository == null;
+      _searching = query.isNotEmpty && _searchesServer;
+      _searchExhaustive = query.isEmpty || !_searchesServer;
     });
-    if (query.isEmpty || _repository == null) return;
+    if (query.isEmpty || !_searchesServer) return;
     _searchTimer = Timer(const Duration(milliseconds: 220), () {
       unawaited(_runSearch(query, requestEpoch, _libraryQuery));
     });
@@ -1409,6 +1413,8 @@ class _SessionListScreenState extends State<SessionListScreen>
   void _selectArchiveView(bool hidden) {
     if (hidden == _showHiddenInArchive) return;
     setState(() => _showHiddenInArchive = hidden);
+    // Entering Hidden drops a pending search; leaving it searches the text.
+    _onSearchChanged(_searchQuery);
   }
 
   /// Archive > Hidden: the chats hidden from this device, filtered by the

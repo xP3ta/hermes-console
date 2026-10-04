@@ -28,6 +28,7 @@ class _Server {
   final bool publishesHidden;
   final List<Map<String, dynamic>> patches = [];
   Map<String, String> snippets = {};
+  final List<String> searches = [];
 
   /// Rows the next default listing still omits: a read that began before
   /// the unhide landed.
@@ -61,6 +62,7 @@ class _Server {
       );
     }
     if (request.method == 'GET' && path == '/api/sessions/search') {
+      searches.add(request.url.queryParameters['q'] ?? '');
       return http.Response(
         jsonEncode({
           'results': [
@@ -338,5 +340,51 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('session-filter-archived')));
     await _pumpUntil(tester, find.text('Legacy chat'));
     expect(server.patches, isEmpty);
+  });
+
+  testWidgets('typing in Archive > Hidden filters locally and never searches '
+      'the server; leaving it searches the current text', (tester) async {
+    final server = _Server({
+      's1': _row('s1', 'QA ping'),
+      's2': _row('s2', 'QA pong'),
+      's3': _row('s3', 'Other'),
+    });
+    await pump(tester, server, legacyHidden: ['s1', 's2']);
+    await _pumpUntil(tester, find.text('Other'));
+    final field = find.byType(TextField).first;
+    await tester.tap(find.byKey(const ValueKey('session-filter-archived')));
+    await _settle(tester);
+    // A search still waiting for the typing pause is dropped on entering.
+    await tester.enterText(field, 'QA');
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.byKey(const ValueKey('archive-view-hidden')));
+    await _settle(tester);
+    expect(server.searches, isEmpty);
+    expect(find.text('QA ping'), findsOneWidget);
+    expect(find.text('QA pong'), findsOneWidget);
+
+    for (final query in ['QA', 'QA p', 'QA pi']) {
+      await tester.enterText(field, query);
+      await tester.pump(const Duration(milliseconds: 300));
+      await _settle(tester);
+    }
+    expect(server.searches, isEmpty);
+    expect(find.text('QA ping'), findsOneWidget);
+    expect(find.text('QA pong'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('archive-view-archived')));
+    await _settle(tester);
+    expect(server.searches, ['QA pi']);
+
+    // Back to Hidden, then out of Archive and in again (Hidden is kept).
+    await tester.tap(find.byKey(const ValueKey('archive-view-hidden')));
+    await _settle(tester);
+    await tester.tap(find.byKey(const ValueKey('session-filter-archived')));
+    await _settle(tester);
+    expect(server.searches, ['QA pi', 'QA pi']);
+    await tester.tap(find.byKey(const ValueKey('session-filter-archived')));
+    await _settle(tester);
+    expect(server.searches, ['QA pi', 'QA pi']);
+    expect(find.text('QA ping'), findsOneWidget);
   });
 }
