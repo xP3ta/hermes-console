@@ -253,9 +253,13 @@ void main() {
   });
 
   group('providerSignedIn', () {
-    Map<String, dynamic> card(String id, bool loggedIn) => {
+    Map<String, dynamic> card(
+      String id,
+      bool loggedIn, {
+      bool freeTier = false,
+    }) => {
       'id': id,
-      'status': {'logged_in': loggedIn},
+      'status': {'logged_in': loggedIn, 'free_tier': freeTier},
     };
 
     test('a Claude Code login counts for the anthropic runtime', () {
@@ -287,6 +291,13 @@ void main() {
         isFalse,
       );
       expect(providerSignedIn([card('nous', true)], 'nous'), isTrue);
+    });
+
+    test('a free-tier Nous identity is not a connected account', () {
+      expect(
+        providerSignedIn([card('nous', true, freeTier: true)], 'nous'),
+        isFalse,
+      );
     });
   });
 }
