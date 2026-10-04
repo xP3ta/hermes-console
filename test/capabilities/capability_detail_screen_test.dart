@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/capability_detail_screen.dart';
 import 'package:hermes_android/core/capabilities/capability_models.dart';
 import 'package:hermes_android/core/capabilities/capability_ui.dart';
@@ -77,13 +78,14 @@ Future<void> _pump(
   ScriptedRest rest, {
   bool readOnly = false,
   VoidCallback? onChanged,
+  CapabilitiesRepository? repository,
 }) async {
   await setPhone(tester);
   await tester.pumpWidget(
     spanishApp(
       CapabilityDetailScreen(
         item: item,
-        repository: repoOf(rest),
+        repository: repository ?? repoOf(rest),
         readOnly: readOnly,
         onChanged: onChanged,
       ),
@@ -381,22 +383,20 @@ void main() {
     }
   });
 
-  testWidgets('preview and scan rows need confirmed server support', (
+  testWidgets('preview and scan rows need support already confirmed', (
     tester,
   ) async {
-    // A legacy server declares neither route: nothing is painted, and the
-    // single open-time probe is not repeated by rebuilds.
+    // Opening a skill sends nothing: with support undeclared, no row is
+    // painted and no probe is made, however often it rebuilds.
     final legacy = ScriptedRest();
     await _pump(tester, _docker, legacy);
     expect(find.byKey(const ValueKey('cph-row-preview')), findsNothing);
     expect(find.byKey(const ValueKey('cph-row-scan')), findsNothing);
     await tester.pump(const Duration(seconds: 1));
-    expect(legacy.calls.where((c) => c.startsWith('GET skills/hub')), [
-      'GET skills/hub/preview?identifier=official%2Fdevops%2Fdocker',
-    ]);
+    expect(legacy.calls, isEmpty);
   });
 
-  testWidgets('a confirmed preview shows its row and reads it only once', (
+  testWidgets('a confirmed preview shows its row and reads it on tap', (
     tester,
   ) async {
     final rest = ScriptedRest()
@@ -405,7 +405,12 @@ void main() {
         'skill_md': '# Docker\nRuns **containers**',
         'files': ['SKILL.md', 'scripts/run.sh'],
       };
-    await _pump(tester, _docker, rest);
+    // An earlier server response (e.g. the list screen) confirmed the route.
+    final repo = repoOf(rest);
+    await repo.skillPreview(_docker.installId);
+    rest.calls.clear();
+    await _pump(tester, _docker, rest, repository: repo);
+    expect(rest.calls, isEmpty);
     await tester.ensureVisible(find.byKey(const ValueKey('cph-row-preview')));
     await tester.tap(find.byKey(const ValueKey('cph-row-preview')));
     await tester.pumpAndSettle();
