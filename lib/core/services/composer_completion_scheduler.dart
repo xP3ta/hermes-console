@@ -14,13 +14,19 @@ final class ComposerCompletionScheduler<T extends Object> {
     required this.fetch,
     this.debounce = const Duration(milliseconds: 180),
     this.cacheSize = 32,
+    this.cacheTtl,
   });
 
   final Future<T?> Function(String query) fetch;
   final Duration debounce;
   final int cacheSize;
 
+  /// How long a memoised answer stays valid (Desktop lists a directory again
+  /// once its cached listing is older than this). Null keeps it until evicted.
+  final Duration? cacheTtl;
+
   final LinkedHashMap<String, T> _cache = LinkedHashMap<String, T>();
+  final Map<String, Timer> _expiry = {};
   Timer? _timer;
   int _epoch = 0;
   int _requests = 0;
@@ -74,9 +80,18 @@ final class ComposerCompletionScheduler<T extends Object> {
   void _remember(String query, T value) {
     _cache.remove(query);
     _cache[query] = value;
-    while (_cache.length > cacheSize) {
-      _cache.remove(_cache.keys.first);
+    if (cacheTtl case final ttl?) {
+      _expiry.remove(query)?.cancel();
+      _expiry[query] = Timer(ttl, () => _forget(query));
     }
+    while (_cache.length > cacheSize) {
+      _forget(_cache.keys.first);
+    }
+  }
+
+  void _forget(String query) {
+    _cache.remove(query);
+    _expiry.remove(query)?.cancel();
   }
 
   /// Drops the pending timer and invalidates in-flight lookups.
@@ -87,10 +102,16 @@ final class ComposerCompletionScheduler<T extends Object> {
   }
 
   /// Forget memoised answers (e.g. the session runtime or cwd changed).
-  void clearCache() => _cache.clear();
+  void clearCache() {
+    _cache.clear();
+    for (final timer in _expiry.values) {
+      timer.cancel();
+    }
+    _expiry.clear();
+  }
 
   void dispose() {
     cancel();
-    _cache.clear();
+    clearCache();
   }
 }

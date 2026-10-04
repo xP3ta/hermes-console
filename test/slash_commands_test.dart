@@ -259,6 +259,8 @@ class _ReferenceGateway extends _SlashGateway
     implements HermesDesktopComposerCompletionGateway {
   final List<Map<String, String>> pathCalls = [];
   final Map<String, Completer<PathCompletionBatch>> pathGates = {};
+  // Per-runtime trees: each runtime answers with its own cwd.
+  PathCompletionBatch Function(String word, String runtime)? pathResponder;
   // Scope each complete.slash carried: runtime or new-chat profile.
   final List<Map<String, String?>> slashScopes = [];
 
@@ -283,6 +285,9 @@ class _ReferenceGateway extends _SlashGateway
   }) async {
     pathCalls.add({'word': word, 'session_id': runtimeSessionId});
     if (pathGates[word] case final gate?) return gate.future;
+    if (pathResponder case final respond?) {
+      return respond(word, runtimeSessionId);
+    }
     if (word == '@') {
       return PathCompletionBatch.fromJson({
         'items': [
@@ -798,6 +803,151 @@ void main() {
         findsNothing,
       );
       expect(tester.takeException(), isNull);
+    });
+
+    PathCompletionBatch treeOf(String word, String runtime) =>
+        PathCompletionBatch.fromJson({
+          'items': [
+            {
+              'text': '@file:lib/$runtime.dart',
+              'display': '$runtime.dart',
+              'meta': 'lib',
+            },
+          ],
+        });
+
+    testWidgets('a rotation before the debounce never caches B under A', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway()..pathResponder = treeOf;
+      final chat = await _pumpSlashChat(tester, gateway);
+      final runtimeA = chat.desktopRuntimeSessionId!;
+      final runtimeB = '$runtimeA-b';
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.enterText(composer, '@lib/');
+      await tester.pump(const Duration(milliseconds: 50));
+      chat.adoptDesktopRuntimeForTesting(runtimeB);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(ValueKey('chat-reference-@file:lib/$runtimeA.dart')),
+        findsNothing,
+      );
+      // The retired key asks nobody; B is asked once, under its own key.
+      expect(gateway.pathCalls, [
+        {'word': '@lib/', 'session_id': runtimeB},
+      ]);
+
+      // Back on A, the same query asks A again instead of serving B's tree.
+      chat.adoptDesktopRuntimeForTesting(runtimeA);
+      await tester.enterText(composer, '@lib/x');
+      await tester.pump();
+      await tester.enterText(composer, '@lib/');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(ValueKey('chat-reference-@file:lib/$runtimeB.dart')),
+        findsNothing,
+      );
+      expect(gateway.pathCalls.last, {'word': '@lib/', 'session_id': runtimeA});
+      expect(
+        find.byKey(ValueKey('chat-reference-@file:lib/$runtimeA.dart')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('an in-flight @ answer from a retired runtime is dropped', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway()..pathResponder = treeOf;
+      final late = gateway.pathGates['@lib/'] =
+          Completer<PathCompletionBatch>();
+      final chat = await _pumpSlashChat(tester, gateway);
+      final runtimeA = chat.desktopRuntimeSessionId!;
+      final runtimeB = '$runtimeA-b';
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '@lib/');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.pathCalls.single['session_id'], runtimeA);
+
+      gateway.pathGates.remove('@lib/');
+      chat.adoptDesktopRuntimeForTesting(runtimeB);
+      late.complete(treeOf('@lib/', runtimeA));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.byKey(ValueKey('chat-reference-@file:lib/$runtimeA.dart')),
+        findsNothing,
+      );
+      expect(gateway.pathCalls.last, {'word': '@lib/', 'session_id': runtimeB});
+      expect(
+        find.byKey(ValueKey('chat-reference-@file:lib/$runtimeB.dart')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('complete.path answered after a rotation is not returned', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway()..pathResponder = treeOf;
+      final late = gateway.pathGates['@lib/'] =
+          Completer<PathCompletionBatch>();
+      final chat = await _pumpSlashChat(tester, gateway);
+      final runtimeA = chat.desktopRuntimeSessionId!;
+
+      final answer = chat.completeDesktopPath(
+        '@lib/',
+        runtimeSessionId: runtimeA,
+      );
+      chat.adoptDesktopRuntimeForTesting('$runtimeA-b');
+      late.complete(treeOf('@lib/', runtimeA));
+      expect(await answer, isNull);
+      // Nor is a runtime that is no longer this chat's ever asked.
+      expect(
+        await chat.completeDesktopPath('@lib/', runtimeSessionId: runtimeA),
+        isNull,
+      );
+      expect(gateway.pathCalls, hasLength(1));
+    });
+
+    testWidgets('a cached @ listing expires like Desktop (15 s)', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway()..pathResponder = treeOf;
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      Future<void> retype() async {
+        await tester.enterText(composer, '@lib/x');
+        await tester.pump();
+        await tester.enterText(composer, '@lib/');
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+
+      await tester.enterText(composer, '@lib/');
+      await tester.pump(const Duration(milliseconds: 300));
+      final first = gateway.pathCalls.where((c) => c['word'] == '@lib/');
+      expect(first, hasLength(1));
+      await retype();
+      expect(
+        gateway.pathCalls.where((c) => c['word'] == '@lib/'),
+        hasLength(1),
+      );
+
+      // The tree may have changed since: past the TTL it is listed again.
+      await tester.pump(const Duration(seconds: 16));
+      await retype();
+      expect(
+        gateway.pathCalls.where((c) => c['word'] == '@lib/'),
+        hasLength(2),
+      );
     });
 
     testWidgets('a gateway without complete.path shows no @ palette', (

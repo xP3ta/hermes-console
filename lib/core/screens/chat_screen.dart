@@ -1654,10 +1654,12 @@ class _ChatScreenState extends State<ChatScreen>
   // or the profile a new-chat draft is routed to. Every slash key carries it.
   String? _completionScope;
   // `@` references (`complete.path`), same debounce/cancel contract. The key
-  // carries the runtime so another session's tree is never served from cache.
+  // carries the runtime the listing is asked of and answered for, so another
+  // session's tree is never served; a listing expires like Desktop's (15 s).
   late final ComposerCompletionScheduler<PathCompletionBatch>
   _referenceCompletions = ComposerCompletionScheduler<PathCompletionBatch>(
     fetch: _fetchReferences,
+    cacheTtl: const Duration(seconds: 15),
   );
   List<PathCompletionItem> _referenceItems = const [];
   String? _referenceKey;
@@ -3748,12 +3750,19 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<PathCompletionBatch?> _fetchReferences(String key) {
-    final word = key.substring(key.indexOf('\n') + 1);
-    return _chat.completeDesktopPath(word);
+    final split = key.indexOf('\n');
+    return _chat.completeDesktopPath(
+      key.substring(split + 1),
+      runtimeSessionId: key.substring(0, split),
+    );
   }
 
   void _applyReferences(String key, PathCompletionBatch? batch) {
-    if (_disposed || !mounted || key != _referenceKey) return;
+    if (_disposed || !mounted) return;
+    // A rotation no chat event announced yet still retires this answer and
+    // asks the new runtime instead.
+    _syncComposerCompletionScope();
+    if (key != _referenceKey) return;
     final items = batch?.items ?? const <PathCompletionItem>[];
     if (items.isEmpty && _referenceItems.isEmpty) return;
     setState(() => _referenceItems = items);
@@ -3803,7 +3812,15 @@ class _ChatScreenState extends State<ChatScreen>
     _slashCompletions
       ..cancel()
       ..clearCache();
+    _referenceCompletions
+      ..cancel()
+      ..clearCache();
+    _referenceKey = null;
     if (_disposed || !mounted) return;
+    if (_referenceItems.isNotEmpty) {
+      setState(() => _referenceItems = const []);
+    }
+    _refreshReferenceQuery();
     final text = _textController.text;
     final local = slashSuggestionsFor(text, Strings.of(context));
     setState(() => _slashSuggestions = local);

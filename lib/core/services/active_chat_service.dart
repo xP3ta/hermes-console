@@ -16117,20 +16117,25 @@ class ActiveChat {
   bool get supportsDesktopPathCompletion =>
       _desktopGateway is HermesDesktopComposerCompletionGateway;
 
-  /// `@` completion against this chat's runtime cwd. Null when the gateway
-  /// lacks it, no runtime is bound yet (the listing would show another tree),
-  /// or the socket is down — completion never dials.
-  Future<PathCompletionBatch?> completeDesktopPath(String word) async {
+  /// `@` completion against [runtimeSessionId], the runtime the caller keyed
+  /// its query to. Null when the gateway lacks it, the socket is down
+  /// (completion never dials), or this chat's runtime is not that one before
+  /// or after the round trip, so another runtime's tree is never listed.
+  Future<PathCompletionBatch?> completeDesktopPath(
+    String word, {
+    required String runtimeSessionId,
+  }) async {
     final gateway = _desktopGateway;
-    final runtime = _desktopRuntimeSessionId;
-    if (gateway is! HermesDesktopComposerCompletionGateway ||
-        runtime == null ||
-        runtime.isEmpty) {
+    bool current() =>
+        runtimeSessionId.isNotEmpty &&
+        _desktopRuntimeSessionId == runtimeSessionId;
+    if (gateway is! HermesDesktopComposerCompletionGateway || !current()) {
       return null;
     }
     try {
-      return await (gateway as HermesDesktopComposerCompletionGateway)
-          .completePath(word, runtimeSessionId: runtime);
+      final batch = await (gateway as HermesDesktopComposerCompletionGateway)
+          .completePath(word, runtimeSessionId: runtimeSessionId);
+      return current() ? batch : null;
     } on TuiGatewayRpcError {
       return null;
     }
