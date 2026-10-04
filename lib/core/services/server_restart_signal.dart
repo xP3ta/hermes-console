@@ -31,6 +31,10 @@ abstract final class ServerRestartSignals {
     if (code == 5098) _remember(host, message);
   }
 
+  /// A model call Console already makes answered well: the process no longer
+  /// runs older code than its checkout, so the note for [host] is stale.
+  static void noteHealthy(String host) => _byHost.remove(_key(host));
+
   /// The note for the first of [hosts] that has one.
   static String? textFor(Iterable<String> hosts) {
     for (final host in hosts) {

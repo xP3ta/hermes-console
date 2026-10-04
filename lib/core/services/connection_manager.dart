@@ -3708,6 +3708,7 @@ class DashboardClient {
     final Map<String, dynamic> data;
     try {
       data = await apiGet('model/options$suffix');
+      _noteRestartRecovered();
     } on DashboardHttpException catch (error) {
       _noteRestartRequired(error);
       rethrow;
@@ -3757,12 +3758,17 @@ class DashboardClient {
           if (apiKey.isNotEmpty) 'api_key': apiKey,
         },
       );
+      _noteRestartRecovered();
     } on DashboardHttpException catch (error) {
       _noteRestartRequired(error);
       rethrow;
     }
     return (res['ok'] as bool?) ?? false;
   }
+
+  /// Passive: a good model call clears the note a 503 left (no request).
+  void _noteRestartRecovered() =>
+      ServerRestartSignals.noteHealthy(Uri.parse(_baseUrl).host);
 
   /// Passive: remembers a 503 `Restart required:` the model calls report so
   /// Diagnostics can say it. Never makes a request of its own.

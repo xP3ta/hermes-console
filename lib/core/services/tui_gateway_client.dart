@@ -4205,6 +4205,10 @@ class TuiGatewayClient
     'connection.respond',
   };
 
+  /// Passive: a good `model.options` clears the note a 5098 left (no request).
+  void _noteRestartRecovered() =>
+      ServerRestartSignals.noteHealthy(_connection.host);
+
   /// Passive: remembers RPC 5098 (`model.options` on a process older than its
   /// checkout) so Diagnostics can say it. Never makes a request of its own.
   void _noteRestartRequired(TuiGatewayRpcError error) =>
@@ -5247,6 +5251,7 @@ class TuiGatewayClient
       _noteRestartRequired(error);
       rethrow;
     }
+    _noteRestartRecovered();
     if (result['providers'] is! List) {
       _capabilityCache.mark(
         DesktopGatewayCapability.modelOptions,
@@ -5313,6 +5318,7 @@ class TuiGatewayClient
       }
       rethrow;
     }
+    _noteRestartRecovered();
     if (result['providers'] is! List) {
       throw const TuiGatewayRpcError(
         method,

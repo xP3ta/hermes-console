@@ -63,6 +63,18 @@ void main() {
       );
     });
 
+    test('a healthy call clears the note of its host only', () {
+      ServerRestartSignals.noteRpc(_host, 5098, 'old code');
+      ServerRestartSignals.noteRpc('other.example.test', 5098, 'other code');
+      ServerRestartSignals.noteHealthy(' ${_host.toUpperCase()} ');
+      expect(ServerRestartSignals.textFor([_host]), isNull);
+      expect(
+        ServerRestartSignals.textFor(['other.example.test']),
+        'other code',
+      );
+      ServerRestartSignals.noteHealthy('never.noted.example.test');
+    });
+
     test('RPC 5098 without text still says restart', () {
       ServerRestartSignals.noteRpc(_host, 5098, '  ');
       expect(ServerRestartSignals.textFor([_host]), isNotEmpty);
