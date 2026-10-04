@@ -30826,13 +30826,14 @@ void main() {
       WidgetTester tester, {
       required Map<String, dynamic> payload,
       DashboardClient Function(SavedConnection)? dashboard,
+      bool readOnly = false,
     }) async {
       nowMs = start.millisecondsSinceEpoch;
       final gateway = _UiRewindGateway();
       final chat = await pumpChat(
         tester,
         desktopGateway: gateway,
-        connection: _remoteConn('conn-te1215'),
+        connection: _remoteConn('conn-te1215').copyWith(readOnly: readOnly),
         messagesLoaded: true,
         initialStoredSessionId: 'sess-test',
         acquireDesktopRuntimeBeforeMount: true,
@@ -30897,6 +30898,29 @@ void main() {
       await tester.pump(const Duration(hours: 3));
       expect(gateway.submissions, ['Resume el informe', 'Resume el informe']);
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a read-only connection offers no retry, armed or not', (
+      tester,
+    ) async {
+      final (_, gateway) = await failTurn(
+        tester,
+        payload: rateLimited(),
+        readOnly: true,
+      );
+
+      expect(
+        find.text('Se restablece a las 13:05 (en 1 h 05 min)'),
+        findsOneWidget,
+      );
+      expect(find.text('↺ reintentar'), findsNothing);
+      await openDetails(tester);
+      expect(find.text('Reintentar a las 13:05'), findsNothing);
+      expect(find.textContaining('Reintentar'), findsNothing);
+
+      nowMs = start.add(const Duration(minutes: 65)).millisecondsSinceEpoch;
+      await tester.pump(const Duration(minutes: 65));
+      expect(gateway.submissions, ['Resume el informe']);
     });
 
     testWidgets('cancelling the armed retry sends nothing', (tester) async {
