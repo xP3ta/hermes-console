@@ -7,7 +7,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
+import '../models/calendar_bucket.dart';
+import '../models/project_move_targets.dart';
 import '../models/session_category.dart';
+import '../models/session_list_sort.dart';
 import '../models/desktop_active_session.dart';
 import '../models/desktop_control_center.dart';
 import '../models/session_live_status.dart';
@@ -16,6 +19,8 @@ import '../services/active_profile_scope.dart';
 import '../services/active_chat_service.dart';
 import '../services/connection_manager.dart';
 import '../services/connection_health_tracker.dart';
+import '../services/desktop_control_gateway.dart'
+    show DesktopControlFailure, DesktopControlFailureKind;
 import '../services/dock_preferences_store.dart';
 import '../services/global_activity_aggregate.dart';
 import '../services/chat_draft_store.dart';
@@ -32,6 +37,7 @@ import '../utils/session_timestamp.dart';
 import '../theme/app_theme.dart';
 import '../widgets/onstage_gate.dart';
 import '../widgets/accent_card.dart';
+import '../widgets/calendar_bucket_label.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_drawer.dart';
 import '../widgets/hermes_notice.dart';
@@ -136,6 +142,11 @@ class SessionListScreen extends StatefulWidget {
   @visibleForTesting
   static int debugFilterPasses = 0;
 
+  /// Forgets which connections answered method-not-found to a workspace move.
+  @visibleForTesting
+  static void debugResetMoveSupport() =>
+      _SessionListScreenState._moveUnsupported.clear();
+
   final SavedConnection connection;
   final ConnectionManager connManager;
   final ApiClient? clientOverride;
@@ -223,6 +234,23 @@ class _SessionListScreenState extends State<SessionListScreen>
   List<Session> _filteredCache = const [];
   SessionCategory _activeCategory = SessionCategory.chats;
   bool _showArchived = false;
+
+  /// View order of the list (a per-connection preference of this device).
+  SessionListSort _sort = SessionListSort.activity;
+
+  /// The project tree, once a "move to project" loaded it in this screen
+  /// session. The menu never loads it just to paint itself.
+  ProjectTreeSnapshot? _projectTree;
+
+  /// Folder of the project the list is narrowed to, or null for all.
+  String? _projectFilterFolder;
+
+  /// Connections whose server answered `session.workspace.move` with
+  /// method-not-found: the entry stays hidden for them (memory only).
+  static final Set<String> _moveUnsupported = {};
+
+  String get _sortPrefKey => 'session_list_sort:${widget.connection.id}';
+  DateTime _now() => (widget.clockOverride ?? DateTime.now)();
 
   SessionArchive? _archive;
   SessionPinSync? _pinSync;
@@ -354,6 +382,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     if (!mounted) return;
     final archive = await SessionArchive.load(prefs, widget.connection.id);
     if (!mounted) return;
+    final storedSort = SessionListSort.fromWire(prefs.getString(_sortPrefKey));
     final repository = _repository;
     final pinSync = SessionPinSync(
       archive,
@@ -376,6 +405,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       _archive = archive;
       archive.addListener(_onArchiveChanged);
       _pinSync = pinSync;
+      _sort = storedSort;
       _archiveReady = true;
     });
     await _migrateLineagePreferences(_sessions);
@@ -520,6 +550,9 @@ class _SessionListScreenState extends State<SessionListScreen>
     if (stateWriter != null) _archive?.detachRemoteState(stateWriter);
     hermesRouteObserver.unsubscribe(this);
     unawaited(DrawerGestureExclusion.setEnabled(false));
+    // A move still choosing or running gives its socket lease back.
+    _moveLease?.release();
+    _moveLease = null;
     _retryTimer?.cancel();
     _searchTimer?.cancel();
     _eventRefreshTimer?.cancel();
@@ -1796,6 +1829,28 @@ class _SessionListScreenState extends State<SessionListScreen>
                 _openDetail(session);
               },
             ),
+            // Re-homes the stored session's workspace; a write, and only when
+            // the server answered the method.
+            if (!widget.connection.readOnly &&
+                !_moveUnsupported.contains(widget.connection.id))
+              ListTile(
+                key: const ValueKey('session-menu-move'),
+                leading: const Icon(Icons.drive_file_move_outlined),
+                title: Text(s.se1215MenuMove),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  unawaited(_moveToProject(session));
+                },
+              ),
+            ListTile(
+              key: const ValueKey('session-menu-export'),
+              leading: const Icon(Icons.ios_share_outlined),
+              title: Text(s.se1215MenuExport),
+              onTap: () {
+                Navigator.pop(ctx);
+                unawaited(_exportSession(session));
+              },
+            ),
             ListTile(
               leading: Icon(
                 hidden
@@ -1855,6 +1910,211 @@ class _SessionListScreenState extends State<SessionListScreen>
     );
   }
 
+  // ── Move to project ──────────────────────────────────────────────────────
+
+  /// "Mover a proyecto": reads the project tree and moves the STORED session
+  /// to the chosen folder over the shared socket. One lease for the whole
+  /// flow, always released; nothing is retried.
+  Future<void> _moveToProject(Session session) async {
+    final notices = HermesNotice.of(context);
+    final s = Strings.of(context);
+    void say(String text, HermesNoticeKind kind) {
+      if (!mounted) return;
+      notices.showSnackBar(SnackBar(content: Text(text)), kind: kind);
+    }
+
+    SharedGatewayLease? lease;
+    try {
+      lease = _moveLease = SharedGatewayPool.instance.acquire(
+        widget.connection,
+        factory: widget.gatewayFactory,
+      );
+      final tree = await lease.client.projectTree();
+      if (!mounted) return;
+      setState(() => _projectTree = tree);
+      final targets = projectMoveTargets(
+        tree,
+        sessionCwd: session.cwd,
+        sessionGitRepoRoot: session.gitRepoRoot,
+      );
+      if (targets.isEmpty) {
+        say(s.se1215MoveNoProjects, HermesNoticeKind.info);
+        return;
+      }
+      final target = await _pickProject(targets, title: s.se1215MenuMove);
+      if (target == null || !mounted) return;
+      final result = await lease.client.moveSessionWorkspace(
+        sessionKey: session.id,
+        cwd: target.cwd,
+        profile: session.profile,
+      );
+      if (!mounted) return;
+      _replaceSession(
+        session.id,
+        (row) => row.copyWith(
+          cwd: result.cwd,
+          gitRepoRoot: result.gitRepoRoot,
+          clearGitRepoRoot: result.gitRepoRoot == null,
+          gitBranch: result.branch,
+          clearGitBranch: result.branch == null,
+        ),
+      );
+      say(s.se1215MovedTo(target.label), HermesNoticeKind.success);
+    } on DesktopControlFailure catch (failure) {
+      if (failure.kind == DesktopControlFailureKind.unsupported) {
+        if (mounted) setState(() => _moveUnsupported.add(widget.connection.id));
+      } else {
+        say(s.se1215MoveFailed, HermesNoticeKind.error);
+      }
+    } catch (_) {
+      say(s.se1215MoveFailed, HermesNoticeKind.error);
+    } finally {
+      lease?.release();
+      if (identical(_moveLease, lease)) _moveLease = null;
+    }
+  }
+
+  SharedGatewayLease? _moveLease;
+
+  /// Applies [change] to the row [id] in the lists this screen holds, without
+  /// reloading the library.
+  void _replaceSession(String id, Session Function(Session row) change) {
+    Session pick(Session row) => row.id == id ? change(row) : row;
+    setState(() {
+      _sessions = [for (final row in _sessions) pick(row)];
+      final results = _searchResults;
+      if (results != null) {
+        _searchResults = [for (final row in results) pick(row)];
+      }
+      _listRevision++;
+    });
+  }
+
+  Future<ProjectMoveTarget?> _pickProject(
+    List<ProjectMoveTarget> targets, {
+    required String title,
+    bool withAll = false,
+  }) {
+    final s = Strings.of(context);
+    return showHermesFloatingSurface<ProjectMoveTarget?>(
+      context: context,
+      surfaceKey: const ValueKey('session-project-surface'),
+      maxWidth: 480,
+      maxHeightFactor: 0.7,
+      builder: (ctx) => SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: Theme.of(context).hermes.textPrimary,
+                  ),
+                ),
+              ),
+            ),
+            Divider(height: 1, color: Theme.of(context).hermes.divider),
+            if (withAll)
+              ListTile(
+                title: Text(s.se1215ProjectAll),
+                onTap: () => Navigator.pop(
+                  ctx,
+                  const ProjectMoveTarget(id: '', label: '', cwd: ''),
+                ),
+              ),
+            for (final target in targets)
+              ListTile(
+                leading: const Icon(Icons.folder_outlined),
+                title: Text(target.label),
+                onTap: () => Navigator.pop(ctx, target),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// "Filtrar por proyecto": only offered once the tree was loaded.
+  Future<void> _chooseProjectFilter() async {
+    final tree = _projectTree;
+    if (tree == null) return;
+    final s = Strings.of(context);
+    final choice = await _pickProject(
+      projectMoveTargets(tree),
+      title: s.se1215ProjectFilter,
+      withAll: true,
+    );
+    if (choice == null || !mounted) return;
+    setState(
+      () => _projectFilterFolder = choice.cwd.isEmpty ? null : choice.cwd,
+    );
+  }
+
+  // ── Export ───────────────────────────────────────────────────────────────
+
+  SessionExportService? _exporter;
+
+  /// "Exportar (JSON)": reads the transcript, writes the Desktop shaped file
+  /// and opens the share sheet. The notice is the non-blocking progress;
+  /// leaving the screen drops the result.
+  Future<void> _exportSession(Session session) async {
+    final notices = HermesNotice.of(context);
+    final s = Strings.of(context);
+    final title = _titleFor(session);
+    final exporter =
+        widget.sessionExporter ??
+        (_exporter ??= SessionExportService(readMessages: _client.getMessages));
+    final progress = notices.showSnackBar(
+      SnackBar(
+        content: Text(s.se1215ExportPreparing),
+        duration: const Duration(minutes: 2),
+      ),
+      kind: HermesNoticeKind.info,
+    );
+    final result = await exporter.export(
+      session,
+      title: title,
+      isCancelled: () => !mounted,
+    );
+    progress?.dismiss();
+    if (!mounted) return;
+    final text = switch (result) {
+      SessionExportResult.tooLarge => s.se1215ExportTooLarge,
+      SessionExportResult.notFound ||
+      SessionExportResult.unavailable ||
+      SessionExportResult.failed => s.se1215ExportFailed,
+      SessionExportResult.shared || SessionExportResult.cancelled => null,
+    };
+    if (text != null) {
+      notices.showSnackBar(
+        SnackBar(content: Text(text)),
+        kind: HermesNoticeKind.error,
+      );
+    }
+  }
+
+  // ── Sort ─────────────────────────────────────────────────────────────────
+
+  Future<void> _setSort(SessionListSort sort) async {
+    if (sort == _sort) return;
+    setState(() => _sort = sort);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_sortPrefKey, sort.wire);
+  }
+
+  String _sortLabel(Strings s, SessionListSort sort) => switch (sort) {
+    SessionListSort.activity => s.se1215SortActivity,
+    SessionListSort.created => s.se1215SortCreated,
+    SessionListSort.tokens => s.se1215SortTokens,
+    SessionListSort.cost => s.se1215SortCost,
+  };
+
   // ── Filtering ────────────────────────────────────────────────────────────
 
   /// [_computeFilteredSessions] memoized on every input it reads: list
@@ -1871,6 +2131,8 @@ class _SessionListScreenState extends State<SessionListScreen>
       _activeCategory,
       _showArchived,
       Localizations.localeOf(context),
+      _sort,
+      _projectFilterFolder,
     );
     final previous = _filteredKey;
     if (previous is _FilterKey && _sameFilterKey(previous, key)) {
@@ -1891,7 +2153,9 @@ class _SessionListScreenState extends State<SessionListScreen>
       a.$6 == b.$6 &&
       a.$7 == b.$7 &&
       a.$8 == b.$8 &&
-      a.$9 == b.$9;
+      a.$9 == b.$9 &&
+      a.$10 == b.$10 &&
+      a.$11 == b.$11;
 
   List<Session> _computeFilteredSessions() {
     SessionListScreen.debugFilterPasses++;
@@ -1909,6 +2173,15 @@ class _SessionListScreenState extends State<SessionListScreen>
       final archived = _isArchived(s);
       if (_showArchived != archived) return false;
       if (!_activeCategory.includesSource(s.source)) return false;
+      final folder = _projectFilterFolder;
+      if (folder != null &&
+          !sessionInProjectFolder(
+            folder,
+            cwd: s.cwd,
+            gitRepoRoot: s.gitRepoRoot,
+          )) {
+        return false;
+      }
 
       // Apply search query
       if (query.isEmpty || _repository != null) return true;
@@ -1917,21 +2190,21 @@ class _SessionListScreenState extends State<SessionListScreen>
     }).toList();
 
     // Las fijadas suben al principio en cualquier categoría no archivada
-    // (archivar desfija). El resto conserva el orden por actividad.
-    if (!_showArchived) {
-      list.sort((a, b) {
-        final pa = _isPinned(a) ? 0 : 1;
-        final pb = _isPinned(b) ? 0 : 1;
-        if (pa != pb) return pa - pb;
-        return compareSessionsByRecentActivity(a, b);
-      });
-    }
-    return list;
+    // (archivar desfija). El resto sigue el orden elegido (por defecto, la
+    // actividad reciente).
+    // The archive keeps the server's order unless a key was chosen.
+    if (_showArchived && _sort == SessionListSort.activity) return list;
+    return sortSessionList(
+      list,
+      _sort,
+      isPinned: _isPinned,
+      pinnedFirst: !_showArchived,
+    );
   }
 
-  /// Intercala cabeceras de sección entre las sesiones (Fijadas / Hoy / Ayer /
-  /// Últimos 7 días / Anteriores) y marca la posición de cada fila dentro de su
-  /// sección.
+  /// Intercala cabeceras de sección entre las sesiones (Fijadas, luego Hoy /
+  /// Ayer / Esta semana / Semana pasada / Este mes / cada mes, según el orden
+  /// elegido) y marca la posición de cada fila dentro de su sección.
   ///
   /// El mockup pinta UNA tarjeta redondeada por sección, con las filas
   /// separadas por líneas finas, en vez de una caja por conversación. Se
@@ -1962,36 +2235,49 @@ class _SessionListScreenState extends State<SessionListScreen>
     for (final s in sessions) {
       (_isPinned(s) ? pinned : rest).add(s);
     }
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final yesterday = today.subtract(const Duration(days: 1));
-    final week = today.subtract(const Duration(days: 6));
-    String bucketOf(Session s) {
-      final d = DateTime.fromMillisecondsSinceEpoch(
-        (s.lastActivityAt * 1000).round(),
-      );
-      final day = DateTime(d.year, d.month, d.day);
-      if (!day.isBefore(today)) return str.sesDateToday;
-      if (!day.isBefore(yesterday)) return str.sesDateYesterday;
-      if (!day.isBefore(week)) return str.sesDateLast7;
-      return str.sesDateOlder;
-    }
-
     final out = <Object>[];
     out.addAll(card(str.sesPinned, pinned, first: true));
-    // Agrupa por día conservando el orden por actividad que ya trae la lista.
-    final buckets = <String, List<Session>>{};
-    final order = <String>[];
+    // Tokens and cost have no date: one section named after the key.
+    if (_sort == SessionListSort.tokens || _sort == SessionListSort.cost) {
+      out.addAll(
+        card(
+          _sort == SessionListSort.tokens
+              ? str.se1215SortTokens
+              : str.se1215SortCost,
+          rest,
+          first: out.isEmpty,
+        ),
+      );
+      return out;
+    }
+    // Human days (04:00 rollover) and the locale's weeks, months and years,
+    // cut on the date of the chosen key and kept in the order the list has.
+    final now = _now();
+    final locale = Localizations.localeOf(context);
+    final firstDay = MaterialLocalizations.of(context).firstDayOfWeekIndex;
+    final weekStartsOn = firstDay == 0 ? DateTime.sunday : firstDay;
+    final buckets = <CalendarBucketKey, List<Session>>{};
+    final order = <CalendarBucketKey>[];
     for (final s in rest) {
-      final bucket = bucketOf(s);
-      final rows = buckets.putIfAbsent(bucket, () {
-        order.add(bucket);
+      final key = calendarBucket(
+        _sort.dateFor(s) ?? s.lastActivityAt,
+        now,
+        weekStartsOn: weekStartsOn,
+      );
+      final rows = buckets.putIfAbsent(key, () {
+        order.add(key);
         return <Session>[];
       });
       rows.add(s);
     }
-    for (final label in order) {
-      out.addAll(card(label, buckets[label]!, first: out.isEmpty));
+    for (final key in order) {
+      out.addAll(
+        card(
+          calendarBucketLabel(str, key, locale),
+          buckets[key]!,
+          first: out.isEmpty,
+        ),
+      );
     }
     return out;
   }
@@ -2064,9 +2350,17 @@ class _SessionListScreenState extends State<SessionListScreen>
             icon: Icon(Icons.more_vert, color: colors.textSecondary),
             tooltip: s.slMoreOptions,
             onSelected: (value) {
+              if (value.startsWith('sort:')) {
+                unawaited(
+                  _setSort(SessionListSort.fromWire(value.substring(5))),
+                );
+                return;
+              }
               switch (value) {
                 case 'refresh':
                   if (!_loading) _fetchSessions();
+                case 'project-filter':
+                  unawaited(_chooseProjectFilter());
               }
             },
             itemBuilder: (ctx) => [
@@ -2079,6 +2373,28 @@ class _SessionListScreenState extends State<SessionListScreen>
                   title: Text(s.slMenuRefresh),
                 ),
               ),
+              const PopupMenuDivider(),
+              PopupMenuItem<String>(
+                enabled: false,
+                height: 32,
+                child: Text(
+                  s.se1215SortBy,
+                  style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                ),
+              ),
+              for (final sort in SessionListSort.values)
+                CheckedPopupMenuItem<String>(
+                  value: 'sort:${sort.wire}',
+                  checked: _sort == sort,
+                  child: Text(_sortLabel(s, sort)),
+                ),
+              if (_projectTree != null) ...[
+                const PopupMenuDivider(),
+                PopupMenuItem<String>(
+                  value: 'project-filter',
+                  child: Text(s.se1215ProjectFilter),
+                ),
+              ],
             ],
           ),
         ],
@@ -3152,4 +3468,6 @@ typedef _FilterKey = (
   SessionCategory,
   bool,
   Locale,
+  SessionListSort,
+  String?,
 );
