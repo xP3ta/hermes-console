@@ -8,7 +8,6 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hermes_android/core/models/session.dart';
 import 'package:hermes_android/core/models/core_read.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/session_export_service.dart';
@@ -227,8 +226,10 @@ void main() {
       await service(
         _api(_messages(2), requests: requests),
       ).export(_session(profile: 'work'));
-      expect(requests.single.path, '/api/sessions/stored-0123456789/messages');
-      expect(requests.single.queryParameters['profile'], 'work');
+      expect(
+        requests.single.path,
+        '/p/work/api/sessions/stored-0123456789/messages',
+      );
     });
 
     test('the temporary file is deleted after sharing', () async {
