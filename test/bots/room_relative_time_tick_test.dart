@@ -98,6 +98,16 @@ void main() {
               .ageTickArmed
           as bool;
 
+  Duration? delay(WidgetTester tester) =>
+      (tester.state(find.byType(RoomScreen, skipOffstage: false)) as dynamic)
+              .ageTickDelay
+          as Duration?;
+
+  int ageTicks(WidgetTester tester) =>
+      (tester.state(find.byType(RoomScreen, skipOffstage: false)) as dynamic)
+              .ageTicks
+          as int;
+
   /// Advances the screen clock and the test's fake time together.
   Future<void> advance(WidgetTester tester, Duration by) async {
     now = now.add(by);
@@ -122,12 +132,39 @@ void main() {
     await pumpIdleRoom(tester);
     await advance(tester, const Duration(minutes: 52));
     expect(line(tester), 'Round 1 finished · 1 h ago');
+    // 1 h 0 min 5 s old: the next label is 2 h, one repaint away.
+    expect(delay(tester), const Duration(minutes: 59, seconds: 55));
+    final ticks = ageTicks(tester);
     for (var i = 0; i < 58; i++) {
       await advance(tester, const Duration(minutes: 1));
       expect(line(tester), 'Round 1 finished · 1 h ago');
     }
+    expect(ageTicks(tester), ticks, reason: 'no repaint inside the hour');
     await advance(tester, const Duration(minutes: 2));
     expect(line(tester), 'Round 1 finished · 2 h ago');
+    expect(ageTicks(tester), ticks + 1);
+    expect(delay(tester), const Duration(minutes: 59, seconds: 55));
+  });
+
+  testWidgets('past a day the label changes once per day', (tester) async {
+    await pumpIdleRoom(tester);
+    // 23 h 59 min 5 s old.
+    await advance(tester, const Duration(hours: 23, minutes: 50, seconds: 60));
+    expect(line(tester), 'Round 1 finished · 23 h ago');
+    await advance(tester, const Duration(minutes: 1));
+    expect(line(tester), 'Round 1 finished · 1 d ago');
+    // 1 d 0 h 0 min 5 s old.
+    expect(delay(tester), const Duration(hours: 23, minutes: 59, seconds: 55));
+    final ticks = ageTicks(tester);
+    for (var i = 0; i < 23; i++) {
+      await advance(tester, const Duration(hours: 1));
+      expect(line(tester), 'Round 1 finished · 1 d ago');
+    }
+    expect(ageTicks(tester), ticks, reason: 'no repaint inside the day');
+    await advance(tester, const Duration(hours: 1));
+    expect(line(tester), 'Round 1 finished · 2 d ago');
+    expect(ageTicks(tester), ticks + 1);
+    expect(delay(tester), const Duration(hours: 23, minutes: 59, seconds: 55));
   });
 
   testWidgets('no tick in the background; the age is fresh on return', (

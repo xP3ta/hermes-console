@@ -319,6 +319,17 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   @visibleForTesting
   bool get ageTickArmed => _agoTimer?.isActive ?? false;
 
+  Duration? _agoTickDelay;
+  int _agoTicks = 0;
+
+  /// Delay of the last armed repaint (null before the first).
+  @visibleForTesting
+  Duration? get ageTickDelay => _agoTickDelay;
+
+  /// Age repaints fired so far.
+  @visibleForTesting
+  int get ageTicks => _agoTicks;
+
   /// Repaints the relative age when its label next changes (a minute, an
   /// hour or a day later), only while the room is on screen: no timer runs
   /// in the background or under another route.
@@ -332,8 +343,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     if (_agoTimer != null && _agoTimerSince == since) return;
     _agoTimer?.cancel();
     _agoTimerSince = since;
-    _agoTimer = Timer(roomAgoNextChange(_now.difference(since)), () {
+    final delay = _agoTickDelay = roomAgoNextChange(_now.difference(since));
+    _agoTimer = Timer(delay, () {
       _agoTimer = null;
+      _agoTicks += 1;
       if (mounted && _poller.active) setState(() {});
     });
   }
