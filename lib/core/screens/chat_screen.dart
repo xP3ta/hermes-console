@@ -25,7 +25,7 @@ import 'dart:math' as math;
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart'
-    show ValueListenable, ValueNotifier, visibleForTesting;
+    show ValueListenable, ValueNotifier, mapEquals, visibleForTesting;
 import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
@@ -17623,6 +17623,14 @@ class _PlannedErrorCard extends StatefulWidget {
   State<_PlannedErrorCard> createState() => _PlannedErrorCardState();
 }
 
+/// Whether [a] and [b] show the same failed turn of the same chat/profile.
+bool _sameFailure(ChatErrorBubble a, ChatErrorBubble b) =>
+    a.retryScope == b.retryScope &&
+    a.error == b.error &&
+    a.prompt == b.prompt &&
+    mapEquals(a.surface?.toJson(), b.surface?.toJson()) &&
+    mapEquals(a.billing?.toJson(), b.billing?.toJson());
+
 class _PlannedErrorCardState extends State<_PlannedErrorCard>
     with WidgetsBindingObserver {
   bool _expanded = false;
@@ -17636,6 +17644,10 @@ class _PlannedErrorCardState extends State<_PlannedErrorCard>
   /// `null` until the user opens the details of a free-tier failure.
   bool? _freeTierSignInOffered;
   bool _freeTierChecked = false;
+
+  /// Bumped when this slot starts showing another failure, so the answer of a
+  /// check started for the previous one is dropped.
+  int _failureGeneration = 0;
 
   ChatErrorBubble get _bubble => widget.bubble;
   bool get _armed => _armTimer != null;
@@ -17659,6 +17671,12 @@ class _PlannedErrorCardState extends State<_PlannedErrorCard>
   void didUpdateWidget(_PlannedErrorCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     final old = oldWidget.bubble;
+    if (!_sameFailure(old, _bubble)) {
+      _failureGeneration++;
+      _expanded = false;
+      _freeTierChecked = false;
+      _freeTierSignInOffered = null;
+    }
     if (_armed &&
         (!_bubble.canArmRetry ||
             _bubble.retryScope != old.retryScope ||
@@ -17727,12 +17745,17 @@ class _PlannedErrorCardState extends State<_PlannedErrorCard>
       return;
     }
     _freeTierChecked = true;
+    final generation = _failureGeneration;
     check().then<void>(
       (offered) {
-        if (mounted) setState(() => _freeTierSignInOffered = offered);
+        if (mounted && generation == _failureGeneration) {
+          setState(() => _freeTierSignInOffered = offered);
+        }
       },
       onError: (Object _) {
-        if (mounted) setState(() => _freeTierSignInOffered = false);
+        if (mounted && generation == _failureGeneration) {
+          setState(() => _freeTierSignInOffered = false);
+        }
       },
     );
   }
