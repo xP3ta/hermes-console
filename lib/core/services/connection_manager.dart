@@ -1341,6 +1341,14 @@ List<Map<String, dynamic>> _strictTranscriptMessages(Object? rawMessages) {
   return List.unmodifiable(messages);
 }
 
+/// A transcript read passed its character cap ([ApiClient.getMessages]).
+final class SessionTranscriptTooLargeException implements Exception {
+  const SessionTranscriptTooLargeException();
+
+  @override
+  String toString() => 'SessionTranscriptTooLargeException';
+}
+
 class ApiClient {
   static const Duration _requestTimeout = Duration(seconds: 15);
   final http.Client _http;
@@ -1486,12 +1494,17 @@ class ApiClient {
 
   // ── Messages ─────────────────────────────────────────────────────────
 
+  /// The whole transcript, oldest first. [maxJsonChars] bounds what is read:
+  /// once the messages read so far encode to more characters than that, it
+  /// stops with [SessionTranscriptTooLargeException] instead of paging on.
   Future<List<Map<String, dynamic>>> getMessages(
     String sessionId, {
     String? profile,
+    int? maxJsonChars,
   }) async {
     const limit = 500;
     var offset = 0;
+    var jsonChars = 0;
     final pagesNewestFirst = <List<Map<String, dynamic>>>[];
     final signatures = <String>{};
     while (true) {
@@ -1503,6 +1516,12 @@ class ApiClient {
       );
       if (!page.messagesFullyParsed || !page.paginationFullyParsed) {
         throw const CoreReadException(CoreReadErrorKind.malformed);
+      }
+      if (maxJsonChars != null) {
+        jsonChars += jsonEncode(page.messages).length;
+        if (jsonChars > maxJsonChars) {
+          throw const SessionTranscriptTooLargeException();
+        }
       }
       pagesNewestFirst.add(page.messages);
       if (!page.paginationProvided) break;
