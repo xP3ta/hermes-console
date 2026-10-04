@@ -124,6 +124,16 @@ void main() {
     (widget) => widget is HermesNavRow && widget.title == 'Avanzado',
   );
 
+  Finder diagnosticsOnlyRow(WidgetTester tester) {
+    final s = Strings.of(tester.element(find.byType(Scaffold).first));
+    return find.byWidgetPredicate(
+      (widget) =>
+          widget is HermesNavRow &&
+          widget.title == 'Avanzado' &&
+          widget.subtitle == s.sd1215AdvancedSub,
+    );
+  }
+
   Future<void> showRow(WidgetTester tester) async {
     await tester.scrollUntilVisible(
       advancedRow(),
@@ -153,7 +163,11 @@ void main() {
     expect(store.schemaReads, 1);
   });
 
-  testWidgets('a server without the schema has no row', (tester) async {
+  // Advanced also holds Diagnostics (probed only when it opens), so the row
+  // stays without a schema and speaks of the server's diagnostics instead.
+  testWidgets('a server without the schema keeps a Diagnostics-only row', (
+    tester,
+  ) async {
     final store = _Store(
       _schema(),
       error: const ServerConfigException(ServerConfigFailureKind.unsupported),
@@ -168,10 +182,12 @@ void main() {
     );
     await tester.pump();
     expect(store.schemaReads, 1);
-    expect(advancedRow(), findsNothing);
+    expect(diagnosticsOnlyRow(tester), findsOneWidget);
   });
 
-  testWidgets('a schema with none of the fields has no row', (tester) async {
+  testWidgets('a schema with none of the fields keeps a Diagnostics-only row', (
+    tester,
+  ) async {
     final store = _Store(_schema('logging.level'));
     await pumpSettings(tester, store);
     await tester.scrollUntilVisible(
@@ -183,10 +199,12 @@ void main() {
     );
     await tester.pump();
     expect(store.schemaReads, 1);
-    expect(advancedRow(), findsNothing);
+    expect(diagnosticsOnlyRow(tester), findsOneWidget);
   });
 
-  testWidgets('denied config reads: no row and no request', (tester) async {
+  testWidgets('denied config reads: Diagnostics-only row and no request', (
+    tester,
+  ) async {
     await manager.saveCapabilities(
       'conn-row1215',
       const CapabilityMatrix(configRead: CapState.no),
@@ -202,7 +220,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(advancedRow(), findsNothing);
+    expect(diagnosticsOnlyRow(tester), findsOneWidget);
     expect(store.schemaReads, 0);
   });
 

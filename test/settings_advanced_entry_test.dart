@@ -56,6 +56,10 @@ void main() {
       200,
       scrollable: find.byType(Scrollable).first,
     );
+    // The row sits at the end of the System section now; bring it fully
+    // into the viewport so the tap lands on it.
+    await tester.ensureVisible(advancedRow());
+    await tester.pump();
     letKnownAssertionThrough(tester);
   }
 

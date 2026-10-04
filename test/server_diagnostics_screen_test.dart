@@ -15,6 +15,8 @@ import 'package:hermes_android/core/capabilities/server_diagnostics_probe.dart'
 import 'package:hermes_android/core/screens/advanced_settings_screen.dart';
 import 'package:hermes_android/core/screens/server_diagnostics_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/server_config_repository.dart';
+import 'package:hermes_android/core/services/server_toolsets_repository.dart';
 import 'package:hermes_android/core/services/server_restart_signal.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_pill.dart' show TuiLoader;
@@ -22,6 +24,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'capabilities/capabilities_fakes.dart';
+import 'support/fake_toolsets_server.dart';
 
 const _host = 'hermes.example.test';
 
@@ -174,6 +177,15 @@ void main() {
             connManager: manager,
             repositoryFor: repos(rest),
             mcpReader: (_) async => const [],
+            // Advanced also lists the server settings pages; this server
+            // offers none, so only Diagnostics is under test here.
+            storeFor: (profile, {required writable}) => _NoSchemaStore(),
+            toolsetsFor: (profile, {required writable}) =>
+                ServerToolsetsRepository(
+                  (FakeToolsetsServer()..toolsets = []).dashboard,
+                  profile: profile,
+                  writable: writable,
+                ),
           ),
         );
 
@@ -828,4 +840,20 @@ final class _GatedRest implements CapabilitiesRest {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A server whose config schema is not readable.
+final class _NoSchemaStore implements ServerConfigStore {
+  @override
+  bool get isWritable => false;
+
+  @override
+  Future<Map<String, dynamic>> readConfig() async => {};
+
+  @override
+  Future<Map<String, dynamic>> readSchema() async =>
+      throw const ServerConfigException(ServerConfigFailureKind.unsupported);
+
+  @override
+  Future<Object?> save(String path, Object? value) async => value;
 }
