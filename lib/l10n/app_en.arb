@@ -1253,8 +1253,6 @@
   "setSecuritySub": "App lock, privacy and credential protection",
   "setPermissions": "Permissions / Approvals",
   "setPermissionsSub": "How Hermes asks permission: YOLO, interactive, conservative or read-only",
-  "setServerConfig": "Server config (read-only)",
-  "setServerConfigSub": "View the agent's real config.yaml via Mobile Bridge, with secrets masked",
   "setActivePrefix": "Active: ",
   "setFontStyle": "Font style",
   "setAppliesInstantly": "Applies to the whole app instantly",

@@ -44,7 +44,6 @@ import '../capabilities/capabilities_repository.dart'
     show CapabilitiesRepository;
 import 'about_screen.dart';
 import 'advanced_settings_screen.dart';
-import 'bridge_file_editor_screen.dart';
 import 'lock_screen.dart';
 import 'gateway_manager_screen.dart';
 import 'instance_edit_screen.dart';
@@ -319,24 +318,6 @@ class SettingsScreen extends StatelessWidget {
                         context,
                         MaterialPageRoute(
                           builder: (_) => PermissionsScreen(connection: conn),
-                        ),
-                      ),
-                    ),
-                    HermesNavRow(
-                      icon: Icons.tune_outlined,
-                      title: Strings.of(context).setServerConfig,
-                      subtitle: Strings.of(context).setServerConfigSub,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => BridgeFileEditorScreen(
-                            connectionId: conn.id,
-                            target: Strings.of(context).setSecConfig,
-                            titleLabel: 'config.yaml',
-                            readOnly: true,
-                            // The Bridge reads its own home's file.
-                            scopeProfile: '',
-                          ),
                         ),
                       ),
                     ),
