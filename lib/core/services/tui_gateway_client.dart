@@ -32,6 +32,7 @@ import '../models/desktop_context_breakdown.dart';
 import '../models/desktop_model_catalog.dart';
 import '../models/desktop_session_config.dart';
 import '../models/desktop_session_snapshot.dart';
+import '../models/session_workspace_move.dart';
 import '../models/interactive_prompt.dart';
 import '../models/hosted_groups.dart';
 import '../models/profile_pet.dart';
@@ -6440,6 +6441,30 @@ class TuiGatewayClient
     await _controlRequest('projects.set_active', {
       'id': _savedProjectId(id),
     }, capability: DesktopGatewayCapability.projectManagement);
+  }
+
+  /// Re-homes a STORED session's workspace (`session.workspace.move`): the
+  /// git branch and root are replaced and a live agent follows. [sessionKey]
+  /// is the stored id, never the runtime one. It is a long handler on the
+  /// server (git probes on an arbitrary mount), so it waits generously, and a
+  /// dropped socket fails it without a retry. Failures are sanitized:
+  /// 4007 unavailable, -32601 unsupported, 4016/4017/5007 rejected.
+  Future<SessionWorkspaceMoveResult> moveSessionWorkspace({
+    required String sessionKey,
+    required String cwd,
+    String? profile,
+  }) async {
+    _requireWritableControlConnection();
+    final key = _validatedControlValue(sessionKey, maxLength: 512);
+    final folder = _validatedControlValue(cwd, maxLength: 4096);
+    final owner = profile?.trim() ?? '';
+    final result = await _controlRequest('session.workspace.move', {
+      'session_key': key,
+      'cwd': folder,
+      if (owner.isNotEmpty) 'profile': owner,
+    }, timeout: const Duration(minutes: 3));
+    return SessionWorkspaceMoveResult.tryParse(result) ??
+        _invalidControlResponse();
   }
 
   Future<T> _projectGitRequest<T>(Future<T> Function() request) async {

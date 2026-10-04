@@ -1342,6 +1342,14 @@ List<Map<String, dynamic>> _strictTranscriptMessages(Object? rawMessages) {
   return List.unmodifiable(messages);
 }
 
+/// A transcript read passed its character cap ([ApiClient.getMessages]).
+final class SessionTranscriptTooLargeException implements Exception {
+  const SessionTranscriptTooLargeException();
+
+  @override
+  String toString() => 'SessionTranscriptTooLargeException';
+}
+
 class ApiClient {
   static const Duration _requestTimeout = Duration(seconds: 15);
   final http.Client _http;
@@ -1525,23 +1533,42 @@ class ApiClient {
 
   // ── Messages ─────────────────────────────────────────────────────────
 
+  /// The whole transcript, oldest first. [maxJsonChars] bounds what is read:
+  /// once the messages read so far encode to more characters than that, it
+  /// stops with [SessionTranscriptTooLargeException] instead of paging on.
   Future<List<Map<String, dynamic>>> getMessages(
     String sessionId, {
     String? profile,
+    int? maxJsonChars,
   }) async {
     const limit = 500;
     var offset = 0;
+    var jsonChars = 0;
     final pagesNewestFirst = <List<Map<String, dynamic>>>[];
     final signatures = <String>{};
     while (true) {
-      final page = await getMessagesPage(
-        sessionId,
-        profile: profile,
-        limit: limit,
-        offset: offset,
-      );
+      final page = maxJsonChars == null
+          ? await getMessagesPage(
+              sessionId,
+              profile: profile,
+              limit: limit,
+              offset: offset,
+            )
+          : await _readMessagesPage(
+              sessionId,
+              profile: profile,
+              limit: limit,
+              offset: offset,
+              maxBodyBytes: (maxJsonChars - jsonChars + 1) * _utf8BytesPerChar,
+            );
       if (!page.messagesFullyParsed || !page.paginationFullyParsed) {
         throw const CoreReadException(CoreReadErrorKind.malformed);
+      }
+      if (maxJsonChars != null) {
+        jsonChars += jsonEncode(page.messages).length;
+        if (jsonChars > maxJsonChars) {
+          throw const SessionTranscriptTooLargeException();
+        }
       }
       pagesNewestFirst.add(page.messages);
       if (!page.paginationProvided) break;
@@ -1566,6 +1593,32 @@ class ApiClient {
     ]);
   }
 
+  /// UTF-8 needs at most this many bytes per character, so a body under
+  /// `chars * _utf8BytesPerChar` bytes can still be under the character cap.
+  static const int _utf8BytesPerChar = 4;
+
+  /// GET that gives up as soon as the body passes [maxBytes], by the declared
+  /// length or by what has arrived, without buffering the rest.
+  Future<http.Response> _getBounded(Uri uri, int maxBytes) async {
+    final request = http.Request('GET', uri)..headers.addAll(_headers);
+    final streamed = await _http.send(request).timeout(_requestTimeout);
+    if (streamed.statusCode != 200) {
+      return http.Response('', streamed.statusCode);
+    }
+    final declared = streamed.contentLength;
+    if (declared != null && declared > maxBytes) {
+      throw const SessionTranscriptTooLargeException();
+    }
+    final bytes = <int>[];
+    await for (final chunk in streamed.stream.timeout(_requestTimeout)) {
+      bytes.addAll(chunk);
+      if (bytes.length > maxBytes) {
+        throw const SessionTranscriptTooLargeException();
+      }
+    }
+    return http.Response.bytes(bytes, 200, headers: streamed.headers);
+  }
+
   /// Una página del transcript con la semántica `order=latest` de Hermes
   /// Agent 0.20: [offset] se mide hacia atrás desde el mensaje MÁS reciente y
   /// la página llega en orden cronológico. Servidores antiguos ignoran los
@@ -1577,22 +1630,33 @@ class ApiClient {
     String? profile,
     int limit = 120,
     int offset = 0,
+  }) => _readMessagesPage(
+    sessionId,
+    profile: profile,
+    limit: limit,
+    offset: offset,
+  );
+
+  Future<SessionMessagesPage> _readMessagesPage(
+    String sessionId, {
+    String? profile,
+    required int limit,
+    required int offset,
+    int? maxBodyBytes,
   }) async {
     if (offset < 0) {
       throw const CoreReadException(CoreReadErrorKind.malformed);
     }
     final owner = validateCronProfile(profile);
     final boundedLimit = limit.clamp(1, 500);
-    final res = await _http
-        .get(
-          Uri.parse(
-            '$baseUrl/${profileEndpoint('api/sessions/${Uri.encodeComponent(sessionId)}/messages', profile: owner)}'
-            '?limit=$boundedLimit&order=latest&offset=$offset'
-            '&include_compacted=true',
-          ),
-          headers: _headers,
-        )
-        .timeout(_requestTimeout);
+    final uri = Uri.parse(
+      '$baseUrl/${profileEndpoint('api/sessions/${Uri.encodeComponent(sessionId)}/messages', profile: owner)}'
+      '?limit=$boundedLimit&order=latest&offset=$offset'
+      '&include_compacted=true',
+    );
+    final res = maxBodyBytes == null
+        ? await _http.get(uri, headers: _headers).timeout(_requestTimeout)
+        : await _getBounded(uri, maxBodyBytes);
     if (res.statusCode != 200) {
       throw CoreReadException(switch (res.statusCode) {
         400 => CoreReadErrorKind.malformed,

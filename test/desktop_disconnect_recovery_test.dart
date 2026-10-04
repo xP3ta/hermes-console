@@ -1362,6 +1362,7 @@ class _ControlledApiClient extends ApiClient {
   Future<List<Map<String, dynamic>>> getMessages(
     String sessionId, {
     String? profile,
+    int? maxJsonChars,
   }) {
     final request = Completer<List<Map<String, dynamic>>>();
     requests.add(request);
@@ -1399,6 +1400,7 @@ class _CompletedTranscriptApi extends ApiClient {
   Future<List<Map<String, dynamic>>> getMessages(
     String sessionId, {
     String? profile,
+    int? maxJsonChars,
   }) async {
     calls++;
     return transcript;
@@ -1424,6 +1426,7 @@ class _SingleAuthorizedTranscriptApi extends ApiClient {
   Future<List<Map<String, dynamic>>> getMessages(
     String sessionId, {
     String? profile,
+    int? maxJsonChars,
   }) async {
     calls += 1;
     if (calls == 1) {
@@ -1450,6 +1453,7 @@ class _ToolThenFinalTranscriptApi extends ApiClient {
   Future<List<Map<String, dynamic>>> getMessages(
     String sessionId, {
     String? profile,
+    int? maxJsonChars,
   }) async {
     calls++;
     if (calls == 1) {

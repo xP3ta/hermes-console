@@ -17,6 +17,7 @@ import 'package:hermes_android/core/models/desktop_model_catalog.dart';
 import 'package:hermes_android/core/models/desktop_session_config.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
+import 'package:hermes_android/core/models/session_workspace_move.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/models/turn_error_surface.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
@@ -377,6 +378,16 @@ final List<_Consumer> _consumers = [
         (s['error_surface'] is Map || s['billing'] is Map) &&
         !_renderableSurface(s['error_surface']) &&
         !_renderableBilling(s['billing']),
+  ),
+  // Move a stored session to a project folder.
+  _Consumer(
+    'result',
+    'session.workspace.move',
+    (c) => c.methodResultSchema('session.workspace.move'),
+    (s) => SessionWorkspaceMoveResult.tryParse(s) != null,
+    // A result without a folder carries nothing to apply to the row.
+    semanticallyEmpty: (s) =>
+        s['cwd'] is! String || (s['cwd'] as String).trim().isEmpty,
   ),
   _Consumer(
     'result',
