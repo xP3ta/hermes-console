@@ -230,29 +230,21 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
     unawaited(_loadNativeVoiceChoice());
   }
 
+  /// Reuses the screen's own Dashboard client: one extra GET, no second login.
   Future<void> _loadGptLiveStatus(
-    SavedConnection connection,
+    DashboardClient dashboard,
     String? profile,
   ) async {
     if (_gptLiveStatusRequested) return;
     _gptLiveStatusRequested = true;
-    final injected = widget.dashboardClientFactory;
-    DashboardClient? client;
-    try {
-      client = injected?.call(connection) ?? DashboardClient.lazy(connection);
-      final status = await DashboardVoiceLiveApi(
-        client,
-      ).fetchStatus(profile: profile ?? '');
-      if (!mounted) return;
-      setState(() {
-        _gptLiveStatus = status;
-        _gptLiveStatusLoaded = true;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _gptLiveStatusLoaded = true);
-    } finally {
-      if (injected == null) client?.close();
-    }
+    final status = await DashboardVoiceLiveApi(
+      dashboard,
+    ).fetchStatus(profile: profile ?? '');
+    if (!mounted) return;
+    setState(() {
+      _gptLiveStatus = status;
+      _gptLiveStatusLoaded = true;
+    });
   }
 
   String _gptLiveSubtitle(Strings s) {
@@ -307,7 +299,6 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
       manager: manager,
       connection: connection,
     );
-    unawaited(_loadGptLiveStatus(connection, effectiveProfile));
     final injectedFactory = widget.dashboardClientFactory;
     final ownsDashboard = injectedFactory == null;
     late final DashboardClient dashboard;
@@ -357,6 +348,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
         _nativeVoiceLoading =
             capability == null || !capabilityStore.isFresh(capability);
       });
+      unawaited(_loadGptLiveStatus(dashboard, effectiveProfile));
     }
     if (storedMode == NativeVoiceMode.server &&
         storedConsent == NativeVoiceConsent.accepted) {
