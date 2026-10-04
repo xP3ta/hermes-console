@@ -5,6 +5,8 @@
 /// what is open now, whoever owned the turn and across app restarts.
 library;
 
+import 'dart:convert';
+
 import '../models/deferred_tool_call.dart';
 import 'agent_preview_target.dart';
 
@@ -95,4 +97,42 @@ String _label(Object? raw, AgentPreviewTarget target) {
   }
   final host = Uri.tryParse(target.url)?.host ?? target.url;
   return host.startsWith('www.') ? host.substring(4) : host;
+}
+
+/// Largest evidence kept for a preview call, after encoding.
+const int _maxEvidenceChars = 4096;
+
+/// What a coalesced transcript row keeps of a `desktop_preview` call: its
+/// `action`, `url` and `label` and nothing else, as a JSON string. Also the
+/// preview calls wrapped by the deferred tool bridge. Null for any other tool,
+/// for unreadable arguments and for anything oversized, so no other tool's
+/// arguments ever reach the loaded transcript.
+String? agentPreviewEvidenceArguments(String toolName, Object? rawArguments) {
+  Map<String, String> pick(Object? arguments) {
+    if (arguments is! Map) return const {};
+    return {
+      for (final key in const ['action', 'url', 'label'])
+        if (arguments[key] is String) key: arguments[key] as String,
+    };
+  }
+
+  final String encoded;
+  if (isDeferredToolBridge(toolName)) {
+    final wrapped = unwrapDeferredToolCall(toolName, rawArguments);
+    if (wrapped == null) return null;
+    final calls = [
+      for (final call in wrapped)
+        if (call.name.trim().toLowerCase() == agentPreviewToolName)
+          {'name': agentPreviewToolName, 'arguments': pick(call.arguments)},
+    ];
+    if (calls.isEmpty) return null;
+    encoded = jsonEncode({'calls': calls});
+  } else if (toolName.trim().toLowerCase() == agentPreviewToolName) {
+    final kept = pick(decodeToolArguments(rawArguments));
+    if (kept.isEmpty) return null;
+    encoded = jsonEncode(kept);
+  } else {
+    return null;
+  }
+  return encoded.length > _maxEvidenceChars ? null : encoded;
 }
