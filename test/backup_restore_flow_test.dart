@@ -9,6 +9,7 @@ import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/action_follower.dart';
 import 'package:hermes_android/core/services/backup_restore_flow.dart';
+import 'package:hermes_android/core/services/backup_zip_summary.dart';
 
 import 'support/fake_backup_gateway.dart';
 
@@ -146,6 +147,16 @@ void main() {
       await f.createBackup(confirmed: true);
       await f.downloadToPhone();
       expect(dir.listSync(), isEmpty);
+    });
+
+    test('the safety backup can be downloaded after a failed import', () async {
+      gateway.importExit = 1;
+      final f = flow();
+      await f.inspect(await _zip(dir), deleteSourceWhenDone: false);
+      await f.restore(confirmed: true, safetyBackup: true);
+      await f.downloadToPhone(safety: true);
+      expect(gateway.calls, contains('download:default:/srv/backups/b1.zip'));
+      expect(shared, hasLength(1));
     });
 
     test('without a backup there is nothing to download', () async {
@@ -337,6 +348,7 @@ void main() {
       final f = flow();
       await f.inspect(bad, deleteSourceWhenDone: true);
       expect(f.failure?.kind, BackupFailureKind.badArchive);
+      expect(f.failure?.zipProblem, BackupZipProblem.notAZip);
       expect(bad.existsSync(), isFalse);
       expect(gateway.calls, isEmpty);
     });

@@ -96,8 +96,9 @@ class BackupZipSummary {
     var total = 0;
     for (final entry in entries) {
       final path = _normalize(entry.name);
-      if (path == null)
+      if (path == null) {
         throw const BackupZipRefused(BackupZipProblem.unsafePath);
+      }
       total += entry.size;
       final segments = path.split('/');
       final first = segments.first;

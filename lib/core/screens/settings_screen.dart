@@ -53,6 +53,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/terminal_availability.dart';
 import '../widgets/hermes_app_bar.dart';
+import 'backup_restore_screen.dart';
 import 'terminal_pane_screen.dart';
 import '../widgets/diagnostic_bundle_tile.dart';
 import '../widgets/install_source_section.dart';
@@ -335,6 +336,32 @@ class SettingsScreen extends StatelessWidget {
               _SectionHeader(Strings.of(context).setSecData),
               HermesGroup(
                 children: [
+                  if (!conn.readOnly)
+                    HermesNavRow(
+                      key: const ValueKey('settings-backup'),
+                      icon: Icons.settings_backup_restore_rounded,
+                      title: Strings.of(context).backupTitle,
+                      subtitle: Strings.of(context).backupSubtitle,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => BackupRestoreScreen(
+                            connection: conn,
+                            profile: Session.profileOwner(
+                              connManager.activeProfileFor(conn.id),
+                            ),
+                            onOpenSecurity: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => SecurityInfoScreen(
+                                  connManager: connManager,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   DiagnosticBundleTile(
                     controller: DiagnosticBundleController(
                       manager: connManager,

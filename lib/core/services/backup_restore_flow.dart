@@ -24,6 +24,10 @@ class BackupRouteMissing implements Exception {
 /// The Dashboard calls a backup needs. Every call carries the profile it acts
 /// on, `default` included.
 abstract class HermesBackupGateway {
+  /// False when the server has no backup routes (404 or 405). Sends nothing
+  /// that creates or changes anything.
+  Future<bool> available();
+
   Future<BackupCreated> createBackup(String profile);
 
   Future<void> downloadBackup(String archive, String profile, File target);
@@ -63,9 +67,12 @@ enum BackupFailureKind {
 
 /// Why a step failed. Carries a kind only: never server text or a path.
 class BackupFailure {
-  const BackupFailure(this.kind);
+  const BackupFailure(this.kind, {this.zipProblem});
 
   final BackupFailureKind kind;
+
+  /// For [BackupFailureKind.badArchive]: what was wrong with the zip.
+  final BackupZipProblem? zipProblem;
 
   @override
   String toString() => 'BackupFailure(${kind.name})';
@@ -228,8 +235,8 @@ class BackupRestoreFlow extends ChangeNotifier {
 
   /// Downloads the last backup to a temp file, hands it to the save/share
   /// sheet and deletes it again.
-  Future<void> downloadToPhone() async {
-    final path = _archive;
+  Future<void> downloadToPhone({bool safety = false}) async {
+    final path = safety ? _safetyArchive : _archive;
     if (path == null || _busy || _disposed) return;
     _busy = true;
     File? target;
@@ -263,11 +270,14 @@ class BackupRestoreFlow extends ChangeNotifier {
     try {
       _summary = await BackupZipSummary.inspect(zip, profile: profile);
       _set(BackupFlowStep.confirm);
-    } on BackupZipRefused {
+    } on BackupZipRefused catch (refused) {
       await _dropPicked();
       _set(
         BackupFlowStep.failed,
-        failure: const BackupFailure(BackupFailureKind.badArchive),
+        failure: BackupFailure(
+          BackupFailureKind.badArchive,
+          zipProblem: refused.reason,
+        ),
       );
     } catch (_) {
       await _dropPicked();

@@ -26,6 +26,14 @@ class FakeBackupGateway implements HermesBackupGateway {
     if (error != null) throw error;
   }
 
+  bool isAvailable = true;
+
+  @override
+  Future<bool> available() async {
+    calls.add('probe');
+    return isAvailable;
+  }
+
   @override
   Future<BackupCreated> createBackup(String profile) async {
     _record('create:$profile');
@@ -43,7 +51,7 @@ class FakeBackupGateway implements HermesBackupGateway {
     File target,
   ) async {
     _record('download:$profile:$archive');
-    await target.writeAsBytes([1, 2, 3]);
+    target.writeAsBytesSync([1, 2, 3]);
   }
 
   @override
