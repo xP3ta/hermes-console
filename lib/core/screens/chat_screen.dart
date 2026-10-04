@@ -112,6 +112,7 @@ import '../services/session_config_reducer.dart';
 import '../services/session_deletion.dart';
 import '../services/model_picker_loader.dart';
 import '../services/shared_gateway_pool.dart';
+import '../services/subagent_live_watch.dart';
 import '../services/subagent_transcript_projection.dart';
 import '../services/tui_gateway_client.dart'
     show TuiGatewayClient, TuiGatewayRpcError;
@@ -175,6 +176,7 @@ import '../widgets/callout_card.dart';
 import '../widgets/chat_event_cards.dart';
 import '../widgets/chat_control_sheet.dart';
 import '../widgets/hermes_drawer.dart';
+import '../widgets/profile_scope.dart' show appActiveProfileScope;
 import '../widgets/hermes_bot_face.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_suggestions.dart';
@@ -191,7 +193,8 @@ import '../widgets/motion_entrance.dart';
 import '../widgets/subagent_activity_card.dart';
 import '../design/modal.dart'
     show showHermesDialog, HermesDialogAction, HermesDialogActionStyle;
-import 'subagent_detail_screen.dart' show SubagentTranscriptPage;
+import 'subagent_detail_screen.dart'
+    show SubagentTranscriptPage, subagentIsLive;
 import '../widgets/activity_panel.dart';
 import '../widgets/activity_task_linger.dart';
 import '../widgets/compaction_dock.dart';
@@ -10652,6 +10655,31 @@ class _ChatScreenState extends State<ChatScreen>
     return null;
   }
 
+  /// Watch en directo del hijo para su pantalla de detalle. El chat presta su
+  /// propio gateway y su perfil fijado (nunca el activo global); un cambio de
+  /// perfil activo también la invalida y la pantalla cae al tail sondeado.
+  SubagentLiveWatch? _openSubagentLiveWatch(SubagentActivity activity) {
+    final lease = _chat.subagentWatchLease(activity);
+    final childSessionId = activity.childSessionId?.trim();
+    if (lease == null || childSessionId == null || childSessionId.isEmpty) {
+      return null;
+    }
+    final scope = appActiveProfileScope(context, widget.connection.id);
+    final ticket = scope?.capture();
+    return SubagentLiveWatch(
+      gateway: lease.gateway,
+      childSessionId: childSessionId,
+      profile: lease.profile,
+      isCurrent: () => lease.isCurrent() && (ticket?.isCurrent ?? true),
+      // A profile switch with no event after it must still end the watch.
+      invalidation: scope,
+      childIsLive: () {
+        final current = _currentSubagentActivity(activity.key);
+        return current != null && subagentIsLive(current);
+      },
+    );
+  }
+
   /// Carga la sesión hija solo tras una acción explícita. La ruta recibe una
   /// copia solo lectura de la conexión para que inspeccionar el transcript no
   /// pueda enviar prompts, duplicar ni borrar la conversación del subagente.
@@ -11989,6 +12017,8 @@ class _ChatScreenState extends State<ChatScreen>
                                                 appForeground:
                                                     _appInForeground &&
                                                     _chatRouteVisible,
+                                                openLiveWatch:
+                                                    _openSubagentLiveWatch,
                                                 onTail: (activity) async {
                                                   final result = await _chat
                                                       .tailSubagent(activity);
