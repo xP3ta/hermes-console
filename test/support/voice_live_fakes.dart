@@ -140,6 +140,10 @@ class FakeVoiceLiveApi implements VoiceLiveApi {
   );
   Object? statusError;
   Completer<VoiceLiveStatus?>? statusGate;
+
+  /// One gate per status read, consumed in call order when [statusGate] is
+  /// not set.
+  final List<Completer<VoiceLiveStatus?>> statusGateQueue = [];
   int statusCalls = 0;
   final List<String> statusProfiles = [];
   final List<({String sdp, List<Map<String, dynamic>> history, String profile})>
@@ -162,6 +166,7 @@ class FakeVoiceLiveApi implements VoiceLiveApi {
     statusProfiles.add(profile);
     final gate = statusGate;
     if (gate != null) return gate.future;
+    if (statusGateQueue.isNotEmpty) return statusGateQueue.removeAt(0).future;
     final error = statusError;
     if (error != null) throw error;
     return status;

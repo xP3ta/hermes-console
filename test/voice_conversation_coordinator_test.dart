@@ -60,6 +60,7 @@ class _Rig {
   final profileChanges = ValueNotifier<int>(0);
   late final VoiceConversationCoordinator coordinator;
   final chat = _chat('chat-1');
+  final chat2 = _chat('chat-2');
   bool optIn = false;
   bool apiFails = false;
   String profile = 'ops';
@@ -71,6 +72,7 @@ class _Rig {
   void dispose() {
     coordinator.dispose();
     chat.dispose();
+    chat2.dispose();
     visible.dispose();
     profileChanges.dispose();
   }
@@ -191,6 +193,50 @@ void main() {
       expect(rig.live.calls, ['enter']);
       expect(rig.api.statusCalls, 1);
     });
+
+    for (final aResolvesFirst in [true, false]) {
+      test(
+        'enter for another chat while the first status read is pending: '
+        'only the second owns an engine '
+        '(${aResolvesFirst ? 'A resolves first' : 'B resolves first'})',
+        () async {
+          rig.optIn = true;
+          const available = VoiceLiveStatus(
+            mode: VoiceLiveMode.gptLive,
+            available: true,
+          );
+          final gateA = Completer<VoiceLiveStatus?>();
+          final gateB = Completer<VoiceLiveStatus?>();
+          rig.api.statusGateQueue.addAll([gateA, gateB]);
+          final enteringA = rig.coordinator.enter(
+            chat: rig.chat,
+            model: 'hermes-agent',
+            profile: 'ops',
+          );
+          final enteringB = rig.coordinator.enter(
+            chat: rig.chat2,
+            model: 'hermes-agent',
+            profile: 'other',
+          );
+          expect(rig.api.statusProfiles, ['ops', 'other']);
+          if (aResolvesFirst) {
+            gateA.complete(available);
+            gateB.complete(available);
+          } else {
+            gateB.complete(available);
+            gateA.complete(available);
+          }
+          await enteringA;
+          await enteringB;
+          expect(rig.live.calls, ['enter']);
+          expect(rig.live.enteredProfile, 'other');
+          expect(rig.chained.calls, isEmpty);
+          expect(rig.coordinator.ownerChat, same(rig.chat2));
+          expect(rig.coordinator.ownsChat(rig.chat), isFalse);
+          expect(rig.coordinator.ownsChat(rig.chat2), isTrue);
+        },
+      );
+    }
 
     test('exit during the status read opens nothing', () async {
       rig.optIn = true;
