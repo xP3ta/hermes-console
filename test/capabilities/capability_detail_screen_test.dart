@@ -3,6 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/capabilities/capability_detail_screen.dart';
 import 'package:hermes_android/core/capabilities/capability_models.dart';
 import 'package:hermes_android/core/design/hermes_design.dart';
+import 'package:hermes_android/core/services/connection_manager.dart'
+    show DashboardHttpException;
+import 'package:hermes_android/l10n/app_localizations_es.dart';
 
 import '../support/inter_font.dart';
 import 'capabilities_fakes.dart';
@@ -19,6 +22,32 @@ const _docker = CapabilityItem(
   installedName: 'docker',
   provenance: 'hub',
   canRemove: true,
+);
+
+const _weatherCatalog = CapabilityItem(
+  kind: CapabilityKind.plugin,
+  id: 'plugin:community:weather',
+  name: 'Weather',
+  description:
+      'Forecasts for any city. Disclosure: hosted-only connector; city names go to weather.example.test.',
+  source: 'community',
+  trust: CapabilityTrust.community,
+  author: 'Example Labs',
+  version: '1.2.0',
+  installId: 'weather',
+  installedName: 'weather',
+  tools: ['weather_now'],
+  requirements: ['WEATHER_KEY'],
+  disclosure: CapabilityDisclosure(
+    repo: 'https://git.example.test/labs/weather',
+    subdir: 'plugin',
+    sha: 'abcdef0123456789abcdef0123456789abcdef01',
+    platforms: ['linux', 'macos'],
+    requiresHermes: '>=1.2.15',
+    hooks: ['on_turn'],
+    middleware: ['cache'],
+    knownIssues: ['Rate limited'],
+  ),
 );
 
 const _weather = CapabilityItem(
@@ -80,7 +109,7 @@ void main() {
       ]);
     });
 
-    test('MCP entry that needs credentials cannot install from here', () {
+    test('MCP entry that needs credentials installs through the env sheet', () {
       const mcp = CapabilityItem(
         kind: CapabilityKind.mcp,
         id: 'mcp:catalog:github',
@@ -88,7 +117,20 @@ void main() {
         installId: 'github',
         env: [CapabilityEnvField(name: 'GITHUB_TOKEN')],
       );
-      expect(capabilityActions(mcp, readOnly: false), isEmpty);
+      expect(capabilityActions(mcp, readOnly: false), [
+        CapabilityAction.install,
+      ]);
+      expect(capabilityActions(mcp, readOnly: true), isEmpty);
+    });
+
+    test('a removed catalog entry has no install', () {
+      final removed = _weatherCatalog.copyWith(
+        disclosure: _weatherCatalog.disclosure.withRemoved('Abandoned'),
+      );
+      expect(capabilityActions(_weatherCatalog, readOnly: false), [
+        CapabilityAction.install,
+      ]);
+      expect(capabilityActions(removed, readOnly: false), isEmpty);
     });
 
     test('only https docs links are offered', () {
@@ -264,9 +306,236 @@ void main() {
     );
     expect(rest.calls, isEmpty);
   });
+
+  testWidgets('plugin disclosure is visible before install', (tester) async {
+    await _pump(tester, _weatherCatalog, ScriptedRest());
+    for (final text in const [
+      'Example Labs',
+      '1.2.0 @ abcdef01',
+      'https://git.example.test/labs/weather',
+      'plugin',
+      'linux, macos',
+      '>=1.2.15',
+      'weather_now',
+      'on_turn',
+      'cache',
+      'WEATHER_KEY',
+      'Rate limited',
+    ]) {
+      expect(find.textContaining(text), findsWidgets, reason: text);
+    }
+    // The disclosure text is read in full, not collapsed.
+    final block = tester.widget<HermesTextBlock>(find.byType(HermesTextBlock));
+    expect(block.collapsedLines, greaterThanOrEqualTo(40));
+    expect(find.byKey(const ValueKey('cph-primary')), findsOneWidget);
+  });
+
+  testWidgets('a removed entry shows the reason and no install', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _weatherCatalog.copyWith(
+        disclosure: _weatherCatalog.disclosure.withRemoved('Abandoned'),
+      ),
+      ScriptedRest(),
+    );
+    expect(find.textContaining('Abandoned'), findsWidgets);
+    expect(find.byKey(const ValueKey('cph-primary')), findsNothing);
+  });
+
+  testWidgets('MCP git entry discloses what runs on the server', (
+    tester,
+  ) async {
+    await _pump(tester, _gitMcp, ScriptedRest());
+    for (final text in const [
+      'https://git.example.test/labs/docs-mcp',
+      'v1.0.0',
+      'npm ci',
+      'npm run build',
+      'api_key',
+      'node dist/index.js',
+    ]) {
+      expect(find.textContaining(text), findsWidgets, reason: text);
+    }
+  });
+
+  testWidgets('skill preview and scan are on demand and hide on 404', (
+    tester,
+  ) async {
+    final rest = ScriptedRest()
+      ..gets['skills/hub/preview'] = {
+        'name': 'docker',
+        'skill_md': '# Docker\nRuns **containers**',
+        'files': ['SKILL.md', 'scripts/run.sh'],
+      };
+    await _pump(tester, _docker, rest);
+    expect(rest.calls.where((c) => c.startsWith('GET skills/hub')), isEmpty);
+
+    await tester.ensureVisible(find.byKey(const ValueKey('cph-row-preview')));
+    await tester.tap(find.byKey(const ValueKey('cph-row-preview')));
+    await tester.pumpAndSettle();
+    expect(rest.calls.where((c) => c.startsWith('GET skills/hub/preview')), [
+      'GET skills/hub/preview?identifier=official%2Fdevops%2Fdocker',
+    ]);
+    expect(find.textContaining('Runs **containers**'), findsOneWidget);
+    expect(find.textContaining('scripts/run.sh'), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+
+    // No scan route on this server: the first tap discovers it and hides it.
+    await tester.ensureVisible(find.byKey(const ValueKey('cph-row-scan')));
+    await tester.tap(find.byKey(const ValueKey('cph-row-scan')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('cph-row-scan')), findsNothing);
+  });
+
+  testWidgets('a blocked skill install offers the scan, never an override', (
+    tester,
+  ) async {
+    final rest = ScriptedRest()
+      ..posts['skills/hub/install'] = {'ok': true, 'name': 'install-docker'}
+      ..gets['skills/hub/scan'] = {
+        'summary': 'Two risky patterns',
+        'findings': [
+          {'severity': 'high', 'description': 'curl piped to shell'},
+        ],
+      }
+      ..statusQueue.add({
+        'name': 'install-docker',
+        'running': false,
+        'exit_code': 1,
+        'lines': [
+          'Not installed: the security scan found 2 high-risk pattern(s)',
+        ],
+      });
+    await _pump(tester, _docker, rest);
+    await tester.tap(find.byKey(const ValueKey('cph-primary')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining(
+        'Bloqueada por el escaneo de seguridad (2 hallazgos)',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Ver escaneo'), findsOneWidget);
+    expect(find.textContaining('force'), findsNothing);
+    await tester.tap(find.text('Ver escaneo'));
+    await tester.pumpAndSettle();
+    expect(rest.calls.where((c) => c.startsWith('GET skills/hub/scan')), [
+      'GET skills/hub/scan?identifier=official%2Fdevops%2Fdocker',
+    ]);
+    expect(find.textContaining('curl piped to shell'), findsOneWidget);
+  });
+
+  testWidgets('MCP env sheet: obscured fields, only declared keys, cleared', (
+    tester,
+  ) async {
+    const secret = 'sentinel-secret-value-123';
+    final rest = ScriptedRest()
+      ..posts['mcp/catalog/install'] = const DashboardHttpException(
+        400,
+        body: '{"detail":"rejected"}',
+      );
+    await _pump(tester, _gitMcp, rest);
+    await tester.tap(find.byKey(const ValueKey('cph-primary')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('cph-env-sheet')), findsOneWidget);
+    for (final name in const ['DOCS_KEY', 'DOCS_REGION']) {
+      final field = tester.widget<TextField>(
+        find.byKey(ValueKey('cph-env-field-$name')),
+      );
+      expect(field.obscureText, isTrue, reason: name);
+      expect(field.autocorrect, isFalse, reason: name);
+      expect(field.enableSuggestions, isFalse, reason: name);
+      expect(field.enableIMEPersonalizedLearning, isFalse, reason: name);
+    }
+    await tester.enterText(
+      find.byKey(const ValueKey('cph-env-field-DOCS_KEY')),
+      secret,
+    );
+    await tester.tap(find.byKey(const ValueKey('cph-env-submit')));
+    await tester.pumpAndSettle();
+
+    expect(rest.mutations, ['POST mcp/catalog/install']);
+    expect(rest.bodies.single!['env'], {'DOCS_KEY': secret});
+    expect(rest.bodies.single!['enable'], isTrue);
+    // The call failed: nothing keeps the value, not even the next sheet.
+    expect(find.textContaining(secret), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('cph-primary')));
+    await tester.pumpAndSettle();
+    final again = tester.widget<TextField>(
+      find.byKey(const ValueKey('cph-env-field-DOCS_KEY')),
+    );
+    expect(again.controller!.text, isEmpty);
+  });
+
+  testWidgets('MCP env sheet: a required field must be filled', (tester) async {
+    final rest = ScriptedRest()..posts['mcp/catalog/install'] = {'ok': true};
+    await _pump(tester, _gitMcp, rest);
+    await tester.tap(find.byKey(const ValueKey('cph-primary')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('cph-env-submit')));
+    await tester.pumpAndSettle();
+    expect(rest.mutations, isEmpty);
+    expect(find.byKey(const ValueKey('cph-env-sheet')), findsOneWidget);
+  });
+
+  test('install confirmation repeats the essentials', () {
+    final s = StringsEs();
+    final community = capabilityInstallConfirmation(
+      s,
+      _weatherCatalog,
+      destination: 'Casa · work',
+    );
+    expect(community.title, contains('Weather'));
+    for (final part in const [
+      'Example Labs',
+      'https://git.example.test/labs/weather',
+      'Comunidad',
+      'Casa · work',
+    ]) {
+      expect(community.detail, contains(part), reason: part);
+    }
+    expect(community.detail, contains(s.cphThirdPartyWarning));
+
+    final official = capabilityInstallConfirmation(
+      s,
+      _docker,
+      destination: 'Casa · work',
+    );
+    expect(official.detail, contains('Casa · work'));
+    expect(official.detail, isNot(contains(s.cphThirdPartyWarning)));
+  });
 }
 
 /// Answers "running" for the action status until [released] returns true.
+
+const _gitMcp = CapabilityItem(
+  kind: CapabilityKind.mcp,
+  id: 'mcp:catalog:docs',
+  name: 'docs',
+  source: 'official',
+  trust: CapabilityTrust.official,
+  installId: 'docs',
+  installedName: 'docs',
+  transport: 'stdio',
+  command: 'node dist/index.js',
+  env: [
+    CapabilityEnvField(name: 'DOCS_KEY', prompt: 'API key for the docs host'),
+    CapabilityEnvField(name: 'DOCS_REGION', required: false),
+  ],
+  requirements: ['DOCS_KEY', 'DOCS_REGION'],
+  disclosure: CapabilityDisclosure(
+    installUrl: 'https://git.example.test/labs/docs-mcp',
+    installRef: 'v1.0.0',
+    bootstrap: ['npm ci', 'npm run build'],
+    authType: 'api_key',
+  ),
+);
+
 class _GatedRest extends ScriptedRest {
   final ScriptedRest inner;
   final bool Function() released;

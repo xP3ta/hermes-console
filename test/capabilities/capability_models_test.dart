@@ -114,7 +114,10 @@ void main() {
         'bootstrap': [
           'npm ci',
           ['npm', 'run', 'build'],
-          {'command': 'node', 'args': ['scripts/setup.js']},
+          {
+            'command': 'node',
+            'args': ['scripts/setup.js'],
+          },
           null,
         ],
         'post_install': 'Restart the agent',
@@ -122,11 +125,7 @@ void main() {
       final d = item.disclosure;
       expect(d.installUrl, 'https://git.example.test/labs/docs-mcp');
       expect(d.installRef, 'v1.0.0');
-      expect(d.bootstrap, [
-        'npm ci',
-        'npm run build',
-        'node scripts/setup.js',
-      ]);
+      expect(d.bootstrap, ['npm ci', 'npm run build', 'node scripts/setup.js']);
       expect(d.authType, 'api_key');
       expect(d.postInstall, 'Restart the agent');
       expect(item.command, 'node dist/index.js');
