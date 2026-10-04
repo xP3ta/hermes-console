@@ -10,6 +10,14 @@ import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+final class _Dashboard extends DashboardClient {
+  _Dashboard() : super(host: '127.0.0.1', port: 1, manualToken: 'unused');
+
+  @override
+  Future<DashboardWebSocketAuth> webSocketAuth() async =>
+      const DashboardWebSocketAuth(queryName: 'ticket', credential: 't');
+}
+
 final class _RpcError {
   final int code;
   const _RpcError(this.code);
@@ -33,6 +41,12 @@ final class _Channel implements WebSocketChannel {
   final StreamController<dynamic> _incoming = StreamController<dynamic>();
 
   void drop() => unawaited(_incoming.close());
+
+  @override
+  int? get closeCode => null;
+
+  @override
+  String? get closeReason => null;
 
   @override
   Future<void> get ready async {}
@@ -110,11 +124,7 @@ _client({bool readOnly = false, _Responder respond = _ok}) {
       apiKey: 'k',
       readOnly: readOnly,
     ),
-    dashboard: DashboardClient(
-      host: '127.0.0.1',
-      port: 1,
-      manualToken: 'unused',
-    ),
+    dashboard: _Dashboard(),
     channelFactory: (_, _) {
       final channel = _Channel(requests, respond);
       channels.add(channel);
@@ -275,7 +285,7 @@ void main() {
     for (final (key, cwd) in const [
       ('', '/srv/x'),
       ('stored-1', ''),
-      ('stored-1', '/srv/x\n/etc'),
+      ('stored-1', '/srv/x\u0001/etc'),
       ('stored\u0000-1', '/srv/x'),
     ]) {
       await expectLater(
