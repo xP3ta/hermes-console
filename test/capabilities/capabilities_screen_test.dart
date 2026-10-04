@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/capabilities_screen.dart';
 import 'package:hermes_android/core/capabilities/capability_detail_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart'
@@ -255,4 +256,50 @@ void main() {
     expect(find.text('Skills actualizadas'), findsOneWidget);
     expect(find.byKey(const ValueKey('cph-progress')), findsNothing);
   });
+
+  test('installed state of a plugin comes from the hub profile', () async {
+    // The REST catalog flags `installed` for the server's launch profile; the
+    // hub is on `work`, where plugins.manage list says nothing is installed.
+    final rest = populatedServer();
+    final repo = CapabilitiesRepository(
+      rest: rest,
+      profile: 'work',
+      rpc: (method, params) async => {'plugins': <Object>[]},
+    );
+    final snapshot = await CapabilitiesSnapshot.load(repo);
+    final weather = snapshot.catalog.firstWhere(
+      (i) => i.installId == 'weather',
+    );
+    expect(weather.installed, isFalse);
+    expect(weather.updateAvailable, isFalse);
+    expect(snapshot.installed.where((i) => i.installId == 'weather'), isEmpty);
+  });
+
+  test(
+    'plugins.manage list matches by catalog_name and carries the update',
+    () async {
+      final repo = CapabilitiesRepository(
+        rest: populatedServer(),
+        profile: 'work',
+        rpc: (method, params) async => {
+          'plugins': [
+            {
+              'name': 'wx',
+              'catalog_name': 'weather',
+              'status': 'disabled',
+              'update_available': true,
+            },
+          ],
+        },
+      );
+      final snapshot = await CapabilitiesSnapshot.load(repo);
+      final weather = snapshot.catalog.firstWhere(
+        (i) => i.installId == 'weather',
+      );
+      expect(weather.installed, isTrue);
+      expect(weather.enabled, isFalse);
+      expect(weather.updateAvailable, isTrue);
+      expect(weather.installedName, 'wx');
+    },
+  );
 }
