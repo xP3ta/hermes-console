@@ -141,6 +141,77 @@ void main() {
     expect(utf8.encode(jsonEncode(transcript)).length, lessThan(5000));
   });
 
+  test('a malformed close survives loading as a malformed close', () {
+    for (final bad in <Object>[
+      42,
+      true,
+      ['x'],
+      {'a': 1},
+    ]) {
+      final transcript = _loaded([
+        _assistant('c1', 'desktop_preview', {
+          'action': 'open',
+          'url': 'https://example.com/a',
+        }),
+        _result('c1', 'desktop_preview'),
+        _assistant('c2', 'desktop_preview', {'action': 'close', 'url': bad}),
+        _result('c2', 'desktop_preview'),
+      ]);
+
+      expect(collectAgentPreviews(transcript).map((p) => p.target.url), [
+        'https://example.com/a',
+      ], reason: 'a close with url: $bad must not become close-all');
+    }
+  });
+
+  test('a wrapped malformed close is dropped too, keeping the others', () {
+    final transcript = _loaded([
+      _assistant('c1', 'desktop_preview', {
+        'action': 'open',
+        'url': 'https://example.com/a',
+      }),
+      _result('c1', 'desktop_preview'),
+      _assistant('c2', 'tool_call', {
+        'calls': [
+          {
+            'name': 'desktop_preview',
+            'arguments': {'action': 'close', 'url': 42},
+          },
+          {
+            'name': 'desktop_preview',
+            'arguments': {'action': 'open', 'url': 'https://example.com/b'},
+          },
+        ],
+      }),
+      _result('c2', 'tool_call'),
+    ]);
+
+    expect(collectAgentPreviews(transcript).map((p) => p.target.url), [
+      'https://example.com/a',
+      'https://example.com/b',
+    ]);
+  });
+
+  test('a close without a url still closes everything after loading', () {
+    for (final close in <Map<String, Object?>>[
+      {'action': 'close'},
+      {'action': 'close', 'url': null},
+      {'action': 'close', 'url': ''},
+    ]) {
+      final transcript = _loaded([
+        _assistant('c1', 'desktop_preview', {
+          'action': 'open',
+          'url': 'https://example.com/a',
+        }),
+        _result('c1', 'desktop_preview'),
+        _assistant('c2', 'desktop_preview', close),
+        _result('c2', 'desktop_preview'),
+      ]);
+
+      expect(collectAgentPreviews(transcript), isEmpty, reason: '$close');
+    }
+  });
+
   test('an oversized argument blob is dropped, not kept', () {
     final transcript = _loaded([
       _assistant('c1', 'desktop_preview', {
