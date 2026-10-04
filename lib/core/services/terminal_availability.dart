@@ -10,12 +10,13 @@ import '../models/terminal_exec.dart';
 /// read-only connection never offers it.
 ///
 /// Answers are remembered per server, not per saved-connection id: editing a
-/// connection to point somewhere else (host, port, scheme, dashboard) drops
-/// what was learned about the old one.
+/// connection to point somewhere else (resolved gateway and dashboard URLs,
+/// host, port, scheme, on-device loopback, kind) drops what was learned about
+/// the old one.
 abstract final class TerminalAvailability {
   static String _key(SavedConnection c) =>
-      '${c.id}|${c.useHttps ? 'https' : 'http'}|${c.host}|${c.port}|'
-      '${c.dashboardUrl ?? ''}';
+      '${c.id}|${c.baseUrl}|${c.effectiveDashboardUrl}|${c.host}|${c.port}|'
+      '${c.useHttps}|${c.onDeviceLoopback}|${c.kind.name}';
 
   static final Set<String> _confirmed = {};
   static final Set<String> _unsupported = {};

@@ -16,6 +16,7 @@ SavedConnection _conn({
   bool readOnly = false,
   String host = 'hermes.example.test',
   int port = 8642,
+  bool onDeviceLoopback = false,
 }) => SavedConnection(
   id: id,
   label: 'x',
@@ -23,6 +24,7 @@ SavedConnection _conn({
   port: port,
   apiKey: 'k',
   readOnly: readOnly,
+  onDeviceLoopback: onDeviceLoopback,
 );
 
 const _labels = ChatControlLabels(
@@ -156,6 +158,24 @@ void main() {
         profile: 'default',
       );
       expect(TerminalAvailability.offered(_conn(port: 9999)), isTrue);
+    },
+  );
+
+  test(
+    'switching to the on-device loopback server forgets the answer',
+    () async {
+      final remote = _conn(host: '127.0.0.1');
+      await TerminalAvailability.confirm(
+        remote,
+        FakeTerminalGateway(),
+        profile: 'default',
+      );
+      expect(TerminalAvailability.offered(remote), isTrue);
+      final local = _conn(host: '127.0.0.1', onDeviceLoopback: true);
+      expect(TerminalAvailability.offered(local), isFalse);
+      final probe = _Probe(const ShellExecUnsupported());
+      await TerminalAvailability.confirm(local, probe, profile: 'default');
+      expect(probe.commands.length, 1, reason: 'the local server is probed');
     },
   );
 }
