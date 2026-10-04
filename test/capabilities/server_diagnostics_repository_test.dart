@@ -1,7 +1,6 @@
 // Read-only server diagnostics over the Capabilities repository: doctor and
 // the security audit (attach when already running, never launch twice, follow
 // until exit, stop when told), live MCP status, usage analytics and health.
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';

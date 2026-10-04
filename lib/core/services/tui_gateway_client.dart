@@ -4194,6 +4194,7 @@ class TuiGatewayClient
     'connectors.catalog',
     'connectors.accounts',
     'connectors.operation.status',
+    'mcp.servers.status',
   };
 
   static const Set<String> _capabilityWrites = {
