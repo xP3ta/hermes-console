@@ -93,6 +93,36 @@ class _GatedGateway
   Future<void> close() => controller.close();
 }
 
+class _KeepingOutbox implements TurnOutboxPersistence {
+  final Map<String, PreparedTurn> latest = {};
+
+  @override
+  Future<void> save(PreparedTurn turn) async =>
+      latest[turn.clientTurnId] = turn;
+
+  @override
+  Future<void> delete(PreparedTurn turn) async =>
+      latest.remove(turn.clientTurnId);
+}
+
+PreparedTurn _prepared(String id, String text) {
+  const now = 1700000000000;
+  return PreparedTurn(
+    connectionId: 'turn-control',
+    sessionId: 'session-turn-control',
+    clientTurnId: id,
+    createdAtMs: now,
+    updatedAtMs: now,
+    text: text,
+    fullText: text,
+    desktopText: text,
+    attachments: const [],
+    model: 'hermes-agent',
+    profile: '',
+    queued: true,
+  );
+}
+
 Future<void> _pump([int turns = 24]) async {
   for (var i = 0; i < turns; i++) {
     await Future<void>.delayed(const Duration(milliseconds: 5));
@@ -136,8 +166,120 @@ void main() {
       expect(chat.queuedMessages, ['second']);
     });
 
-    test('promoting the second row over the head in flight is refused', () async {
-      final (chat, gateway) = await _idleChatWithQueue('promote-in-flight');
+    test(
+      'promoting the second row over the head in flight is refused',
+      () async {
+        final (chat, gateway) = await _idleChatWithQueue('promote-in-flight');
+        final ids = chat.queuedEntries.map((entry) => entry.id).toList();
+        gateway.gate = Completer<void>();
+
+        final sending = chat.sendQueuedNow(ids.first);
+        await _pump();
+        expect(gateway.submissions, ['initial', 'head']);
+
+        expect(chat.promoteQueuedTurn(ids.last), isFalse);
+        expect(await chat.sendQueuedNow(ids.last), isFalse);
+
+        gateway.gate!.complete();
+        await sending;
+        await _pump();
+        expect(gateway.submissions, ['initial', 'head']);
+        expect(chat.queuedMessages, ['second']);
+      },
+    );
+  });
+
+  group('moving a queued row swaps persisted orders', () {
+    test('text rows swap with their neighbour and keep their ids', () async {
+      final (chat, _) = await _idleChatWithQueue('move-text');
+      chat.state = ChatPipelineState.streaming;
+      final before = chat.queuedEntries;
+      final orders = before.map((entry) => entry.queueOrder).toList();
+
+      expect(await chat.moveQueuedTurn(before.last.id, up: true), isTrue);
+
+      final after = chat.queuedEntries;
+      expect(after.map((entry) => entry.text), ['second', 'head']);
+      expect(after.map((entry) => entry.id), [before.last.id, before.first.id]);
+      expect(after.map((entry) => entry.queueOrder), orders);
+      expect(chat.queuedMessages, ['second', 'head']);
+      expect(await chat.moveQueuedTurn(before.last.id, up: true), isFalse);
+      expect(await chat.moveQueuedTurn(before.first.id, up: false), isFalse);
+      expect(await chat.moveQueuedTurn(before.last.id, up: false), isTrue);
+      expect(chat.queuedMessages, ['head', 'second']);
+    });
+
+    test(
+      'prepared rows persist the swap and restore in the user order',
+      () async {
+        final gateway = _GatedGateway();
+        final chat = _chat('move-prepared', gateway);
+        addTearDown(chat.dispose);
+        addTearDown(gateway.close);
+        await chat.send(
+          fullText: 'initial',
+          model: 'hermes-agent',
+          history: [],
+        );
+        final store = _KeepingOutbox();
+        for (final id in ['a', 'b', 'c']) {
+          expect(
+            await chat.enqueuePreparedTurn(
+              ActiveTurnDelivery(prepared: _prepared(id, id), store: store),
+            ),
+            isTrue,
+          );
+        }
+
+        expect(await chat.moveQueuedTurn('prepared:c', up: true), isTrue);
+        expect(await chat.moveQueuedTurn('prepared:c', up: true), isTrue);
+        expect(chat.queuedEntries.map((entry) => entry.text), ['c', 'a', 'b']);
+
+        final reopened = _chat('move-prepared', _GatedGateway());
+        addTearDown(reopened.dispose);
+        await reopened.restoreQueuedTurns(
+          store.latest.values.map(
+            (turn) => PreparedTurn.fromJson(turn.toJson()),
+          ),
+          store,
+          scheduleDrain: false,
+        );
+        expect(reopened.queuedEntries.map((entry) => entry.text), [
+          'c',
+          'a',
+          'b',
+        ]);
+        expect(reopened.queueParked, isTrue);
+      },
+    );
+
+    test('a store failure leaves both rows where they were', () async {
+      final gateway = _GatedGateway();
+      final chat = _chat('move-store-failure', gateway);
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.send(fullText: 'initial', model: 'hermes-agent', history: []);
+      final store = _KeepingOutbox();
+      for (final id in ['a', 'b']) {
+        await chat.enqueuePreparedTurn(
+          ActiveTurnDelivery(prepared: _prepared(id, id), store: store),
+        );
+      }
+      final failing = _FailingOutbox();
+      for (final item in chat.queuedTurns) {
+        item.delivery.rebindStore(failing);
+      }
+
+      expect(await chat.moveQueuedTurn('prepared:b', up: true), isFalse);
+      expect(chat.queuedEntries.map((entry) => entry.text), ['a', 'b']);
+      expect(
+        store.latest['a']!.queueOrder,
+        lessThan(store.latest['b']!.queueOrder!),
+      );
+    });
+
+    test('the head in flight cannot move and cannot be overtaken', () async {
+      final (chat, gateway) = await _idleChatWithQueue('move-in-flight');
       final ids = chat.queuedEntries.map((entry) => entry.id).toList();
       gateway.gate = Completer<void>();
 
@@ -145,8 +287,8 @@ void main() {
       await _pump();
       expect(gateway.submissions, ['initial', 'head']);
 
-      expect(chat.promoteQueuedTurn(ids.last), isFalse);
-      expect(await chat.sendQueuedNow(ids.last), isFalse);
+      expect(await chat.moveQueuedTurn(ids.last, up: true), isFalse);
+      expect(await chat.moveQueuedTurn(ids.first, up: false), isFalse);
 
       gateway.gate!.complete();
       await sending;
@@ -155,4 +297,12 @@ void main() {
       expect(chat.queuedMessages, ['second']);
     });
   });
+}
+
+class _FailingOutbox implements TurnOutboxPersistence {
+  @override
+  Future<void> save(PreparedTurn turn) async => throw StateError('disk full');
+
+  @override
+  Future<void> delete(PreparedTurn turn) async {}
 }
