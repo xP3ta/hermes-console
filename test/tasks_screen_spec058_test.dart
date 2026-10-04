@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/design/content.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/screens/tasks_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -472,5 +473,105 @@ void main() {
       {'orchestrator_profile': 'lead'},
       {'auto_decompose': true},
     ]);
+  });
+
+  testWidgets('overlapping orchestration writes keep every field', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final events = StreamController<KanbanEvent>.broadcast();
+    addTearDown(events.close);
+    final writes = <Map<String, dynamic>>[];
+    final orchestratorGate = Completer<void>();
+    var orchestrator = '';
+    var autoDecompose = false;
+    String snapshot() => jsonEncode({
+      'orchestrator_profile': orchestrator,
+      'default_assignee': null,
+      'auto_decompose': autoDecompose,
+      'resolved_orchestrator_profile': orchestrator.isEmpty
+          ? 'builder'
+          : orchestrator,
+      'resolved_default_assignee': 'builder',
+      'active_profile': 'default',
+    });
+    final client = MockClient((request) async {
+      switch (request.url.path) {
+        case '/api/plugins/kanban/board':
+          return http.Response('{"columns":[]}', 200);
+        case '/api/plugins/kanban/boards':
+          return http.Response('{}', 404);
+        case '/api/plugins/kanban/profiles':
+          return http.Response(
+            '{"profiles":[{"name":"builder","is_default":true},{"name":"lead"}]}',
+            200,
+          );
+        case '/api/plugins/kanban/orchestration':
+          if (request.method != 'PUT') return http.Response(snapshot(), 200);
+          final body = Map<String, dynamic>.from(
+            jsonDecode(request.body) as Map,
+          );
+          writes.add(body);
+          if (body['orchestrator_profile'] case final String value) {
+            orchestrator = value;
+          }
+          if (body['auto_decompose'] case final bool value) {
+            autoDecompose = value;
+          }
+          // The server applies the write on arrival; only the reply
+          // (a full snapshot taken now) is delayed.
+          final reply = snapshot();
+          if (body.containsKey('orchestrator_profile')) {
+            await orchestratorGate.future;
+          }
+          return http.Response(reply, 200);
+        default:
+          return http.Response('{}', 404);
+      }
+    });
+
+    bool toggleValue() => tester
+        .widget<HermesToggleRow>(
+          find.byKey(const ValueKey('kanban-auto-decompose')),
+        )
+        .value;
+
+    await pumpScreen(tester, httpClient: client, events: events.stream);
+    await tester.tap(find.byTooltip('How it works'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('kanban-orchestration-row')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('kanban-orchestrator-profile')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('kanban-option-surface')),
+        matching: find.text('lead'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // The orchestrator reply is still held; the user flips the toggle.
+    expect(writes, [
+      {'orchestrator_profile': 'lead'},
+    ]);
+    await tester.tap(find.byKey(const ValueKey('kanban-auto-decompose')));
+    await tester.pumpAndSettle();
+
+    orchestratorGate.complete();
+    await tester.pumpAndSettle();
+
+    expect(writes, [
+      {'orchestrator_profile': 'lead'},
+      {'auto_decompose': true},
+    ]);
+    expect(toggleValue(), isTrue);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('kanban-orchestrator-profile')),
+        matching: find.text('lead'),
+      ),
+      findsOneWidget,
+    );
   });
 }

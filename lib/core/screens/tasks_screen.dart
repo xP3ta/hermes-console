@@ -948,6 +948,10 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
         profile.name: TextEditingController(text: profile.description),
     };
     final busy = <String>{};
+    // Every PUT answers with the whole orchestration, so writes to different
+    // fields run one at a time: an older reply landing after a newer one
+    // would otherwise revert the newer field on screen.
+    Future<void> writes = Future<void>.value();
 
     await showHermesFloatingSurface<void>(
       context: context,
@@ -958,12 +962,10 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
         controllers: controllers.values.toList(growable: false),
         child: StatefulBuilder(
           builder: (sheetCtx, setSheet) {
-            Future<void> updateState(
+            Future<void> runWrite(
               String field,
               Future<KanbanOrchestration> Function() write,
             ) async {
-              if (busy.contains(field)) return;
-              setSheet(() => busy.add(field));
               try {
                 final next = await write();
                 if (sheetCtx.mounted) setSheet(() => state = next);
@@ -981,6 +983,18 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
               } finally {
                 if (sheetCtx.mounted) setSheet(() => busy.remove(field));
               }
+            }
+
+            Future<void> updateState(
+              String field,
+              Future<KanbanOrchestration> Function() write,
+            ) {
+              if (busy.contains(field)) return Future<void>.value();
+              setSheet(() => busy.add(field));
+              final run = writes.then((_) => runWrite(field, write));
+              // A failed write must not stall the ones queued behind it.
+              writes = run.then((_) {}, onError: (_) {});
+              return run;
             }
 
             Future<void> pickProfile({required bool orchestrator}) async {
