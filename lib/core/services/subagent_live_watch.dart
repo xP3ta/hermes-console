@@ -16,7 +16,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/desktop_session_snapshot.dart';
 import '../utils/assistant_content.dart';
-import 'tui_gateway_client.dart' show TuiGatewayEvent;
+import 'tui_gateway_client.dart' show TuiGatewayEvent, TuiGatewayRpcError;
 
 /// Minimal gateway surface the watch needs. Deliberately has no prompt
 /// submission: a watch session is read-only.
@@ -123,11 +123,16 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
   String _history = '';
   String _liveRaw = '';
 
+  /// Only the mirrored deltas, without the tool lines: what the closing
+  /// summary repeats.
+  String _deltaText = '';
+
   /// Opens the watch. Idempotent; the caller is the page that became visible.
   void start() {
     if (_started || _closed) return;
     _started = true;
     _subscription = gateway.events.listen(_onEvent, onError: _onTransportError);
+    invalidation?.addListener(_onInvalidated);
     _open(SubagentLiveWatchStatus.opening);
   }
 
@@ -136,6 +141,7 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
   Future<void> close() async {
     _closed = true;
     _generation++;
+    invalidation?.removeListener(_onInvalidated);
     final subscription = _subscription;
     _subscription = null;
     unawaited(subscription?.cancel());
@@ -176,6 +182,7 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     }
     _history = _publicHistory(snapshot.messages);
     _liveRaw = '';
+    _deltaText = '';
     if (!snapshot.running && !childIsLive()) {
       // Nothing is mirrored for a finished child: read once, keep nothing.
       unawaited(_closeRemote(runtime));
@@ -200,7 +207,10 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     switch (event.type) {
       case 'message.delta':
         final text = payload['text'];
-        if (text is String) _appendRaw(text);
+        if (text is String) {
+          _deltaText += text;
+          _appendRaw(text);
+        }
       case 'tool.start':
         final name = _publicToolName(payload['name']);
         if (name != null) _appendRaw('${_onNewLine(_liveRaw)}› $name\n');
@@ -208,7 +218,7 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
         final summary = finalizedPublicAssistantText(
           payload['text'] is String ? payload['text'] as String : '',
         ).trim();
-        if (summary.isNotEmpty && !_publicLive.trimRight().endsWith(summary)) {
+        if (summary.isNotEmpty && !_alreadyShown(summary)) {
           _appendRaw('${_onNewLine(_liveRaw)}$summary');
         }
         _stopListening();
@@ -219,8 +229,19 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     }
   }
 
+  void _onInvalidated() {
+    if (_closed || isCurrent()) return;
+    _giveUp();
+  }
+
   void _onTransportError(Object error, [StackTrace? stackTrace]) {
     if (_closed || _runtime == null) return;
+    // The shared socket also reports rehydrations that name one runtime: only
+    // this watch's own, or a loss of the whole transport, concerns it.
+    if (error is TuiGatewayRpcError) {
+      final named = error.data['session_id'];
+      if (named is String && named.isNotEmpty && named != _runtime) return;
+    }
     // The socket died with its runtime: nothing to close on the old one. A
     // fresh lazy resume rebuilds history from storage, so the live buffer is
     // dropped instead of being appended to.
@@ -269,6 +290,18 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     if (_liveRaw.length >= maxLiveChars) return;
     _liveRaw += text;
     _publish(value.status);
+  }
+
+  /// The summary the child closes with usually repeats what was streamed,
+  /// with or without the tool lines between the deltas.
+  bool _alreadyShown(String summary) {
+    String squash(String text) => text.replaceAll(RegExp(r'\s+'), '');
+    final streamed = squash(
+      projectPublicAssistantText(_deltaText, streaming: false).text,
+    );
+    final wanted = squash(summary);
+    return streamed.endsWith(wanted) ||
+        squash(_publicLive).endsWith(wanted);
   }
 
   String get _publicLive =>
