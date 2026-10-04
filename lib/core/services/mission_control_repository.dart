@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:math';
 
 import '../models/agent_profile.dart';
+import '../models/desktop_active_session.dart';
 import '../models/hosted_groups.dart';
 import '../models/kanban.dart';
 import '../models/mission_control.dart';
@@ -14,6 +15,8 @@ import 'tui_gateway_client.dart';
 
 typedef MissionProfilesLoader = Future<List<AgentProfile>> Function();
 typedef MissionSessionsLoader = Future<List<Session>> Function();
+typedef MissionActiveSessionsLoader =
+    Future<DesktopActiveSessionList> Function();
 typedef MissionBoardLoader = Future<KanbanBoard> Function();
 typedef MissionKanbanEventsLoader = Stream<KanbanEvent> Function(int since);
 typedef MissionDashboardGet =
@@ -498,6 +501,13 @@ final class MissionRosterRead {
   final Object? profilesError;
   final Object? sessionsError;
 
+  /// `session.active_list` read together with the roster.
+  final List<DesktopActiveSession> activeSessions;
+  final DateTime? activeSessionsObservedAt;
+
+  /// See [MissionBackendSnapshot.activeSessionsAuthoritative].
+  final bool activeSessionsAuthoritative;
+
   const MissionRosterRead({
     required this.profiles,
     required this.sessions,
@@ -505,6 +515,9 @@ final class MissionRosterRead {
     required this.sessionsCapability,
     this.profilesError,
     this.sessionsError,
+    this.activeSessions = const [],
+    this.activeSessionsObservedAt,
+    this.activeSessionsAuthoritative = true,
   });
 }
 
@@ -531,6 +544,14 @@ abstract interface class MissionLiveRefreshDataSource {
   );
 }
 
+/// One `session.active_list` read: its rows and whether it was an answer.
+final class _ActiveSessionsRead {
+  const _ActiveSessionsRead(this.rows, this.authoritative);
+
+  final List<DesktopActiveSession> rows;
+  final bool authoritative;
+}
+
 final class MissionControlRepository
     implements
         MissionControlDataSource,
@@ -542,6 +563,10 @@ final class MissionControlRepository
   final MissionProfilesLoader profilesLoader;
   final MissionSessionsLoader sessionsLoader;
   final MissionBoardLoader boardLoader;
+
+  /// `session.active_list` on the shared Desktop socket; read together with
+  /// the roster, never on a timer of its own. Null on legacy sources.
+  final MissionActiveSessionsLoader? activeSessionsLoader;
   final MissionKanbanEventsLoader? kanbanEventsLoader;
   final MissionProfileAvatarLoader? profileAvatarLoader;
   final MissionHostedGroupsGateway? hostedGroupsGateway;
@@ -564,6 +589,7 @@ final class MissionControlRepository
     required this.profilesLoader,
     required this.sessionsLoader,
     required this.boardLoader,
+    this.activeSessionsLoader,
     this.kanbanEventsLoader,
     this.profileAvatarLoader,
     this.hostedGroupsGateway,
@@ -599,6 +625,8 @@ final class MissionControlRepository
         legacyGatewayLoader: () => gateway.getSessions(includeChildren: true),
       ),
       boardLoader: kanban.getCurrentBoard,
+      // The same pooled socket: no extra connection for the live sessions.
+      activeSessionsLoader: desktop.listActiveSessions,
       kanbanEventsLoader: (since) => kanban.events(since: since),
       profileAvatarLoader: desktop.profileAvatar,
       hostedGroupsGateway: _TuiMissionHostedGroupsGateway(desktop),
@@ -630,16 +658,19 @@ final class MissionControlRepository
   @override
   Future<MissionBackendSnapshot> load() async {
     if (_closed) throw StateError('MissionControlRepository is closed');
+    final activeObservedAt = DateTime.now();
     final results = await Future.wait<Object>([
       _capture(profilesLoader),
       _capture(sessionsLoader),
       _capture(boardLoader),
       _capture(_loadHostedGroups),
+      _loadActiveSessions(),
     ]);
     final profilesResult = results[0] as _MissionLoadResult<List<AgentProfile>>;
     final sessionsResult = results[1] as _MissionLoadResult<List<Session>>;
     final boardResult = results[2] as _MissionLoadResult<KanbanBoard>;
     final groupsResult = results[3] as _MissionLoadResult<HostedGroupsSnapshot>;
+    final active = results[4] as _ActiveSessionsRead;
     final failures = <String, Object>{
       'profiles': ?profilesResult.error,
       'sessions': ?sessionsResult.error,
@@ -661,7 +692,27 @@ final class MissionControlRepository
           : _capability(groupsResult),
       failures: failures,
       loadedAt: DateTime.now(),
+      activeSessions: active.rows,
+      activeSessionsObservedAt: active.authoritative ? activeObservedAt : null,
+      activeSessionsAuthoritative: active.authoritative,
     );
+  }
+
+  /// `session.active_list` of the read in progress, never an error of the
+  /// read. An answer (even an empty one) and a server that lacks the method
+  /// are authoritative; a timeout, a cut socket or any other failure proves
+  /// nothing about absence, so the caller keeps what it last confirmed.
+  Future<_ActiveSessionsRead> _loadActiveSessions() async {
+    final loader = activeSessionsLoader;
+    if (loader == null) return const _ActiveSessionsRead([], true);
+    try {
+      return _ActiveSessionsRead((await loader()).sessions, true);
+    } catch (error) {
+      // Only the typed «method not found» says the server lacks the method.
+      // A 404 in a message, an HTTP status or any other code is a failed read.
+      final missing = error is TuiGatewayRpcError && error.code == -32601;
+      return _ActiveSessionsRead(const [], missing);
+    }
   }
 
   @override
@@ -679,12 +730,15 @@ final class MissionControlRepository
   @override
   Future<MissionRosterRead> loadRoster() async {
     if (_closed) throw StateError('MissionControlRepository is closed');
+    final activeObservedAt = DateTime.now();
     final results = await Future.wait<Object>([
       _capture(profilesLoader),
       _capture(sessionsLoader),
+      _loadActiveSessions(),
     ]);
     final profiles = results[0] as _MissionLoadResult<List<AgentProfile>>;
     final sessions = results[1] as _MissionLoadResult<List<Session>>;
+    final active = results[2] as _ActiveSessionsRead;
     return MissionRosterRead(
       profiles: profiles.value ?? const [],
       sessions: sessions.value ?? const [],
@@ -692,6 +746,9 @@ final class MissionControlRepository
       sessionsCapability: _capability(sessions),
       profilesError: profiles.error,
       sessionsError: sessions.error,
+      activeSessions: active.rows,
+      activeSessionsObservedAt: active.authoritative ? activeObservedAt : null,
+      activeSessionsAuthoritative: active.authoritative,
     );
   }
 
