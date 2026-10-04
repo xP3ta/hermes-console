@@ -130,8 +130,32 @@ class _AdvancedSettingsScreenState extends State<AdvancedSettingsScreen> {
 
   bool get _hasDiagnostics => _diagnostics?.any ?? false;
 
-  Future<void> _load() async {
+  // The batch in flight and the profile it reads for. A refresh while it is
+  // pending joins it, so the reads are not issued twice and an older answer
+  // cannot be published after a newer one.
+  Future<void>? _inFlight;
+  ProfileReadTicket? _inFlightTicket;
+
+  Future<void> _load() {
+    final pending = _inFlight;
+    if (pending != null && (_inFlightTicket?.isCurrent ?? false)) {
+      return pending;
+    }
     final ticket = _scope.capture();
+    final batch = _loadBatch(ticket);
+    _inFlightTicket = ticket;
+    late final Future<void> guarded;
+    guarded = batch.whenComplete(() {
+      if (identical(_inFlight, guarded)) {
+        _inFlight = null;
+        _inFlightTicket = null;
+      }
+    });
+    _inFlight = guarded;
+    return guarded;
+  }
+
+  Future<void> _loadBatch(ProfileReadTicket ticket) async {
     final writable = !_readOnly;
     final client = _client ??= DashboardClient.lazy(widget.connection);
     final store =
