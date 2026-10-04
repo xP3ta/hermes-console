@@ -540,7 +540,15 @@ enum DesktopPromptResponseStatus { ok, expired }
 final class DesktopPromptResponse {
   final DesktopPromptResponseStatus status;
 
-  const DesktopPromptResponse._(this.status);
+  /// False when the answer went out as a bare response frame to a server
+  /// request: nothing acknowledges it, so a transport loss right after the
+  /// write leaves its delivery unknown.
+  final bool deliveryAcknowledged;
+
+  const DesktopPromptResponse._(
+    this.status, {
+    this.deliveryAcknowledged = true,
+  });
 
   bool get isExpired => status == DesktopPromptResponseStatus.expired;
 
@@ -7213,7 +7221,10 @@ class TuiGatewayClient
           'Hermes Desktop WebSocket was replaced',
         );
       }
-      return const DesktopPromptResponse._(DesktopPromptResponseStatus.ok);
+      return const DesktopPromptResponse._(
+        DesktopPromptResponseStatus.ok,
+        deliveryAcknowledged: false,
+      );
     }
     if (requestId.startsWith(_serverRequestIdPrefix)) {
       // A v7 server request that is not open on this socket: it reached

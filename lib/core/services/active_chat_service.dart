@@ -4772,6 +4772,11 @@ class ActiveChat {
   DateTime? _desktopTurnStartedAt;
   InteractivePromptState _interactivePrompts =
       const InteractivePromptState.empty();
+
+  /// Clarify answers written as bare response frames, which Hermes never
+  /// acknowledges. A transport loss forgets their tombstones (see
+  /// [InteractivePromptUnacknowledgedAnswerLost]).
+  final Set<InteractivePromptKey> _unacknowledgedClarifyAnswers = {};
   final Map<InteractivePromptKey, Future<DesktopPromptResponse>> _batchLocks =
       {};
   SubagentActivityState? _subagentActivities;
@@ -18713,6 +18718,15 @@ class ActiveChat {
             InteractivePromptRuntimeDetached(disconnectedRuntimeId),
           );
         }
+        // An answer that went out without acknowledgement may have died with
+        // the socket. The resume snapshot is the authority: a request it still
+        // lists was never read, so its card must become answerable again.
+        for (final key in _unacknowledgedClarifyAnswers) {
+          _reduceInteractivePrompt(
+            InteractivePromptUnacknowledgedAnswerLost(key),
+          );
+        }
+        _unacknowledgedClarifyAnswers.clear();
         _usingDesktopGateway = false;
         _retireDesktopRuntime(reason: _RuntimeRetirement.transportLoss);
         // The retirement moved the bind/session epochs, so an automatic
@@ -25389,6 +25403,11 @@ class ActiveChat {
             ? InteractivePromptExpired(key)
             : InteractivePromptResponded(key),
       );
+      if (expectedKind == InteractivePromptKind.clarify &&
+          !result.isExpired &&
+          !result.deliveryAcknowledged) {
+        _unacknowledgedClarifyAnswers.add(key);
+      }
       if (!result.isExpired && !_runTerminal) _armActivityWatchdog();
       return result;
     } catch (error) {

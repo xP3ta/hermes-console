@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/shared_gateway_pool.dart';
@@ -365,7 +366,8 @@ void main() {
   });
 
   test(
-    'an answered clarify never reopens from a stale replay after a drop',
+    'an answered clarify never reopens from a stale replay on the same socket '
+    'nor after a drop once Hermes consumed it',
     () async {
       gateway.resumeResult = (_) => {
         'session_id': 'runtime-1',
@@ -384,23 +386,164 @@ void main() {
       await _waitUntil(() => chat.pendingInteractivePrompt != null);
       await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'si');
       expect(chat.pendingInteractivePrompt, isNull);
+      await gateway.nextFrame((frame) => frame['id'] == 'srq-answered0001');
 
-      // A replay that still lists the answered id (race with the server
-      // settling it) must not resurrect the card.
+      // A replay computed before Hermes read the answer, delivered on the
+      // same socket, must not resurrect the card.
+      final answeredKey = chat.interactivePrompts.entries.keys.single;
+      gateway.pushServerRequest('srq-answered0001', 'clarify', {
+        'question': 'Seguimos?',
+        'choices': ['si', 'no'],
+      });
+      // Frames are handled in order: once this later question shows, the
+      // stale replay above has been processed.
+      gateway.pushServerRequest('srq-barrier00001', 'clarify', {
+        'question': 'Otra?',
+        'choices': ['si', 'no'],
+      });
+      await _waitUntil(
+        () =>
+            chat.pendingInteractivePrompt?.key.requestId == 'srq-barrier00001',
+      );
+      expect(
+        chat.interactivePrompts[answeredKey]?.status,
+        InteractivePromptStatus.responded,
+      );
+      await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'no');
+      expect(chat.pendingInteractivePrompt, isNull);
+
+      // Hermes consumed both answers and asked something new: the resume
+      // lists only the new request.
       gateway.resumeResult = (_) => {
         'session_id': 'runtime-1',
         'stored_session_id': 'stored-1',
         'running': true,
         'status': 'waiting',
-        'open_requests': [_openClarify('srq-answered0001')],
+        'open_requests': [_openClarify('srq-nextquest001')],
       };
-      final resumesBefore = gateway.rpcCalls('session.resume').length;
       await gateway.sockets.single.close(1001);
       await _waitUntil(
-        () => gateway.rpcCalls('session.resume').length > resumesBefore,
+        () =>
+            chat.pendingInteractivePrompt?.key.requestId == 'srq-nextquest001',
         timeout: const Duration(seconds: 20),
       );
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(
+        chat.interactivePrompts.entries.values
+            .where((entry) => entry.needsInput)
+            .map((entry) => entry.key.requestId),
+        ['srq-nextquest001'],
+      );
+      expect(
+        gateway.frames.where((frame) => frame['id'] == 'srq-answered0001'),
+        hasLength(1),
+      );
+    },
+  );
+
+  test('an acknowledged clarify answer never reopens from a stale replay '
+      'after a drop', () async {
+    gateway.resumeResult = (_) => {
+      'session_id': 'runtime-1',
+      'stored_session_id': 'stored-1',
+      'running': true,
+      'status': 'working',
+    };
+    final client = _clientFor(gateway);
+    final chat = _chatFor(gateway, client, attach: true);
+    await chat.loadMessages();
+    await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+    // A request this socket never registered is answered through the
+    // acknowledged `request.answer` proxy.
+    gateway.pushSessionEvent('clarify.request', {
+      'request_id': 'srq-acked0000001',
+      'question': 'Seguimos?',
+      'choices': ['si', 'no'],
+    });
+    await _waitUntil(() => chat.pendingInteractivePrompt != null);
+    await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'si');
+    expect(gateway.rpcCalls('request.answer'), hasLength(1));
+    expect(chat.pendingInteractivePrompt, isNull);
+
+    // A replay racing the settlement still lists the acknowledged id.
+    gateway.resumeResult = (_) => {
+      'session_id': 'runtime-1',
+      'stored_session_id': 'stored-1',
+      'running': true,
+      'status': 'waiting',
+      'open_requests': [_openClarify('srq-acked0000001')],
+    };
+    final resumesBefore = gateway.rpcCalls('session.resume').length;
+    await gateway.sockets.single.close(1001);
+    await _waitUntil(
+      () =>
+          gateway.rpcCalls('session.resume').length > resumesBefore &&
+          chat.desktopRuntimeSessionId == 'runtime-1',
+      timeout: const Duration(seconds: 20),
+    );
+    expect(chat.pendingInteractivePrompt, isNull);
+    expect(gateway.rpcCalls('request.answer'), hasLength(1));
+  });
+
+  test(
+    'an answer written into a socket that just died reopens the card when '
+    'the resume still lists the request, and the new answer is sent once',
+    () async {
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'waiting',
+        'open_requests': [_openClarify('srq-lostanswer01')],
+      };
+      final proxy = await _FlakyProxy.start(gateway.server.port);
+      addTearDown(proxy.close);
+      final client = TuiGatewayClient(
+        _connectionFor(
+          gateway,
+        ).copyWith(dashboardUrl: 'http://127.0.0.1:${proxy.port}'),
+        dashboard: _TicketDashboardClient(),
+      );
+      addTearDown(client.close);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      final key = chat.pendingInteractivePrompt!.key;
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+
+      // The path dies before the client notices: the answer frame is written
+      // into a dead socket, so Hermes never reads it.
+      proxy.severAll();
+      final lost = await chat.respondToClarify(key, 'si');
+      expect(lost.deliveryAcknowledged, isFalse);
+      expect(chat.pendingInteractivePrompt, isNull);
+
+      await _waitUntil(
+        () =>
+            gateway.rpcCalls('session.resume').length > resumesBefore &&
+            chat.desktopRuntimeSessionId == 'runtime-1',
+        timeout: const Duration(seconds: 20),
+      );
+      // Hermes still waits on the same request: the card is answerable again.
+      expect(chat.pendingInteractivePrompt?.key.requestId, 'srq-lostanswer01');
+      expect(
+        chat.pendingInteractivePrompt?.status,
+        InteractivePromptStatus.pending,
+      );
+      expect(chat.awaitsUnseenInput, isFalse);
+      expect(
+        gateway.frames.where((frame) => frame['id'] == 'srq-lostanswer01'),
+        isEmpty,
+      );
+
+      await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'no');
+      final answer = await gateway
+          .nextFrame((frame) => frame['id'] == 'srq-lostanswer01')
+          .timeout(const Duration(seconds: 2));
+      expect(answer['result'], {'answer': 'no'});
+      expect(
+        gateway.frames.where((frame) => frame['id'] == 'srq-lostanswer01'),
+        hasLength(1),
+      );
       expect(chat.pendingInteractivePrompt, isNull);
     },
   );
