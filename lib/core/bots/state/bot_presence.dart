@@ -26,6 +26,7 @@ enum BotPresence {
     required DateTime now,
     Iterable<DesktopActiveSession> liveSessions = const [],
     Iterable<BotRoomSeat> roomSeats = const [],
+    Set<String> ambiguousSessionIds = const {},
   }) {
     var result = BotPresence.idle;
     void lift(BotPresence candidate) {
@@ -58,6 +59,11 @@ enum BotPresence {
     }
     return result;
   }
+
+  /// Stored ids that more than one of [profiles] owns. `session.active_list`
+  /// carries no profile, so a live row with such an id cannot be attributed.
+  static Set<String> ambiguousSessionIds(Iterable<AgentProfile> profiles) =>
+      const {};
 
   static bool workerIsFresh(AgentProfileWorkerSession? worker, DateTime now) {
     if (worker == null) return false;

@@ -1,4 +1,6 @@
+import '../bots/state/bot_presence.dart';
 import 'agent_profile.dart';
+import 'desktop_active_session.dart';
 import 'hosted_groups.dart';
 import 'kanban.dart';
 import 'room_mirror.dart';
@@ -156,6 +158,15 @@ final class MissionBackendSnapshot {
   final Map<String, Object> failures;
   final DateTime loadedAt;
 
+  /// `session.active_list` of the same read: every live session of the
+  /// Gateway process, whichever client moves it. It carries no profile.
+  /// A read that omits a session is authoritative about its absence.
+  final List<DesktopActiveSession> activeSessions;
+
+  /// When that read started; a row older than a chat's own settled turn loses
+  /// to the chat. Null falls back to [loadedAt].
+  final DateTime? activeSessionsObservedAt;
+
   const MissionBackendSnapshot({
     this.profiles = const [],
     this.sessions = const [],
@@ -167,6 +178,8 @@ final class MissionBackendSnapshot {
     this.hostedGroupsCapability = MissionCapabilityState.unsupported,
     this.failures = const {},
     required this.loadedAt,
+    this.activeSessions = const [],
+    this.activeSessionsObservedAt,
   });
 
   List<KanbanTask> get tasks => List<KanbanTask>.unmodifiable(
@@ -188,6 +201,9 @@ final class MissionLiveChat {
   final String? model;
   final String? provider;
 
+  /// When this chat last saw its own turn end (`ActiveChat.lastTerminalAt`).
+  final DateTime? settledAt;
+
   const MissionLiveChat({
     required this.profileName,
     required this.sessionId,
@@ -196,6 +212,7 @@ final class MissionLiveChat {
     this.approval,
     this.model,
     this.provider,
+    this.settledAt,
   });
 }
 
@@ -417,6 +434,13 @@ final class MissionAgent {
   final String? model;
   final String? provider;
 
+  /// What `session.active_list` (and the fresh worker) says this bot is
+  /// doing, whichever client moves its chat; [BotPresence.derive] decides.
+  final BotPresence livePresence;
+
+  /// Title of the chat behind [livePresence], for the «Working · chat» line.
+  final String? livePresenceTitle;
+
   /// Shared by Bots and room presence; a gateway being online is not a turn.
   bool get activeNow => switch (status) {
     MissionAgentStatus.thinking ||
@@ -437,6 +461,8 @@ final class MissionAgent {
     this.lastActivityAt,
     this.model,
     this.provider,
+    this.livePresence = BotPresence.idle,
+    this.livePresenceTitle,
   });
 }
 

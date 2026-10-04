@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:math';
 
 import '../models/agent_profile.dart';
+import '../models/desktop_active_session.dart';
 import '../models/hosted_groups.dart';
 import '../models/kanban.dart';
 import '../models/mission_control.dart';
@@ -14,6 +15,8 @@ import 'tui_gateway_client.dart';
 
 typedef MissionProfilesLoader = Future<List<AgentProfile>> Function();
 typedef MissionSessionsLoader = Future<List<Session>> Function();
+typedef MissionActiveSessionsLoader =
+    Future<DesktopActiveSessionList> Function();
 typedef MissionBoardLoader = Future<KanbanBoard> Function();
 typedef MissionKanbanEventsLoader = Stream<KanbanEvent> Function(int since);
 typedef MissionDashboardGet =
@@ -491,6 +494,10 @@ final class MissionRosterRead {
   final Object? profilesError;
   final Object? sessionsError;
 
+  /// `session.active_list` read together with the roster.
+  final List<DesktopActiveSession> activeSessions;
+  final DateTime? activeSessionsObservedAt;
+
   const MissionRosterRead({
     required this.profiles,
     required this.sessions,
@@ -498,6 +505,8 @@ final class MissionRosterRead {
     required this.sessionsCapability,
     this.profilesError,
     this.sessionsError,
+    this.activeSessions = const [],
+    this.activeSessionsObservedAt,
   });
 }
 
@@ -534,6 +543,10 @@ final class MissionControlRepository
   final MissionProfilesLoader profilesLoader;
   final MissionSessionsLoader sessionsLoader;
   final MissionBoardLoader boardLoader;
+
+  /// `session.active_list` on the shared Desktop socket; read together with
+  /// the roster, never on a timer of its own. Null on legacy sources.
+  final MissionActiveSessionsLoader? activeSessionsLoader;
   final MissionKanbanEventsLoader? kanbanEventsLoader;
   final MissionProfileAvatarLoader? profileAvatarLoader;
   final MissionHostedGroupsGateway? hostedGroupsGateway;
@@ -556,6 +569,7 @@ final class MissionControlRepository
     required this.profilesLoader,
     required this.sessionsLoader,
     required this.boardLoader,
+    this.activeSessionsLoader,
     this.kanbanEventsLoader,
     this.profileAvatarLoader,
     this.hostedGroupsGateway,
