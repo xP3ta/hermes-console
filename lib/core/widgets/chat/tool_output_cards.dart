@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -390,14 +391,14 @@ class _TerminalOutputCardState extends State<TerminalOutputCard> {
   @override
   void initState() {
     super.initState();
-    _lines = _TerminalLines(widget.output);
+    _lines = _TerminalLines.of(widget.output);
   }
 
   @override
   void didUpdateWidget(TerminalOutputCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.output != widget.output) {
-      _lines = _TerminalLines(widget.output);
+      _lines = _TerminalLines.of(widget.output);
     }
   }
 
@@ -472,11 +473,30 @@ class _TerminalOutputCardState extends State<TerminalOutputCard> {
 
 /// Line view over a terminal output that never splits the whole string: the
 /// folded card reads only its last lines (found from the end), so a long
-/// output costs one newline count however often its row is rebuilt.
+/// output costs one newline count however often its row is rebuilt or
+/// remounted.
 final class _TerminalLines {
-  _TerminalLines(this.output) : count = '\n'.allMatches(output).length + 1;
+  _TerminalLines(this.output) : count = _countLines(output);
+
+  static int _countLines(String output) {
+    assert(DebugToolCardWork.record('terminal.lines', output.length));
+    return '\n'.allMatches(output).length + 1;
+  }
 
   static final empty = _TerminalLines('');
+
+  /// Recently shown outputs, by identity: a row that scrolls back in gets
+  /// its line count and tails without scanning the output again.
+  static final Map<String, _TerminalLines> _recent = LinkedHashMap.identity();
+  static const int _recentMax = 32;
+
+  static _TerminalLines of(String output) {
+    final cached = _recent.remove(output);
+    final lines = cached ?? _TerminalLines(output);
+    _recent[output] = lines;
+    if (_recent.length > _recentMax) _recent.remove(_recent.keys.first);
+    return lines;
+  }
 
   final String output;
 
@@ -493,6 +513,7 @@ final class _TerminalLines {
     for (var i = 0; i < lines; i++) {
       start = output.lastIndexOf('\n', start - 1);
     }
+    assert(DebugToolCardWork.record('terminal.tail', output.length - start));
     final state = ansiSgrStateAt(output, start + 1);
     return (text: state + output.substring(start + 1), lines: lines);
   }();

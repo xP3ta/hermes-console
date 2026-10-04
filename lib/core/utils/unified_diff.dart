@@ -25,6 +25,24 @@ final class DiffStats {
 }
 
 /// One file's slice of a (possibly multi-file) diff.
+/// Debug-only tally of the input scanned by tool-card derivations, by kind
+/// (`diff.parse`, `diff.stats`, `terminal.lines`, `terminal.tail`). Fed from
+/// `assert`s, so release builds pay nothing; tests reset it and bound the
+/// bytes a mount or a scroll may scan.
+abstract final class DebugToolCardWork {
+  static final Map<String, int> bytes = {};
+
+  static int get total => bytes.values.fold(0, (a, b) => a + b);
+
+  static void reset() => bytes.clear();
+
+  /// Always true, for use inside `assert`.
+  static bool record(String kind, int length) {
+    bytes[kind] = (bytes[kind] ?? 0) + length;
+    return true;
+  }
+}
+
 final class FileDiff {
   final String path;
   final String diff;
@@ -51,6 +69,7 @@ String cleanInlineDiff(String raw) {
 }
 
 DiffStats countDiffLineStats(String diff) {
+  assert(DebugToolCardWork.record('diff.stats', diff.length));
   var added = 0;
   var removed = 0;
   for (final line in diff.split('\n')) {
@@ -137,6 +156,7 @@ List<FileDiff> splitFileDiffs(String diff, {String fallbackPath = ''}) {
 /// Renderable lines of one file's diff: file headers dropped, hunk headers
 /// kept as a separator kind. Markers stay so the text copies as a diff.
 List<DiffLine> parseDiffLines(String diff) {
+  assert(DebugToolCardWork.record('diff.parse', diff.length));
   final out = <DiffLine>[];
   for (final line in diff.split('\n')) {
     if (line.startsWith('+++ ') ||
