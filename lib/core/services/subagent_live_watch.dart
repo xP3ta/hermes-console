@@ -214,7 +214,7 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
       case 'message.delta':
         final text = payload['text'];
         if (text is String) {
-          if (_deltaText.length < maxLiveChars) _deltaText += text;
+          _deltaText += _take(text, maxLiveChars - _deltaText.length);
           _appendRaw(text);
         }
       case 'tool.start':
@@ -222,10 +222,8 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
         if (name != null) {
           // A tool line splits the streamed text: keep that boundary as a
           // line break so the summary is compared with the same spacing.
-          if (_deltaText.isNotEmpty &&
-              !_deltaText.endsWith('\n') &&
-              _deltaText.length < maxLiveChars) {
-            _deltaText += '\n';
+          if (_deltaText.isNotEmpty && !_deltaText.endsWith('\n')) {
+            _deltaText += _take('\n', maxLiveChars - _deltaText.length);
           }
           _appendRaw('${_onNewLine(_liveRaw)}› $name\n');
         }
@@ -303,21 +301,34 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
   }
 
   void _appendRaw(String text) {
-    if (_liveRaw.length >= maxLiveChars) return;
-    _liveRaw += text;
+    final kept = _take(text, maxLiveChars - _liveRaw.length);
+    if (kept.isEmpty) return;
+    _liveRaw += kept;
     _publish(value.status);
   }
 
-  /// The summary the child closes with usually repeats what was streamed. Runs
-  /// of whitespace compare as one space, but a missing space is a difference:
-  /// a corrected summary must not be swallowed.
+  /// The summary the child closes with usually repeats what was streamed.
+  /// Only the line-ending flavour and the ends are normalized: line breaks and
+  /// indentation are meaning in Markdown, so a summary that restructures the
+  /// text is a correction and is kept.
   bool _alreadyShown(String summary) {
-    String norm(String text) => text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    String norm(String text) => text.replaceAll('\r\n', '\n').trim();
     final wanted = norm(summary);
     final streamed = norm(
       projectPublicAssistantText(_deltaText, streaming: false).text,
     );
     return streamed.endsWith(wanted) || norm(_publicLive).endsWith(wanted);
+  }
+
+  /// At most [room] code units of [text], never ending in half a surrogate
+  /// pair.
+  static String _take(String text, int room) {
+    if (room <= 0) return '';
+    if (text.length <= room) return text;
+    var end = room;
+    final last = text.codeUnitAt(end - 1);
+    if (last >= 0xD800 && last <= 0xDBFF) end--;
+    return text.substring(0, end);
   }
 
   String get _publicLive =>
