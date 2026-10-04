@@ -681,4 +681,24 @@ void main() {
       },
     );
   });
+
+  test('plugin catalog marks removed entries with the reason', () async {
+    final rest = FakeRest()
+      ..gets['dashboard/plugins/catalog'] = {
+        'entries': [
+          {'name': 'old-one', 'repo': 'https://git.example.test/a/old'},
+          {'name': 'renamed', 'repo': 'https://git.example.test/a/bad.git/'},
+          {'name': 'fine', 'repo': 'https://git.example.test/a/fine'},
+        ],
+        'removed': [
+          {'name': 'old-one', 'reason': 'Abandoned', 'date': '2026-09-01'},
+          {'repo': 'https://git.example.test/a/BAD', 'reason': 'Malicious'},
+        ],
+      };
+    final items = await CapabilitiesRepository(rest: rest).pluginCatalog();
+    final byName = {for (final i in items) i.installId: i};
+    expect(byName['old-one']!.disclosure.removedReason, 'Abandoned');
+    expect(byName['renamed']!.disclosure.removedReason, 'Malicious');
+    expect(byName['fine']!.disclosure.removedReason, isEmpty);
+  });
 }
