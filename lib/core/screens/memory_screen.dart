@@ -256,7 +256,10 @@ class _MemoryScreenState extends State<MemoryScreen>
           children: [
             Text(Strings.of(context).memTitle),
             // States which profile this memory belongs to.
-            ProfileScopeLabel(profile: _profile),
+            ProfileScopeLabel(
+              profile: _profile,
+              connectionId: widget.connection.id,
+            ),
             if (_info != null)
               Text(
                 Strings.of(context).memoryConfiguredCount(

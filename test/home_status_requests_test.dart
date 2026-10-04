@@ -191,7 +191,7 @@ void main() {
     final server = _Server();
     await pumpHome(tester, server);
     await settleHome(tester);
-    expect(find.text('agent online · QA'), findsOneWidget);
+    expect(find.text('online · QA'), findsOneWidget);
     expect(find.text('Hola'), findsWidgets);
     expect(server.count('/health'), 1);
     expect(server.count('/api/sessions'), 1);
@@ -207,7 +207,7 @@ void main() {
     final server = _Server(totalSessions: 1000);
     await pumpHome(tester, server);
     await settleHome(tester);
-    expect(find.text('agent online · QA'), findsOneWidget);
+    expect(find.text('online · QA'), findsOneWidget);
     expect(find.text('Chat 0'), findsWidgets);
     final first = server.count('/api/sessions');
     final state = tester.state(find.byType(HomeDashboardScreen));
@@ -246,7 +246,7 @@ void main() {
     final server = _Server(totalSessions: 1000, leadingAutomation: 1000);
     await pumpHome(tester, server);
     await settleHome(tester);
-    expect(find.text('agent online · QA'), findsOneWidget);
+    expect(find.text('online · QA'), findsOneWidget);
     expect(server.count('/api/sessions'), 3);
     await unmount(tester);
   });
@@ -257,7 +257,7 @@ void main() {
     final server = _Server(sessionsStatus: 401);
     await pumpHome(tester, server);
     await settleHome(tester);
-    expect(find.text('agent online · QA'), findsNothing);
+    expect(find.text('online · QA'), findsNothing);
     expect(server.count('/api/sessions'), 1);
     await unmount(tester);
   });
@@ -271,7 +271,7 @@ void main() {
       final server = _Server();
       await pumpHome(tester, server);
       await settleHome(tester);
-      expect(find.text('agent online · QA'), findsOneWidget);
+      expect(find.text('online · QA'), findsOneWidget);
       expect(find.text('Hola'), findsWidgets);
 
       if (failure == '503') {
@@ -296,7 +296,7 @@ void main() {
       print('[#1215] home $failure: seconds shown offline=$offlineSeconds');
       expect(offlineSeconds, 0);
       expect(find.text('offline · QA'), findsNothing);
-      expect(find.text('agent online · QA'), findsOneWidget);
+      expect(find.text('online · QA'), findsOneWidget);
       expect(find.text('Hola'), findsWidgets, reason: 'keep the known list');
       await unmount(tester);
     });
@@ -308,7 +308,7 @@ void main() {
     final server = _Server(healthStatus: 503);
     await pumpHome(tester, server);
     await settleHome(tester);
-    expect(find.text('agent online · QA'), findsNothing);
+    expect(find.text('online · QA'), findsNothing);
     expect(server.count('/api/sessions'), 0);
     await unmount(tester);
   });

@@ -1369,7 +1369,11 @@ class _ModelsScreenState extends State<ModelsScreen>
     return Scaffold(
       appBar: HermesAppBar(
         // States which profile this model belongs to.
-        title: ProfileScopedTitle(title: s.mdlTitle, profile: _profile),
+        title: ProfileScopedTitle(
+          title: s.mdlTitle,
+          profile: _profile,
+          connectionId: widget.connection.id,
+        ),
         actions: [
           // Contador "N ocultos" (proveedores + modelos): siempre visible
           // mientras haya algo oculto, para que lo escondido no parezca

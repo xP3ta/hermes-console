@@ -741,6 +741,8 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
         ApiClient(
           baseUrl: widget.connection.baseUrl,
           apiKey: widget.connection.apiKey,
+          // A named profile's list comes from the Dashboard, as on Desktop.
+          profileDashboard: DashboardClient.lazy(widget.connection),
         );
     SessionListRead? listRead;
     List<Session> read = const [];

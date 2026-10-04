@@ -642,7 +642,10 @@ class _SoulScreenState extends State<SoulScreen>
             const Text('SOUL'),
             _profileScoped
                 // States which profile this SOUL belongs to.
-                ? ProfileScopeLabel(profile: _profile)
+                ? ProfileScopeLabel(
+                    profile: _profile,
+                    connectionId: widget.connection?.id,
+                  )
                 : AnimatedSwitcher(
                     duration: const Duration(milliseconds: 300),
                     child: _saved

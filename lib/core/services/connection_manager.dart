@@ -1348,14 +1348,20 @@ class ApiClient {
   final String _apiKey;
   final String? _connectionId;
 
+  /// Dashboard that serves a named profile's session list (see
+  /// [getSessions]). Owned: [close] closes it.
+  final DashboardClient? _profileDashboard;
+
   // Keep the public parameter name `apiKey` while storing it privately.
   ApiClient({
     required String baseUrl,
     required String apiKey,
     String? connectionId,
     http.Client? httpClient,
+    DashboardClient? profileDashboard,
   }) : _apiKey = apiKey,
        _connectionId = connectionId,
+       _profileDashboard = profileDashboard,
        baseUrl = TransportPrivacy.requireAllowed(
          baseUrl.endsWith('/')
              ? baseUrl.substring(0, baseUrl.length - 1)
@@ -1388,6 +1394,12 @@ class ApiClient {
   /// newest rows (Home, drawer): the read stops after the first page for
   /// which `enough(sessionsSoFar)` is true, or after [maxPages] pages. Without
   /// them every page is read, as cleanup and lineage resolution require.
+  ///
+  /// A named profile is read from the Dashboard when this client has one
+  /// ([profileDashboard]), as Desktop does: `listSessions()` sends
+  /// `/api/sessions?profile=<name>` to the Dashboard. The API server's
+  /// `/p/<name>/` mirror only accepts that profile's own `API_SERVER_KEY`
+  /// and answers 401 when it has none, so the connection's key cannot read it.
   Future<List<Session>> getSessions({
     bool includeChildren = false,
     String? profile,
@@ -1395,9 +1407,11 @@ class ApiClient {
     bool Function(List<Session> sessions)? enough,
     int? maxPages,
   }) async {
-    final pageLimit = pageSize.clamp(1, 200);
     var pagesRead = 0;
     final owner = validateCronProfile(profile);
+    final dashboard = owner == null ? null : _profileDashboard;
+    // The Dashboard caps `limit` at 100 (422 above it).
+    final pageLimit = pageSize.clamp(1, dashboard == null ? 200 : 100);
     final endpoint = profileEndpoint('api/sessions', profile: owner);
     final sessions = <Session>[];
     final observed = <String>{};
@@ -1407,29 +1421,49 @@ class ApiClient {
     var offset = 0;
 
     while (true) {
-      final query = <String, String>{
-        'limit': '$pageLimit',
-        'offset': '$offset',
-        if (includeChildren) 'include_children': 'true',
-      };
-      final uri = Uri.parse(
-        '$baseUrl/$endpoint',
-      ).replace(queryParameters: query);
-      final res = await _http
-          .get(uri, headers: _headers)
-          .timeout(_requestTimeout);
-      if (res.statusCode != 200) {
-        throw CoreReadException(switch (res.statusCode) {
-          401 => CoreReadErrorKind.auth,
-          403 => CoreReadErrorKind.forbidden,
-          404 when owner != null => CoreReadErrorKind.profileUnavailable,
-          404 => CoreReadErrorKind.notFound,
-          503 => CoreReadErrorKind.temporarilyUnavailable,
-          _ => CoreReadErrorKind.malformed,
-        }, statusCode: res.statusCode);
+      CoreReadException readFailure(int status) =>
+          CoreReadException(switch (status) {
+            401 => CoreReadErrorKind.auth,
+            403 => CoreReadErrorKind.forbidden,
+            404 when owner != null => CoreReadErrorKind.profileUnavailable,
+            404 => CoreReadErrorKind.notFound,
+            503 => CoreReadErrorKind.temporarilyUnavailable,
+            _ => CoreReadErrorKind.malformed,
+          }, statusCode: status);
+      final Map<String, dynamic> data;
+      if (dashboard != null) {
+        // Desktop `listSessions(limit)`: one recent-first page per call.
+        final query = Uri(
+          queryParameters: {
+            'limit': '$pageLimit',
+            'offset': '$offset',
+            'min_messages': '0',
+            'archived': 'exclude',
+            'order': 'recent',
+            'profile': owner!,
+          },
+        ).query;
+        try {
+          data = await dashboard.apiGet('sessions?$query');
+        } on DashboardHttpException catch (error) {
+          throw readFailure(error.statusCode);
+        }
+      } else {
+        final query = <String, String>{
+          'limit': '$pageLimit',
+          'offset': '$offset',
+          if (includeChildren) 'include_children': 'true',
+        };
+        final uri = Uri.parse(
+          '$baseUrl/$endpoint',
+        ).replace(queryParameters: query);
+        final res = await _http
+            .get(uri, headers: _headers)
+            .timeout(_requestTimeout);
+        if (res.statusCode != 200) throw readFailure(res.statusCode);
+        data = jsonDecode(res.body) as Map<String, dynamic>;
       }
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-      final rawRows = data['data'];
+      final rawRows = dashboard != null ? data['sessions'] : data['data'];
       if (rawRows is! List) {
         throw const FormatException('Invalid Gateway session page');
       }
@@ -1438,9 +1472,13 @@ class ApiClient {
           positivePageInt(data['limit']) ??
           (pagination is Map ? positivePageInt(pagination['limit']) : null) ??
           pageLimit;
-      final hasMore =
-          data['has_more'] == true ||
-          (pagination is Map && pagination['has_more'] == true);
+      final total = data['total'];
+      final hasMore = dashboard != null
+          ? (total is int
+                ? offset + rawRows.length < total
+                : rawRows.length >= pageLimitPublished)
+          : data['has_more'] == true ||
+                (pagination is Map && pagination['has_more'] == true);
       final signature = rawRows
           .map((row) => row is Map ? row['id']?.toString() ?? '' : '')
           .join('\u001f');
@@ -2107,7 +2145,10 @@ class ApiClient {
     body: {'scope': scope, 'provider': provider, 'model': model},
   );
 
-  void close() => _http.close();
+  void close() {
+    _http.close();
+    _profileDashboard?.close();
+  }
 }
 
 typedef ToolProgressCallback = void Function(Map<String, dynamic> progress);

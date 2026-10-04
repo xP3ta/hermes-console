@@ -16,13 +16,6 @@ import 'profile_scope.dart';
 /// never overwrite a newer roster.
 typedef ProfileRosterReader = Future<List<AgentProfile>> Function();
 
-/// Label for a profile: its display name when set, else its name.
-String profileDisplayLabel(Strings strings, AgentProfile profile) {
-  final display = profile.displayName.trim();
-  if (display.isNotEmpty) return display;
-  return ProfileScopeLabel.display(strings, profile.name);
-}
-
 /// The one way to change the active profile (Desktop's profile rail). A
 /// switch re-scopes the whole app for [connection]: chats, Home, model,
 /// SOUL, skills and memory. Plain on purpose: the redesign restyles it via
@@ -52,12 +45,19 @@ class ProfileSwitcherButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scope = ActiveProfileScope.of(connManager, connection.id);
+    final roster = (rosterRegistry ?? BotRosterRegistry.shared).store(
+      connection.id,
+    );
     return ListenableBuilder(
-      listenable: scope,
+      listenable: Listenable.merge([scope, roster]),
       builder: (context, _) {
         final strings = Strings.of(context);
         final colors = Theme.of(context).hermes;
-        final label = ProfileScopeLabel.display(strings, scope.name);
+        final label = activeProfileDisplayLabel(
+          strings,
+          scope.name,
+          roster.profiles,
+        );
         void open() => unawaited(
           showProfileSwitcher(
             context,
