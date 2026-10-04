@@ -162,6 +162,7 @@ import '../widgets/provider_reauth.dart';
 import 'recovery_center_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
+import 'chat_prompt_index.dart';
 import 'chat_render_projection.dart';
 import '../widgets/action_approval.dart';
 import '../widgets/agent_task_widgets.dart';
@@ -207,6 +208,7 @@ import '../widgets/voice_stage.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/chat_find_bar.dart';
+import '../widgets/chat_prompt_sheet.dart';
 import '../utils/transcript_search.dart';
 
 /// El streaming sustituye mapas de mensaje completos. Esta caché usa identidad
@@ -1023,6 +1025,7 @@ enum _ModelSource { desktop, bridge, dashboard, gateway }
 enum _ChatControlAction {
   permissions,
   refresh,
+  prompts,
   content,
   artifacts,
   details,
@@ -10250,6 +10253,7 @@ class _ChatScreenState extends State<ChatScreen>
             refresh: strings.chaUpdateTitle,
             artifacts: strings.chaArtifactsAction,
             content: strings.sa1215ContentAction,
+            prompts: strings.pj1215PromptsAction,
             details: strings.chaSessionDetailsAction,
             cron: strings.crnOpenFromConversation,
             recovery: strings.chaControlRecovery,
@@ -10270,6 +10274,7 @@ class _ChatScreenState extends State<ChatScreen>
           onRefresh: () => select(_ChatControlAction.refresh),
           onArtifacts: () => select(_ChatControlAction.artifacts),
           onContent: () => select(_ChatControlAction.content),
+          onPrompts: () => select(_ChatControlAction.prompts),
           onDetails: () => select(_ChatControlAction.details),
           onCron: () => select(_ChatControlAction.cron),
           onRecovery:
@@ -10295,6 +10300,8 @@ class _ChatScreenState extends State<ChatScreen>
         if (policy != null) _showModeSheet(policy);
       case _ChatControlAction.refresh:
         unawaited(_fetchMessages());
+      case _ChatControlAction.prompts:
+        unawaited(_showPromptSheet());
       case _ChatControlAction.content:
         unawaited(_openChatContent());
       case _ChatControlAction.artifacts:
@@ -10311,6 +10318,43 @@ class _ChatScreenState extends State<ChatScreen>
         unawaited(_releaseRuntimeForDesktop());
       case _ChatControlAction.delete:
         unawaited(_deleteCurrentChat());
+    }
+  }
+
+  /// Lists the prompts of the loaded transcript and reveals the chosen one.
+  /// The entries are derived once per open, never per frame.
+  Future<void> _showPromptSheet() async {
+    final strings = Strings.of(context);
+    final entries = deriveChatPromptEntries(_messages);
+    final tops = <double?>[
+      for (final entry in entries)
+        _ChatStreamingViewportLock._visualOffsetInViewport(
+          _messageAnchors[entry.message],
+        ),
+    ];
+    final picked = await showHermesFloatingSurface<int>(
+      context: context,
+      surfaceKey: const ValueKey('chat-prompt-dialog'),
+      maxWidth: 480,
+      builder: (dialogContext) => ChatPromptSheet(
+        title: strings.pj1215PromptsAction,
+        emptyLabel: strings.pj1215PromptsEmpty,
+        previews: [for (final entry in entries) entry.preview],
+        activeIndex: activeChatPromptIndex(tops),
+        onSelect: (index) => Navigator.of(dialogContext).pop(index),
+      ),
+    );
+    if (!mounted || picked == null || picked >= entries.length) return;
+    final target =
+        chatRefreshFindAnchorMessage(entries[picked].message, _messages) ??
+        entries[picked].message;
+    _freezeStreamingFollow();
+    final revealed = await _revealTranscriptMessage(target);
+    if (revealed == false && mounted) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).artifactSourceUnavailable)),
+        kind: HermesNoticeKind.warning,
+      );
     }
   }
 
