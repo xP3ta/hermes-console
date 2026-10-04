@@ -370,6 +370,37 @@ void main() {
       },
     );
 
+    test('a turn still streaming at the grace and ended later without an '
+        'event is closed out', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.enter(async);
+        rig.delegate('del_1');
+        async.flushMicrotasks();
+        rig.desktop.emit('message.start');
+        expect(rig.chat.isStreaming, isTrue);
+        async.elapse(const Duration(seconds: 16));
+        List<Object?> noResult() => rig.transport.sent
+            .where((e) => e['type'] == 'session.thinking.append')
+            .map((e) => e['content'])
+            .toList();
+        // Still running at the grace boundary: nothing is settled yet.
+        expect(noResult(), isEmpty);
+        // The stored reconciliation ends the turn at 17 s and publishes no
+        // terminal event.
+        async.elapse(const Duration(seconds: 1));
+        rig.chat.state = ChatPipelineState.idle;
+        async.elapse(const Duration(seconds: 15));
+        expect(noResult(), [
+          'Hermes finished that request without a spoken result.',
+        ]);
+        expect(rig.controller.phase, VoicePhase.listening);
+        // Settled once: later time adds nothing.
+        async.elapse(const Duration(seconds: 60));
+        expect(noResult(), hasLength(1));
+      });
+    });
+
     test('a turn that ended silently is closed out by the 15 s grace', () {
       fakeAsync((async) {
         final rig = _Rig();

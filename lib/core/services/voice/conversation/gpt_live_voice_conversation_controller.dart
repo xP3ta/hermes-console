@@ -501,16 +501,28 @@ class GptLiveVoiceConversationController extends ChangeNotifier
         _apologize(session, id);
         return;
       }
-      _graceTimer?.cancel();
-      _graceTimer = Timer(_noReplyGrace, () {
-        if (!current() || _delegationId != id) return;
-        if (!(_chat?.isStreaming ?? false)) _settle(session, id);
-      });
+      _armGrace(session, id, current);
       _observe();
     } catch (_) {
       if (!current()) return;
       _apologize(session, id);
     }
+  }
+
+  /// Settles a delegation whose terminal event never arrives (an empty turn
+  /// publishes none until the transcript reconciles). Reads local chat state
+  /// only: while the turn is still running it re-arms itself, and it stops as
+  /// soon as the delegation is settled, superseded or torn down.
+  void _armGrace(VoiceLiveSession session, String id, bool Function() current) {
+    _graceTimer?.cancel();
+    _graceTimer = Timer(_noReplyGrace, () {
+      if (!current() || _delegationId != id) return;
+      if (_chat?.isStreaming ?? false) {
+        _armGrace(session, id, current);
+        return;
+      }
+      _settle(session, id);
+    });
   }
 
   void _apologize(VoiceLiveSession session, String id) {
