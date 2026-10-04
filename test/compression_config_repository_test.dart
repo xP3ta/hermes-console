@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+// Transitive via flutter_test; not added to pubspec to keep the lockfile.
+// ignore: depend_on_referenced_packages
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/compression_config.dart';
 import 'package:hermes_android/core/services/compression_config_repository.dart';
@@ -874,41 +877,50 @@ void main() {
 
     test(
       'the next save waits for the confirmation read of the previous one',
-      () async {
-        final gate = Completer<void>();
-        final rereadGate = Completer<void>();
-        final fake = server(gate, rereadGate: rereadGate);
-        final repository = CompressionConfigRepository(fake.dashboard);
-        addTearDown(() {
+      () {
+        // Virtual time: while the read is held, 9 s (just under the client's
+        // request timeout) must not let the second PUT out, so only the read
+        // settling can release it, whatever short delay a mutant adds.
+        fakeAsync((async) {
+          final gate = Completer<void>();
+          final rereadGate = Completer<void>();
+          final fake = server(gate, rereadGate: rereadGate);
+          final repository = CompressionConfigRepository(fake.dashboard);
+
+          CompressionConfigSnapshot? base;
+          repository.load().then((value) => base = value);
+          async.flushMicrotasks();
+          expect(base, isNotNull);
+
+          final results = <double>[];
+          for (final threshold in [0.6, 0.7]) {
+            repository
+                .save(
+                  base!,
+                  base!.configuration!.copyWith(threshold: threshold),
+                )
+                .then((saved) => results.add(saved.configuration!.threshold));
+          }
+          async.flushMicrotasks();
+          gate.complete();
+          async.flushMicrotasks();
+          expect(fake.events, [
+            'PUT 0.6',
+            'reread started',
+          ], reason: 'the first confirmation read is in flight');
+
+          async.elapse(const Duration(seconds: 9));
+          expect(fake.sentThresholds, [
+            0.6,
+          ], reason: 'the second PUT does not start before that read settles');
+
+          rereadGate.complete();
+          async.flushMicrotasks();
+          expect(fake.sentThresholds, [0.6, 0.7]);
+          expect(results, [0.6, 0.7]);
           repository.close();
           fake.dashboard.close();
         });
-        final base = await repository.load();
-
-        final first = repository.save(
-          base,
-          base.configuration!.copyWith(threshold: 0.6),
-        );
-        final second = repository.save(
-          base,
-          base.configuration!.copyWith(threshold: 0.7),
-        );
-        await settle();
-        gate.complete();
-        await settle();
-        expect(fake.events, [
-          'PUT 0.6',
-          'reread started',
-        ], reason: 'the first confirmation read is in flight');
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-        expect(fake.sentThresholds, [
-          0.6,
-        ], reason: 'the second PUT does not start before that read settles');
-
-        rereadGate.complete();
-        await first;
-        await second;
-        expect(fake.sentThresholds, [0.6, 0.7]);
       },
     );
 
