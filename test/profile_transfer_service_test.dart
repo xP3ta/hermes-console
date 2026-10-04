@@ -226,7 +226,153 @@ void main() {
         ),
       ),
     );
-    expect(transport.requests, hasLength(1));
+    expect(transport.requests.map((request) => request.method), [
+      'POST',
+      'DELETE',
+    ]);
+    expect(transport.requests.last.json, {
+      'path': '/srv/ops.tar.gz',
+      'recursive': false,
+    });
+  });
+
+  test('cancelling mid-download deletes the server archive', () async {
+    late final ProfileTransferService service;
+    final transport = _Transport((request) {
+      if (request.method == 'POST') {
+        return _Response.json(200, {'ok': true, 'archive': '/srv/ops.tar.gz'});
+      }
+      if (request.method == 'GET') {
+        service.cancel();
+        return _Response.bytes(200, utf8.encode('archive'));
+      }
+      return _Response.json(200, {'ok': true});
+    });
+    service = _service(transport, temp);
+
+    await expectLater(
+      service.exportProfile('ops', share: (_) async {}),
+      throwsA(
+        isA<ProfileTransferException>().having(
+          (error) => error.code,
+          'code',
+          ProfileTransferErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect(transport.requests.map((request) => request.method), [
+      'POST',
+      'GET',
+      'DELETE',
+    ]);
+    expect(transport.requests.last.json['path'], '/srv/ops.tar.gz');
+  });
+
+  test('profile switch mid-download deletes the server archive', () async {
+    var current = true;
+    final transport = _Transport((request) {
+      if (request.method == 'POST') {
+        return _Response.json(200, {'ok': true, 'archive': '/srv/ops.tar.gz'});
+      }
+      if (request.method == 'GET') {
+        current = false;
+        return _Response.bytes(200, utf8.encode('archive'));
+      }
+      return _Response.json(200, {'ok': true});
+    });
+
+    await expectLater(
+      _service(
+        transport,
+        temp,
+        isCurrent: () => current,
+      ).exportProfile('ops', share: (_) async {}),
+      throwsA(
+        isA<ProfileTransferException>().having(
+          (error) => error.code,
+          'code',
+          ProfileTransferErrorCode.stale,
+        ),
+      ),
+    );
+    expect(transport.requests.map((request) => request.method), [
+      'POST',
+      'GET',
+      'DELETE',
+    ]);
+  });
+
+  test('download HTTP 500 deletes the server archive', () async {
+    final transport = _Transport((request) {
+      if (request.method == 'POST') {
+        return _Response.json(200, {'ok': true, 'archive': '/srv/ops.tar.gz'});
+      }
+      if (request.method == 'GET') {
+        return _Response.json(500, {'detail': 'boom'});
+      }
+      return _Response.json(200, {'ok': true});
+    });
+
+    await expectLater(
+      _service(transport, temp).exportProfile('ops', share: (_) async {}),
+      throwsA(
+        isA<ProfileTransferException>().having(
+          (error) => error.code,
+          'code',
+          ProfileTransferErrorCode.server,
+        ),
+      ),
+    );
+    expect(transport.requests.map((request) => request.method), [
+      'POST',
+      'GET',
+      'DELETE',
+    ]);
+  });
+
+  test('download over the size limit deletes the server archive', () async {
+    final transport = _Transport((request) {
+      if (request.method == 'POST') {
+        return _Response.json(200, {'ok': true, 'archive': '/srv/ops.tar.gz'});
+      }
+      if (request.method == 'GET') {
+        return _Response.bytes(200, const [
+          0,
+        ], declaredLength: ProfileTransferService.maxArchiveBytes + 1);
+      }
+      return _Response.json(200, {'ok': true});
+    });
+
+    await expectLater(
+      _service(transport, temp).exportProfile('ops', share: (_) async {}),
+      throwsA(isA<StateError>()),
+    );
+    expect(transport.requests.map((request) => request.method), [
+      'POST',
+      'GET',
+      'DELETE',
+    ]);
+  });
+
+  test('a failing share still deletes the server archive', () async {
+    final transport = _Transport((request) {
+      if (request.method == 'POST') {
+        return _Response.json(200, {'ok': true, 'archive': '/srv/ops.tar.gz'});
+      }
+      if (request.method == 'GET') {
+        return _Response.bytes(200, utf8.encode('archive'));
+      }
+      return _Response.json(200, {'ok': true});
+    });
+
+    await expectLater(
+      _service(transport, temp).exportProfile(
+        'ops',
+        share: (_) async => throw const FileSystemException('share failed'),
+      ),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(transport.requests.last.method, 'DELETE');
   });
 
   test('read-only service sends nothing', () async {
@@ -347,13 +493,13 @@ final class _Transport extends http.BaseClient {
       Stream.value(response.bytes),
       response.status,
       headers: response.headers,
-      contentLength: response.bytes.length,
+      contentLength: response.declaredLength ?? response.bytes.length,
     );
   }
 }
 
 final class _Response {
-  const _Response(this.status, this.bytes, this.headers);
+  const _Response(this.status, this.bytes, this.headers, {this.declaredLength});
 
   factory _Response.json(int status, Map<String, dynamic> body) => _Response(
     status,
@@ -361,10 +507,13 @@ final class _Response {
     const {'content-type': 'application/json'},
   );
 
-  factory _Response.bytes(int status, List<int> bytes) =>
-      _Response(status, bytes, const {'content-type': 'application/gzip'});
+  factory _Response.bytes(int status, List<int> bytes, {int? declaredLength}) =>
+      _Response(status, bytes, const {
+        'content-type': 'application/gzip',
+      }, declaredLength: declaredLength);
 
   final int status;
   final List<int> bytes;
   final Map<String, String> headers;
+  final int? declaredLength;
 }
