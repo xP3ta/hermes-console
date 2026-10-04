@@ -420,6 +420,24 @@ void main() {
       });
     });
 
+    test('close during ICE gathering: the timeout never creates a session', () {
+      fakeAsync((async) {
+        final h = _Harness();
+        h.transport.iceGathering = Completer<void>();
+        h.start(async);
+        h.transport.channelOpen = false;
+        async.elapse(const Duration(seconds: 1));
+        expect(h.log.last, 'waitForIce');
+        unawaited(h.session.close());
+        async.flushMicrotasks();
+        expect(h.transport.disposeCalls, 1);
+        async.elapse(const Duration(seconds: 30));
+        expect(h.api.createCalls, isEmpty);
+        expect(h.log, isNot(contains('setRemoteAnswer')));
+        expect(h.transport.disposeCalls, 1);
+      });
+    });
+
     test('close during the POST: late answer is not applied', () {
       fakeAsync((async) {
         final h = _Harness();
