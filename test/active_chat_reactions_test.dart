@@ -181,6 +181,7 @@ void main() {
       await chat.confirmReactions();
       expect(gateway.confirmCalls, 1);
       expect(chat.canReact, isTrue);
+      await Future<void>.delayed(Duration.zero);
       expect(emitted, contains(ActiveChatEvent.reactionsChanged));
     },
   );
