@@ -148,9 +148,9 @@ class _TerminalPaneScreenState extends State<TerminalPaneScreen> {
       _stopAgentStream();
     }
     if (_controller.access == TerminalPaneAccess.unsupported) {
-      TerminalAvailability.markUnsupported(widget.connection.id);
+      TerminalAvailability.markUnsupported(widget.connection);
     } else if (_controller.access == TerminalPaneAccess.ready) {
-      TerminalAvailability.markConfirmed(widget.connection.id);
+      TerminalAvailability.markConfirmed(widget.connection);
     }
     setState(() {});
   }

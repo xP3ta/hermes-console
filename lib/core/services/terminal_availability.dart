@@ -8,7 +8,15 @@ import '../models/terminal_exec.dart';
 /// (even with its empty-command refusal, which proves the method exists);
 /// a server that answered -32601 stays hidden until the app restarts, and a
 /// read-only connection never offers it.
+///
+/// Answers are remembered per server, not per saved-connection id: editing a
+/// connection to point somewhere else (host, port, scheme, dashboard) drops
+/// what was learned about the old one.
 abstract final class TerminalAvailability {
+  static String _key(SavedConnection c) =>
+      '${c.id}|${c.useHttps ? 'https' : 'http'}|${c.host}|${c.port}|'
+      '${c.dashboardUrl ?? ''}';
+
   static final Set<String> _confirmed = {};
   static final Set<String> _unsupported = {};
   static final Set<String> _probing = {};
@@ -18,15 +26,15 @@ abstract final class TerminalAvailability {
 
   static bool offered(SavedConnection connection) =>
       !connection.readOnly &&
-      _confirmed.contains(connection.id) &&
-      !_unsupported.contains(connection.id);
+      _confirmed.contains(_key(connection)) &&
+      !_unsupported.contains(_key(connection));
 
-  static void markConfirmed(String connectionId) {
-    if (_confirmed.add(connectionId)) changes.value++;
+  static void markConfirmed(SavedConnection connection) {
+    if (_confirmed.add(_key(connection))) changes.value++;
   }
 
-  static void markUnsupported(String connectionId) {
-    if (_unsupported.add(connectionId)) changes.value++;
+  static void markUnsupported(SavedConnection connection) {
+    if (_unsupported.add(_key(connection))) changes.value++;
   }
 
   /// Asks once whether the server has `shell.exec`, with the empty command
@@ -38,7 +46,7 @@ abstract final class TerminalAvailability {
     HermesTerminalGateway gateway, {
     required String profile,
   }) async {
-    final id = connection.id;
+    final id = _key(connection);
     if (connection.readOnly ||
         _confirmed.contains(id) ||
         _unsupported.contains(id) ||
@@ -47,11 +55,11 @@ abstract final class TerminalAvailability {
     }
     try {
       await gateway.shellExec('', profile: profile);
-      markConfirmed(id);
+      markConfirmed(connection);
     } on ShellExecRefusal {
-      markConfirmed(id);
+      markConfirmed(connection);
     } on ShellExecUnsupported {
-      markUnsupported(id);
+      markUnsupported(connection);
     } catch (_) {
       // Nothing learned.
     } finally {

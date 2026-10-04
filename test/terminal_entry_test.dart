@@ -11,15 +11,19 @@ import 'package:hermes_android/core/widgets/chat_control_sheet.dart';
 
 import 'support/fake_terminal_gateway.dart';
 
-SavedConnection _conn({String id = 'c1', bool readOnly = false}) =>
-    SavedConnection(
-      id: id,
-      label: 'x',
-      host: 'hermes.example.test',
-      port: 8642,
-      apiKey: 'k',
-      readOnly: readOnly,
-    );
+SavedConnection _conn({
+  String id = 'c1',
+  bool readOnly = false,
+  String host = 'hermes.example.test',
+  int port = 8642,
+}) => SavedConnection(
+  id: id,
+  label: 'x',
+  host: host,
+  port: port,
+  apiKey: 'k',
+  readOnly: readOnly,
+);
 
 const _labels = ChatControlLabels(
   title: 'Chat settings',
@@ -118,10 +122,42 @@ void main() {
       FakeTerminalGateway(),
       profile: 'default',
     );
-    TerminalAvailability.markUnsupported('c1');
+    TerminalAvailability.markUnsupported(_conn());
     expect(TerminalAvailability.offered(_conn()), isFalse);
     expect(TerminalAvailability.offered(_conn(id: 'c2')), isFalse);
   });
+
+  test(
+    'editing a saved connection to another server forgets the answer',
+    () async {
+      await TerminalAvailability.confirm(
+        _conn(),
+        FakeTerminalGateway(),
+        profile: 'default',
+      );
+      expect(TerminalAvailability.offered(_conn()), isTrue);
+      final moved = _conn(host: 'other.example.test');
+      expect(TerminalAvailability.offered(moved), isFalse);
+      final bare = _Probe(const ShellExecUnsupported());
+      await TerminalAvailability.confirm(moved, bare, profile: 'default');
+      expect(bare.commands.length, 1, reason: 'the new server is probed');
+      expect(TerminalAvailability.offered(moved), isFalse);
+    },
+  );
+
+  test(
+    'a port change also forgets it, and an unsupported mark is per server',
+    () async {
+      TerminalAvailability.markUnsupported(_conn());
+      expect(TerminalAvailability.offered(_conn()), isFalse);
+      await TerminalAvailability.confirm(
+        _conn(port: 9999),
+        FakeTerminalGateway(),
+        profile: 'default',
+      );
+      expect(TerminalAvailability.offered(_conn(port: 9999)), isTrue);
+    },
+  );
 }
 
 class _Probe extends FakeTerminalGateway {
