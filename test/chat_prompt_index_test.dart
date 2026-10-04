@@ -68,10 +68,11 @@ void main() {
               '(exit code 1).\nCommand: echo hi\nOutput:\nhi\n]',
         ),
         _msg('user', _carrier),
+        _msg('user', '[IMPORTANT: Background process 7 finished]'),
         _msg('user', 'pregunta real'),
       ]);
       expect(entries.map((e) => e.preview), ['pregunta real']);
-      expect(entries.single.messageIndex, 2);
+      expect(entries.single.messageIndex, 3);
     });
 
     test('a prompt that only starts like a carrier stays a prompt', () {
@@ -108,6 +109,14 @@ void main() {
         _msg('user', 'pregunta real'),
       ];
       expect(stickyPromptIndex(rows, 0), 2);
+      expect(
+        stickyPromptIndex([
+          _msg('assistant', 'respuesta'),
+          _msg('user', '[IMPORTANT: Background process 7 finished]'),
+          _msg('user', 'pregunta real'),
+        ], 0),
+        2,
+      );
     });
 
     test('empty transcript has no entries', () {

@@ -37,14 +37,22 @@ String chatPromptPreview(String text) {
   return '$head…';
 }
 
+// A complete process notification: the whole row is one bracketed
+// `[IMPORTANT: Background process …]`. A prompt that merely starts with those
+// words (no closing bracket at the end of the row) is not matched.
+final RegExp _completeProcessNotification = RegExp(
+  r'^\[IMPORTANT: Background process [\s\S]*\]$',
+);
+
 /// True when [message] is a user row with text: the rows that open a turn and
 /// appear in the prompt list.
 ///
 /// Process-notification carriers (Hermes writes them as user rows) are not
 /// prompts: Desktop's timeline skips them too. Only a row that is entirely the
-/// canonical carrier is dropped (via the visible-content projection), so a real
-/// prompt that merely starts with the same words stays a prompt. [isSystemRow]
-/// drops other rows the transcript paints as system chips instead of prompts.
+/// notification is dropped (the structured carrier through the visible-content
+/// projection, any other complete bracketed row through the anchored pattern),
+/// so a real prompt that merely starts with the same words stays a prompt.
+/// [isSystemRow] drops other rows the transcript paints as system chips instead of prompts.
 bool isChatPromptMessage(
   Map<String, dynamic> message, {
   bool Function(Map<String, dynamic> message)? isSystemRow,
@@ -52,6 +60,7 @@ bool isChatPromptMessage(
   if (message['role'] != 'user') return false;
   final content = message['content'];
   if (content is! String || content.trim().isEmpty) return false;
+  if (_completeProcessNotification.hasMatch(content.trim())) return false;
   if (projectedUserVisibleContent(message).trim().isEmpty) return false;
   return isSystemRow == null || !isSystemRow(message);
 }
