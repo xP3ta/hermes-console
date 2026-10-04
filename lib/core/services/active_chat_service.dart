@@ -14567,6 +14567,7 @@ class ActiveChat {
         sessionProfile,
         turnEpoch,
         nativeAttachments: nativeAttachments,
+        clientSurface: clientSurface,
         capturedLifecycle: capturedLifecycle,
         transcriptOperation: transcriptOperation,
       );
@@ -22895,6 +22896,7 @@ class ActiveChat {
     String profile,
     int turnEpoch, {
     List<AttachmentDraft> nativeAttachments = const [],
+    PromptClientSurface? clientSurface,
     required LocalConversationLifecycle? capturedLifecycle,
     LocalConversationOperation? transcriptOperation,
   }) async {
@@ -22943,6 +22945,7 @@ class ActiveChat {
         sessionConfig: _turnSessionConfig,
         profile: profile,
         nativeAttachments: nativeAttachments,
+        clientSurface: clientSurface,
       );
     }
   }
