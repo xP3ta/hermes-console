@@ -5,6 +5,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../../../l10n/app_localizations.dart';
 import '../../../theme/app_theme.dart';
+import '../../hermes_premium_ui.dart' show showHermesFloatingSurface;
 import '../../artifact_viewer/artifact_html_policy.dart';
 import 'embed_consent_store.dart';
 import 'embed_detector.dart';
@@ -235,9 +236,9 @@ class _EmbedCardState extends State<EmbedCard> {
 
   Future<void> _chooseMode() async {
     final s = Strings.of(context);
-    final choice = await showModalBottomSheet<EmbedMode>(
+    final choice = await showHermesFloatingSurface<EmbedMode>(
       context: context,
-      showDragHandle: true,
+      maxWidth: 420,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,

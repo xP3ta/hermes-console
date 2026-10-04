@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../design/modal.dart' show HermesAction, showHermesMenu;
 import '../../models/message_reaction.dart';
 
 /// Reaction chips under a message plus one button to add the user's own.
@@ -35,20 +36,28 @@ class MessageReactionBar extends StatelessWidget {
             scheme: scheme,
           ),
         if (onPick != null)
-          PopupMenuButton<String>(
-            key: const ValueKey('message-react-add'),
-            tooltip: addTooltip,
-            padding: EdgeInsets.zero,
-            icon: Icon(
-              Icons.add_reaction_outlined,
-              size: 18,
-              color: scheme.onSurfaceVariant,
+          Builder(
+            builder: (context) => IconButton(
+              key: const ValueKey('message-react-add'),
+              tooltip: addTooltip,
+              padding: EdgeInsets.zero,
+              visualDensity: VisualDensity.compact,
+              icon: Icon(
+                Icons.add_reaction_outlined,
+                size: 18,
+                color: scheme.onSurfaceVariant,
+              ),
+              onPressed: () async {
+                final emoji = await showHermesMenu<String>(
+                  context: context,
+                  actions: [
+                    for (final e in kQuickReactions)
+                      HermesAction(value: e, label: e),
+                  ],
+                );
+                if (emoji != null) onPick?.call(emoji);
+              },
             ),
-            onSelected: onPick,
-            itemBuilder: (_) => [
-              for (final emoji in kQuickReactions)
-                PopupMenuItem<String>(value: emoji, child: Text(emoji)),
-            ],
           ),
       ],
     );
