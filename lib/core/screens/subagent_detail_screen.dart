@@ -35,7 +35,8 @@ import '../widgets/subagent_activity_card.dart'
         SubagentTailLoader,
         SubagentSteerSender,
         SubagentStopRequester,
-        SubagentTailScheduler;
+        SubagentTailScheduler,
+        SubagentLiveWatchOpener;
 
 /// Human status of a subagent (label + tone), shared by the in-chat row, the
 /// floating list and the detail page so the same entity reads the same way.
@@ -214,6 +215,10 @@ class SubagentDetailScreen extends StatefulWidget {
   final VoidCallback Function()? acquirePresentation;
 
   final SubagentTailScheduler? scheduleTailPoll;
+
+  /// Live watch of the child's mirrored turn. While it is up the polled tail
+  /// stays off; it is the fallback when the watch cannot be opened.
+  final SubagentLiveWatchOpener? openLiveWatch;
   final DateTime Function()? clock;
 
   /// Route observer used to know when this page is covered (tests inject one).
@@ -239,6 +244,7 @@ class SubagentDetailScreen extends StatefulWidget {
     this.isOpenPending,
     this.acquirePresentation,
     this.scheduleTailPoll,
+    this.openLiveWatch,
     this.clock,
     this.routeObserver,
     this.hideGoal = false,
