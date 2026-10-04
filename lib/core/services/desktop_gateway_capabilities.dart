@@ -17,6 +17,7 @@ enum DesktopGatewayCapability {
   projectFileDelete,
   profileAssets,
   profilePets,
+  freeTier,
   sessionControl,
 }
 

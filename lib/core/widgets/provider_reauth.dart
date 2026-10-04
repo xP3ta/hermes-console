@@ -66,7 +66,8 @@ bool providerSignedIn(List<Map<String, dynamic>> rows, String provider) {
     final status = row['status'];
     if (accepted.contains(row['id']) &&
         status is Map &&
-        status['logged_in'] == true) {
+        status['logged_in'] == true &&
+        status['free_tier'] != true) {
       return true;
     }
   }
