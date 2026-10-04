@@ -718,9 +718,11 @@ void main() {
       );
     });
 
-    testWidgets('with no connected socket it says so', (tester) async {
+    testWidgets('with no connected socket there is no MCP section', (
+      tester,
+    ) async {
       await pumpDiagnostics(tester, _server(), mcp: (_) async => null);
-      expect(find.text(strings(tester).sd1215McpNoSocket), findsOneWidget);
+      expect(find.text(strings(tester).sd1215Mcp), findsNothing);
     });
 
     testWidgets('a server without the method hides the section', (

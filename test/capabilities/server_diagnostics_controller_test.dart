@@ -133,13 +133,25 @@ void main() {
       expect(count(rest, 'GET analytics/usage'), 2);
     });
 
-    test('no connected socket says so and reads nothing', () async {
-      final rest = _server();
-      final c = controller(rest, mcp: (_) async => null);
-      await c.load();
-      expect(c.mcpPhase, DiagPhase.noSocket);
-      expect(c.mcpServers, isEmpty);
-    });
+    test(
+      'no connected socket confirms nothing, so there is no section',
+      () async {
+        final rest = _server();
+        var connected = false;
+        final c = controller(
+          rest,
+          mcp: (_) async => connected ? const [] : null,
+        );
+        await c.load();
+        expect(c.mcpPhase, DiagPhase.hidden);
+        expect(c.mcpServers, isEmpty);
+
+        // A chat connects; the next refresh gets a real answer.
+        connected = true;
+        await c.refresh();
+        expect(c.mcpPhase, DiagPhase.ready);
+      },
+    );
 
     test('an MCP method the server lacks hides the section', () async {
       final rest = _server();
