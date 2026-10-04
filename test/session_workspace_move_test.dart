@@ -4,6 +4,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
@@ -302,41 +303,44 @@ void main() {
     expect(_moves(h.requests), isEmpty);
   });
 
-  test('a socket drop during the move fails once and never retries', () async {
-    // A 5 ms base keeps the whole backoff ladder far below the waits below, so
-    // a replay scheduled after the reconnect would be seen.
-    final h = _client(
-      respond: (frame) =>
-          frame['method'] == 'session.workspace.move' ? null : _ok(frame),
-      reconnectBackoff: GatewayReconnectBackoff(
-        base: const Duration(milliseconds: 5),
-        random: () => 1,
-      ),
-    );
-    final pending = h.client.moveSessionWorkspace(
-      sessionKey: 'stored-1',
-      cwd: '/srv/work/repo',
-    );
-    final outcome = expectLater(
-      pending,
-      throwsA(
-        isA<DesktopControlFailure>().having(
-          (f) => f.kind,
-          'kind',
-          DesktopControlFailureKind.unavailable,
-        ),
-      ),
-    );
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    h.channels.single.drop();
-    await outcome;
+  test('a socket drop during the move fails once and never retries', () {
+    // Fake time: the default reconnect ladder and every other timer the client
+    // owns are driven by `elapse`, so a replay scheduled at any delay is seen.
+    fakeAsync((async) {
+      final h = _client(
+        respond: (frame) =>
+            frame['method'] == 'session.workspace.move' ? null : _ok(frame),
+      );
+      Object? failure;
+      h.client
+          .moveSessionWorkspace(sessionKey: 'stored-1', cwd: '/srv/work/repo')
+          .then<void>((_) {}, onError: (Object error) => failure = error);
+      async.flushMicrotasks();
+      async.elapse(const Duration(milliseconds: 50));
+      expect(_moves(h.requests), hasLength(1), reason: 'the move is in flight');
 
-    // Wait well past the reconnect backoff (at most 7.5 ms here, 20 times
-    // more below) and past any short replay delay, then count the moves on
-    // every socket generation.
-    for (var i = 0; i < 6; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    }
-    expect(_moves(h.requests), hasLength(1));
+      h.channels.single.drop();
+      async.flushMicrotasks();
+      expect(failure, isA<DesktopControlFailure>());
+      expect(
+        (failure! as DesktopControlFailure).kind,
+        DesktopControlFailureKind.unavailable,
+      );
+
+      // Past any backoff step, then a later request makes the client connect
+      // again (reconnection is lazy), then past any replay timer.
+      async.elapse(const Duration(hours: 1));
+      h.client.connect().then<void>((_) {}, onError: (Object _) {});
+      async.flushMicrotasks();
+      async.elapse(const Duration(hours: 1));
+      expect(
+        h.channels.length,
+        greaterThan(1),
+        reason: 'the client reconnected, so a replay could have happened',
+      );
+      expect(_moves(h.requests), hasLength(1));
+      h.client.close();
+      async.flushMicrotasks();
+    });
   });
 }
