@@ -498,6 +498,9 @@ final class MissionRosterRead {
   final List<DesktopActiveSession> activeSessions;
   final DateTime? activeSessionsObservedAt;
 
+  /// See [MissionBackendSnapshot.activeSessionsAuthoritative].
+  final bool activeSessionsAuthoritative;
+
   const MissionRosterRead({
     required this.profiles,
     required this.sessions,
@@ -507,6 +510,7 @@ final class MissionRosterRead {
     this.sessionsError,
     this.activeSessions = const [],
     this.activeSessionsObservedAt,
+    this.activeSessionsAuthoritative = true,
   });
 }
 

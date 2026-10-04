@@ -167,6 +167,11 @@ final class MissionBackendSnapshot {
   /// to the chat. Null falls back to [loadedAt].
   final DateTime? activeSessionsObservedAt;
 
+  /// False when the read failed (timeout, cut socket, server error): the empty
+  /// list then proves nothing and the last good rows must be kept. A read that
+  /// answered, even with no rows, is authoritative about absence.
+  final bool activeSessionsAuthoritative;
+
   const MissionBackendSnapshot({
     this.profiles = const [],
     this.sessions = const [],
@@ -180,6 +185,7 @@ final class MissionBackendSnapshot {
     required this.loadedAt,
     this.activeSessions = const [],
     this.activeSessionsObservedAt,
+    this.activeSessionsAuthoritative = true,
   });
 
   List<KanbanTask> get tasks => List<KanbanTask>.unmodifiable(
