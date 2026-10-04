@@ -273,4 +273,42 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Agent'), findsNothing);
   });
+
+  testWidgets('leaving before FLAG_SECURE lands releases it and never opens', (
+    tester,
+  ) async {
+    final applied = Completer<void>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('hermes/security'), (
+          call,
+        ) async {
+          if (call.method == 'setSecureScreen') {
+            await applied.future;
+            secure.add(call.arguments as bool);
+          }
+          return null;
+        });
+    var verified = 0;
+    final gateway = FakeTerminalGateway();
+    await tester.pumpWidget(
+      app(
+        gateway,
+        await lock(enabled: true),
+        verify: (_, _, _) async {
+          verified++;
+          return true;
+        },
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    applied.complete();
+    await tester.pumpAndSettle();
+    expect(verified, 0);
+    expect(
+      secure.isEmpty || secure.last == false,
+      isTrue,
+      reason: 'a lease that landed after leaving is released',
+    );
+  });
 }

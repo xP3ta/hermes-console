@@ -170,5 +170,14 @@ void main() {
       t.seed([_seed('gone', tail: '')]);
       expect(t.ids, isEmpty);
     });
+
+    test('two different early closes are both kept', () {
+      final s = AgentTerminalStream();
+      s.onClose('first');
+      s.onClose('second');
+      s.seed([_seed('first', tail: ''), _seed('second', tail: '')]);
+      expect(s.isClosed('first'), isTrue);
+      expect(s.isClosed('second'), isTrue);
+    });
   });
 }
