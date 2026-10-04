@@ -7722,5 +7722,6 @@
   "profileSwitcherLoadFailed": "Couldn't load the profiles. Tap to retry.",
   "profileSwitcherManage": "Manage profiles",
   "pj1215PromptsAction": "Prompts",
-  "pj1215PromptsEmpty": "No prompts in this chat yet."
+  "pj1215PromptsEmpty": "No prompts in this chat yet.",
+  "pj1215StickyPromptLabel": "Prompt of this reply; tap to jump to it"
 }

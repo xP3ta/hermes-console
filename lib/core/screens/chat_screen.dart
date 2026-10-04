@@ -1776,6 +1776,92 @@ class _ChatScreenState extends State<ChatScreen>
   // show the transcript jumping upward screen by screen before it lands.
   final ValueNotifier<bool> _transcriptConcealed = ValueNotifier(false);
 
+  // Sticky prompt: the prompt of the turn whose reply spans the viewport top.
+  // Recomputed at most once per frame (post-frame, scheduled from the scroll
+  // listener and from a new transcript snapshot), reading only the attached
+  // anchors plus the snapshot the last build used: never a transcript walk
+  // and never a screen setState.
+  final ValueNotifier<Map<String, dynamic>?> _stickyPrompt = ValueNotifier(
+    null,
+  );
+  List<Map<String, dynamic>> _stickySource = const [];
+  Map<Map<String, dynamic>, int>? _stickyIndex;
+  bool _stickyUpdateScheduled = false;
+
+  void _scheduleStickyPromptUpdate() {
+    if (_stickyUpdateScheduled || _disposed) return;
+    _stickyUpdateScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _stickyUpdateScheduled = false;
+      if (_disposed || !mounted) return;
+      final next =
+          _findOpen ||
+              _transcriptConcealed.value ||
+              !_scrollController.hasClients ||
+              _stickySource.isEmpty
+          ? null
+          : _stickyPromptCandidate();
+      if (!identical(_stickyPrompt.value, next)) _stickyPrompt.value = next;
+    });
+  }
+
+  /// The prompt to pin, or null when the reply at the top has none loaded or
+  /// the prompt's own bubble is (partly) on screen.
+  Map<String, dynamic>? _stickyPromptCandidate() {
+    Map<String, dynamic>? topMessage;
+    var topOffset = double.infinity;
+    for (final entry in _messageAnchors.entries) {
+      final anchor = entry.value;
+      final top = _ChatStreamingViewportLock._visualOffsetInViewport(anchor);
+      final height = anchor is ChatAnswerAnchorRenderBox
+          ? anchor.laidOutHeight
+          : null;
+      if (top == null || height == null || top + height <= 0) continue;
+      if (top < topOffset) {
+        topOffset = top;
+        topMessage = entry.key;
+      }
+    }
+    if (topMessage == null || topOffset > chatPromptActiveSlack) return null;
+    final source = _stickySource;
+    var index = _stickyIndex;
+    if (index == null) {
+      index = Map<Map<String, dynamic>, int>.identity();
+      for (var i = 0; i < source.length; i++) {
+        index[source[i]] = i;
+      }
+      _stickyIndex = index;
+    }
+    final topIndex = index[topMessage];
+    if (topIndex == null) return null;
+    final promptIndex = stickyPromptIndex(source, topIndex);
+    if (promptIndex == null) return null;
+    final prompt = source[promptIndex];
+    if (_jobChipLabel(prompt['content'] as String, Strings.of(context)) !=
+        null) {
+      return null;
+    }
+    final promptAnchor = _messageAnchors[prompt];
+    final promptTop = _ChatStreamingViewportLock._visualOffsetInViewport(
+      promptAnchor,
+    );
+    final promptHeight = promptAnchor is ChatAnswerAnchorRenderBox
+        ? promptAnchor.laidOutHeight
+        : null;
+    if (promptTop != null &&
+        promptHeight != null &&
+        promptTop + promptHeight > 0) {
+      return null;
+    }
+    return prompt;
+  }
+
+  Future<void> _revealStickyPrompt(Map<String, dynamic> prompt) async {
+    final target = chatRefreshFindAnchorMessage(prompt, _messages) ?? prompt;
+    _freezeStreamingFollow();
+    await _revealTranscriptMessage(target);
+  }
+
   /// Walk budget of the entry landing: long enough to build a first unread
   /// row several screens up, short enough (~330 ms) that a blank transcript
   /// never reads as a broken screen.
@@ -7025,6 +7111,7 @@ class _ChatScreenState extends State<ChatScreen>
     _scrollToBottomVisibility.dispose();
     _newWhileAway.dispose();
     _transcriptConcealed.dispose();
+    _stickyPrompt.dispose();
     _findStatus.dispose();
     _findActiveMessage.dispose();
     _activityPillExtent.dispose();
@@ -7153,6 +7240,7 @@ class _ChatScreenState extends State<ChatScreen>
       _cancelMessageRefreshViewportAnchor();
     }
     _scheduleMessageRefreshViewportReanchor();
+    _scheduleStickyPromptUpdate();
     // Lista reverse:true → offset 0 es el FONDO (mensaje más nuevo) y
     // maxScrollExtent es lo más antiguo. "Estás abajo" = cerca de
     // minScrollExtent; medir contra maxScrollExtent detectaría lo contrario
@@ -12063,6 +12151,58 @@ class _ChatScreenState extends State<ChatScreen>
                                   child: _buildBody(),
                                 ),
                                 Positioned(
+                                  top: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: ListenableBuilder(
+                                    listenable: Listenable.merge([
+                                      _stickyPrompt,
+                                      _transcriptConcealed,
+                                    ]),
+                                    builder: (context, _) {
+                                      final prompt = _stickyPrompt.value;
+                                      if (prompt == null ||
+                                          _findOpen ||
+                                          _transcriptConcealed.value) {
+                                        return const SizedBox.shrink();
+                                      }
+                                      return Semantics(
+                                        button: true,
+                                        label: str.pj1215StickyPromptLabel,
+                                        child: GestureDetector(
+                                          key: const ValueKey(
+                                            'chat-sticky-prompt',
+                                          ),
+                                          behavior: HitTestBehavior.opaque,
+                                          onTap: () => unawaited(
+                                            _revealStickyPrompt(prompt),
+                                          ),
+                                          child: ClipRect(
+                                            child: ConstrainedBox(
+                                              constraints:
+                                                  const BoxConstraints(
+                                                    maxHeight: 96,
+                                                  ),
+                                              child: SingleChildScrollView(
+                                                physics:
+                                                    const NeverScrollableScrollPhysics(),
+                                                child: ExcludeSemantics(
+                                                  child: _UserMessage(
+                                                    content:
+                                                        prompt['content']
+                                                            as String,
+                                                    compact: true,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                                Positioned(
                                   top: 8,
                                   left: 0,
                                   right: 0,
@@ -15348,7 +15488,13 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     final entries = _currentListEntries;
-    pruneMessageAnchorCache(_messageAnchors, _messages);
+    final snapshot = _messages;
+    pruneMessageAnchorCache(_messageAnchors, snapshot);
+    if (!identical(snapshot, _stickySource)) {
+      _stickySource = snapshot;
+      _stickyIndex = null;
+      _scheduleStickyPromptUpdate();
+    }
 
     final transcript = ListenableBuilder(
       listenable: Listenable.merge([
