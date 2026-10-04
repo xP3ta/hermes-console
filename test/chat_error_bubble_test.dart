@@ -88,9 +88,23 @@ void main() {
       testWidgets('$code reads as a busy provider, not an exhausted quota', (
         tester,
       ) async {
-        for (final (locale, title, notTitle) in const [
-          ('es', 'El servicio de IA está ocupado', 'Límite de uso alcanzado'),
-          ('en', 'The AI service is busy', 'Usage limit reached'),
+        for (final (locale, title, notTitle, hint, notHint) in const [
+          (
+            'es',
+            'El servicio de IA está ocupado',
+            'Límite de uso alcanzado',
+            'El proveedor está limitando las peticiones ahora mismo. '
+                'Reintenta en un momento o prueba otro modelo.',
+            'Espera a que se levante el límite o prueba otro modelo.',
+          ),
+          (
+            'en',
+            'The AI service is busy',
+            'Usage limit reached',
+            'The provider is limiting requests right now. '
+                'Try again in a moment or pick another model.',
+            'Wait for the limit to lift or try another model.',
+          ),
         ]) {
           await tester.pumpWidget(
             _host(
@@ -106,6 +120,8 @@ void main() {
 
           expect(find.text(title), findsOneWidget);
           expect(find.text(notTitle), findsNothing);
+          expect(find.text(hint), findsOneWidget);
+          expect(find.text(notHint), findsNothing);
         }
       });
     }
