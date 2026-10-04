@@ -328,6 +328,68 @@ void main() {
     });
   });
 
+  group('single reads', () {
+    test('readConfig is one GET of the config, with the profile', () async {
+      final server = _Server();
+      final config = await _repo(server, profile: 'work').readConfig();
+
+      expect(config['model_context_length'], 0);
+      expect(server.requests.single.url.path, '/api/config');
+      expect(server.requests.single.url.queryParameters, {'profile': 'work'});
+    });
+
+    test('readSchema is one GET of the schema and needs its fields', () async {
+      final server = _Server(
+        schema: {
+          'fields': {
+            'agent.max_turns': {'type': 'number'},
+          },
+        },
+      );
+      final schema = await _repo(server).readSchema();
+
+      expect(schema['fields'], isA<Map>());
+      expect(server.requests.single.url.path, '/api/config/schema');
+    });
+
+    test('a schema without fields is an invalid response', () async {
+      final server = _Server(schema: {'nothing': true});
+      final failure = await _failure(_repo(server).readSchema());
+      expect(failure.kind, ServerConfigFailureKind.invalidResponse);
+    });
+
+    test('a missing route is unsupported', () async {
+      final repo = ServerConfigRepository(
+        DashboardClient(
+          host: 'hermes.example.test',
+          port: 9119,
+          manualToken: 'synthetic-token',
+          httpClientOverride: MockClient(
+            (request) async => http.Response('nope', 404),
+          ),
+        ),
+      );
+      expect(
+        (await _failure(repo.readSchema())).kind,
+        ServerConfigFailureKind.unsupported,
+      );
+      expect(
+        (await _failure(repo.readConfig())).kind,
+        ServerConfigFailureKind.unsupported,
+      );
+    });
+
+    test('a closed repository refuses to read', () async {
+      final server = _Server();
+      final repo = _repo(server)..close();
+      expect(
+        (await _failure(repo.readConfig())).kind,
+        ServerConfigFailureKind.closed,
+      );
+      expect(server.requests, isEmpty);
+    });
+  });
+
   group('load', () {
     test('reads config and schema in the same profile', () async {
       final server = _Server(
