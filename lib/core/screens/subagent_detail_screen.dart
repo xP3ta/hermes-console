@@ -23,6 +23,7 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart' show hermesRouteObserver;
 import '../design/hermes_design.dart';
 import '../models/subagent_activity.dart';
+import '../services/subagent_live_watch.dart';
 import '../theme/app_theme.dart';
 import '../utils/assistant_content.dart' show finalizedPublicAssistantText;
 import '../widgets/activity_pill.dart' show formatTurnElapsed;
@@ -277,6 +278,12 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
   VoidCallback? _cancelTailPoll;
   Duration _tailInterval = SubagentDetailScreen.tailFast;
 
+  // Live watch of the child's mirrored turn. While it is up it is the only
+  // source of the log; once it cannot be served the polled tail takes over
+  // for the rest of this page's life.
+  SubagentLiveWatch? _watch;
+  bool _watchUnavailable = false;
+
   final TextEditingController _steer = TextEditingController();
   bool _steerPending = false;
   String? _steerNotice;
@@ -316,6 +323,7 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
     WidgetsBinding.instance.removeObserver(this);
     _observer?.unsubscribe(this);
     widget.roster.removeListener(_onRoster);
+    _stopWatch();
     _stopTail();
     _clockTimer?.cancel();
     _release?.call();
@@ -391,6 +399,7 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
   /// Event-driven tail read, coalesced: a burst during an in-flight read
   /// yields exactly one follow-up read when it lands.
   void _tailOnChildEvent() {
+    if (_watch != null) return;
     if (!_visible || !_canTailNow(_find())) {
       _syncTail();
       return;
@@ -427,11 +436,74 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
 
   void _syncTail() {
     if (!mounted) return;
+    if (_syncWatch()) {
+      _stopTail();
+      return;
+    }
     if (_visible && _canTailNow(_find())) {
       if (_cancelTailPoll == null && !_tailInFlight) _pollTail();
     } else {
       _stopTail();
     }
+  }
+
+  /// Keeps the live watch open exactly while the page is visible and the child
+  /// is working. Returns whether the watch is the log's source right now.
+  bool _syncWatch() {
+    final activity = _find();
+    final wanted =
+        _visible &&
+        activity != null &&
+        subagentIsLive(activity) &&
+        widget.openLiveWatch != null &&
+        !_watchUnavailable;
+    if (!wanted) {
+      _stopWatch();
+      return false;
+    }
+    if (_watch == null) {
+      final watch = widget.openLiveWatch!(activity);
+      if (watch == null) {
+        _watchUnavailable = true;
+        return false;
+      }
+      _watch = watch
+        ..addListener(_onWatch)
+        ..start();
+    }
+    return true;
+  }
+
+  void _stopWatch({bool fromListener = false}) {
+    final watch = _watch;
+    if (watch == null) return;
+    _watch = null;
+    watch.removeListener(_onWatch);
+    // A notifier cannot be disposed while it is still notifying.
+    if (fromListener) {
+      scheduleMicrotask(watch.dispose);
+    } else {
+      watch.dispose();
+    }
+  }
+
+  void _onWatch() {
+    final watch = _watch;
+    if (!mounted || watch == null) return;
+    final view = watch.value;
+    if (view.status == SubagentLiveWatchStatus.unavailable) {
+      _stopWatch(fromListener: true);
+      _watchUnavailable = true;
+      setState(() {});
+      _syncTail();
+      return;
+    }
+    if (view.status != SubagentLiveWatchStatus.opening) {
+      _tail.value = _tail.value.apply(
+        SubagentTailView(available: true, content: view.text, truncated: false),
+      );
+    }
+    setState(() {});
   }
 
   void _stopTail() {
@@ -640,7 +712,13 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
             s.subagentUiSectionLive,
             trailing: _LiveDot(active: _visible),
           ),
-          _LivePanel(tail: _tail, onOpen: _openLivePage, paused: !_visible),
+          _LivePanel(
+            tail: _tail,
+            onOpen: _openLivePage,
+            paused: !_visible,
+            reconnecting:
+                _watch?.value.status == SubagentLiveWatchStatus.reconnecting,
+          ),
         ],
         if (canSteer) ...[
           HermesSectionHeader(s.subagentUiSectionGuide),
@@ -783,6 +861,7 @@ class _LivePanel extends StatelessWidget {
   final ValueListenable<SubagentLiveTail> tail;
   final VoidCallback onOpen;
   final bool paused;
+  final bool reconnecting;
 
   static const int visibleLines = 10;
 
@@ -790,6 +869,7 @@ class _LivePanel extends StatelessWidget {
     required this.tail,
     required this.onOpen,
     required this.paused,
+    this.reconnecting = false,
   });
 
   @override
@@ -813,7 +893,9 @@ class _LivePanel extends StatelessWidget {
               ? lines.length - visibleLines
               : 0;
           final visible = lines.sublist(start).join('\n').trimRight();
-          note = paused
+          note = reconnecting
+              ? s.chaConnectionLostReconnecting
+              : paused
               ? s.subagentUiLivePaused
               : value.truncated || start > 0
               ? s.subagentUiLiveTruncated
