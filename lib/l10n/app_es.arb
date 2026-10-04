@@ -132,7 +132,7 @@
       }
     }
   },
-  "homeStatusOnline": "agent online · {label}",
+  "homeStatusOnline": "en línea · {label}",
   "@homeStatusOnline": {
     "description": "Línea de estado cuando la instancia responde. {label} = nombre de la instancia.",
     "placeholders": {
