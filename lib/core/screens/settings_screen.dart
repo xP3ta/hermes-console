@@ -51,7 +51,9 @@ import 'voice_settings_screen.dart';
 
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../services/terminal_availability.dart';
 import '../widgets/hermes_app_bar.dart';
+import 'terminal_pane_screen.dart';
 import '../widgets/diagnostic_bundle_tile.dart';
 import '../widgets/install_source_section.dart';
 import '../design/hermes_design.dart'
@@ -298,6 +300,36 @@ class SettingsScreen extends StatelessWidget {
                 connection: conn,
                 connManager: connManager,
               ),
+              if (TerminalAvailability.offered(conn))
+                HermesGroup(
+                  children: [
+                    HermesNavRow(
+                      key: const ValueKey('settings-terminal'),
+                      icon: Icons.terminal_rounded,
+                      title: Strings.of(context).termTitle,
+                      subtitle: Strings.of(context).termSubtitle,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => TerminalPaneScreen(
+                            connection: conn,
+                            profile: Session.profileOwner(
+                              connManager.activeProfileFor(conn.id),
+                            ),
+                            onOpenSecurity: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => SecurityInfoScreen(
+                                  connManager: connManager,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               _SectionHeader(Strings.of(context).setSecBridge),
               HermesGroup(children: [_BridgeAutoUpdateTile(connection: conn)]),
               _SectionHeader(Strings.of(context).setSecData),

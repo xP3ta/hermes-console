@@ -14,6 +14,7 @@ import '../services/agent_terminal_stream.dart';
 import '../services/app_lock.dart';
 import '../services/screen_security.dart';
 import '../services/shared_gateway_pool.dart';
+import '../services/terminal_availability.dart';
 import '../services/terminal_pane_controller.dart';
 import '../design/page.dart' show HermesActionButton;
 import '../theme/app_theme.dart';
@@ -138,6 +139,9 @@ class _TerminalPaneScreenState extends State<TerminalPaneScreen> {
       unawaited(_startAgentStream());
     } else if (_controller.access != TerminalPaneAccess.ready) {
       _stopAgentStream();
+    }
+    if (_controller.access == TerminalPaneAccess.unsupported) {
+      TerminalAvailability.markUnsupported(widget.connection.id);
     }
     setState(() {});
   }
