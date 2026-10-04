@@ -58,6 +58,7 @@ import 'core/services/profile_pet_service.dart';
 import 'core/services/platform/native_appearance.dart';
 import 'core/services/secure_storage.dart';
 import 'core/services/screen_security.dart';
+import 'core/services/session_archive.dart';
 import 'core/services/sftp_transfer_service.dart';
 import 'core/services/ssh_manager.dart';
 import 'core/services/ssh_session_service.dart';
@@ -296,6 +297,9 @@ Future<Widget> bootstrapHermesApp() async {
   final bridgeManager = BridgeManager(SecureStorage(), connManager);
   final sshManager = SshManager(SecureStorage(), connManager);
   final notifications = NotificationService(prefs);
+  // A chat read on another device (or opened here) retracts this phone's
+  // notification on the next session list read the app already makes.
+  SessionArchive.listReadObserver = notifications.enableChatReadSync();
   final sftpTransfers = SftpTransferService(sshManager, notifications);
   final sshSessions = SshSessionService(sshManager);
   final activeChats = ActiveChatService(
