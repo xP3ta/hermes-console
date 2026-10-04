@@ -166,6 +166,10 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    // No socket lingers after its last lease: every test gets a fresh one.
+    SharedGatewayPool.debugDefaultLinger = Duration.zero;
+    SessionListScreen.debugResetMoveSupport();
+    addTearDown(() => SharedGatewayPool.debugDefaultLinger = null);
     shared.clear();
     secureValues.clear();
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
@@ -208,8 +212,9 @@ void main() {
     SessionExportService? exporter,
     ProjectTreeSnapshot? tree,
     Widget Function(Widget screen)? wrap,
+    double height = 2532,
   }) async {
-    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.physicalSize = Size(1170, height);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -443,6 +448,8 @@ void main() {
         // Unchanged: Beta is still a destination.
         await openMoveSheet(tester);
         expect(find.text('Beta'), findsOneWidget);
+        await tester.tapAt(const Offset(10, 10));
+        await tester.pumpAndSettle();
         expect(SharedGatewayPool.instance.leaseCount, 0);
       });
     }
@@ -646,7 +653,7 @@ void main() {
     testWidgets('weeks, months and years get their own sections', (
       tester,
     ) async {
-      await pump(tester, [
+      await pump(height: 7000, tester, [
         _row('r1', title: 'Hoy mismo', active: at(2026, 10, 14, 9)),
         _row('r2', title: 'Ayer', active: at(2026, 10, 13)),
         _row('r3', title: 'Lunes', active: at(2026, 10, 12)),

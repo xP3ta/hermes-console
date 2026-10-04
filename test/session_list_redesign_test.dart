@@ -278,6 +278,7 @@ void main() {
     WidgetTester tester,
     List<Map<String, dynamic>> rows, {
     ActiveChatService? activeChats,
+    DateTime Function()? clock,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final manager = await ConnectionManager.create(prefs);
@@ -311,6 +312,7 @@ void main() {
           clientOverride: gateway,
           repositoryOverride: repository,
           activeChatsOverride: activeChats,
+          clockOverride: clock,
         ),
       ),
     );
@@ -327,25 +329,16 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    final today = nowSeconds();
-    // Un offset fijo de 26h puede caer dos días atrás si el test corre de
-    // madrugada (antes de las 02:00), en vez de "ayer" — se ancla al
-    // mediodía del día calendario anterior para que sea independiente de
-    // la hora a la que corra la suite.
-    final now = DateTime.now();
-    final yesterday =
-        DateTime(
-          now.year,
-          now.month,
-          now.day - 1,
-          12,
-        ).millisecondsSinceEpoch ~/
-        1000;
+    // The sections follow the human day (04:00 rollover), so the test fixes
+    // the clock instead of depending on the hour the suite runs at.
+    final now = DateTime(2026, 10, 14, 12, 0);
+    final today = now.millisecondsSinceEpoch ~/ 1000;
+    final yesterday = DateTime(2026, 10, 13, 12).millisecondsSinceEpoch ~/ 1000;
     await pump(tester, [
       _row('hoy-1', title: 'Firma del keystore en CI', lastActive: today),
       _row('hoy-2', title: 'Notas de la release', lastActive: today - 60),
       _row('ayer-1', title: 'Deploy a staging', lastActive: yesterday),
-    ]);
+    ], clock: () => now);
     await _pumpUntil(tester, find.text('Firma del keystore en CI'));
 
     final strings = Strings.of(tester.element(find.byType(SessionListScreen)));
