@@ -565,6 +565,7 @@
   "chaErrFirstTokenTimeout": "Model not responding",
   "chaErrSearchToolUnavailable": "Web search not configured",
   "chaErrSessionTooLarge": "Session too large",
+  "chaErrProfileDashboardAccess": "This profile needs Dashboard access. Sign in to this connection's Dashboard (or give the profile its own API_SERVER_KEY) and retry.",
   "chaErrUnknown": "Error",
   "chaErrHintConnection": "Check the instance, network or Tailscale and try again.",
   "chaErrHintModel": "Check the key/credentials or the active model.",

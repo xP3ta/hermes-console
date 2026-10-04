@@ -5,6 +5,8 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/screens/subagent_detail_screen.dart';
+import 'package:hermes_android/core/services/active_chat_service.dart'
+    show ProfileTranscriptAccessRequired;
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/accent_card.dart';
 import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
@@ -812,5 +814,34 @@ void main() {
     expect(find.text('GUIDE'), findsOneWidget);
     expect(find.text('Detener'), findsNothing);
     expect(find.text('GUIAR'), findsNothing);
+  });
+
+  testWidgets('transcript page names the missing Dashboard access of a '
+      'named profile and retries on demand', (tester) async {
+    var loads = 0;
+    await tester.pumpWidget(
+      _host(
+        SubagentTranscriptPage(
+          title: 'Child',
+          load: () async {
+            loads += 1;
+            throw const ProfileTranscriptAccessRequired();
+          },
+        ),
+      ),
+    );
+    await _settle(tester);
+
+    expect(
+      find.textContaining('Este perfil necesita acceso al Dashboard'),
+      findsOneWidget,
+    );
+    expect(loads, 1);
+    await tester.pump(const Duration(seconds: 30));
+    expect(loads, 1, reason: 'no automatic retry');
+
+    await tester.tap(find.text('Reintentar'));
+    await _settle(tester);
+    expect(loads, 2);
   });
 }

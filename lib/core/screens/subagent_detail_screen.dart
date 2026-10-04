@@ -23,6 +23,8 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart' show hermesRouteObserver;
 import '../design/hermes_design.dart';
 import '../models/subagent_activity.dart';
+import '../services/active_chat_service.dart'
+    show ProfileTranscriptAccessRequired;
 import '../theme/app_theme.dart';
 import '../utils/assistant_content.dart' show finalizedPublicAssistantText;
 import '../widgets/activity_pill.dart' show formatTurnElapsed;
@@ -1242,9 +1244,18 @@ class _SubagentTranscriptPageState extends State<SubagentTranscriptPage> {
           children.add(
             HermesEmptyStateView(
               icon: Icons.cloud_off_rounded,
-              title: s.subagentUiTranscriptError,
+              title: snap.error is ProfileTranscriptAccessRequired
+                  ? s.chaErrProfileDashboardAccess
+                  : s.subagentUiTranscriptError,
               actionLabel: s.subagentUiRetry,
-              onAction: () => setState(() => _future = widget.load()),
+              onAction: () {
+                // FutureBuilder subscribes on the next frame: keep a failed
+                // retry from surfacing as an uncaught error before then.
+                final retry = widget.load()..ignore();
+                setState(() {
+                  _future = retry;
+                });
+              },
             ),
           );
         } else {
