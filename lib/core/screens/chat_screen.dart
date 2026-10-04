@@ -8720,6 +8720,84 @@ class _ChatScreenState extends State<ChatScreen>
 
   bool _providerReauthRunning = false;
 
+  /// "Compactar conversación" on the card: the `/compress` the composer
+  /// already runs. That flow takes over the composer text, so a draft the user
+  /// was typing is put back afterwards.
+  Future<void> _compressFromError() async {
+    final draft = _textController.text;
+    await _compressDesktopSession('');
+    if (draft.isNotEmpty && mounted) _restoreSlashInvocation(draft);
+  }
+
+  /// "Editar mensaje" on the card: opens the edit of the message the failed
+  /// turn answered, or null when it cannot be edited.
+  VoidCallback? _editMessageOfError(Map<String, dynamic> error) {
+    var foundError = false;
+    Map<String, dynamic>? target;
+    for (final message in _messages) {
+      if (identical(message, error)) {
+        foundError = true;
+        continue;
+      }
+      if (foundError && isRealUserTurn(message)) {
+        target = message;
+        break;
+      }
+    }
+    // The card may hold a projected copy of its row: the newest user turn is
+    // then the one the failure answered.
+    if (!foundError) {
+      for (final message in _messages) {
+        if (isRealUserTurn(message)) {
+          target = message;
+          break;
+        }
+      }
+    }
+    final user = target;
+    if (user == null || !_canEditUserMessage(user)) return null;
+    return () {
+      if (!mounted) return;
+      _editUserMessage(user, MediaQuery.sizeOf(context).width * 0.85);
+    };
+  }
+
+  /// Billing action: Nous opens the existing Models/account screen; another
+  /// provider opens its `https` billing page in the system browser.
+  VoidCallback? _openBillingAction(TurnBillingBlock? billing) {
+    if (billing == null) return null;
+    if (billing.isNous) {
+      return () => _pushScreen(ModelsScreen(connection: widget.connection));
+    }
+    final url = billing.billingUrl;
+    if (url == null) return null;
+    return () => unawaited(
+      launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+    );
+  }
+
+  /// Free-tier sign-in is only offered when the Accounts catalog of this
+  /// chat's profile lists `nous`, so it never opens a dead flow.
+  Future<bool> _freeTierSignInAvailable() async {
+    final client = (widget.providerReauthClientFactory ?? DashboardClient.lazy)(
+      widget.connection,
+    );
+    final rows = await client.getOAuthProviders(
+      profile: Session.profileOwner(_chat.sessionProfile),
+    );
+    return rows.any((row) => row['id'] == 'nous');
+  }
+
+  void _signInFreeTier() => unawaited(
+    _reauthProvider(
+      const ProviderAuthFailure(
+        provider: 'nous',
+        label: 'Nous',
+        kind: ProviderAuthKind.oauth,
+      ),
+    ),
+  );
+
   /// "Volver a iniciar sesión" / "Revisar la clave" on a provider credential
   /// failure. After a successful sign-in the turn can be retried in place.
   Future<void> _reauthProvider(
@@ -11138,16 +11216,23 @@ class _ChatScreenState extends State<ChatScreen>
     // tool names itself). «Ejecutando herramientas…» with none listed read
     // as a pill out of sync with its own panel; between steps the agent is
     // thinking, as the list and Home say.
-    final activityHeadline = switch (_pipelineState) {
-      // cq1215: a post-cut viewer stays `connecting` for the rest of the
-      // turn; with the socket back it is watching a running turn.
-      ChatPipelineState.connecting
-          when _chat.observesRemoteTurnAfterReconnect =>
-        s.ss1215StatusWorking,
-      ChatPipelineState.connecting => s.chaPipelineConnecting,
-      ChatPipelineState.streaming => s.chaPipelineStreaming,
-      _ => s.chaPipelineThinking,
-    };
+    // A provider wait the core explained ("⏳ waiting on provider…") is the
+    // turn's status line until the provider answers.
+    final providerWait = _pipelineState == ChatPipelineState.connecting
+        ? null
+        : _chat.providerWaitText;
+    final activityHeadline =
+        providerWait ??
+        switch (_pipelineState) {
+          // cq1215: a post-cut viewer stays `connecting` for the rest of the
+          // turn; with the socket back it is watching a running turn.
+          ChatPipelineState.connecting
+              when _chat.observesRemoteTurnAfterReconnect =>
+            s.ss1215StatusWorking,
+          ChatPipelineState.connecting => s.chaPipelineConnecting,
+          ChatPipelineState.streaming => s.chaPipelineStreaming,
+          _ => s.chaPipelineThinking,
+        };
     return chatActivityHeadlineForTransport(
       transportLossVisible: _transportVisibility.visible,
       authRequired: _chat.dashboardAuthRequired,
@@ -15800,6 +15885,11 @@ class _ChatScreenState extends State<ChatScreen>
       final onRetry = _chat.conflictReadOnly
           ? null
           : () => unawaited(_retryLastPrompt(prompt));
+      final surface = TurnErrorSurface.parse(msg[turnErrorSurfaceKey]);
+      final billing = TurnBillingBlock.parse(msg[turnBillingBlockKey]);
+      final failedTurn = _chat.currentFailedTurnToken;
+      final retryChat = _chat;
+      final readOnly = _chat.conflictReadOnly || widget.connection.readOnly;
       return ChatErrorBubble(
         error: activeChatStoredErrorUiMessage(content),
         onRetry: onRetry,
@@ -15810,6 +15900,42 @@ class _ChatScreenState extends State<ChatScreen>
         onReauth: authFailure == null || _providerReauthRunning
             ? null
             : () => unawaited(_reauthProvider(authFailure, onRetry: onRetry)),
+        surface: surface,
+        billing: billing,
+        onCompress: readOnly ? null : () => unawaited(_compressFromError()),
+        onChooseModel: readOnly ? null : _showModelSheet,
+        onEditMessage: _editMessageOfError(msg),
+        onOpenBilling: _openBillingAction(billing),
+        onSignInFreeTier: readOnly ? null : _signInFreeTier,
+        freeTierSignInAvailable: _freeTierSignInAvailable,
+        // A retry may only be armed on the failed turn that is still the last
+        // one; a different chat, profile or failed turn drops it.
+        canArmRetry:
+            onRetry != null &&
+            failedTurn != null &&
+            _chat.state == ChatPipelineState.failed,
+        retryScope: (
+          retryChat,
+          Session.profileOwner(_chat.sessionProfile),
+          failedTurn,
+        ),
+        onScheduledRetry: onRetry == null || failedTurn == null
+            ? null
+            : () {
+                if (!mounted ||
+                    !identical(_chat, retryChat) ||
+                    _chat.state != ChatPipelineState.failed ||
+                    !_isSameFailedTurn(
+                      retryChat.currentFailedTurnToken,
+                      failedTurn,
+                    )) {
+                  return;
+                }
+                onRetry();
+              },
+        now: _chat.wallNow,
+        composerProvider: _chat.desktopRuntimeInfo.provider,
+        composerModel: _chat.desktopRuntimeInfo.model,
       );
     }
 
@@ -17258,6 +17384,10 @@ class ChatErrorBubble extends StatefulWidget {
   final bool canArmRetry;
   final Object? retryScope;
 
+  /// What an armed retry runs when its time comes; defaults to [onRetry]. The
+  /// screen guards it so it only resends the turn the card belongs to.
+  final VoidCallback? onScheduledRetry;
+
   /// Clock and app version, replaceable in tests.
   final DateTime Function()? now;
   final String? composerProvider;
@@ -17283,6 +17413,7 @@ class ChatErrorBubble extends StatefulWidget {
     this.freeTierSignInAvailable,
     this.canArmRetry = false,
     this.retryScope,
+    this.onScheduledRetry,
     this.now,
     this.composerProvider,
     this.composerModel,
@@ -17580,7 +17711,7 @@ class _PlannedErrorCardState extends State<_PlannedErrorCard>
 
   void _fire() {
     if (!mounted || !_armed) return;
-    final retry = _bubble.onRetry;
+    final retry = _bubble.onScheduledRetry ?? _bubble.onRetry;
     final allowed = _bubble.canArmRetry && TickerMode.valuesOf(context).enabled;
     _disarm();
     if (allowed) retry?.call();
@@ -17821,7 +17952,15 @@ class _PlannedErrorCardState extends State<_PlannedErrorCard>
                   children: [
                     if (primary != null)
                       _ErrorBubbleAction(
-                        key: const ValueKey('te1215-error-primary'),
+                        // The sign-in / key action keeps the key it always had.
+                        key: ValueKey(
+                          primary.name ==
+                                      ErrorRecoveryAction.signInAgain.name ||
+                                  primary.name ==
+                                      ErrorRecoveryAction.updateApiKey.name
+                              ? 'hr1215-error-reauth'
+                              : 'te1215-error-primary',
+                        ),
                         label: primary.label,
                         color: colors.error,
                         onTap: primary.onTap,
@@ -17844,7 +17983,14 @@ class _PlannedErrorCardState extends State<_PlannedErrorCard>
                     children: [
                       for (final action in secondary)
                         _ErrorBubbleAction(
-                          key: ValueKey('te1215-error-action-${action.name}'),
+                          key: ValueKey(
+                            action.name ==
+                                        ErrorRecoveryAction.signInAgain.name ||
+                                    action.name ==
+                                        ErrorRecoveryAction.updateApiKey.name
+                                ? 'hr1215-error-reauth'
+                                : 'te1215-error-action-${action.name}',
+                          ),
                           label: action.label,
                           color: colors.error,
                           onTap: action.onTap,
