@@ -7387,7 +7387,12 @@ class TuiGatewayClient
           'Hermes Desktop WebSocket was replaced',
         );
       }
-      return const DesktopPromptResponse._(DesktopPromptResponseStatus.ok);
+      // A bare response frame, like clarify/sudo/secret: nothing
+      // acknowledges it.
+      return const DesktopPromptResponse._(
+        DesktopPromptResponseStatus.ok,
+        deliveryAcknowledged: false,
+      );
     }
     final result = await _request(method, {
       'request_id': _interactiveRequestId(method, requestId),

@@ -4773,10 +4773,10 @@ class ActiveChat {
   InteractivePromptState _interactivePrompts =
       const InteractivePromptState.empty();
 
-  /// Clarify, sudo and secret answers written as bare response frames, which
-  /// Hermes never acknowledges. A transport loss forgets their tombstones (see
-  /// [InteractivePromptUnacknowledgedAnswerLost]). Only keys: a sensitive
-  /// value is never kept for a resend; the user enters it again.
+  /// Clarify, sudo, secret and terminal.read answers written as bare response
+  /// frames, which Hermes never acknowledges. A transport loss forgets their
+  /// tombstones (see [InteractivePromptUnacknowledgedAnswerLost]). Only keys:
+  /// a sensitive value is never kept for a resend; the user enters it again.
   final Set<InteractivePromptKey> _unacknowledgedPromptAnswers = {};
 
   /// Transport losses seen by this chat. An unacknowledged answer whose

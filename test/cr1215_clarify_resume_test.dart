@@ -1134,6 +1134,52 @@ void main() {
         expect(answersTo(id), hasLength(1));
       });
     }
+
+    test('a terminal.read answer written into a socket that just died is '
+        'answered again when the resume still lists it', () async {
+      const id = 'srq-lostterm0001';
+      final open = {
+        'id': id,
+        'method': 'terminal.read',
+        'params': {'session_id': 'runtime-1'},
+      };
+      // The clarify keeps Hermes waiting on the user, so the viewer rejoins.
+      gateway.resumeResult = (_) =>
+          waiting([open, _openClarify('srq-stillopen001')]);
+      final proxy = await _FlakyProxy.start(gateway.server.port);
+      addTearDown(proxy.close);
+      final client = _GatedClient(
+        _connectionFor(
+          gateway,
+        ).copyWith(dashboardUrl: 'http://127.0.0.1:${proxy.port}'),
+        dashboard: _TicketDashboardClient(),
+      );
+      addTearDown(client.close);
+      final writeGate = client.terminalReadWriteGate = Completer<void>();
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      // The automatic answer is parked before its frame is written.
+      await _eventually(
+        () => chat.interactivePrompts.entries.values.any(
+          (entry) =>
+              entry.key.requestId == id &&
+              entry.status == InteractivePromptStatus.responding,
+        ),
+      );
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+
+      proxy.severAll();
+      client.terminalReadWriteGate = null;
+      writeGate.complete();
+      await awaitReattach(chat, resumesBefore);
+      final frame = await gateway
+          .nextFrame((frame) => frame['id'] == id)
+          .timeout(const Duration(seconds: 5));
+      expect(frame['result'], {
+        'value': TerminalReadResponsePolicy.noOwnedTerminalText,
+      });
+      expect(answersTo(id), hasLength(1));
+    });
   });
 }
 
