@@ -13,6 +13,7 @@ enum DesktopGatewayCapability {
   projectPullRequests,
   sessionPullRequestScan,
   foreignSessions,
+  messageReactions,
   projectFiles,
   projectFileMkdir,
   projectFileWriteText,

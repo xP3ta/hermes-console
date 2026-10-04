@@ -1,4 +1,5 @@
 import '../models/bot_mention.dart';
+import '../models/message_reaction.dart';
 import 'bot_mention_roster.dart';
 // Servicio singleton que posee el streaming SSE de los chats. Vive por encima
 // del Navigator (en HermesAppState), así que la respuesta/ejecución del agente
@@ -3671,6 +3672,7 @@ enum ActiveChatEvent {
   dashboardAuthChanged,
   goalUpdated,
   backgroundTaskComplete,
+  reactionsChanged,
 }
 
 Future<({Object? error, T? value})> _captureAsync<T>(
@@ -4535,6 +4537,72 @@ class ActiveChat {
   final Map<String, ({String text, bool isError})> _backgroundTaskOutcomes = {};
   Map<String, ({String text, bool isError})> get backgroundTaskOutcomes =>
       Map.unmodifiable(_backgroundTaskOutcomes);
+
+  /// Reactions per transcript row id. Memory only: the gateway returns them
+  /// with each reaction and pushes the agent's as `message.reaction`.
+  final Map<int, List<MessageReaction>> _reactions = {};
+
+  List<MessageReaction> reactionsFor(int rowId) =>
+      _reactions[rowId] ?? const <MessageReaction>[];
+
+  /// True when the bound gateway can store reactions at all.
+  bool get canReact => _desktopGateway is HermesMessageReactionGateway;
+
+  /// Sets, replaces or retracts the user's reaction. A persisted row (with
+  /// [rowId]) shows it at once and rolls back if the gateway refuses; a live
+  /// row that has no id yet names [newestRole] and shows the server's answer.
+  Future<void> reactToMessage({
+    int? rowId,
+    String? newestRole,
+    required String? emoji,
+  }) async {
+    final runtimeId = _desktopRuntimeSessionId;
+    final gateway = _desktopGateway;
+    if (runtimeId == null || gateway is! HermesMessageReactionGateway) {
+      throw const TuiGatewayRpcError(
+        'message.react',
+        'Reactions are unavailable',
+        code: -32601,
+      );
+    }
+    final before = rowId == null ? null : _reactions[rowId];
+    if (rowId != null) {
+      _setReactions(
+        rowId,
+        applyReaction(
+          before ?? const <MessageReaction>[],
+          MessageReactionAuthor.user,
+          emoji,
+        ),
+      );
+    }
+    try {
+      final result = await (gateway as HermesMessageReactionGateway)
+          .reactToMessage(
+            runtimeId,
+            rowId: rowId,
+            newestRole: newestRole,
+            emoji: emoji,
+            profile: _storedSessionProfile,
+          );
+      if (_disposed) return;
+      _setReactions(result.rowId, result.reactions);
+    } catch (_) {
+      if (!_disposed && rowId != null) {
+        _setReactions(rowId, before ?? const <MessageReaction>[]);
+      }
+      rethrow;
+    }
+  }
+
+  void _setReactions(int rowId, List<MessageReaction> list) {
+    if (list.isEmpty) {
+      _reactions.remove(rowId);
+    } else {
+      _reactions[rowId] = list;
+    }
+    _emit(ActiveChatEvent.reactionsChanged);
+  }
 
   /// El usuario ya vio/descartó este resultado — lo quita del strip.
   void dismissBackgroundTaskOutcome(String taskId) {
@@ -20907,6 +20975,14 @@ class ActiveChat {
                   .catchError((_) {}) ??
               Future<void>.value(),
         );
+      }
+      return;
+    }
+    if (event.type == 'message.reaction') {
+      final rowId = payload['row_id'];
+      final list = payload['reactions'];
+      if (rowId is int && list is List) {
+        _setReactions(rowId, parseReactions(list));
       }
       return;
     }

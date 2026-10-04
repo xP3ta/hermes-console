@@ -39,6 +39,7 @@ import 'capability_payload_sanitizer.dart';
 import 'connection_manager.dart';
 import 'desktop_control_gateway.dart';
 import '../models/foreign_session.dart';
+import '../models/message_reaction.dart';
 import 'session_pull_requests.dart';
 import 'desktop_gateway_capabilities.dart';
 import 'json_rpc_wire.dart';
@@ -1393,6 +1394,7 @@ class TuiGatewayClient
         HermesProjectManagementGateway,
         HermesPullRequestGateway,
         HermesForeignSessionGateway,
+        HermesMessageReactionGateway,
         HermesProjectFilesGateway,
         HermesProjectFileWritesGateway,
         HermesExtensionManagementGateway,
@@ -6409,6 +6411,40 @@ class TuiGatewayClient
       throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
     }
     return id;
+  }
+
+  /// False once `message.react` answered -32601 on this connection (or for a
+  /// read-only one): reactions are then not offered.
+  bool get messageReactionsAvailable =>
+      !_connection.readOnly &&
+      _capabilityCache.canAttempt(DesktopGatewayCapability.messageReactions);
+
+  @override
+  Future<({int rowId, List<MessageReaction> reactions})> reactToMessage(
+    String runtimeSessionId, {
+    int? rowId,
+    String? newestRole,
+    String? emoji,
+    String? profile,
+  }) async {
+    if (rowId == null && (newestRole == null || newestRole.isEmpty)) {
+      throw ArgumentError('a reaction needs a row id or newest_role');
+    }
+    _requireWritableControlConnection();
+    final owner = profile?.trim() ?? '';
+    final result = await _controlRequest('message.react', {
+      'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+      if (owner.isNotEmpty) 'profile': owner,
+      if (rowId != null) 'row_id': rowId else 'newest_role': newestRole,
+      'emoji': ?emoji,
+      'author': 'user',
+    }, capability: DesktopGatewayCapability.messageReactions);
+    final id = result['row_id'];
+    final list = result['reactions'];
+    if (id is! int || list is! List) {
+      _invalidControlResponse(DesktopGatewayCapability.messageReactions);
+    }
+    return (rowId: id, reactions: parseReactions(list));
   }
 
   @override

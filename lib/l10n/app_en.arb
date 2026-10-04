@@ -7763,5 +7763,9 @@
   "embedSettingsAlways": "Always",
   "embedSettingsClear": "Clear allowed services",
   "embedSettingsCleared": "Allowed services will ask again.",
-  "embedSvgLabel": "SVG image"
+  "embedSvgLabel": "SVG image",
+  "reactAdd": "React",
+  "reactFailed": "Couldn't save the reaction",
+  "reactSettingsTitle": "Reactions",
+  "reactSettingsSubtitle": "React to messages with an emoji"
 }

@@ -52,9 +52,11 @@ import 'voice_settings_screen.dart';
 
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../services/message_reaction_prefs.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/diagnostic_bundle_tile.dart';
 import '../widgets/install_source_section.dart';
+import '../design/content.dart' show HermesToggleRow;
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
@@ -253,6 +255,17 @@ class SettingsScreen extends StatelessWidget {
                       MaterialPageRoute(
                         builder: (_) => const EmbedSettingsScreen(),
                       ),
+                    ),
+                  ),
+                  ListenableBuilder(
+                    listenable: MessageReactionPrefs.shared,
+                    builder: (context, _) => HermesToggleRow(
+                      key: const ValueKey('settings-reactions'),
+                      icon: Icons.add_reaction_outlined,
+                      title: Strings.of(context).reactSettingsTitle,
+                      subtitle: Strings.of(context).reactSettingsSubtitle,
+                      value: MessageReactionPrefs.shared.enabled,
+                      onChanged: MessageReactionPrefs.shared.setEnabled,
                     ),
                   ),
                 ],
