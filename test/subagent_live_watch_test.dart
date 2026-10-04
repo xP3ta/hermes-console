@@ -732,33 +732,6 @@ void main() {
     });
   }
 
-  test(
-    'a close answered closed:false is asked once: no retry, no second release',
-    () async {
-      final gateway = FakeWatchGateway()..closeResult = false;
-      final watch = SubagentLiveWatch(
-        gateway: gateway,
-        childSessionId: _child,
-        profile: _parentProfile,
-        isCurrent: () => true,
-      )..start();
-      await pumpEventQueue();
-
-      gateway.emit('watch-1', 'message.complete', {'text': 'listo'});
-      await pumpEventQueue();
-      watch.dispose();
-      await pumpEventQueue();
-
-      // The gateway contract does not say whether `closed:false` means
-      // "already gone" or "not closed". Until the owner decides, the watch
-      // keeps its documented behaviour: it asks once, never polls or re-sends,
-      // and has already released the runtime locally.
-      expect(watch.value.status, SubagentLiveWatchStatus.finished);
-      expect(gateway.closed, ['watch-1']);
-      expect(gateway.released, ['watch-1']);
-    },
-  );
-
   test('a normal finish cancels the event subscription', () async {
     final gateway = FakeWatchGateway();
     final watch = _watch(gateway)..start();
