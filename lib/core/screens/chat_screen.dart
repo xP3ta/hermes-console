@@ -159,6 +159,7 @@ import 'memory_screen.dart';
 import 'models_screen.dart';
 import '../models/provider_auth_failure.dart';
 import '../widgets/provider_reauth.dart';
+import '../models/turn_error_surface.dart';
 import 'recovery_center_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
@@ -15798,7 +15799,7 @@ class _ChatScreenState extends State<ChatScreen>
       final onRetry = _chat.conflictReadOnly
           ? null
           : () => unawaited(_retryLastPrompt(prompt));
-      return _ErrorBubble(
+      return ChatErrorBubble(
         error: activeChatStoredErrorUiMessage(content),
         onRetry: onRetry,
         prompt: prompt,
@@ -17215,7 +17216,8 @@ final _classifyError = classifyChatError;
 ///
 /// Diferencia el tipo de error (conexión/modelo/herramienta/local/desconocido)
 /// usando únicamente el copy público ya saneado por ActiveChat.
-class _ErrorBubble extends StatefulWidget {
+@visibleForTesting
+class ChatErrorBubble extends StatefulWidget {
   final String error;
   final String prompt;
   final VoidCallback? onRetry;
@@ -17233,7 +17235,36 @@ class _ErrorBubble extends StatefulWidget {
   final ProviderAuthFailure? authFailure;
   final VoidCallback? onReauth;
 
-  const _ErrorBubble({
+  /// What the gateway said failed (`error_surface`) and, for a provider out of
+  /// credit, its `billing` block. With either, the card follows the recovery
+  /// plan; without them it is the text-classified card of older servers.
+  final TurnErrorSurface? surface;
+  final TurnBillingBlock? billing;
+
+  /// Recovery handlers the plan may offer; a null one is never painted.
+  final VoidCallback? onCompress;
+  final VoidCallback? onChooseModel;
+  final VoidCallback? onEditMessage;
+  final VoidCallback? onOpenBilling;
+
+  /// Free-tier sign-in: only painted when [freeTierSignInAvailable] answers
+  /// true (checked once, when the details open).
+  final VoidCallback? onSignInFreeTier;
+  final Future<bool> Function()? freeTierSignInAvailable;
+
+  /// A usage-limit retry may be armed only while the failed turn is the last
+  /// one; [retryScope] changing (another chat or profile) drops an armed retry.
+  final bool canArmRetry;
+  final Object? retryScope;
+
+  /// Clock and app version, replaceable in tests.
+  final DateTime Function()? now;
+  final String? composerProvider;
+  final String? composerModel;
+  final Future<String> Function()? appVersion;
+
+  const ChatErrorBubble({
+    super.key,
     required this.error,
     required this.prompt,
     required this.onRetry,
@@ -17241,13 +17272,27 @@ class _ErrorBubble extends StatefulWidget {
     this.onNewSession,
     this.authFailure,
     this.onReauth,
+    this.surface,
+    this.billing,
+    this.onCompress,
+    this.onChooseModel,
+    this.onEditMessage,
+    this.onOpenBilling,
+    this.onSignInFreeTier,
+    this.freeTierSignInAvailable,
+    this.canArmRetry = false,
+    this.retryScope,
+    this.now,
+    this.composerProvider,
+    this.composerModel,
+    this.appVersion,
   });
 
   @override
-  State<_ErrorBubble> createState() => _ErrorBubbleState();
+  State<ChatErrorBubble> createState() => _ErrorBubbleState();
 }
 
-class _ErrorBubbleState extends State<_ErrorBubble> {
+class _ErrorBubbleState extends State<ChatErrorBubble> {
   bool _expanded = false;
 
   String _kindLabel(_ErrorKind kind, Strings s) => switch (kind) {
