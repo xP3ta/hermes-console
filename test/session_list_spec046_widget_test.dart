@@ -409,10 +409,13 @@ void main() {
     'Dashboard keeps child sessions folded without exposing a fake toggle',
     (tester) async {
       final queries = <Map<String, String>>[];
+      // A delegate run: real branches are their own rows (see
+      // session_onestore_branches_test.dart).
       final child = _sessionRow(
         1,
         id: 'child-session',
         title: 'Hidden child session',
+        source: 'subagent',
       )..['parent_session_id'] = 'session-0';
       final dashboardHttp = MockClient((request) async {
         if (request.url.path == '/api/sessions') {

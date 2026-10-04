@@ -989,6 +989,7 @@ class ConnectionManager {
     'approval_rules_',
     'archived_sessions_',
     'hidden_sessions_',
+    'deleted_sessions_',
     'mission_control.organizations.v1.',
     'mission_control.rooms.v1.',
     'mission_control.bot_chat_pins.v1.',

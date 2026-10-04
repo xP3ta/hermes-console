@@ -123,6 +123,12 @@ final class SessionLibrarySnapshot {
   final int epoch;
   final int? total;
 
+  /// Set only when this refresh fell back to the gateway: its complete
+  /// default listing of the query's profile (every page, no filter), as the
+  /// server returned it. What a deletion tombstone may be confirmed against
+  /// (SessionListRead.end).
+  final List<Session>? completeGatewayListing;
+
   const SessionLibrarySnapshot({
     this.sessions = const [],
     this.source = SessionLibrarySource.local,
@@ -130,6 +136,7 @@ final class SessionLibrarySnapshot {
     this.stale = false,
     this.epoch = 0,
     this.total,
+    this.completeGatewayListing,
   });
 }
 
@@ -275,7 +282,11 @@ final class SessionRepository {
       _total = null;
       _exhausted = false;
       _deletionTombstones.removeAll(deletionTombstones);
-      return _snapshot();
+      return _snapshot(
+        completeGatewayListing: query.includeChildren
+            ? null
+            : List<Session>.unmodifiable(rawFallback),
+      );
     }
   }
 
@@ -417,14 +428,16 @@ final class SessionRepository {
   bool _isCurrent(int epoch, String fingerprint) =>
       epoch == _queryEpoch && _query?.fingerprint == fingerprint;
 
-  SessionLibrarySnapshot _snapshot() => SessionLibrarySnapshot(
-    sessions: List<Session>.unmodifiable(_sessions),
-    source: _source,
-    exhaustive: _source == SessionLibrarySource.dashboard && _exhausted,
-    stale: false,
-    epoch: _queryEpoch,
-    total: _total,
-  );
+  SessionLibrarySnapshot _snapshot({List<Session>? completeGatewayListing}) =>
+      SessionLibrarySnapshot(
+        sessions: List<Session>.unmodifiable(_sessions),
+        source: _source,
+        exhaustive: _source == SessionLibrarySource.dashboard && _exhausted,
+        stale: false,
+        epoch: _queryEpoch,
+        total: _total,
+        completeGatewayListing: completeGatewayListing,
+      );
 
   Future<_SessionPage> _loadDashboardPage(
     SessionLibraryQuery query,
@@ -488,8 +501,8 @@ final class SessionRepository {
   }
 
   static Set<String> _sessionIdentityAliases(Session session) => {
-    session.id,
     session.logicalId,
+    ...session.identityIds,
   };
 
   static bool _matchesAliases(Session session, Set<String> aliases) =>
@@ -559,9 +572,7 @@ final class SessionRepository {
     final requestedOwner = Session.profileOwner(query.profile);
     for (final row in rows) {
       if (row.messageCount < query.boundedMinMessages) continue;
-      if (!query.includeChildren && row.parentSessionId?.isNotEmpty == true) {
-        continue;
-      }
+      if (!query.includeChildren && !row.listsAsOwnRow) continue;
       if (query.archived == SessionArchiveMode.exclude && row.archived) {
         continue;
       }

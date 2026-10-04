@@ -34,6 +34,7 @@ class SessionArchive extends ChangeNotifier {
   static const _pinnedPrefix = 'pinned_sessions_';
   static const _hiddenPrefix = 'hidden_sessions_';
   static const _titlePrefix = 'session_titles_';
+  static const _deletedPrefix = 'deleted_sessions_';
 
   final SharedPreferences _prefs;
   final String _connectionId;
@@ -43,6 +44,28 @@ class SessionArchive extends ChangeNotifier {
   Set<String> _pinned = {};
   Set<String> _hidden = {};
   Map<String, String> _titles = {};
+
+  /// Server-confirmed deletions: physical session id -> activity watermark
+  /// (seconds). See [markSessionDeleted].
+  Map<String, double> _deleted = {};
+
+  /// For each tombstone a complete listing can confirm, the profile whose
+  /// default listing would carry the row (see [SessionListRead.end]).
+  /// Persisted with the tombstone; an id without one is only released by
+  /// the session's recreation.
+  Map<String, String> _deletedScope = {};
+
+  /// Tombstones a complete listing confirmed gone, waiting for the reads
+  /// that began before their deletion to end.
+  final Set<String> _confirmedGone = {};
+
+  /// List reads of this process that have not finished (see
+  /// [beginListRead]), and for each tombstone of this process the last read
+  /// that had started when it was recorded. Not persisted: no read of an
+  /// earlier process can still answer.
+  int _listReadSeq = 0;
+  final Set<int> _openListReads = {};
+  final Map<String, int> _deletedAfterRead = {};
 
   int _revision = 0;
 
@@ -84,12 +107,18 @@ class SessionArchive extends ChangeNotifier {
   String get _pinnedKey => '$_pinnedPrefix$_connectionId';
   String get _hiddenKey => '$_hiddenPrefix$_connectionId';
   String get _titleKey => '$_titlePrefix$_connectionId';
+  String get _deletedKey => '$_deletedPrefix$_connectionId';
 
   void _read() {
     _archived = (_prefs.getStringList(_key) ?? []).toSet();
     _pinned = (_prefs.getStringList(_pinnedKey) ?? []).toSet();
     _hidden = (_prefs.getStringList(_hiddenKey) ?? []).toSet();
     _titles = _decodeTitles(_prefs.getStringList(_titleKey) ?? const []);
+    final deleted = _decodeDeleted(
+      _prefs.getStringList(_deletedKey) ?? const [],
+    );
+    _deleted = deleted.watermarks;
+    _deletedScope = deleted.scopes;
   }
 
   void _resync() {
@@ -97,11 +126,15 @@ class SessionArchive extends ChangeNotifier {
     final pinned = _pinned;
     final hidden = _hidden;
     final titles = _titles;
+    final deleted = _deleted;
+    final deletedScope = _deletedScope;
     _read();
     if (setEquals(archived, _archived) &&
         setEquals(pinned, _pinned) &&
         setEquals(hidden, _hidden) &&
-        mapEquals(titles, _titles)) {
+        mapEquals(titles, _titles) &&
+        mapEquals(deleted, _deleted) &&
+        mapEquals(deletedScope, _deletedScope)) {
       return;
     }
     _revision++;
@@ -213,6 +246,201 @@ class SessionArchive extends ChangeNotifier {
     await _flush();
   }
 
+  // ── Borradas en el servidor ───────────────────────────────────────────────
+
+  /// True when [session] is a row the server already confirmed deleted.
+  ///
+  /// Every screen (Home recents, Conversations, drawer) filters with this, so
+  /// a delete made on any screen drops the row everywhere in the same frame
+  /// and a stale retained page, cached tail or slow refresh cannot bring it
+  /// back. Any id the row answers to matches (live id, lineage root, each
+  /// compression segment, as Desktop's `tombstoneRowIds`), so a page naming
+  /// the same conversation by another segment stays hidden; and only up to
+  /// the activity watermark recorded at deletion: a row with newer activity
+  /// is real data (the server recreated it) and is shown.
+  bool isSessionDeleted(Session session) {
+    if (_deleted.isEmpty) return false;
+    final activity = _activitySeconds(session.lastActivityAt);
+    for (final id in session.identityIds) {
+      final watermark = _deleted[id];
+      if (watermark != null && activity <= watermark) return true;
+    }
+    return false;
+  }
+
+  /// True when the server confirmed [sessionId] deleted and no server list
+  /// row has shown it recreated since.
+  ///
+  /// For surfaces that only hold an id (the home screen widget): a late
+  /// event from the deleted chat stamps fresh activity, so the watermark
+  /// rule of [isSessionDeleted] would let it back in. Only an authoritative
+  /// list row with activity after the delete releases it (see
+  /// [SessionListRead.end]).
+  bool isSessionIdDeleted(String sessionId) => _deleted.containsKey(sessionId);
+
+  /// Records a deletion the server confirmed for [session] (every id it
+  /// answers to) and [sessionIds] (the physical ids that were deleted).
+  /// Notifies every screen synchronously.
+  ///
+  /// The tombstone stays until the server's own data proves it is no longer
+  /// needed (see [SessionListRead.end]); no count bound ever drops one.
+  Future<void> markSessionDeleted(
+    Session session, {
+    Iterable<String> sessionIds = const [],
+    DateTime? now,
+  }) {
+    final nowSeconds = (now ?? DateTime.now()).millisecondsSinceEpoch / 1000.0;
+    final activity = _activitySeconds(session.lastActivityAt);
+    final watermark = activity > nowSeconds ? activity : nowSeconds;
+    // Only a row the default listing carries (an own, unarchived row) can
+    // be confirmed absent by it; any other tombstone is kept.
+    final scope = !session.archived && session.listsAsOwnRow
+        ? Session.profileOwner(session.profile)
+        : null;
+    for (final id in {...session.identityIds, ...sessionIds}) {
+      if (id.isEmpty) continue;
+      final previous = _deleted[id];
+      if (scope != null && (previous == null || _deletedScope[id] == scope)) {
+        _deletedScope[id] = scope;
+      } else {
+        _deletedScope.remove(id);
+      }
+      if (previous == null || previous < watermark) _deleted[id] = watermark;
+      _deletedAfterRead[id] = _listReadSeq;
+      _confirmedGone.remove(id);
+    }
+    return _flush();
+  }
+
+  /// Starts a session list read (a page or walk of `/api/sessions`) whose
+  /// rows will be stored or painted. Call [SessionListRead.end] with the
+  /// server rows once its result has been applied, or without rows when it
+  /// was abandoned.
+  ///
+  /// As in Desktop (projects.ts keeps a tombstone while the authoritative
+  /// snapshot still lists the id), a tombstone goes only when a complete
+  /// listing of its profile, started after the delete, no longer names any
+  /// id of the row, and once every read that began before the delete has
+  /// ended (one of those could still carry the row). A page, a bounded walk
+  /// or a cached answer proves nothing about rows it does not show, so it
+  /// never drops one, whatever the count.
+  SessionListRead beginListRead() {
+    final id = ++_listReadSeq;
+    _openListReads.add(id);
+    return SessionListRead._(this, id);
+  }
+
+  void _endListRead(int id, Iterable<Session> rows, String? completeProfile) {
+    if (!_openListReads.remove(id)) return;
+    final released = _releaseRecreated(rows);
+    // A read started after the delete that still names a confirmed id
+    // contradicts the confirmation: keep the tombstone. (A read begun
+    // before the delete naming it is the stale answer it guards against.)
+    if (_confirmedGone.isNotEmpty) {
+      for (final row in rows) {
+        for (final named in row.identityIds) {
+          if (!_confirmedGone.contains(named)) continue;
+          final lastReadBefore = _deletedAfterRead[named];
+          if (lastReadBefore == null || id > lastReadBefore) {
+            _confirmedGone.remove(named);
+          }
+        }
+      }
+    }
+    if (completeProfile != null) _confirmAbsent(id, rows, completeProfile);
+    if (_evictConfirmedGone() || released) unawaited(_flush());
+  }
+
+  /// [rows] are the complete default listing of [profile], read by [readId]:
+  /// every tombstone of that profile recorded before the read started whose
+  /// ids it does not name is confirmed gone on the server.
+  void _confirmAbsent(int readId, Iterable<Session> rows, String profile) {
+    if (_deletedScope.isEmpty) return;
+    final owner = Session.profileOwner(profile);
+    final listed = <String>{for (final row in rows) ...row.identityIds};
+    _deletedScope.forEach((id, scope) {
+      if (scope != owner || listed.contains(id)) return;
+      final lastReadBefore = _deletedAfterRead[id];
+      if (lastReadBefore != null && readId <= lastReadBefore) return;
+      _confirmedGone.add(id);
+    });
+  }
+
+  /// Drops the confirmed tombstones no read still in flight can need.
+  /// Returns whether any went.
+  bool _evictConfirmedGone() {
+    var evicted = false;
+    for (final id in _confirmedGone.toList()) {
+      if (_tombstoneNeeded(id)) continue;
+      _forgetTombstone(id);
+      evicted = true;
+    }
+    return evicted;
+  }
+
+  void _forgetTombstone(String id) {
+    _deleted.remove(id);
+    _deletedScope.remove(id);
+    _deletedAfterRead.remove(id);
+    _confirmedGone.remove(id);
+  }
+
+  /// A server row with activity newer than a tombstone's watermark is the
+  /// session recreated (real data, as [isSessionDeleted] already shows it):
+  /// its tombstone goes, so readers that only hold an id (the home screen
+  /// widget, [isSessionIdDeleted]) show it again. An older copy of the
+  /// deleted row never releases it. Returns whether any went.
+  bool _releaseRecreated(Iterable<Session> rows) {
+    if (_deleted.isEmpty) return false;
+    var released = false;
+    for (final row in rows) {
+      final activity = _activitySeconds(row.lastActivityAt);
+      for (final id in row.identityIds) {
+        final watermark = _deleted[id];
+        if (watermark == null || activity <= watermark) continue;
+        _forgetTombstone(id);
+        released = true;
+      }
+    }
+    return released;
+  }
+
+  /// A tombstone is still needed while a list read that began before it was
+  /// recorded is open.
+  bool _tombstoneNeeded(String id) {
+    final lastReadBefore = _deletedAfterRead[id];
+    if (lastReadBefore == null) return false;
+    return _openListReads.any((read) => read <= lastReadBefore);
+  }
+
+  /// Session timestamps arrive in seconds or milliseconds.
+  static double _activitySeconds(double value) =>
+      value > 100000000000 ? value / 1000 : value;
+
+  /// Rows are `id<TAB>watermark[<TAB>profile]`; older builds wrote no
+  /// profile, so their tombstones are never confirmed absent, only kept.
+  static ({Map<String, double> watermarks, Map<String, String> scopes})
+  _decodeDeleted(List<String> rows) {
+    final watermarks = <String, double>{};
+    final scopes = <String, String>{};
+    for (final row in rows) {
+      final fields = row.split('\t');
+      if (fields.length < 2 || fields.first.isEmpty) continue;
+      final watermark = double.tryParse(fields[1]);
+      if (watermark == null || !watermark.isFinite) continue;
+      watermarks[fields.first] = watermark;
+      if (fields.length > 2 && fields[2].isNotEmpty) {
+        scopes[fields.first] = fields[2];
+      }
+    }
+    return (watermarks: watermarks, scopes: scopes);
+  }
+
+  String _encodeDeleted(String id, double watermark) {
+    final scope = _deletedScope[id];
+    return scope == null ? '$id\t$watermark' : '$id\t$watermark\t$scope';
+  }
+
   // ── Títulos locales ──────────────────────────────────────────────────────
 
   String titleFor(String sessionId, String serverTitle) {
@@ -312,6 +540,11 @@ class SessionArchive extends ChangeNotifier {
       _prefs.setStringList(_pinnedKey, _pinned.toList()),
       _prefs.setStringList(_hiddenKey, _hidden.toList()),
       _writeTitles(),
+      if (_deleted.isNotEmpty || _prefs.containsKey(_deletedKey))
+        _prefs.setStringList(
+          _deletedKey,
+          _deleted.entries.map((e) => _encodeDeleted(e.key, e.value)).toList(),
+        ),
     ]);
     notifyListeners();
     return writes;
@@ -577,4 +810,21 @@ final class _AcknowledgedPinWrite {
 
   _AcknowledgedPinWrite confirmedCopy() =>
       _AcknowledgedPinWrite(revision, pinned, confirmed: true);
+}
+
+/// An open session list read; see [SessionArchive.beginListRead].
+final class SessionListRead {
+  SessionListRead._(this._archive, this._id);
+
+  final SessionArchive _archive;
+  final int _id;
+
+  /// Ends this read; [rows] are the server rows it returned (any subset).
+  /// A row recreating a deleted session releases its tombstone. Pass
+  /// [completeProfile] only when [rows] are that profile's complete default
+  /// listing (every page of `/api/sessions`, no filter): tombstones of that
+  /// profile it does not name are then confirmed gone. Only the first call
+  /// counts.
+  void end({Iterable<Session> rows = const [], String? completeProfile}) =>
+      _archive._endListRead(_id, rows, completeProfile);
 }

@@ -159,7 +159,7 @@ void main() {
       expect(find.byKey(const ValueKey('home-draft-chat-2')), findsNothing);
     });
 
-    testWidgets('nunca muestra JSON de tools y usa una etiqueta localizada', (
+    testWidgets('nunca muestra JSON de tools ni pinta una línea sustituta', (
       tester,
     ) async {
       const rawToolCall = '[{"id":"call_latest","type":"function"}]';
@@ -175,7 +175,31 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text(rawToolCall), findsNothing);
-      expect(find.text('Sin mensajes visibles'), findsOneWidget);
+      // 7a236c6: like the Desktop sidebar, no stand-in line when the row has
+      // no readable preview.
+      expect(find.text('Sin mensajes visibles'), findsNothing);
+      expect(find.text('Deploy a staging'), findsOneWidget);
+      // Structural absence: the tile paints its empty slot and no preview
+      // line, so no stand-in text of any wording can come back.
+      final none = find.byKey(const ValueKey('preview-none'));
+      expect(none, findsOneWidget);
+      expect(tester.getSize(none), Size.zero);
+      expect(
+        find.byWidgetPredicate((w) {
+          final key = w.key;
+          return key is ValueKey<String> && key.value.startsWith('preview-');
+        }),
+        findsOneWidget,
+        reason: 'only preview-none, no preview-<text> line',
+      );
+      expect(
+        tester
+            .widgetList<RichText>(find.byType(RichText))
+            .map((t) => t.text.toPlainText())
+            .toList(),
+        ['Deploy a staging', '12:40'],
+        reason: 'the tile paints only its title and time',
+      );
     });
 
     testWidgets(

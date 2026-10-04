@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '../utils/chat_turn.dart';
 import '../utils/markdown_clipboard.dart';
 import '../utils/session_timestamp.dart';
+import 'session_category.dart';
 
 /// Derived lifecycle state for a session.
 ///
@@ -68,6 +69,15 @@ class Session implements SessionSortKey {
 
   /// Stable compression lineage identity advertised by Dashboard 0.19.
   final String? lineageRootId;
+
+  /// Every session id of the compression chain projected onto this row
+  /// (`_lineage_ids`, root first). A page can name the same conversation by
+  /// its root, a middle segment or a later tip.
+  final List<String> lineageIds;
+
+  /// The server's `is_internal_child`: a delegate run Desktop folds under its
+  /// parent whatever its source. Null when an older server omits it.
+  final bool? isInternalChild;
   final String? cwd;
   final String? gitRepoRoot;
   final String? gitBranch;
@@ -115,6 +125,8 @@ class Session implements SessionSortKey {
     this.endReason,
     this.parentSessionId,
     this.lineageRootId,
+    this.lineageIds = const [],
+    this.isInternalChild,
     this.cwd,
     this.gitRepoRoot,
     this.gitBranch,
@@ -155,6 +167,11 @@ class Session implements SessionSortKey {
   }
 
   String get logicalId => lineageRootId ?? id;
+
+  /// Every id this row answers to: its live id, its lineage root and each
+  /// compression segment (Desktop's `tombstoneRowIds`).
+  Set<String> get identityIds =>
+      {id, ?lineageRootId, ...lineageIds}..remove('');
 
   /// Chat que todavía existe únicamente como borrador cifrado en el móvil.
   bool get isDraftOnly => source == 'mobile-draft';
@@ -232,6 +249,30 @@ class Session implements SessionSortKey {
   /// ¿Es una sesión de job/cron/skill programada? El servidor las marca con
   /// `source: "cron"` y/o las nombra `cron_<jobid>_<timestamp>` (009-jobs).
   bool get isJob => id.startsWith('cron_') || source == 'cron';
+
+  /// Whether this row is its own entry in a session list (Home recents,
+  /// Conversations, drawer), one rule for every screen.
+  ///
+  /// The server's `is_internal_child` decides first, as in the Desktop
+  /// sidebar (store/session.ts): an internal child (a delegate run, whatever
+  /// its source) is always folded under its parent. Otherwise a root always
+  /// is its own row, and a child (`parent_session_id`) is when a person
+  /// chats in it: Hermes lists `/branch` and reset children as their own
+  /// rows and Desktop shows them. Automation children (cron, Kanban) stay
+  /// folded. Only when an older server omits `is_internal_child` does the
+  /// source tell a chat child from a delegate run (`subagent`), a tool
+  /// session or an unclassified child, which stay folded. Compression
+  /// continuations never arrive as separate rows: the server projects them
+  /// onto one row carrying `_lineage_root_id`.
+  bool get listsAsOwnRow {
+    if (isInternalChild == true) return false;
+    final parent = parentSessionId?.trim();
+    if (parent == null || parent.isEmpty) return true;
+    if (isJob || isKanbanJob) return false;
+    if (isInternalChild == false) return true;
+    final kind = source.trim();
+    return kind.isNotEmpty && SessionCategory.chats.includesSource(kind);
+  }
 
   /// Identificador del cron que originó esta sesión.
   ///
@@ -485,6 +526,8 @@ class Session implements SessionSortKey {
     String? endReason,
     String? parentSessionId,
     String? lineageRootId,
+    List<String>? lineageIds,
+    bool? isInternalChild,
     String? cwd,
     String? gitRepoRoot,
     String? gitBranch,
@@ -514,6 +557,8 @@ class Session implements SessionSortKey {
     endReason: endReason ?? this.endReason,
     parentSessionId: parentSessionId ?? this.parentSessionId,
     lineageRootId: lineageRootId ?? this.lineageRootId,
+    lineageIds: lineageIds ?? this.lineageIds,
+    isInternalChild: isInternalChild ?? this.isInternalChild,
     cwd: cwd ?? this.cwd,
     gitRepoRoot: gitRepoRoot ?? this.gitRepoRoot,
     gitBranch: gitBranch ?? this.gitBranch,
@@ -573,6 +618,10 @@ class Session implements SessionSortKey {
       lineageRootId: _opaqueId(
         json['_lineage_root_id'] ?? json['lineage_root'],
       ),
+      lineageIds: _opaqueIds(json['_lineage_ids']),
+      isInternalChild: json['is_internal_child'] is bool
+          ? json['is_internal_child'] as bool
+          : null,
       cwd: _boundedText(json['cwd'], 1024),
       gitRepoRoot: _boundedText(json['git_repo_root'], 1024),
       gitBranch: _boundedText(json['git_branch'], 512),
@@ -632,6 +681,11 @@ class Session implements SessionSortKey {
     if (end == null || end <= startedAt) return null;
     return Duration(milliseconds: ((end - startedAt) * 1000).round());
   }
+}
+
+List<String> _opaqueIds(Object? value) {
+  if (value is! List) return const [];
+  return List<String>.unmodifiable(value.map(_opaqueId).whereType<String>());
 }
 
 String? _opaqueId(Object? value) {

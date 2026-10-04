@@ -369,6 +369,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       if (!mounted) return;
       switch (result.status) {
         case LinkedSessionDeleteStatus.deleted:
+          // Shared store first: every screen drops the row in this frame.
+          unawaited(_archive?.markSessionDeleted(_session));
           app?.activeChats.globalActivity.clearSession(
             widget.connection.id,
             ownerProfile,

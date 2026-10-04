@@ -2363,6 +2363,7 @@ class _ChatScreenState extends State<ChatScreen>
     _sessionUsageSnapshot = widget.session;
     _compaction.addListener(_onCompactionChanged);
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_loadSharedArchive());
     _loadPrefs();
     _loadActiveModel();
     _profileReady = _loadActiveProfile();
@@ -3260,6 +3261,36 @@ class _ChatScreenState extends State<ChatScreen>
         '[chat-draft] submitted-turn cleanup failed (${error.runtimeType})',
       );
     }
+  }
+
+  /// The connection's shared [SessionArchive], loaded when the chat opens so
+  /// a confirmed delete can be recorded without an await.
+  SessionArchive? _sharedArchive;
+
+  Future<void> _loadSharedArchive() async {
+    final prefs = await SharedPreferences.getInstance();
+    final archive = await SessionArchive.load(prefs, widget.connection.id);
+    if (mounted) _sharedArchive = archive;
+  }
+
+  /// Records the server-confirmed delete in the store every list filters
+  /// with. Synchronous when the store is loaded (the normal case).
+  void _markDeletedInSharedStore() {
+    final deletedIds = [_chat.serverSessionId];
+    final archive = _sharedArchive;
+    if (archive != null) {
+      unawaited(
+        archive.markSessionDeleted(widget.session, sessionIds: deletedIds),
+      );
+      return;
+    }
+    final session = widget.session;
+    final connectionId = widget.connection.id;
+    unawaited(() async {
+      final prefs = await SharedPreferences.getInstance();
+      final loaded = await SessionArchive.load(prefs, connectionId);
+      await loaded.markSessionDeleted(session, sessionIds: deletedIds);
+    }());
   }
 
   /// El DELETE puede usar un ID persistido por Desktop distinto del ID móvil
@@ -10846,6 +10877,10 @@ class _ChatScreenState extends State<ChatScreen>
         remoteSessionId: _chat.serverSessionId,
         localRecoverySessionId: widget.session.id,
         clearLocalRecovery: _clearDeletedChatRecovery,
+        // Shared store first, before the local cleanup's awaits: Home,
+        // Conversations and the drawer drop the row in this same turn,
+        // whichever screen opened this chat.
+        onRemoteDeleted: _markDeletedInSharedStore,
         cronDeletion: cronDeletion,
         deleteCronJob:
             !widget.session.isJob ||
