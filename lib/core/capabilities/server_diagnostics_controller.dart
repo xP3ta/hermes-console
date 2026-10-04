@@ -107,6 +107,10 @@ class ServerDiagnosticsController extends ChangeNotifier {
   final Map<OpsAction, OpsView> _ops = {};
   final Map<OpsAction, int> _loop = {};
   final Set<OpsAction> _active = {};
+
+  /// Actions the screen asked to re-attach while their paused follow was still
+  /// unwinding: they re-attach as soon as that follow is gone.
+  final Set<OpsAction> _reattach = {};
   final Set<OpsAction> _missing = {};
 
   bool get doctorAvailable => !_missing.contains(OpsAction.doctor);
@@ -271,6 +275,12 @@ class ServerDiagnosticsController extends ChangeNotifier {
       }
     } finally {
       _active.remove(action);
+      if (_reattach.remove(action) &&
+          !_disposed &&
+          _foreground &&
+          ops(action).phase == OpsPhase.running) {
+        unawaited(_follow(action, attach: true));
+      }
     }
   }
 
@@ -286,9 +296,17 @@ class ServerDiagnosticsController extends ChangeNotifier {
     _foreground = true;
     return Future.wait([
       for (final action in OpsAction.values)
-        if (ops(action).phase == OpsPhase.running && !_active.contains(action))
-          _follow(action, attach: true),
+        if (ops(action).phase == OpsPhase.running)
+          if (_active.contains(action))
+            _queueReattach(action)
+          else
+            _follow(action, attach: true),
     ]);
+  }
+
+  Future<void> _queueReattach(OpsAction action) {
+    _reattach.add(action);
+    return Future.value();
   }
 
   // ── Profile ─────────────────────────────────────────────────────────────
