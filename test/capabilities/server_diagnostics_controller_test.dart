@@ -165,13 +165,77 @@ void main() {
       expect(c.doctorAvailable, isTrue, reason: 'unknown until probed');
     });
 
-    test('usage 503 says the history is not available now', () async {
-      final rest = _server()
-        ..gets['analytics/usage?days=30'] = const DashboardHttpException(503);
+    for (final failure in [
+      const DashboardHttpException(401),
+      const DashboardHttpException(403),
+      const DashboardHttpException(500),
+      const DashboardHttpException(503),
+      const DashboardHttpException(404),
+    ]) {
+      test(
+        'usage ${failure.statusCode} before a good answer stays hidden',
+        () async {
+          final rest = _server()..gets['analytics/usage?days=30'] = failure;
+          final c = controller(rest);
+          await c.load();
+          expect(c.usagePhase, DiagPhase.hidden);
+          expect(c.usage, isNull);
+        },
+      );
+    }
+
+    test(
+      'usage 503 after a good answer says it is not available now',
+      () async {
+        final rest = _server();
+        final c = controller(rest);
+        await c.load();
+        expect(c.usagePhase, DiagPhase.ready);
+
+        rest.gets['analytics/usage?days=7'] = const DashboardHttpException(503);
+        await c.setUsageDays(7);
+
+        expect(c.usagePhase, DiagPhase.unavailable);
+        expect(c.usage, isNull);
+      },
+    );
+
+    test('a 404 after a good answer hides the section again', () async {
+      final rest = _server();
       final c = controller(rest);
       await c.load();
-      expect(c.usagePhase, DiagPhase.unavailable);
-      expect(c.usage, isNull);
+      rest.gets['analytics/usage?days=7'] = const DashboardHttpException(404);
+      await c.setUsageDays(7);
+      expect(c.usagePhase, DiagPhase.hidden);
+      // ...and a later 503 does not bring it back: it was never confirmed
+      // again.
+      rest.gets['analytics/usage?days=90'] = const DashboardHttpException(503);
+      await c.setUsageDays(90);
+      expect(c.usagePhase, DiagPhase.hidden);
+    });
+
+    test('MCP and the server section follow the same rule', () async {
+      final rest = _server()
+        ..gets['health'] = const DashboardHttpException(500)
+        ..gets['health/idle'] = const DashboardHttpException(500);
+      var mcpOk = false;
+      final c = controller(
+        rest,
+        mcp: (_) async {
+          if (mcpOk) return const [];
+          throw const CapabilityFailure(CapabilityFailureKind.rejected);
+        },
+      );
+      await c.load();
+      expect(c.serverPhase, DiagPhase.hidden);
+      expect(c.mcpPhase, DiagPhase.hidden);
+
+      mcpOk = true;
+      await c.refresh();
+      expect(c.mcpPhase, DiagPhase.ready);
+      mcpOk = false;
+      await c.refresh();
+      expect(c.mcpPhase, DiagPhase.unavailable, reason: 'was confirmed');
     });
 
     test('changing the period makes one request', () async {

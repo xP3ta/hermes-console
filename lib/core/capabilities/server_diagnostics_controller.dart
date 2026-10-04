@@ -144,19 +144,24 @@ class ServerDiagnosticsController extends ChangeNotifier {
     ]);
   }
 
-  /// A failed read is shown ("not available now") only when the server itself
-  /// answered with an error; a missing route or no answer at all is nothing
-  /// to advertise.
-  static DiagPhase _failedPhase(CapabilityFailure failure) =>
-      switch (failure.kind) {
-        CapabilityFailureKind.unsupported => DiagPhase.hidden,
-        CapabilityFailureKind.unavailable when !failure.answered =>
-          DiagPhase.hidden,
-        _ => DiagPhase.unavailable,
-      };
+  /// A section the server has answered before (a good read) stays on screen
+  /// as "not available now" when a later read fails; a section it has never
+  /// answered stays absent whatever the failure (missing route, error status,
+  /// auth, no answer): only a good response confirms a capability.
+  bool _serverConfirmed = false;
+  bool _mcpConfirmed = false;
+  bool _usageConfirmed = false;
 
-  /// Whether a section in [phase] is on screen: only after a positive answer
-  /// (or a server error answer); never while unknown or loading.
+  static DiagPhase _failedPhase(
+    CapabilityFailure failure, {
+    required bool confirmed,
+  }) => failure.kind != CapabilityFailureKind.unsupported && confirmed
+      ? DiagPhase.unavailable
+      : DiagPhase.hidden;
+
+  /// Whether a section in [phase] is on screen: only after a good answer (or
+  /// a later failure of an already confirmed one); never while unknown or
+  /// loading.
   static bool shows(DiagPhase phase) =>
       phase == DiagPhase.ready ||
       phase == DiagPhase.noSocket ||
@@ -174,13 +179,13 @@ class ServerDiagnosticsController extends ChangeNotifier {
       try {
         nextHealth = await repo.serverHealth();
       } on CapabilityFailure catch (failure) {
-        healthPhase = _failedPhase(failure);
+        healthPhase = _failedPhase(failure, confirmed: _serverConfirmed);
       }
     }
     try {
       nextIdle = await repo.serverIdle();
     } on CapabilityFailure catch (failure) {
-      idlePhase = _failedPhase(failure);
+      idlePhase = _failedPhase(failure, confirmed: _serverConfirmed);
     }
     if (_stale(generation)) return;
     health = nextHealth ?? health;
@@ -192,6 +197,7 @@ class ServerDiagnosticsController extends ChangeNotifier {
               idlePhase == DiagPhase.unavailable
         ? DiagPhase.unavailable
         : DiagPhase.hidden;
+    _serverConfirmed = serverPhase != DiagPhase.hidden;
     _notify();
   }
 
@@ -203,10 +209,12 @@ class ServerDiagnosticsController extends ChangeNotifier {
       if (_stale(generation)) return;
       mcpServers = servers ?? const [];
       mcpPhase = servers == null ? DiagPhase.noSocket : DiagPhase.ready;
+      if (servers != null) _mcpConfirmed = true;
     } on CapabilityFailure catch (failure) {
       if (_stale(generation)) return;
       mcpServers = const [];
-      mcpPhase = _failedPhase(failure);
+      mcpPhase = _failedPhase(failure, confirmed: _mcpConfirmed);
+      if (mcpPhase == DiagPhase.hidden) _mcpConfirmed = false;
     }
     _notify();
   }
@@ -220,10 +228,12 @@ class ServerDiagnosticsController extends ChangeNotifier {
       if (_stale(generation) || days != usageDays) return;
       usage = result;
       usagePhase = DiagPhase.ready;
+      _usageConfirmed = true;
     } on CapabilityFailure catch (failure) {
       if (_stale(generation) || days != usageDays) return;
       usage = null;
-      usagePhase = _failedPhase(failure);
+      usagePhase = _failedPhase(failure, confirmed: _usageConfirmed);
+      if (usagePhase == DiagPhase.hidden) _usageConfirmed = false;
     }
     _notify();
   }
@@ -340,6 +350,9 @@ class ServerDiagnosticsController extends ChangeNotifier {
     usage = null;
     usagePhase = DiagPhase.idle;
     serverPhase = DiagPhase.idle;
+    _serverConfirmed = false;
+    _mcpConfirmed = false;
+    _usageConfirmed = false;
     _repo = repoFor(scope.name);
     _notify();
     unawaited(load());
