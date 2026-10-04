@@ -92,6 +92,7 @@ void main() {
       'connectors.catalog',
       'connectors.accounts',
       'connectors.operation.status',
+      'mcp.servers.status',
     ]) {
       expect(
         TuiGatewayClient.capabilitiesRpcAllowed(method, readOnly: true),

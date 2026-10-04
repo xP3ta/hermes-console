@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/capability_models.dart';
+import 'package:hermes_android/core/capabilities/mcp_runtime_status.dart';
 import 'package:hermes_android/core/services/connection_manager.dart'
     show DashboardHttpException;
 import 'package:hermes_android/core/services/tui_gateway_client.dart'
@@ -391,5 +392,68 @@ void main() {
       ['b'],
     );
     expect(capabilityCategories(items).first, ('research', 2));
+  });
+
+  group('mcp runtime status', () {
+    Map<String, dynamic> row(String name, String status, int tools) => {
+      'name': name,
+      'transport': 'stdio',
+      'tools': tools,
+      'connected': status == 'connected',
+      'disabled': status == 'disabled',
+      'status': status,
+      'source': 'config',
+      'plugin': null,
+    };
+
+    test('keys rows by server name and tolerates unknown values', () async {
+      final calls = <String>[];
+      final repo = CapabilitiesRepository(
+        rest: FakeRest(),
+        rpc: (method, params) async {
+          calls.add(method);
+          return {
+            'servers': [
+              row('files', 'connected', 4),
+              row('broken', 'failed', 0),
+              row('odd', 'quantum', 2),
+              {'status': 'connected'},
+            ],
+            'checked_at': 1,
+          };
+        },
+      );
+      final status = await repo.mcpRuntimeStatus();
+      expect(calls, ['mcp.servers.status']);
+      expect(status.keys, unorderedEquals(['files', 'broken', 'odd']));
+      expect(status['files']!.status, McpRuntimeStatus.connected);
+      expect(status['files']!.tools, 4);
+      expect(status['broken']!.status, McpRuntimeStatus.failed);
+      expect(status['odd']!.status, McpRuntimeStatus.configured);
+    });
+
+    test('-32601 marks it unsupported and is not asked twice', () async {
+      var calls = 0;
+      final repo = CapabilitiesRepository(
+        rest: FakeRest(),
+        rpc: (method, _) async {
+          calls++;
+          throw TuiGatewayRpcError(method, 'nope', code: -32601);
+        },
+      );
+      await expectLater(
+        repo.mcpRuntimeStatus(),
+        throwsA(
+          isA<CapabilityFailure>().having(
+            (e) => e.kind,
+            'kind',
+            CapabilityFailureKind.unsupported,
+          ),
+        ),
+      );
+      expect(repo.supports(CapabilityFeature.mcpStatus), isFalse);
+      await expectLater(repo.mcpRuntimeStatus(), throwsA(isA<CapabilityFailure>()));
+      expect(calls, 1);
+    });
   });
 }
