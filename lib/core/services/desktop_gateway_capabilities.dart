@@ -10,6 +10,8 @@ enum DesktopGatewayCapability {
   projectsCenter,
   projectManagement,
   projectWorktrees,
+  projectPullRequests,
+  sessionPullRequestScan,
   projectFiles,
   projectFileMkdir,
   projectFileWriteText,

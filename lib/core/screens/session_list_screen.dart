@@ -43,6 +43,8 @@ import '../widgets/session_title_editor_route.dart';
 import '../widgets/session_row_stop_control.dart';
 import 'chat_screen.dart';
 import 'mission_control_screen.dart';
+import '../services/session_pull_requests.dart';
+import '../widgets/session_pull_request_row.dart';
 import 'session_branches_screen.dart';
 import 'session_detail_screen.dart';
 import '../widgets/hermes_app_bar.dart';
@@ -173,6 +175,7 @@ class _SessionListScreenState extends State<SessionListScreen>
   late final SessionRepository? _repository;
   late final bool _ownsRepository;
   TuiGatewayClient? _ownedActivityClient;
+  PullRequestTagService? _pullRequests;
   SharedGatewayLease? _activityLease;
   StreamSubscription<TuiGatewayEvent>? _eventSubscription;
   StreamSubscription<HistoryCleanupInvalidation>? _historyCleanupSubscription;
@@ -1697,6 +1700,26 @@ class _SessionListScreenState extends State<SessionListScreen>
     }
   }
 
+  /// The PR read behind the session menu: on demand, never on list build.
+  Future<PullRequestInfo?> Function()? _pullRequestLoader(Session session) {
+    final client = _ownedActivityClient;
+    if (client == null || session.gitRepoRoot?.trim().isNotEmpty != true) {
+      return null;
+    }
+    return () async {
+      var service = _pullRequests;
+      if (service == null) {
+        final prefs = await SharedPreferences.getInstance();
+        service = _pullRequests ??= PullRequestTagService(
+          gateway: client,
+          connectionId: widget.connection.id,
+          prefs: prefs,
+        );
+      }
+      return service.tagFor(session);
+    };
+  }
+
   Future<void> _openBranches(Session session) {
     final canLoadMore =
         _repository != null &&
@@ -1806,6 +1829,19 @@ class _SessionListScreenState extends State<SessionListScreen>
                   Navigator.pop(ctx);
                   await _toggleUnread(session);
                 },
+              ),
+            if (_pullRequestLoader(session) case final load?)
+              SessionPullRequestRow(
+                key: ValueKey('session-menu-pr-${session.id}'),
+                load: load,
+                builder: (context, label, onTap) => ListTile(
+                  leading: const Icon(Icons.merge_type_rounded),
+                  title: Text(label),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    onTap();
+                  },
+                ),
               ),
             if (SessionBranchesScreen.isAvailable(_sessions, session.id))
               ListTile(

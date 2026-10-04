@@ -31,6 +31,9 @@ import '../widgets/session_deletion_dialogs.dart';
 import '../widgets/session_context_usage.dart';
 import 'chat_screen.dart';
 import 'cron_screen.dart';
+import '../services/session_pull_requests.dart';
+import '../services/shared_gateway_pool.dart';
+import '../widgets/session_pull_request_row.dart';
 import 'session_branches_screen.dart';
 
 class SessionDetailScreen extends StatefulWidget {
@@ -43,10 +46,14 @@ class SessionDetailScreen extends StatefulWidget {
   /// Rows the caller already holds; the branch family is built from them.
   final List<Session> knownSessions;
 
+  @visibleForTesting
+  final HermesPullRequestGateway? pullRequestGateway;
+
   const SessionDetailScreen({
     required this.connection,
     required this.session,
     this.knownSessions = const [],
+    @visibleForTesting this.pullRequestGateway,
     @visibleForTesting this.client,
     @visibleForTesting this.observedFirstTokenLatencyMs,
     this.skipInitialSessionRefresh = false,
@@ -64,6 +71,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   late Session _session;
   bool _refreshing = false;
   bool _technicalOpen = false;
+
+  PullRequestTagService? _pullRequests;
+  SharedGatewayLease? _pullRequestLease;
 
   SessionArchive? _archive;
   bool _archivePending = false;
@@ -103,8 +113,31 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 ),
       );
 
+  /// PR read for this session, opened on demand and only for sessions that
+  /// belong to a git repo. The gateway lease is held while the page lives.
+  Future<PullRequestInfo?> _loadPullRequest() async {
+    if (_session.gitRepoRoot?.trim().isNotEmpty != true) return null;
+    var service = _pullRequests;
+    if (service == null) {
+      var gateway = widget.pullRequestGateway;
+      if (gateway == null) {
+        final lease = SharedGatewayPool.instance.acquire(widget.connection);
+        _pullRequestLease = lease;
+        gateway = lease.client;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      service = _pullRequests ??= PullRequestTagService(
+        gateway: gateway,
+        connectionId: widget.connection.id,
+        prefs: prefs,
+      );
+    }
+    return service.tagFor(_session);
+  }
+
   @override
   void dispose() {
+    _pullRequestLease?.release();
     _archive?.removeListener(_onArchiveChanged);
     _repository.close();
     _client.close();
@@ -621,6 +654,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 icon: Icons.schedule_rounded,
                 title: s.sesUiOpenRoutine,
                 onTap: _openLinkedCron,
+              ),
+            if (_session.gitRepoRoot?.trim().isNotEmpty == true)
+              SessionPullRequestRow(
+                key: const ValueKey('session-detail-pr'),
+                load: _loadPullRequest,
+                builder: (context, label, onTap) => HermesListRow(
+                  icon: Icons.merge_type_rounded,
+                  title: label,
+                  onTap: onTap,
+                ),
               ),
             if (SessionBranchesScreen.isAvailable(
               widget.knownSessions,

@@ -7723,5 +7723,10 @@
   "profileSwitcherManage": "Manage profiles",
   "sesBranchesTitle": "Branches",
   "sesBranchesCurrent": "This conversation",
-  "sesBranchesLoadMore": "Load more"
+  "sesBranchesLoadMore": "Load more",
+  "sesPrTag": "PR #{number} · {state}",
+  "sesPrStateDraft": "draft",
+  "sesPrStateOpen": "open",
+  "sesPrStateMerged": "merged",
+  "sesPrStateClosed": "closed"
 }

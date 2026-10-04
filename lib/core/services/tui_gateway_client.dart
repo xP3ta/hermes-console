@@ -38,6 +38,7 @@ import '../models/project_files.dart';
 import 'capability_payload_sanitizer.dart';
 import 'connection_manager.dart';
 import 'desktop_control_gateway.dart';
+import 'session_pull_requests.dart';
 import 'desktop_gateway_capabilities.dart';
 import 'json_rpc_wire.dart';
 import 'recovery_proof.dart';
@@ -1389,6 +1390,7 @@ class TuiGatewayClient
         HermesDesktopControlGateway,
         HermesDesktopSessionControlGateway,
         HermesProjectManagementGateway,
+        HermesPullRequestGateway,
         HermesProjectFilesGateway,
         HermesProjectFileWritesGateway,
         HermesExtensionManagementGateway,
@@ -6350,10 +6352,12 @@ class TuiGatewayClient
     }, capability: DesktopGatewayCapability.projectManagement);
   }
 
-  Future<T> _projectGitRequest<T>(Future<T> Function() request) async {
-    if (!_capabilityCache.canAttempt(
-      DesktopGatewayCapability.projectWorktrees,
-    )) {
+  Future<T> _projectGitRequest<T>(
+    Future<T> Function() request, {
+    DesktopGatewayCapability capability =
+        DesktopGatewayCapability.projectWorktrees,
+  }) async {
+    if (!_capabilityCache.canAttempt(capability)) {
       throw const DesktopControlFailure(
         DesktopControlFailureKind.unsupported,
         code: 404,
@@ -6362,19 +6366,55 @@ class TuiGatewayClient
     try {
       final value = await _dashboardExtensionRequest(request);
       _capabilityCache.mark(
-        DesktopGatewayCapability.projectWorktrees,
+        capability,
         DesktopGatewayCapabilityState.supported,
       );
       return value;
     } on DesktopControlFailure catch (failure) {
       if (failure.kind == DesktopControlFailureKind.unsupported) {
         _capabilityCache.mark(
-          DesktopGatewayCapability.projectWorktrees,
+          capability,
           DesktopGatewayCapabilityState.unsupported,
         );
       }
       rethrow;
     }
+  }
+
+  @override
+  Future<PullRequestList> prList(
+    String repoPath, {
+    List<String> branches = const [],
+    List<int> numbers = const [],
+  }) {
+    final body = {
+      'path': _validatedControlValue(repoPath, maxLength: 4096),
+      'branches': [
+        for (final b in branches) _validatedControlValue(b, maxLength: 512),
+      ],
+      'numbers': numbers,
+    };
+    return _projectGitRequest(
+      () async => PullRequestList.fromJson(
+        await _dashboard.apiPost('git/review/pr-list', body: body),
+      ),
+      capability: DesktopGatewayCapability.projectPullRequests,
+    );
+  }
+
+  @override
+  Future<PullRequestScan> scanSessionPullRequests(List<String> ids) {
+    final body = {
+      'ids': [
+        for (final id in ids) _validatedControlValue(id, maxLength: 1024),
+      ],
+    };
+    return _projectGitRequest(
+      () async => PullRequestScan.fromJson(
+        await _dashboard.apiPost('profiles/sessions/pull-requests', body: body),
+      ),
+      capability: DesktopGatewayCapability.sessionPullRequestScan,
+    );
   }
 
   String _gitQuery(String route, String repoPath) {

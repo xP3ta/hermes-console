@@ -9408,5 +9408,11 @@
   "profileSwitcherManage": "Gestionar perfiles",
   "sesBranchesTitle": "Ramas",
   "sesBranchesCurrent": "Esta conversación",
-  "sesBranchesLoadMore": "Cargar más"
+  "sesBranchesLoadMore": "Cargar más",
+  "sesPrTag": "PR #{number} · {state}",
+  "@sesPrTag": {"placeholders": {"number": {"type": "int"}, "state": {"type": "String"}}},
+  "sesPrStateDraft": "borrador",
+  "sesPrStateOpen": "abierto",
+  "sesPrStateMerged": "fusionado",
+  "sesPrStateClosed": "cerrado"
 }
