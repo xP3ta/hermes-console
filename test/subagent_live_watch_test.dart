@@ -273,6 +273,62 @@ void main() {
     expect(gateway.released, ['watch-1']);
   });
 
+  test('closing and disposing release the invalidation listener', () async {
+    final gateway = FakeWatchGateway();
+    final invalidation = _CountingListenable();
+    final watch = SubagentLiveWatch(
+      gateway: gateway,
+      childSessionId: _child,
+      profile: _parentProfile,
+      isCurrent: () => true,
+      invalidation: invalidation,
+    )..start();
+    await pumpEventQueue();
+    expect(invalidation.listeners, 1);
+
+    await watch.close();
+    expect(invalidation.listeners, 0);
+    invalidation.notify();
+    await pumpEventQueue();
+    expect(gateway.closed, ['watch-1'], reason: 'one close, nothing after it');
+
+    final other = SubagentLiveWatch(
+      gateway: FakeWatchGateway(),
+      childSessionId: _child,
+      profile: _parentProfile,
+      isCurrent: () => true,
+      invalidation: invalidation,
+    )..start();
+    await pumpEventQueue();
+    expect(invalidation.listeners, 1);
+    other.dispose();
+    await pumpEventQueue();
+    expect(invalidation.listeners, 0);
+    watch.dispose();
+  });
+
+  test('a watch that gave up on a stale owner stops listening too', () async {
+    final gateway = FakeWatchGateway();
+    final invalidation = _CountingListenable();
+    var current = true;
+    final watch = SubagentLiveWatch(
+      gateway: gateway,
+      childSessionId: _child,
+      profile: _parentProfile,
+      isCurrent: () => current,
+      invalidation: invalidation,
+    )..start();
+    await pumpEventQueue();
+
+    current = false;
+    invalidation.notify();
+    await pumpEventQueue();
+
+    expect(watch.value.status, SubagentLiveWatchStatus.unavailable);
+    expect(invalidation.listeners, 0);
+    watch.dispose();
+  });
+
   test(
     'a notification while the owner is still current changes nothing',
     () async {
@@ -435,4 +491,22 @@ void main() {
     expect(gateway.closed, isEmpty);
     expect(gateway.retained, isEmpty);
   });
+}
+
+/// A [Listenable] that counts its listeners, to prove they are released.
+class _CountingListenable implements Listenable {
+  final _listeners = <VoidCallback>[];
+  int get listeners => _listeners.length;
+
+  void notify() {
+    for (final listener in [..._listeners]) {
+      listener();
+    }
+  }
+
+  @override
+  void addListener(VoidCallback listener) => _listeners.add(listener);
+
+  @override
+  void removeListener(VoidCallback listener) => _listeners.remove(listener);
 }

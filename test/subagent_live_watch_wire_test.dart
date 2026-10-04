@@ -29,11 +29,14 @@ class _Gateway {
           },
           'gateway.capabilities' => {'per_session_exclusive_submit': true},
           'session.resume' => {
-            'session_id': 'watch-runtime-1',
+            // A lazy resume is a watch; any other resume is a chat's.
+            'session_id': (frame['params'] as Map)['lazy'] == true
+                ? 'watch-runtime-1'
+                : 'chat-runtime-1',
             'session_key': (frame['params'] as Map)['session_id'],
             'running': true,
             'messages': <Object>[],
-            'info': {'lazy': true},
+            'info': {'lazy': (frame['params'] as Map)['lazy'] == true},
           },
           'session.close' => {'closed': true},
           _ => <String, dynamic>{'status': 'ok'},
@@ -121,6 +124,32 @@ void main() {
       await client.resumeWatchSession('child-1', profile: 'parent-profile');
 
       expect(client.watchedRuntimesForTesting, isEmpty);
+      expect(client.legacyEventRuntimeForTesting, (
+        runtime: null,
+        ambiguous: false,
+      ));
+    },
+  );
+
+  test(
+    'a watch beside a chat leaves the chat runtime as the only legacy anchor',
+    () async {
+      final client = clientFor();
+      await client.resumeExisting('chat-session');
+      expect(client.legacyEventRuntimeForTesting, (
+        runtime: 'chat-runtime-1',
+        ambiguous: false,
+      ));
+      final watched = Set.of(client.watchedRuntimesForTesting);
+
+      await client.resumeWatchSession('child-1', profile: 'parent-profile');
+
+      // A second bound runtime would make unscoped events ambiguous.
+      expect(client.legacyEventRuntimeForTesting, (
+        runtime: 'chat-runtime-1',
+        ambiguous: false,
+      ));
+      expect(client.watchedRuntimesForTesting, watched);
     },
   );
 
