@@ -6,24 +6,30 @@ import 'package:hermes_android/core/settings/settings_deep_link.dart';
 import 'package:hermes_android/core/settings/settings_search.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 
-Widget _host(ScrollController controller) => MaterialApp(
+Widget _host({int spacers = 8}) => MaterialApp(
   theme: AppTheme.fromId('dark'),
   home: Scaffold(
-    // Like the Settings list: sections far from the viewport stay built.
-    body: ListView(
-      controller: controller,
-      cacheExtent: 6000,
-      children: [
-        const SizedBox(height: 1600),
-        SettingsDeepLinkTarget(
-          section: SettingsSection.security,
-          child: const SizedBox(height: 80, child: Text('Security rows')),
-        ),
-        const SizedBox(height: 1600),
-      ],
+    body: SettingsDeepLinkScope(
+      sections: const {SettingsSection.security},
+      builder: (context, controller) => ListView(
+        key: const ValueKey('list'),
+        controller: controller,
+        children: [
+          // Far enough that the list has not built the section yet.
+          for (var i = 0; i < spacers; i++) const SizedBox(height: 400),
+          SettingsDeepLinkTarget(
+            section: SettingsSection.security,
+            child: const SizedBox(height: 80, child: Text('Security rows')),
+          ),
+          for (var i = 0; i < spacers; i++) const SizedBox(height: 400),
+        ],
+      ),
     ),
   ),
 );
+
+ScrollController _list(WidgetTester tester) =>
+    tester.widget<ListView>(find.byKey(const ValueKey('list'))).controller!;
 
 Finder _highlight() =>
     find.byKey(const ValueKey('settings-highlight-security'));
@@ -32,25 +38,21 @@ void main() {
   tearDown(() => SettingsDeepLink.pending.value = null);
 
   testWidgets('nothing is highlighted without a request', (tester) async {
-    final controller = ScrollController();
-    addTearDown(controller.dispose);
-    await tester.pumpWidget(_host(controller));
+    await tester.pumpWidget(_host());
 
     expect(_highlight(), findsNothing);
-    expect(controller.offset, 0);
+    expect(_list(tester).offset, 0);
   });
 
   testWidgets('a request scrolls to the section and highlights it once', (
     tester,
   ) async {
-    final controller = ScrollController();
-    addTearDown(controller.dispose);
-    await tester.pumpWidget(_host(controller));
+    await tester.pumpWidget(_host());
 
     SettingsDeepLink.request(SettingsSection.security);
     await tester.pumpAndSettle(const Duration(milliseconds: 50));
 
-    expect(controller.offset, greaterThan(1000));
+    expect(_list(tester).offset, greaterThan(1000));
     expect(_highlight(), findsOneWidget);
     expect(SettingsDeepLink.pending.value, isNull, reason: 'consumed');
 
@@ -61,10 +63,8 @@ void main() {
   testWidgets('a request made before the screen exists is honored', (
     tester,
   ) async {
-    final controller = ScrollController();
-    addTearDown(controller.dispose);
     SettingsDeepLink.request(SettingsSection.security);
-    await tester.pumpWidget(_host(controller));
+    await tester.pumpWidget(_host());
     await tester.pumpAndSettle(const Duration(milliseconds: 50));
 
     expect(_highlight(), findsOneWidget);
@@ -74,24 +74,20 @@ void main() {
   testWidgets('a request for another section does nothing here', (
     tester,
   ) async {
-    final controller = ScrollController();
-    addTearDown(controller.dispose);
-    await tester.pumpWidget(_host(controller));
+    await tester.pumpWidget(_host());
 
     SettingsDeepLink.request(SettingsSection.about);
     await tester.pump(const Duration(seconds: 1));
 
     expect(_highlight(), findsNothing);
-    expect(controller.offset, 0);
+    expect(_list(tester).offset, 0);
     expect(SettingsDeepLink.pending.value, SettingsSection.about);
   });
 
   testWidgets('leaving the screen before the highlight ends leaves no timer', (
     tester,
   ) async {
-    final controller = ScrollController();
-    addTearDown(controller.dispose);
-    await tester.pumpWidget(_host(controller));
+    await tester.pumpWidget(_host());
     SettingsDeepLink.request(SettingsSection.security);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
