@@ -64,6 +64,7 @@ import '../models/activity_snapshot.dart';
 import '../models/attachment_draft.dart';
 import '../models/agent_profile.dart';
 import '../models/chat_preferences.dart';
+import '../models/cron_run_write_gate.dart';
 import '../models/compaction_progress.dart';
 import '../models/command_descriptor.dart';
 import '../models/desktop_compression_result.dart';
@@ -1357,6 +1358,13 @@ class _ChatScreenState extends State<ChatScreen>
   // ese setState tardío reventaba con "_lifecycleState != defunct". Filtrar por
   // este flag además de `mounted` corta esos eventos diferidos.
   bool _disposed = false;
+
+  /// View-only verdict for a cron run that never closed and that the
+  /// scheduler no longer owns (Desktop `open-cron-run.ts`, #88443).
+  /// Re-evaluated from every authoritative session read and before each send.
+  late bool _cronRunReadOnly =
+      CronRunWriteGate.appliesTo(widget.session) &&
+      CronRunWriteGate.readOnlyFor(widget.session);
   late final LocalConversationLifecycle _localConversationLifecycle;
 
   bool _editingUserMessage = false;
@@ -4085,6 +4093,7 @@ class _ChatScreenState extends State<ChatScreen>
       try {
         final snapshot = await _chat.loadPersistedSessionSnapshot();
         if (_disposed || !mounted || snapshot == null) return;
+        _applyCronRunVerdict(snapshot);
         _sessionUsageSnapshot = snapshot;
         _sessionUsageRefreshedAt = DateTime.now();
         _chatService.updateHomeWidgetSessionMetadata(_chat, session: snapshot);
@@ -4102,6 +4111,34 @@ class _ChatScreenState extends State<ChatScreen>
         _sessionUsageRefreshInFlight = null;
       }
     });
+  }
+
+  void _applyCronRunVerdict(Session row) {
+    if (!CronRunWriteGate.appliesTo(widget.session)) return;
+    final readOnly = CronRunWriteGate.readOnlyFor(row);
+    if (readOnly == _cronRunReadOnly) return;
+    if (mounted) {
+      setState(() => _cronRunReadOnly = readOnly);
+    } else {
+      _cronRunReadOnly = readOnly;
+    }
+  }
+
+  /// Desktop `refreshCronRunWriteGate`: re-reads the run's authoritative row
+  /// right before a send. A row that cannot be read refuses the send (fail
+  /// closed): a message into a possibly dead cron run is the misroute this
+  /// gate exists to prevent.
+  Future<bool> _cronRunAllowsSend() async {
+    if (!CronRunWriteGate.appliesTo(widget.session)) return true;
+    try {
+      final row = await _chat.loadPersistedSessionSnapshot();
+      if (_disposed || !mounted || row == null) return false;
+      _applyCronRunVerdict(row);
+      return !_cronRunReadOnly;
+    } catch (error) {
+      debugPrint('[chat] cron run row unavailable (${error.runtimeType})');
+      return false;
+    }
   }
 
   Future<DesktopContextBreakdown?> _loadSessionContextDetails() async {
@@ -8032,6 +8069,15 @@ class _ChatScreenState extends State<ChatScreen>
     await _profileReady;
     final outboxRecoveryAvailable = await _initialOutboxRead.future;
     if (!mounted) return false;
+    final cronRunAllowsSend = await _cronRunAllowsSend();
+    if (!mounted) return false;
+    if (!cronRunAllowsSend) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).au1215CronRunSendBlocked)),
+        kind: HermesNoticeKind.warning,
+      );
+      return false;
+    }
     if (_chat.mutationsBlockedByOwnershipConflict &&
         !_chat.manualOwnershipProbeAvailable) {
       return false;
@@ -14970,7 +15016,7 @@ class _ChatScreenState extends State<ChatScreen>
   Widget _buildInputBar() {
     widget.performanceProbe?.composerBuilds++;
     final colors = Theme.of(context).hermes;
-    if (widget.connection.readOnly) {
+    if (widget.connection.readOnly || _cronRunReadOnly) {
       // Mantiene la misma huella y superficie que el composer para no convertir
       // un estado persistente en una alerta separada del lugar al que afecta.
       return Container(
@@ -14995,7 +15041,9 @@ class _ChatScreenState extends State<ChatScreen>
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          Strings.of(context).readOnlyNotice,
+                          widget.connection.readOnly
+                              ? Strings.of(context).readOnlyNotice
+                              : Strings.of(context).au1215CronRunViewOnly,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

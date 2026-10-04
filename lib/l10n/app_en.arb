@@ -7720,5 +7720,7 @@
   "profileSwitcherHint": "Switch profile",
   "profileSwitcherBody": "Each profile has its own chats, memory, SOUL, skills and model.",
   "profileSwitcherLoadFailed": "Couldn't load the profiles. Tap to retry.",
-  "profileSwitcherManage": "Manage profiles"
+  "profileSwitcherManage": "Manage profiles",
+  "au1215CronRunViewOnly": "Scheduled run that never closed — view only",
+  "au1215CronRunSendBlocked": "This scheduled run is view-only — sending is disabled."
 }

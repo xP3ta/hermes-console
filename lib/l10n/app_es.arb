@@ -9405,5 +9405,7 @@
   "profileSwitcherHint": "Cambiar de perfil",
   "profileSwitcherBody": "Cada perfil tiene sus propios chats, memoria, SOUL, skills y modelo.",
   "profileSwitcherLoadFailed": "No se pudieron cargar los perfiles. Toca para reintentar.",
-  "profileSwitcherManage": "Gestionar perfiles"
+  "profileSwitcherManage": "Gestionar perfiles",
+  "au1215CronRunViewOnly": "Ejecución programada sin cerrar: solo lectura",
+  "au1215CronRunSendBlocked": "Esta ejecución programada es de solo lectura: no se puede enviar."
 }
