@@ -49,6 +49,27 @@ final class _Consumer {
   });
 }
 
+bool _renderableSurface(Object? surface) =>
+    surface is Map &&
+    const {
+      'provider',
+      'endpoint',
+      'streaming',
+      'auth',
+      'billing',
+      'gateway',
+      'runtime',
+      'disk',
+    }.contains(surface['layer']);
+
+bool _renderableBilling(Object? billing) {
+  if (billing is! Map) return false;
+  final label = billing['provider_label'];
+  return label is String &&
+      label.trim().isNotEmpty &&
+      label.trim().length <= 128;
+}
+
 String _id(Object? value, String fallback) =>
     value is String && value.trim().isNotEmpty ? value : fallback;
 
@@ -318,40 +339,30 @@ final List<_Consumer> _consumers = [
     }, expectedKey: DesktopSessionConfigKey.model);
     return true;
   }),
-  // A failed turn: the card reads `error_surface` and `billing`.
+  // A failed turn: the card reads `error_surface` and `billing`, each on its
+  // own (`turnFailureMetadata`).
   _Consumer(
     'event',
     'message.complete',
     (c) => c.eventPayloadSchema('message.complete'),
     (s) {
-      final surface = s['error_surface'];
-      if (surface is Map && TurnErrorSurface.parse(surface) == null) {
+      final metadata = turnFailureMetadata(
+        errorSurface: s['error_surface'],
+        billing: s['billing'],
+      );
+      if (_renderableSurface(s['error_surface']) &&
+          metadata[turnErrorSurfaceKey] == null) {
         return false;
       }
-      final billing = s['billing'];
-      return !(billing is Map && TurnBillingBlock.parse(billing) == null);
+      return !(_renderableBilling(s['billing']) &&
+          metadata[turnBillingBlockKey] == null);
     },
-    // A layer Console does not know, or a billing block that names no
-    // provider, carries nothing the card could render.
-    semanticallyEmpty: (s) {
-      final surface = s['error_surface'];
-      final billing = s['billing'];
-      return (surface is Map &&
-              !const {
-                'provider',
-                'endpoint',
-                'streaming',
-                'auth',
-                'billing',
-                'gateway',
-                'runtime',
-                'disk',
-              }.contains(surface['layer'])) ||
-          (billing is Map &&
-              (billing['provider_label'] is! String ||
-                  (billing['provider_label'] as String).trim().isEmpty ||
-                  (billing['provider_label'] as String).trim().length > 128));
-    },
+    // Empty only when neither descriptor could be rendered: a layer Console
+    // does not know and a billing block that names no provider.
+    semanticallyEmpty: (s) =>
+        (s['error_surface'] is Map || s['billing'] is Map) &&
+        !_renderableSurface(s['error_surface']) &&
+        !_renderableBilling(s['billing']),
   ),
   _Consumer(
     'result',
