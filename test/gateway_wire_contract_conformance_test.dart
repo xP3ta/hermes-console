@@ -18,6 +18,7 @@ import 'package:hermes_android/core/models/desktop_session_config.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
+import 'package:hermes_android/core/models/turn_error_surface.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/json_rpc_wire.dart';
@@ -317,6 +318,41 @@ final List<_Consumer> _consumers = [
     }, expectedKey: DesktopSessionConfigKey.model);
     return true;
   }),
+  // A failed turn: the card reads `error_surface` and `billing`.
+  _Consumer(
+    'event',
+    'message.complete',
+    (c) => c.eventPayloadSchema('message.complete'),
+    (s) {
+      final surface = s['error_surface'];
+      if (surface is Map && TurnErrorSurface.parse(surface) == null) {
+        return false;
+      }
+      final billing = s['billing'];
+      return !(billing is Map && TurnBillingBlock.parse(billing) == null);
+    },
+    // A layer Console does not know, or a billing block that names no
+    // provider, carries nothing the card could render.
+    semanticallyEmpty: (s) {
+      final surface = s['error_surface'];
+      final billing = s['billing'];
+      return (surface is Map &&
+              !const {
+                'provider',
+                'endpoint',
+                'streaming',
+                'auth',
+                'billing',
+                'gateway',
+                'runtime',
+                'disk',
+              }.contains(surface['layer'])) ||
+          (billing is Map &&
+              (billing['provider_label'] is! String ||
+                  (billing['provider_label'] as String).trim().isEmpty ||
+                  (billing['provider_label'] as String).trim().length > 128));
+    },
+  ),
   _Consumer(
     'result',
     'session.events.since',
