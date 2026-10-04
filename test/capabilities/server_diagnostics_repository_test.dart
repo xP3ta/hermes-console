@@ -1,16 +1,23 @@
 // Read-only server diagnostics over the Capabilities repository: doctor and
 // the security audit (attach when already running, never launch twice, follow
 // until exit, stop when told), live MCP status, usage analytics and health.
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/capabilities/capabilities_adapters.dart'
+    show DashboardCapabilitiesRest;
 import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/capability_models.dart';
 import 'package:hermes_android/core/capabilities/server_diagnostics_models.dart';
+import 'package:hermes_android/core/capabilities/server_diagnostics_probe.dart';
 import 'package:hermes_android/core/services/connection_manager.dart'
-    show DashboardHttpException;
+    show DashboardClient, DashboardHttpException;
 import 'package:hermes_android/core/services/tui_gateway_client.dart'
     show TuiGatewayClient, TuiGatewayRpcError;
+
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'capabilities_fakes.dart';
 
@@ -672,6 +679,89 @@ void main() {
       expect(repo.supports(CapabilityFeature.serverIdle), isFalse);
     });
   });
+
+  test(
+    'every diagnostics read and run stays on the known read routes',
+    () async {
+      // Behavioral: everything the repository can send, through the real
+      // Dashboard transport, must be one of these routes. A retirement call,
+      // however its path is composed, is not in the list.
+      const allowed = {
+        'GET /api/health',
+        'GET /api/health/idle',
+        'GET /api/actions/doctor/status',
+        'GET /api/actions/security-audit/status',
+        'POST /api/ops/doctor',
+        'POST /api/ops/security-audit',
+        'GET /api/analytics/usage',
+      };
+      final sent = <String>[];
+      var launched = false;
+      final dashboard = DashboardClient(
+        host: 'hermes.example.test',
+        port: 9119,
+        manualToken: 'synthetic-token',
+        httpClientOverride: MockClient((request) async {
+          final path = Uri.decodeFull(request.url.path);
+          sent.add('${request.method} $path');
+          if (request.method == 'POST') {
+            launched = true;
+            return http.Response(jsonEncode({'ok': true}), 200);
+          }
+          if (path.startsWith('/api/actions/')) {
+            return http.Response(
+              jsonEncode({
+                'name': path.split('/')[3],
+                'running': false,
+                'exit_code': launched ? 0 : null,
+                'lines': <String>[],
+              }),
+              200,
+            );
+          }
+          if (path == '/api/analytics/usage') {
+            return http.Response(
+              jsonEncode({
+                'daily': [],
+                'by_model': [],
+                'totals': {},
+                'period_days': 30,
+              }),
+              200,
+            );
+          }
+          return http.Response(
+            jsonEncode({'ok': true, 'version': '1', 'idle': true}),
+            200,
+          );
+        }),
+      );
+      addTearDown(dashboard.close);
+      final repo = CapabilitiesRepository(
+        rest: DashboardCapabilitiesRest(dashboard),
+        profile: 'work',
+        sleep: (_) async {},
+        actionPollInterval: Duration.zero,
+      );
+
+      await repo.serverHealth();
+      await repo.serverIdle();
+      for (final action in OpsAction.values) {
+        await repo.opsStatus(action);
+        await repo.attachOps(action);
+        launched = false;
+        await repo.runOps(action);
+      }
+      for (final days in UsageAnalytics.presets) {
+        await repo.usage(days);
+      }
+      await probeDiagnostics(repo);
+
+      expect(sent, isNotEmpty);
+      expect(sent.toSet().difference(allowed), isEmpty);
+      expect(sent.where((r) => r.toLowerCase().contains('retire')), isEmpty);
+    },
+  );
 
   test('no Console code can call the retirement endpoint', () {
     // `/api/health/retirement` closes the backend's admission of new work.
