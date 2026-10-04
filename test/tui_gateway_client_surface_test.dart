@@ -86,6 +86,15 @@ void main() {
     await client.submitPrompt('rt', 'cuatro');
     await client.submitPromptIdempotent('rt', 'cinco', 'turn-5');
     await client.submitInterruptedPrompt('rt', 'seis');
+    await client.submitQueuedPromptWithSurface('rt', 'siete', surface);
+    await client.submitQueuedPromptIdempotentWithSurface(
+      'rt',
+      'ocho',
+      'turn-8',
+      surface,
+    );
+    await client.submitQueuedPrompt('rt', 'nueve');
+    await client.submitQueuedPromptIdempotent('rt', 'diez', 'turn-10');
 
     const extra = {
       'surface': 'voice-live',
@@ -98,6 +107,21 @@ void main() {
       {'session_id': 'rt', 'text': 'cuatro'},
       {'session_id': 'rt', 'text': 'cinco', 'client_turn_id': 'turn-5'},
       {'session_id': 'rt', 'text': 'seis', 'interrupted': true},
+      {'session_id': 'rt', 'text': 'siete', 'queued': true, ...extra},
+      {
+        'session_id': 'rt',
+        'text': 'ocho',
+        'client_turn_id': 'turn-8',
+        'queued': true,
+        ...extra,
+      },
+      {'session_id': 'rt', 'text': 'nueve', 'queued': true},
+      {
+        'session_id': 'rt',
+        'text': 'diez',
+        'client_turn_id': 'turn-10',
+        'queued': true,
+      },
     ]);
   });
 }

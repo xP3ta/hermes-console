@@ -39,6 +39,7 @@ class _SurfaceGateway
         HermesDesktopGateway,
         HermesDesktopInterruptedPromptGateway,
         HermesDesktopIdempotentGateway,
+        HermesDesktopQueuedPromptGateway,
         HermesDesktopClientSurfacePromptGateway {
   final StreamController<TuiGatewayEvent> controller =
       StreamController<TuiGatewayEvent>.broadcast();
@@ -93,6 +94,38 @@ class _SurfaceGateway
     String text,
     PromptClientSurface surface,
   ) async => _record('interrupted', text, surface);
+
+  @override
+  Future<void> submitQueuedPrompt(String runtimeSessionId, String text) async =>
+      _record('queued', text, null);
+
+  @override
+  Future<void> submitQueuedPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  ) async => _record('queued', text, surface);
+
+  @override
+  Future<DesktopTurnAck> submitQueuedPromptIdempotent(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+  ) async {
+    _record('queued-idempotent', text, null);
+    return _ack(clientTurnId);
+  }
+
+  @override
+  Future<DesktopTurnAck> submitQueuedPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  ) async {
+    _record('queued-idempotent', text, surface);
+    return _ack(clientTurnId);
+  }
 
   DesktopTurnAck _ack(String clientTurnId) => DesktopTurnAck(
     accepted: true,
@@ -156,7 +189,7 @@ class _MemoryOutbox implements TurnOutboxPersistence {
   Future<void> delete(PreparedTurn turn) async {}
 }
 
-ActiveTurnDelivery _delivery(String id, String text) {
+ActiveTurnDelivery _delivery(String id, String text, {bool queued = false}) {
   final now = DateTime.now().millisecondsSinceEpoch;
   return ActiveTurnDelivery(
     prepared: PreparedTurn(
@@ -171,7 +204,7 @@ ActiveTurnDelivery _delivery(String id, String text) {
       attachments: const [],
       model: 'hermes-agent',
       profile: '',
-      queued: false,
+      queued: queued,
     ),
     store: _MemoryOutbox(),
   );
@@ -224,6 +257,43 @@ void main() {
     expect(gateway.submits, [
       {
         'path': 'idempotent',
+        'text': 'abre el calendario',
+        'surface': 'voice-live',
+        'voice_context': 'User: hola\nVoice assistant: dime',
+      },
+    ]);
+  });
+
+  test('queued submit carries surface and voice_context', () async {
+    await chat.send(
+      fullText: 'abre el calendario',
+      model: 'hermes-agent',
+      history: const [],
+      queued: true,
+      clientSurface: _voiceLive,
+    );
+    expect(gateway.submits, [
+      {
+        'path': 'queued',
+        'text': 'abre el calendario',
+        'surface': 'voice-live',
+        'voice_context': 'User: hola\nVoice assistant: dime',
+      },
+    ]);
+  });
+
+  test('queued idempotent submit carries surface and voice_context', () async {
+    await chat.send(
+      fullText: 'abre el calendario',
+      model: 'hermes-agent',
+      history: const [],
+      queued: true,
+      delivery: _delivery('turn-q', 'abre el calendario', queued: true),
+      clientSurface: _voiceLive,
+    );
+    expect(gateway.submits, [
+      {
+        'path': 'queued-idempotent',
         'text': 'abre el calendario',
         'surface': 'voice-live',
         'voice_context': 'User: hola\nVoice assistant: dime',

@@ -6756,9 +6756,7 @@ class ActiveChat {
     final provisional = provisionalLiveStatus;
     if (provisional != null) return provisional;
     final activity = sessionActivity;
-    final steps = isStreaming
-        ? _liveTraceSteps()
-        : (label: null, detail: null);
+    final steps = isStreaming ? _liveTraceSteps() : (label: null, detail: null);
     // A live turn with no running tool reads as thinking (between steps,
     // after a resume, while reasoning): never «running tools» with none
     // listed. [sessionLiveStatusFromActivity] applies that precedence.
@@ -18450,12 +18448,20 @@ class ActiveChat {
           } else if (idempotentGateway != null) {
             idempotentSubmission = true;
             final ack = queued && gateway is HermesDesktopQueuedPromptGateway
-                ? await (gateway as HermesDesktopQueuedPromptGateway)
-                      .submitQueuedPromptIdempotent(
-                        targetRuntimeId,
-                        promptText,
-                        delivery!.current.clientTurnId,
-                      )
+                ? surfaceGateway != null
+                      ? await surfaceGateway
+                            .submitQueuedPromptIdempotentWithSurface(
+                              targetRuntimeId,
+                              promptText,
+                              delivery!.current.clientTurnId,
+                              surface!,
+                            )
+                      : await (gateway as HermesDesktopQueuedPromptGateway)
+                            .submitQueuedPromptIdempotent(
+                              targetRuntimeId,
+                              promptText,
+                              delivery!.current.clientTurnId,
+                            )
                 : surfaceGateway != null
                 ? await surfaceGateway.submitPromptIdempotentWithSurface(
                     targetRuntimeId,
@@ -18482,8 +18488,16 @@ class ActiveChat {
               await _completeRun();
             }
           } else if (queued && gateway is HermesDesktopQueuedPromptGateway) {
-            await (gateway as HermesDesktopQueuedPromptGateway)
-                .submitQueuedPrompt(targetRuntimeId, promptText);
+            if (surfaceGateway != null) {
+              await surfaceGateway.submitQueuedPromptWithSurface(
+                targetRuntimeId,
+                promptText,
+                surface!,
+              );
+            } else {
+              await (gateway as HermesDesktopQueuedPromptGateway)
+                  .submitQueuedPrompt(targetRuntimeId, promptText);
+            }
           } else if (surfaceGateway != null) {
             await surfaceGateway.submitPromptWithSurface(
               targetRuntimeId,
@@ -26335,19 +26349,20 @@ class ActiveChat {
       return _TerminalTranscriptRead.tail(page, context);
     }
     final pageDecidesTurn = fences.every(
-      (fence) => [
-        (messageId: fence.userMessageId, rowId: fence.userRowId),
-        (messageId: fence.anchorMessageId, rowId: fence.anchorRowId),
-      ].any(
-        (coordinate) =>
-            _resolveTranscriptIdentity(
-              newestFirst,
-              messageId: coordinate.messageId,
-              rowId: coordinate.rowId,
-              accepts: (_) => true,
-            ).kind ==
-            _TranscriptIdentityResolutionKind.unique,
-      ),
+      (fence) =>
+          [
+            (messageId: fence.userMessageId, rowId: fence.userRowId),
+            (messageId: fence.anchorMessageId, rowId: fence.anchorRowId),
+          ].any(
+            (coordinate) =>
+                _resolveTranscriptIdentity(
+                  newestFirst,
+                  messageId: coordinate.messageId,
+                  rowId: coordinate.rowId,
+                  accepts: (_) => true,
+                ).kind ==
+                _TranscriptIdentityResolutionKind.unique,
+          ),
     );
     if (pageDecidesTurn) return const _TerminalTranscriptRead.pending();
     return _TerminalTranscriptRead.whole(await _loadStoredMessages(profile));

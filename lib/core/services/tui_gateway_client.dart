@@ -444,6 +444,19 @@ abstract class HermesDesktopClientSurfacePromptGateway {
     String text,
     PromptClientSurface surface,
   );
+
+  Future<void> submitQueuedPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  );
+
+  Future<DesktopTurnAck> submitQueuedPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  );
 }
 
 /// Lifecycle moderno y explícito de sesión.
@@ -6801,11 +6814,26 @@ class TuiGatewayClient
   }
 
   @override
-  Future<void> submitQueuedPrompt(String runtimeSessionId, String text) async {
+  Future<void> submitQueuedPrompt(String runtimeSessionId, String text) =>
+      _submitQueued(runtimeSessionId, text, const {});
+
+  @override
+  Future<void> submitQueuedPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  ) => _submitQueued(runtimeSessionId, text, surface.toParams());
+
+  Future<void> _submitQueued(
+    String runtimeSessionId,
+    String text,
+    Map<String, dynamic> extraParams,
+  ) async {
     await _requestPromptSubmit({
       'session_id': runtimeSessionId,
       'text': text,
       'queued': true,
+      ...extraParams,
     });
     _markWatchdogRuntimeBusy(runtimeSessionId);
   }
@@ -6891,20 +6919,20 @@ class TuiGatewayClient
     String runtimeSessionId,
     String text,
     String clientTurnId,
-  ) async {
-    final result = await _requestPromptSubmit({
-      'session_id': runtimeSessionId,
-      'text': text,
-      'client_turn_id': clientTurnId,
-      'queued': true,
-    });
-    final ack = DesktopTurnAck.fromJson(
-      result,
-      expectedClientTurnId: clientTurnId,
-    );
-    _markWatchdogRuntimeBusy(runtimeSessionId);
-    return ack;
-  }
+  ) => _submitIdempotent(runtimeSessionId, text, clientTurnId, const {
+    'queued': true,
+  });
+
+  @override
+  Future<DesktopTurnAck> submitQueuedPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  ) => _submitIdempotent(runtimeSessionId, text, clientTurnId, {
+    'queued': true,
+    ...surface.toParams(),
+  });
 
   @override
   Future<DesktopTurnStatus> getTurnStatus(

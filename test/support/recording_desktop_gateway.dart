@@ -103,6 +103,21 @@ class RecordingDesktopGateway
   ) => throw UnimplementedError('idempotent path is not used here');
 
   @override
+  Future<void> submitQueuedPromptWithSurface(
+    String runtimeSessionId,
+    String text,
+    PromptClientSurface surface,
+  ) async => _submit(text, surface, kind: 'queued');
+
+  @override
+  Future<DesktopTurnAck> submitQueuedPromptIdempotentWithSurface(
+    String runtimeSessionId,
+    String text,
+    String clientTurnId,
+    PromptClientSurface surface,
+  ) => throw UnimplementedError('idempotent path is not used here');
+
+  @override
   Future<void> steer(String runtimeSessionId, String text) async {}
 
   @override
