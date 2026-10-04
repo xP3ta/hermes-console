@@ -4,7 +4,7 @@ import 'package:hermes_android/core/capabilities/capability_models.dart';
 import 'package:hermes_android/core/services/connection_manager.dart'
     show DashboardHttpException;
 import 'package:hermes_android/core/services/tui_gateway_client.dart'
-    show TuiGatewayRpcError;
+    show TuiGatewayRpcError, TuiGatewayRpcFailureKind;
 
 class FakeRest implements CapabilitiesRest {
   final Map<String, Object> gets = {};
@@ -391,5 +391,156 @@ void main() {
       ['b'],
     );
     expect(capabilityCategories(items).first, ('research', 2));
+  });
+
+  group('plugins through plugins.manage', () {
+    late List<(String, Map<String, dynamic>)> sent;
+    Object? reply;
+
+    CapabilitiesRepository repoFor(String profile, FakeRest rest) =>
+        CapabilitiesRepository(
+          rest: rest,
+          profile: profile,
+          rpc: (method, params) async {
+            sent.add((method, params));
+            if (reply is Exception) throw reply!;
+            return Map<String, dynamic>.from(reply! as Map);
+          },
+        );
+
+    setUp(() {
+      sent = [];
+      reply = {'ok': true};
+    });
+
+    test('every mutation carries the hub profile and never uses REST', () async {
+      final rest = FakeRest();
+      final repo = repoFor('work', rest);
+      await repo.installPlugin('weather');
+      await repo.setPluginEnabled('weather', false);
+      await repo.updatePlugin('weather', acceptCapabilities: true);
+      await repo.removePlugin('weather');
+      expect(sent.map((c) => c.$1).toSet(), {'plugins.manage'});
+      expect(sent.map((c) => c.$2), [
+        {
+          'action': 'install',
+          'catalog_name': 'weather',
+          'enable': true,
+          'force': false,
+          'profile': 'work',
+        },
+        {
+          'action': 'toggle',
+          'name': 'weather',
+          'key': 'weather',
+          'enable': false,
+          'profile': 'work',
+        },
+        {
+          'action': 'update',
+          'name': 'weather',
+          'accept_capabilities': true,
+          'profile': 'work',
+        },
+        {'action': 'remove', 'name': 'weather', 'profile': 'work'},
+      ]);
+      expect(rest.calls, isEmpty);
+    });
+
+    test('-32601 falls back to REST only on the default profile', () async {
+      reply = const TuiGatewayRpcError('plugins.manage', 'nope', code: -32601);
+      final rest = FakeRest()
+        ..posts['dashboard/agent-plugins/install'] = {'ok': true};
+      await repoFor('default', rest).installPlugin('weather');
+      expect(rest.calls, ['POST dashboard/agent-plugins/install']);
+
+      final scoped = FakeRest()
+        ..posts['dashboard/agent-plugins/install'] = {'ok': true};
+      final repo = repoFor('work', scoped);
+      await expectLater(
+        repo.installPlugin('weather'),
+        throwsA(
+          isA<CapabilityFailure>().having(
+            (e) => e.kind,
+            'kind',
+            CapabilityFailureKind.unsupported,
+          ),
+        ),
+      );
+      expect(scoped.calls, isEmpty);
+      expect(repo.supports(CapabilityFeature.pluginMutations), isFalse);
+    });
+
+    test('an RPC timeout is uncertain and is not retried', () async {
+      reply = const TuiGatewayRpcError(
+        'plugins.manage',
+        'request timed out after 120s: plugins.manage',
+        failureKind: TuiGatewayRpcFailureKind.timeout,
+      );
+      final rest = FakeRest();
+      final repo = repoFor('work', rest);
+      await expectLater(
+        repo.installPlugin('weather'),
+        throwsA(
+          isA<CapabilityFailure>().having(
+            (e) => e.kind,
+            'kind',
+            CapabilityFailureKind.uncertain,
+          ),
+        ),
+      );
+      expect(sent, hasLength(1));
+      expect(rest.calls, isEmpty);
+    });
+
+    test('the install result keeps env, issues and live MCP errors', () async {
+      reply = {
+        'ok': true,
+        'missing_env': ['WEATHER_KEY'],
+        'warnings': ['pinned to 1a2b3c4d'],
+        'known_issues': ['Rate limited'],
+        'python_dependencies': ['httpx'],
+        'restart_required': true,
+        'gateway_reloaded': false,
+        'activation': {
+          'live_now': {
+            'mcp_servers': [
+              {'name': 'weather', 'connected': false, 'error': 'spawn failed'},
+              {'name': 'ok', 'connected': true},
+            ],
+          },
+        },
+      };
+      final result = await repoFor('work', FakeRest()).installPlugin('weather');
+      expect(result.missingEnv, ['WEATHER_KEY']);
+      expect(result.warnings, ['pinned to 1a2b3c4d']);
+      expect(result.knownIssues, ['Rate limited']);
+      expect(result.pythonDependencies, ['httpx']);
+      expect(result.restartRequired, isTrue);
+      expect(result.gatewayReloaded, isFalse);
+      expect(result.mcpNotices, ['weather: spawn failed']);
+    });
+
+    test('list matches installed rows by catalog_name, then name', () async {
+      reply = {
+        'plugins': [
+          {
+            'name': 'wx',
+            'key': 'wx',
+            'catalog_name': 'weather',
+            'status': 'enabled',
+            'installed_sha': 'abcdef012345',
+            'update_available': true,
+          },
+          {'name': 'notes', 'key': 'notes', 'status': 'disabled'},
+        ],
+      };
+      final repo = repoFor('work', FakeRest());
+      final rows = await repo.installedPluginsRpc();
+      expect(sent.single.$2, {'action': 'list', 'profile': 'work'});
+      expect(rows.match(catalogName: 'weather', name: 'weather')?.name, 'wx');
+      expect(rows.match(catalogName: 'notes', name: 'notes')?.enabled, isFalse);
+      expect(rows.match(catalogName: 'ghost', name: 'ghost'), isNull);
+    });
   });
 }
