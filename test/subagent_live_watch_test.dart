@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_compression_outcome.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
@@ -689,7 +690,22 @@ void main() {
     ),
     'timeout': TimeoutException('session.close'),
     'state error': StateError('close refused'),
-    // Anything else a plugin, the auth layer or the channel may throw.
+    // Concrete auth and channel failures, not stand-ins for them.
+    'unauthorized (401)': const TuiGatewayRpcError(
+      'session.close',
+      'Unauthorized',
+      code: 401,
+    ),
+    'forbidden (403)': const TuiGatewayRpcError(
+      'session.close',
+      'Forbidden',
+      code: 403,
+    ),
+    'platform channel error': PlatformException(
+      code: 'channel-error',
+      message: 'Unable to establish connection on channel.',
+    ),
+    // Anything else a plugin may throw.
     'format error': const FormatException('bad frame'),
     'unrelated exception': _UnrelatedFailure(),
     'non-exception object': 'refused',
