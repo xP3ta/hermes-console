@@ -154,6 +154,11 @@ class VoiceSettings {
   /// con altavoz falla cerrado y el corte táctil continúa disponible.
   final bool bargeInEnabled;
 
+  /// Opt-in local a la conversación GPT-Live (experimental). Es la única puerta
+  /// de la función: el modo del servidor es informativo y nunca arranca una
+  /// sesión facturada en el móvil. Desactivado por defecto.
+  final bool gptLiveEnabled;
+
   /// Pausar y continuar es el comportamiento por defecto. Quien prefiera una
   /// lectura nueva en cada toque puede elegir detener y reiniciar.
   final ReadAloudStopBehavior readAloudStopBehavior;
@@ -231,6 +236,7 @@ class VoiceSettings {
     this.ttsEngine = TtsEngineKind.onnx,
     this.autoSpeak = false,
     this.bargeInEnabled = false,
+    this.gptLiveEnabled = false,
     this.readAloudStopBehavior = ReadAloudStopBehavior.pauseAndResume,
     this.vadEnabled = true,
     this.elevenVoiceId = '21m00Tcm4TlvDq8ikWAM', // "Rachel" (default público)
@@ -296,6 +302,7 @@ class VoiceSettings {
     TtsEngineKind? ttsEngine,
     bool? autoSpeak,
     bool? bargeInEnabled,
+    bool? gptLiveEnabled,
     ReadAloudStopBehavior? readAloudStopBehavior,
     bool? vadEnabled,
     String? elevenVoiceId,
@@ -331,6 +338,7 @@ class VoiceSettings {
       ttsEngine: ttsEngine ?? this.ttsEngine,
       autoSpeak: autoSpeak ?? this.autoSpeak,
       bargeInEnabled: bargeInEnabled ?? this.bargeInEnabled,
+      gptLiveEnabled: gptLiveEnabled ?? this.gptLiveEnabled,
       readAloudStopBehavior:
           readAloudStopBehavior ?? this.readAloudStopBehavior,
       vadEnabled: vadEnabled ?? this.vadEnabled,
@@ -398,6 +406,7 @@ class VoiceSettings {
   // La clave versionada evita resucitar el experimento retirado que usó
   // `voice_barge_in_enabled` en builds antiguas.
   static const _kBargeIn = 'voice_barge_in_enabled_v2';
+  static const _kGptLive = 'voice_gpt_live_enabled_v1';
   static const _kReadAloudStopBehavior = 'voice_read_aloud_stop_behavior';
   static const _kVad = 'voice_vad_enabled';
   static const _kVoice = 'voice_eleven_voice_id';
@@ -503,6 +512,7 @@ class VoiceSettings {
       ttsEngine: migratedTtsEngine,
       autoSpeak: prefs.getBool(_kAuto) ?? false,
       bargeInEnabled: prefs.getBool(_kBargeIn) ?? false,
+      gptLiveEnabled: prefs.getBool(_kGptLive) ?? false,
       readAloudStopBehavior: ReadAloudStopBehavior.from(
         prefs.getString(_kReadAloudStopBehavior),
       ),
@@ -566,6 +576,7 @@ class VoiceSettings {
     await prefs.setString(_kTts, ttsEngine.id);
     await prefs.setBool(_kAuto, autoSpeak);
     await prefs.setBool(_kBargeIn, bargeInEnabled);
+    await prefs.setBool(_kGptLive, gptLiveEnabled);
     await prefs.setString(_kReadAloudStopBehavior, readAloudStopBehavior.id);
     await prefs.setBool(_kVad, vadEnabled);
     await prefs.setString(_kVoice, elevenVoiceId);

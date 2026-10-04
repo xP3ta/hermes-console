@@ -124,7 +124,7 @@ void main() {
     expect(find.byKey(_toggleKey, skipOffstage: false), findsNothing);
   });
 
-  testWidgets('hidden on 405 and on a network error', (tester) async {
+  testWidgets('hidden when the route answers 405', (tester) async {
     await pump(tester, status: (_) => http.Response('no', 405));
     expect(find.byKey(_toggleKey, skipOffstage: false), findsNothing);
   });
