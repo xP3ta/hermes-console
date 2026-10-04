@@ -71,6 +71,92 @@ final class CapabilityEnvField {
   });
 }
 
+/// What the catalog discloses about an entry before it is installed.
+/// Everything is optional: a server that omits a field simply shows no row.
+final class CapabilityDisclosure {
+  final String repo;
+  final String subdir;
+  final String sha;
+  final List<String> platforms;
+  final String requiresHermes;
+  final List<String> hooks;
+  final List<String> middleware;
+  final List<String> knownIssues;
+
+  /// MCP git entries: what the server clones and runs on install.
+  final String installUrl;
+  final String installRef;
+  final List<String> bootstrap;
+  final String authType;
+  final String postInstall;
+
+  /// Set when the entry is on the catalog's blocklist (`removed`).
+  final String removedReason;
+
+  const CapabilityDisclosure({
+    this.repo = '',
+    this.subdir = '',
+    this.sha = '',
+    this.platforms = const [],
+    this.requiresHermes = '',
+    this.hooks = const [],
+    this.middleware = const [],
+    this.knownIssues = const [],
+    this.installUrl = '',
+    this.installRef = '',
+    this.bootstrap = const [],
+    this.authType = '',
+    this.postInstall = '',
+    this.removedReason = '',
+  });
+
+  String get sha8 => sha.length > 8 ? sha.substring(0, 8) : sha;
+
+  /// Reviewed pin: `version @ sha8`, or `sha8` alone.
+  String pin(String version) {
+    if (sha8.isEmpty) return '';
+    return version.isEmpty ? sha8 : '$version @ $sha8';
+  }
+
+  bool get isRemoved => removedReason.isNotEmpty;
+
+  CapabilityDisclosure withRemoved(String reason) => CapabilityDisclosure(
+    repo: repo,
+    subdir: subdir,
+    sha: sha,
+    platforms: platforms,
+    requiresHermes: requiresHermes,
+    hooks: hooks,
+    middleware: middleware,
+    knownIssues: knownIssues,
+    installUrl: installUrl,
+    installRef: installRef,
+    bootstrap: bootstrap,
+    authType: authType,
+    postInstall: postInstall,
+    removedReason: reason,
+  );
+}
+
+String _bootstrapLine(Object? step) {
+  if (step is String) return _text(step, max: 300);
+  if (step is List) {
+    return step
+        .map((part) => _text(part, max: 120))
+        .where((part) => part.isNotEmpty)
+        .join(' ');
+  }
+  if (step is Map) {
+    final command = _text(
+      step['command'] ?? step['run'] ?? step['cmd'],
+      max: 300,
+    );
+    final args = _strings(step['args'], max: 120);
+    return [command, ...args].where((part) => part.isNotEmpty).join(' ');
+  }
+  return '';
+}
+
 /// One row of the unified catalog / installed list.
 final class CapabilityItem {
   final CapabilityKind kind;
@@ -106,6 +192,7 @@ final class CapabilityItem {
   final String command;
   final String url;
   final String docsUrl;
+  final CapabilityDisclosure disclosure;
 
   const CapabilityItem({
     required this.kind,
@@ -132,6 +219,7 @@ final class CapabilityItem {
     this.command = '',
     this.url = '',
     this.docsUrl = '',
+    this.disclosure = const CapabilityDisclosure(),
   });
 
   CapabilityItem copyWith({
@@ -142,6 +230,7 @@ final class CapabilityItem {
     String? provenance,
     bool? canRemove,
     String? version,
+    CapabilityDisclosure? disclosure,
   }) => CapabilityItem(
     kind: kind,
     id: id,
@@ -167,6 +256,7 @@ final class CapabilityItem {
     command: command,
     url: url,
     docsUrl: docsUrl,
+    disclosure: disclosure ?? this.disclosure,
   );
 
   String get searchText => [
@@ -234,6 +324,7 @@ final class CapabilityItem {
           installedIdentifiers.contains(identifier),
       tags: _strings(json['tags']),
       docsUrl: _text(json['repo'], max: 400),
+      disclosure: CapabilityDisclosure(repo: _text(json['repo'], max: 400)),
       provenance: 'hub',
       canRemove: true,
     );
@@ -271,6 +362,18 @@ final class CapabilityItem {
           ? _text(json['docs_url'], max: 400)
           : _text(json['repo'], max: 400),
       canRemove: installed,
+      disclosure: CapabilityDisclosure(
+        repo: _text(json['repo'], max: 400),
+        subdir: _text(json['subdir'], max: 200),
+        sha: _text(json['sha'], max: 64).isNotEmpty
+            ? _text(json['sha'], max: 64)
+            : _text(json['sha_short'], max: 16),
+        platforms: _strings(json['platforms'], max: 40),
+        requiresHermes: _text(json['requires_hermes'], max: 60),
+        hooks: _strings(caps['provides_hooks']),
+        middleware: _strings(caps['provides_middleware']),
+        knownIssues: _strings(json['known_issues'], max: 300),
+      ),
     );
   }
 
@@ -334,6 +437,17 @@ final class CapabilityItem {
       ].where((part) => part.isNotEmpty).join(' '),
       url: _text(json['url'], max: 400),
       canRemove: installed,
+      disclosure: CapabilityDisclosure(
+        installUrl: _text(json['install_url'], max: 400),
+        installRef: _text(json['install_ref'], max: 120),
+        bootstrap: [
+          if (json['bootstrap'] is List)
+            for (final step in (json['bootstrap'] as List).take(40))
+              _bootstrapLine(step),
+        ].where((line) => line.isNotEmpty).toList(growable: false),
+        authType: _text(json['auth_type'], max: 40),
+        postInstall: _text(json['post_install'], max: 300),
+      ),
     );
   }
 

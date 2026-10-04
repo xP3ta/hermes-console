@@ -60,7 +60,7 @@ void main() {
         'subdir': 'plugin',
         'platforms': ['linux', 'macos'],
         'requires_hermes': '>=1.2.15',
-        'known_issues': ['Rate limited', 7, null],
+        'known_issues': ['Rate limited', null],
         'capabilities': {
           'provides_tools': ['weather_now'],
           'provides_hooks': ['on_turn'],

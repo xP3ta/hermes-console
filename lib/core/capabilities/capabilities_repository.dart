@@ -402,11 +402,42 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
   Future<List<CapabilityItem>> pluginCatalog() =>
       _call(CapabilityFeature.pluginCatalog, () async {
         final result = await rest.get('dashboard/plugins/catalog');
+        final removed = result['removed'] is List
+            ? _list(result['removed'])
+            : const <Map<String, dynamic>>[];
         return _list(result['entries'])
             .map(CapabilityItem.catalogPlugin)
             .whereType<CapabilityItem>()
+            .map((item) => _markRemoved(item, removed))
             .toList(growable: false);
       });
+
+  static String _repoKey(Object? value) => '${value ?? ''}'
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'/+$'), '')
+      .replaceAll(RegExp(r'\.git$'), '');
+
+  /// The catalog's blocklist is enforced by the installer; Console shows the
+  /// reason and offers no install for a listed name or repo.
+  static CapabilityItem _markRemoved(
+    CapabilityItem item,
+    List<Map<String, dynamic>> removed,
+  ) {
+    final repo = _repoKey(item.disclosure.repo);
+    for (final row in removed) {
+      final byName = '${row['name'] ?? ''}'.trim() == item.installId;
+      final byRepo = repo.isNotEmpty && _repoKey(row['repo']) == repo;
+      if (!byName && !byRepo) continue;
+      final reason = '${row['reason'] ?? ''}'.trim();
+      return item.copyWith(
+        disclosure: item.disclosure.withRemoved(
+          reason.isEmpty ? 'removed' : reason,
+        ),
+      );
+    }
+    return item;
+  }
 
   Future<List<CapabilityItem>> installedPlugins() =>
       _call(CapabilityFeature.pluginInstalled, () async {
