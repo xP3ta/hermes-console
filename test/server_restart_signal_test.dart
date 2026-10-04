@@ -195,6 +195,43 @@ void main() {
       expect(ServerRestartSignals.textFor([_host]), isNull);
     });
 
+    test('a 200 that is not a model catalog keeps the note', () async {
+      var failing = true;
+      final client = dashboard(
+        (_) => failing
+            ? http.Response(jsonEncode({'detail': _restartDetail}), 503)
+            : http.Response(jsonEncode({'providers': 5}), 200),
+      );
+      await expectLater(
+        client.getModelOptions(),
+        throwsA(isA<DashboardHttpException>()),
+      );
+      failing = false;
+      await expectLater(client.getModelOptions(), throwsA(isA<TypeError>()));
+
+      expect(ServerRestartSignals.textFor([_host]), isNotNull);
+    });
+
+    test('a setActiveModel the server did not accept keeps the note', () async {
+      var failing = true;
+      final client = dashboard(
+        (_) => failing
+            ? http.Response(jsonEncode({'detail': _restartDetail}), 503)
+            : http.Response(jsonEncode({'ok': false}), 200),
+      );
+      await expectLater(
+        client.setActiveModel(providerSlug: 'p', modelId: 'm'),
+        throwsA(isA<DashboardHttpException>()),
+      );
+      failing = false;
+      expect(
+        await client.setActiveModel(providerSlug: 'p', modelId: 'm'),
+        false,
+      );
+
+      expect(ServerRestartSignals.textFor([_host]), isNotNull);
+    });
+
     test('another host answering well does not clear this host', () async {
       ServerRestartSignals.noteRpc(_host, 5098, 'old code');
       final client = DashboardClient(
@@ -274,12 +311,45 @@ void main() {
       expect(ServerRestartSignals.textFor([_host]), isNull);
       expect(requests.where((r) => r == 'model.options'), hasLength(2));
     });
+
+    test('a result that is not a model catalog keeps the note', () async {
+      final requests = <String>[];
+      final stale = _Stale(true);
+      final client = TuiGatewayClient(
+        SavedConnection(
+          id: 'rs-3',
+          label: 'rs',
+          host: _host,
+          port: 8642,
+          apiKey: 'k',
+        ),
+        dashboard: _Dashboard(),
+        channelFactory: (_, _) => _Channel(requests, stale),
+      );
+      addTearDown(client.close);
+      await expectLater(
+        client.globalModelOptions(),
+        throwsA(isA<TuiGatewayRpcError>().having((e) => e.code, 'code', 5098)),
+      );
+
+      stale.value = false;
+      stale.okResult = <String, dynamic>{};
+      await expectLater(
+        client.globalModelOptions(),
+        throwsA(isA<TuiGatewayRpcError>().having((e) => e.code, 'code', null)),
+      );
+
+      expect(ServerRestartSignals.textFor([_host]), isNotNull);
+    });
   });
 }
 
 final class _Stale {
   _Stale(this.value);
   bool value;
+
+  /// What a good `model.options` answers (a catalog by default).
+  Map<String, dynamic> okResult = {'providers': <Object>[]};
 }
 
 final class _Dashboard extends DashboardClient {
@@ -329,7 +399,7 @@ final class _Channel implements WebSocketChannel {
         if (method == 'model.options' && _stale.value)
           'error': {'code': 5098, 'message': 'Restart required: old code'}
         else if (method == 'model.options')
-          'result': {'providers': <Object>[]}
+          'result': _stale.okResult
         else
           'result': method == 'gateway.capabilities'
               ? {'per_session_exclusive_submit': true}
