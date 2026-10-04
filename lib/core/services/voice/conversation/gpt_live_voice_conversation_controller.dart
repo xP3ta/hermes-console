@@ -250,21 +250,30 @@ class GptLiveVoiceConversationController extends ChangeNotifier
       _notify();
       return;
     }
-    final session = VoiceLiveSession(
-      transport: _transportFactory(),
-      api: api,
-      profile: _profile,
-      history: toLiveHistory(chat.buildHistory()),
-      onDelegation: (id, context) {
-        if (epoch == _epoch) _onDelegation(id, context);
-      },
-      onClosed: (reason, seconds) {
-        if (epoch == _epoch) _onSessionClosed(reason, seconds);
-      },
-      onTranscript: (fragment) {
-        if (epoch == _epoch) _onFragment(fragment);
-      },
-    );
+    final VoiceLiveSession session;
+    try {
+      session = VoiceLiveSession(
+        transport: _transportFactory(),
+        api: api,
+        profile: _profile,
+        history: toLiveHistory(chat.buildHistory()),
+        onDelegation: (id, context) {
+          if (epoch == _epoch) _onDelegation(id, context);
+        },
+        onClosed: (reason, seconds) {
+          if (epoch == _epoch) _onSessionClosed(reason, seconds);
+        },
+        onTranscript: (fragment) {
+          if (epoch == _epoch) _onFragment(fragment);
+        },
+      );
+    } catch (_) {
+      api.close();
+      _starting = false;
+      note = _strings.voiceGptLiveCouldNotStart;
+      _notify();
+      return;
+    }
     _api = api;
     _session = session;
     try {

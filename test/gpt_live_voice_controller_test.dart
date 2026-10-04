@@ -45,6 +45,7 @@ class _Rig {
         return api;
       },
       transportFactory: () {
+        if (transportFails) throw StateError('no webrtc');
         transportsCreated++;
         // A transport is never reused after dispose: the first session gets
         // [transport], every later one a fresh fake.
@@ -69,6 +70,7 @@ class _Rig {
   int transportsCreated = 0;
   final transports = <FakeLiveRtcTransport>[];
   bool apiFails = false;
+  bool transportFails = false;
   int notifications = 0;
 
   Future<void> enter(FakeAsync async, {String profile = 'ops'}) async {
@@ -635,6 +637,25 @@ void main() {
         });
       },
     );
+
+    test('a transport that cannot be built releases the api and can retry', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.transportFails = true;
+        rig.enter(async);
+        expect(rig.controller.note, 'Could not start GPT-Live');
+        expect(rig.controller.phase, VoicePhase.idle);
+        expect(rig.api.closeCalls, 1, reason: 'the api client is released');
+        expect(rig.api.createCalls, isEmpty);
+        // The start state is cleared: a retry starts a normal session.
+        rig.transportFails = false;
+        rig.controller.retry();
+        async.flushMicrotasks();
+        expect(rig.transportsCreated, 1);
+        expect(rig.api.createCalls, hasLength(1));
+        expect(rig.controller.note, isNull);
+      });
+    });
 
     test('a denied microphone reports the existing STT permission check', () {
       fakeAsync((async) {
