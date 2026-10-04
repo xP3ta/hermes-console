@@ -18,6 +18,11 @@ import '../services/connection_manager.dart';
 
 import '../services/font_size_service.dart';
 import '../services/local_transcript_store.dart';
+import '../services/active_profile_scope.dart';
+import '../services/server_config_repository.dart';
+import '../settings/server_config_pages.dart';
+import '../settings/settings_deep_link.dart';
+import '../settings/settings_search.dart';
 import '../services/session_deletion.dart';
 import '../services/turn_outbox_store.dart';
 import '../theme/app_theme.dart';
@@ -36,6 +41,7 @@ import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_update_card.dart';
 import '../widgets/read_only.dart';
 import 'about_screen.dart';
+import 'advanced_settings_screen.dart';
 import 'bridge_file_editor_screen.dart';
 import 'lock_screen.dart';
 import 'gateway_manager_screen.dart';
@@ -48,6 +54,7 @@ import 'themes_screen.dart';
 import 'dock_settings_screen.dart';
 import 'notification_settings_screen.dart';
 import 'voice_settings_screen.dart';
+import 'server_config_page_screen.dart' show ServerConfigStoreFactory;
 
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -138,10 +145,15 @@ class SettingsScreen extends StatelessWidget {
   final ConnectionManager connManager;
   @visibleForTesting
   final Future<bool> Function()? verifyHistoryCleanupForTesting;
+
+  /// Where the "Advanced" row reads the config schema (tests pass a fake).
+  @visibleForTesting
+  final ServerConfigStoreFactory? advancedStoreFor;
   const SettingsScreen({
     required this.connection,
     required this.connManager,
     @visibleForTesting this.verifyHistoryCleanupForTesting,
+    @visibleForTesting this.advancedStoreFor,
     super.key,
   });
 
@@ -180,7 +192,11 @@ class SettingsScreen extends StatelessWidget {
                       (candidate) => candidate.id == id,
                     );
                     final conn = matches.isEmpty ? connection : matches.first;
-                    return _buildBody(context, conn);
+                    return SettingsDeepLinkScope(
+                      sections: SettingsSection.values.toSet(),
+                      builder: (context, scroll) =>
+                          _buildBody(context, conn, scroll),
+                    );
                   },
                 );
               },
@@ -191,7 +207,11 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBody(BuildContext context, SavedConnection conn) {
+  Widget _buildBody(
+    BuildContext context,
+    SavedConnection conn,
+    ScrollController scroll,
+  ) {
     return Scaffold(
       appBar: HermesAppBar(title: Text(Strings.of(context).setTitle)),
       // Ajustes es una pantalla de navegación de nivel superior alcanzable
@@ -211,6 +231,7 @@ class SettingsScreen extends StatelessWidget {
         body: ListenableBuilder(
           listenable: DockPreferencesController.instance.listenable,
           builder: (context, _) => ListView(
+            controller: scroll,
             padding: EdgeInsets.fromLTRB(
               16,
               0,
@@ -225,90 +246,133 @@ class SettingsScreen extends StatelessWidget {
               // avanzado, con voz y notificaciones como apartados propios en vez
               // de filas sueltas dentro de "chat" (spec 028 U-08).
               _SectionHeader(Strings.of(context).setSecConnection),
-              _ConnectionCard(connection: conn, connManager: connManager),
+              SettingsDeepLinkTarget(
+                section: SettingsSection.connection,
+                child: _ConnectionCard(
+                  connection: conn,
+                  connManager: connManager,
+                ),
+              ),
               _SectionHeader(Strings.of(context).setSecAppearance),
-              HermesGroup(
-                children: [
-                  _ThemesEntry(),
-                  _FontStyleEntry(),
-                  _LanguageEntry(),
-                  _HeaderTitleField(),
-                  _UseDockTile(),
-                  _DockTile(),
-                  _StartupDestinationTile(),
-                ],
+              SettingsDeepLinkTarget(
+                section: SettingsSection.appearance,
+                child: HermesGroup(
+                  children: [
+                    _ThemesEntry(),
+                    _FontStyleEntry(),
+                    _LanguageEntry(),
+                    _HeaderTitleField(),
+                    _UseDockTile(),
+                    _DockTile(),
+                    _StartupDestinationTile(),
+                  ],
+                ),
               ),
               _SectionHeader(Strings.of(context).setSecChat),
-              HermesGroup(
-                children: [
-                  _ActiveModelTile(key: ValueKey(conn.id), connection: conn),
-                ],
+              SettingsDeepLinkTarget(
+                section: SettingsSection.chat,
+                child: HermesGroup(
+                  children: [
+                    _ActiveModelTile(key: ValueKey(conn.id), connection: conn),
+                  ],
+                ),
               ),
               _SectionHeader(Strings.of(context).voiceTitle),
-              HermesGroup(children: [_VoiceTile(connection: conn)]),
+              SettingsDeepLinkTarget(
+                section: SettingsSection.voice,
+                child: HermesGroup(children: [_VoiceTile(connection: conn)]),
+              ),
               _SectionHeader(Strings.of(context).notifTitle),
-              HermesGroup(children: [_NotificationsTile()]),
+              SettingsDeepLinkTarget(
+                section: SettingsSection.notifications,
+                child: HermesGroup(children: [_NotificationsTile()]),
+              ),
               _SectionHeader(Strings.of(context).setSecSecurity),
-              HermesGroup(
-                children: [
-                  HermesNavRow(
-                    icon: Icons.shield_outlined,
-                    title: Strings.of(context).setSecurity,
-                    subtitle: Strings.of(context).setSecuritySub,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            SecurityInfoScreen(connManager: connManager),
-                      ),
-                    ),
-                  ),
-                  HermesNavRow(
-                    icon: Icons.verified_user_outlined,
-                    title: Strings.of(context).setPermissions,
-                    subtitle: Strings.of(context).setPermissionsSub,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => PermissionsScreen(connection: conn),
-                      ),
-                    ),
-                  ),
-                  HermesNavRow(
-                    icon: Icons.tune_outlined,
-                    title: Strings.of(context).setServerConfig,
-                    subtitle: Strings.of(context).setServerConfigSub,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => BridgeFileEditorScreen(
-                          connectionId: conn.id,
-                          target: Strings.of(context).setSecConfig,
-                          titleLabel: 'config.yaml',
-                          readOnly: true,
+              SettingsDeepLinkTarget(
+                section: SettingsSection.security,
+                child: HermesGroup(
+                  children: [
+                    HermesNavRow(
+                      icon: Icons.shield_outlined,
+                      title: Strings.of(context).setSecurity,
+                      subtitle: Strings.of(context).setSecuritySub,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              SecurityInfoScreen(connManager: connManager),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                    HermesNavRow(
+                      icon: Icons.verified_user_outlined,
+                      title: Strings.of(context).setPermissions,
+                      subtitle: Strings.of(context).setPermissionsSub,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => PermissionsScreen(connection: conn),
+                        ),
+                      ),
+                    ),
+                    HermesNavRow(
+                      icon: Icons.tune_outlined,
+                      title: Strings.of(context).setServerConfig,
+                      subtitle: Strings.of(context).setServerConfigSub,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => BridgeFileEditorScreen(
+                            connectionId: conn.id,
+                            target: Strings.of(context).setSecConfig,
+                            titleLabel: 'config.yaml',
+                            readOnly: true,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
               _SectionHeader(Strings.of(context).setSecSystem),
-              _MaintenanceSection(
-                key: ValueKey('maint-${conn.id}'),
-                connection: conn,
-                connManager: connManager,
+              SettingsDeepLinkTarget(
+                section: SettingsSection.system,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _MaintenanceSection(
+                      key: ValueKey('maint-${conn.id}'),
+                      connection: conn,
+                      connManager: connManager,
+                    ),
+                    _AdvancedEntry(
+                      key: ValueKey('advanced-${conn.id}'),
+                      connection: conn,
+                      connManager: connManager,
+                      storeFor: advancedStoreFor,
+                    ),
+                  ],
+                ),
               ),
               _SectionHeader(Strings.of(context).setSecBridge),
-              HermesGroup(children: [_BridgeAutoUpdateTile(connection: conn)]),
+              SettingsDeepLinkTarget(
+                section: SettingsSection.bridge,
+                child: HermesGroup(
+                  children: [_BridgeAutoUpdateTile(connection: conn)],
+                ),
+              ),
               _SectionHeader(Strings.of(context).setSecData),
-              HermesGroup(
-                children: [
-                  DiagnosticBundleTile(
-                    controller: DiagnosticBundleController(
-                      manager: connManager,
+              SettingsDeepLinkTarget(
+                section: SettingsSection.data,
+                child: HermesGroup(
+                  children: [
+                    DiagnosticBundleTile(
+                      controller: DiagnosticBundleController(
+                        manager: connManager,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               HistoryCleanupSection(
                 key: ValueKey('history-cleanup-${conn.id}'),
@@ -318,13 +382,118 @@ class SettingsScreen extends StatelessWidget {
               ),
               _OrphanDataTile(connManager: connManager),
               _SectionHeader(Strings.of(context).setSecAbout),
-              _AboutCard(),
+              SettingsDeepLinkTarget(
+                section: SettingsSection.about,
+                child: _AboutCard(),
+              ),
               const SizedBox(height: 10),
               const InstallSourceSection(),
               const SizedBox(height: 24),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The one "Advanced" row. It is there only when the server's config schema
+/// answers (one read when Settings opens, per profile) with at least one field
+/// an Advanced page owns, and config reads are not denied for the connection.
+class _AdvancedEntry extends StatefulWidget {
+  final SavedConnection connection;
+  final ConnectionManager connManager;
+  final ServerConfigStoreFactory? storeFor;
+
+  const _AdvancedEntry({
+    super.key,
+    required this.connection,
+    required this.connManager,
+    this.storeFor,
+  });
+
+  @override
+  State<_AdvancedEntry> createState() => _AdvancedEntryState();
+}
+
+class _AdvancedEntryState extends State<_AdvancedEntry> {
+  DashboardClient? _client;
+  late final ActiveProfileScope _scope = ActiveProfileScope.of(
+    widget.connManager,
+    widget.connection.id,
+  );
+  Map<String, dynamic>? _schema;
+
+  @override
+  void initState() {
+    super.initState();
+    _scope.addListener(_onProfileChanged);
+    unawaited(_probe());
+  }
+
+  @override
+  void dispose() {
+    _scope.removeListener(_onProfileChanged);
+    _client?.close();
+    super.dispose();
+  }
+
+  void _onProfileChanged() {
+    setState(() => _schema = null);
+    unawaited(_probe());
+  }
+
+  Future<void> _probe() async {
+    final conn = widget.connection;
+    if (widget.connManager.loadCapabilities(conn.id).configRead ==
+        CapState.no) {
+      return;
+    }
+    final ticket = _scope.capture();
+    final store =
+        widget.storeFor?.call(ticket.name, writable: !conn.readOnly) ??
+        ServerConfigRepository(
+          _client ??= DashboardClient.lazy(conn),
+          profile: ticket.name,
+          writable: !conn.readOnly,
+        );
+    try {
+      final schema = await store.readSchema();
+      if (!mounted || !ticket.isCurrent) return;
+      if (serverConfigPagesWithFields(schema).isNotEmpty) {
+        setState(() => _schema = schema);
+      }
+    } on ServerConfigException {
+      // No schema, no row.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final schema = _schema;
+    if (schema == null) return const SizedBox.shrink();
+    final s = Strings.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: HermesGroup(
+        children: [
+          HermesNavRow(
+            icon: Icons.tune_rounded,
+            title: s.drawerAdvanced,
+            subtitle: s.adv1215AdvancedSub,
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => AdvancedSettingsScreen(
+                  connection: widget.connection,
+                  connManager: widget.connManager,
+                  initialSchema: schema,
+                  storeFor: widget.storeFor,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

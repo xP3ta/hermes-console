@@ -82,7 +82,25 @@ void main() {
         );
   });
 
+  // Building the "Data" block of Settings (below the new row) trips a
+  // framework assertion about a `ListTile` inside a `DecoratedBox`, on every
+  // frame it is visible. It happens on the base too and has nothing to do with
+  // this row; only that message is let through, anything else still fails.
+  void ignoreKnownAssertion() {
+    final previous = FlutterError.onError;
+    FlutterError.onError = (details) {
+      if (details.exceptionAsString().contains(
+        'ListTile background color or ink splashes may be invisible',
+      )) {
+        return;
+      }
+      previous?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = previous);
+  }
+
   Future<void> pumpSettings(WidgetTester tester, _Store store) async {
+    ignoreKnownAssertion();
     await tester.pumpWidget(
       MaterialApp(
         locale: const Locale('es'),
@@ -107,11 +125,14 @@ void main() {
     (widget) => widget is HermesNavRow && widget.title == 'Avanzado',
   );
 
-  Future<void> showRow(WidgetTester tester) => tester.scrollUntilVisible(
-    advancedRow(),
-    200,
-    scrollable: find.byType(Scrollable).first,
-  );
+  Future<void> showRow(WidgetTester tester) async {
+    await tester.scrollUntilVisible(
+      advancedRow(),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
+  }
 
   testWidgets('one Advanced row when the schema answers', (tester) async {
     final store = _Store(_schema());
@@ -127,6 +148,8 @@ void main() {
   ) async {
     final store = _Store(_schema());
     await pumpSettings(tester, store);
+    expect(store.schemaReads, 0, reason: 'nothing before the row is near');
+    await showRow(tester);
     await tester.pump(const Duration(minutes: 10));
     expect(store.schemaReads, 1);
   });
@@ -144,12 +167,23 @@ void main() {
       200,
       scrollable: find.byType(Scrollable).first,
     );
+    await tester.pump();
+    expect(store.schemaReads, 1);
     expect(advancedRow(), findsNothing);
   });
 
   testWidgets('a schema with none of the fields has no row', (tester) async {
     final store = _Store(_schema('logging.level'));
     await pumpSettings(tester, store);
+    await tester.scrollUntilVisible(
+      find.text(
+        Strings.of(tester.element(find.byType(Scaffold).first)).setSecSystem,
+      ),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
+    expect(store.schemaReads, 1);
     expect(advancedRow(), findsNothing);
   });
 
@@ -160,6 +194,14 @@ void main() {
     );
     final store = _Store(_schema());
     await pumpSettings(tester, store);
+    await tester.scrollUntilVisible(
+      find.text(
+        Strings.of(tester.element(find.byType(Scaffold).first)).setSecSystem,
+      ),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
 
     expect(advancedRow(), findsNothing);
     expect(store.schemaReads, 0);
@@ -185,6 +227,7 @@ void main() {
   ) async {
     final store = _Store(_schema());
     await pumpSettings(tester, store);
+    await showRow(tester);
     await manager.setActiveProfile('conn-row1215', 'work');
     await tester.pump();
     await tester.pump();
@@ -204,11 +247,6 @@ void main() {
       }
       await tester.drag(find.byType(Scrollable).first, const Offset(0, -300));
       await tester.pump();
-      final error = tester.takeException();
-      if (error != null &&
-          !error.toString().contains('ListTile background color')) {
-        throw error;
-      }
     }
     final s = Strings.of(tester.element(find.byType(Scaffold).first));
     expect(headers, {
@@ -233,19 +271,12 @@ void main() {
 
     SettingsDeepLink.request(SettingsSection.about);
     await tester.pump();
-    for (var i = 0; i < 60; i++) {
+    final highlight = find.byKey(const ValueKey('settings-highlight-about'));
+    for (var i = 0; i < 60 && highlight.evaluate().isEmpty; i++) {
       await tester.pump(const Duration(milliseconds: 50));
-      final error = tester.takeException();
-      if (error != null &&
-          !error.toString().contains('ListTile background color')) {
-        throw error;
-      }
     }
 
-    expect(
-      find.byKey(const ValueKey('settings-highlight-about')),
-      findsOneWidget,
-    );
+    expect(highlight, findsOneWidget);
     await tester.pump(const Duration(seconds: 3));
   });
 }
