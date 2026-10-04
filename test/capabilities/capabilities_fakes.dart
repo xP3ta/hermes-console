@@ -14,6 +14,7 @@ class ScriptedRest implements CapabilitiesRest {
   final Map<String, Object> posts = {};
   final Map<String, Object> puts = {};
   final List<String> calls = [];
+  final List<Map<String, dynamic>?> bodies = [];
   final List<Map<String, dynamic>> statusQueue = [];
   Object? deleteError;
 
@@ -43,6 +44,7 @@ class ScriptedRest implements CapabilitiesRest {
     Duration? timeout,
   }) async {
     calls.add('POST $endpoint');
+    bodies.add(body);
     final value = _resolve(posts, endpoint);
     if (value is Exception) throw value;
     return Map<String, dynamic>.from(value as Map);
@@ -54,6 +56,7 @@ class ScriptedRest implements CapabilitiesRest {
     Map<String, dynamic> body,
   ) async {
     calls.add('PUT $endpoint');
+    bodies.add(body);
     final value = _resolve(puts, endpoint);
     if (value is Exception) throw value;
     return Map<String, dynamic>.from(value as Map);

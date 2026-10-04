@@ -41,6 +41,7 @@ class HermesField extends StatelessWidget {
   final TextInputType? keyboardType;
   final bool autocorrect;
   final bool enableSuggestions;
+  final bool enableIMEPersonalizedLearning;
   final int minLines;
   final int maxLines;
   final bool autofocus;
@@ -60,6 +61,7 @@ class HermesField extends StatelessWidget {
     this.keyboardType,
     this.autocorrect = true,
     this.enableSuggestions = true,
+    this.enableIMEPersonalizedLearning = true,
     this.minLines = 1,
     this.maxLines = 1,
     this.autofocus = false,
@@ -134,6 +136,7 @@ class HermesField extends StatelessWidget {
             keyboardType: keyboardType,
             autocorrect: autocorrect,
             enableSuggestions: enableSuggestions,
+            enableIMEPersonalizedLearning: enableIMEPersonalizedLearning,
             minLines: minLines,
             maxLines: obscure ? 1 : maxLines,
             autofocus: autofocus,

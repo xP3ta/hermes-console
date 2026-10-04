@@ -4281,7 +4281,11 @@ class TuiGatewayClient
     String method,
     Map<String, dynamic> params,
   ) async {
-    if (!capabilitiesRpcAllowed(method, readOnly: _connection.readOnly)) {
+    if (!capabilitiesRpcAllowed(
+      method,
+      action: params['action'] is String ? params['action'] as String : null,
+      readOnly: _connection.readOnly,
+    )) {
       throw TuiGatewayRpcError(method, 'Capability request unavailable');
     }
     await _connectForRequest('gateway.connect');
@@ -4312,9 +4316,27 @@ class TuiGatewayClient
   void _noteRestartRequired(TuiGatewayRpcError error) =>
       ServerRestartSignals.noteRpc(_connection.host, error.code, error.message);
 
-  static bool capabilitiesRpcAllowed(String method, {required bool readOnly}) =>
-      _capabilityReads.contains(method) ||
-      (!readOnly && _capabilityWrites.contains(method));
+  /// `plugins.manage` is admitted per action: `list` reads, the lifecycle
+  /// actions write, anything else (`settings`, `onboarding`) stays closed.
+  static const Set<String> _pluginsManageWrites = {
+    'install',
+    'toggle',
+    'update',
+    'remove',
+  };
+
+  static bool capabilitiesRpcAllowed(
+    String method, {
+    required bool readOnly,
+    String? action,
+  }) {
+    if (method == 'plugins.manage') {
+      if (action == 'list') return true;
+      return !readOnly && _pluginsManageWrites.contains(action);
+    }
+    return _capabilityReads.contains(method) ||
+        (!readOnly && _capabilityWrites.contains(method));
+  }
 
   late final BotProfileClient _botProfiles = BotProfileClient((
     method,

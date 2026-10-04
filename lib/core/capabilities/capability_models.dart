@@ -71,6 +71,92 @@ final class CapabilityEnvField {
   });
 }
 
+/// What the catalog discloses about an entry before it is installed.
+/// Everything is optional: a server that omits a field simply shows no row.
+final class CapabilityDisclosure {
+  final String repo;
+  final String subdir;
+  final String sha;
+  final List<String> platforms;
+  final String requiresHermes;
+  final List<String> hooks;
+  final List<String> middleware;
+  final List<String> knownIssues;
+
+  /// MCP git entries: what the server clones and runs on install.
+  final String installUrl;
+  final String installRef;
+  final List<String> bootstrap;
+  final String authType;
+  final String postInstall;
+
+  /// Set when the entry is on the catalog's blocklist (`removed`).
+  final String removedReason;
+
+  const CapabilityDisclosure({
+    this.repo = '',
+    this.subdir = '',
+    this.sha = '',
+    this.platforms = const [],
+    this.requiresHermes = '',
+    this.hooks = const [],
+    this.middleware = const [],
+    this.knownIssues = const [],
+    this.installUrl = '',
+    this.installRef = '',
+    this.bootstrap = const [],
+    this.authType = '',
+    this.postInstall = '',
+    this.removedReason = '',
+  });
+
+  String get sha8 => sha.length > 8 ? sha.substring(0, 8) : sha;
+
+  /// Reviewed pin: `version @ sha8`, or `sha8` alone.
+  String pin(String version) {
+    if (sha8.isEmpty) return '';
+    return version.isEmpty ? sha8 : '$version @ $sha8';
+  }
+
+  bool get isRemoved => removedReason.isNotEmpty;
+
+  CapabilityDisclosure withRemoved(String reason) => CapabilityDisclosure(
+    repo: repo,
+    subdir: subdir,
+    sha: sha,
+    platforms: platforms,
+    requiresHermes: requiresHermes,
+    hooks: hooks,
+    middleware: middleware,
+    knownIssues: knownIssues,
+    installUrl: installUrl,
+    installRef: installRef,
+    bootstrap: bootstrap,
+    authType: authType,
+    postInstall: postInstall,
+    removedReason: reason,
+  );
+}
+
+String _bootstrapLine(Object? step) {
+  if (step is String) return _text(step, max: 300);
+  if (step is List) {
+    return step
+        .map((part) => _text(part, max: 120))
+        .where((part) => part.isNotEmpty)
+        .join(' ');
+  }
+  if (step is Map) {
+    final command = _text(
+      step['command'] ?? step['run'] ?? step['cmd'],
+      max: 300,
+    );
+    final args = _strings(step['args'], max: 120);
+    return [command, ...args].where((part) => part.isNotEmpty).join(' ');
+  }
+  return '';
+}
+
 /// One row of the unified catalog / installed list.
 final class CapabilityItem {
   final CapabilityKind kind;
@@ -91,7 +177,15 @@ final class CapabilityItem {
 
   /// Name used by toggle / uninstall / remove endpoints once installed.
   final String installedName;
+
+  /// Canonical plugin key (`category/name`): toggles address it, never the
+  /// bare name, which can collide across categories.
+  final String installedKey;
   final bool installed;
+
+  /// The installed state could not be read for this profile (never the same
+  /// as "not installed"): nothing may offer an install or a mutation.
+  final bool stateUnknown;
   final bool? enabled;
   final bool updateAvailable;
 
@@ -106,6 +200,7 @@ final class CapabilityItem {
   final String command;
   final String url;
   final String docsUrl;
+  final CapabilityDisclosure disclosure;
 
   const CapabilityItem({
     required this.kind,
@@ -119,7 +214,9 @@ final class CapabilityItem {
     this.version = '',
     this.installId = '',
     this.installedName = '',
+    this.installedKey = '',
     this.installed = false,
+    this.stateUnknown = false,
     this.enabled,
     this.updateAvailable = false,
     this.provenance = '',
@@ -132,16 +229,20 @@ final class CapabilityItem {
     this.command = '',
     this.url = '',
     this.docsUrl = '',
+    this.disclosure = const CapabilityDisclosure(),
   });
 
   CapabilityItem copyWith({
     bool? installed,
+    bool? stateUnknown,
     bool? enabled,
     bool? updateAvailable,
     String? installedName,
+    String? installedKey,
     String? provenance,
     bool? canRemove,
     String? version,
+    CapabilityDisclosure? disclosure,
   }) => CapabilityItem(
     kind: kind,
     id: id,
@@ -154,7 +255,9 @@ final class CapabilityItem {
     version: version ?? this.version,
     installId: installId,
     installedName: installedName ?? this.installedName,
+    installedKey: installedKey ?? this.installedKey,
     installed: installed ?? this.installed,
+    stateUnknown: stateUnknown ?? this.stateUnknown,
     enabled: enabled ?? this.enabled,
     updateAvailable: updateAvailable ?? this.updateAvailable,
     provenance: provenance ?? this.provenance,
@@ -167,6 +270,7 @@ final class CapabilityItem {
     command: command,
     url: url,
     docsUrl: docsUrl,
+    disclosure: disclosure ?? this.disclosure,
   );
 
   String get searchText => [
@@ -234,6 +338,7 @@ final class CapabilityItem {
           installedIdentifiers.contains(identifier),
       tags: _strings(json['tags']),
       docsUrl: _text(json['repo'], max: 400),
+      disclosure: CapabilityDisclosure(repo: _text(json['repo'], max: 400)),
       provenance: 'hub',
       canRemove: true,
     );
@@ -271,6 +376,18 @@ final class CapabilityItem {
           ? _text(json['docs_url'], max: 400)
           : _text(json['repo'], max: 400),
       canRemove: installed,
+      disclosure: CapabilityDisclosure(
+        repo: _text(json['repo'], max: 400),
+        subdir: _text(json['subdir'], max: 200),
+        sha: _text(json['sha'], max: 64).isNotEmpty
+            ? _text(json['sha'], max: 64)
+            : _text(json['sha_short'], max: 16),
+        platforms: _strings(json['platforms'], max: 40),
+        requiresHermes: _text(json['requires_hermes'], max: 60),
+        hooks: _strings(caps['provides_hooks']),
+        middleware: _strings(caps['provides_middleware']),
+        knownIssues: _strings(json['known_issues'], max: 300),
+      ),
     );
   }
 
@@ -289,6 +406,7 @@ final class CapabilityItem {
       trust: _trustOf(source),
       version: _text(json['version'], max: 60),
       installedName: name,
+      installedKey: _text(json['key'], max: 160),
       installed: true,
       enabled: status == 'enabled',
       canRemove: json['can_remove'] == true,
@@ -334,6 +452,17 @@ final class CapabilityItem {
       ].where((part) => part.isNotEmpty).join(' '),
       url: _text(json['url'], max: 400),
       canRemove: installed,
+      disclosure: CapabilityDisclosure(
+        installUrl: _text(json['install_url'], max: 400),
+        installRef: _text(json['install_ref'], max: 120),
+        bootstrap: [
+          if (json['bootstrap'] is List)
+            for (final step in (json['bootstrap'] as List).take(40))
+              _bootstrapLine(step),
+        ].where((line) => line.isNotEmpty).toList(growable: false),
+        authType: _text(json['auth_type'], max: 40),
+        postInstall: _text(json['post_install'], max: 300),
+      ),
     );
   }
 
@@ -512,12 +641,71 @@ final class CapabilityActionStatus {
     return '';
   }
 
+  // Ported 1:1 from Desktop (`hermes_cli/skills_hub.py::_scan_block_message`).
+  static final RegExp _blockedCurrent = RegExp(
+    r'Not installed:\s+the security scan found\s+(?:(\d+)\s+)?high-risk\s+pattern',
+    caseSensitive: false,
+  );
+  static final RegExp _blockedUnverified = RegExp(
+    r'never installs\s+unverified',
+    caseSensitive: false,
+  );
+  static final RegExp _blockedLegacy = RegExp(
+    r'Installation blocked:.*?\(([a-z_-]+) source \+ ([a-z_]+) verdict, (\d+) findings?\)',
+    caseSensitive: false,
+  );
+
   /// `hermes skills install` refusing through the security scan gate.
-  bool get blockedByScan {
-    final text = lines.join(' ').toLowerCase();
-    return text.contains('security scan') &&
-        (text.contains('not installed') || text.contains('blocked'));
+  bool get blockedByScan => lines.any(
+    (line) =>
+        _blockedCurrent.hasMatch(line) ||
+        _blockedUnverified.hasMatch(line) ||
+        _blockedLegacy.hasMatch(line),
+  );
+
+  /// High-risk finding count when the log states one.
+  int? get scanFindings {
+    for (final line in lines.reversed) {
+      final raw =
+          _blockedCurrent.firstMatch(line)?.group(1) ??
+          _blockedLegacy.firstMatch(line)?.group(3);
+      final count = raw == null ? null : int.tryParse(raw);
+      if (count != null) return count;
+    }
+    return null;
   }
+}
+
+/// `GET /api/skills/hub/preview`: the SKILL.md text and its file list.
+final class SkillPreview {
+  final String skillMd;
+  final List<String> files;
+
+  const SkillPreview({this.skillMd = '', this.files = const []});
+
+  factory SkillPreview.fromJson(Map<String, dynamic> json) => SkillPreview(
+    skillMd: _text(json['skill_md'], max: 20000),
+    files: _strings(json['files'], maxRows: 200, max: 200),
+  );
+}
+
+/// `GET /api/skills/hub/scan`: install-time scan without installing.
+final class SkillScan {
+  final String summary;
+  final List<String> findings;
+
+  const SkillScan({this.summary = '', this.findings = const []});
+
+  factory SkillScan.fromJson(Map<String, dynamic> json) => SkillScan(
+    summary: _text(json['summary'], max: 400),
+    findings: [
+      for (final row in _rows(json['findings'], max: 100))
+        [
+          _text(row['severity'], max: 20),
+          _text(row['description'], max: 300),
+        ].where((part) => part.isNotEmpty).join(': '),
+    ].where((line) => line.isNotEmpty).toList(growable: false),
+  );
 }
 
 /// Plugin mutation answer (`/api/dashboard/agent-plugins/...`).
@@ -526,27 +714,107 @@ final class PluginMutationResult {
   final bool consentRequired;
   final List<String> deltaLines;
   final List<String> warnings;
+
+  /// Env names the plugin still needs (names only, never values).
+  final List<String> missingEnv;
+  final List<String> knownIssues;
+  final List<String> pythonDependencies;
+
+  /// One `name: error` line per live MCP server that did not connect.
+  final List<String> mcpNotices;
   final bool restartRequired;
+  final bool? gatewayReloaded;
 
   const PluginMutationResult({
     required this.ok,
     this.consentRequired = false,
     this.deltaLines = const [],
     this.warnings = const [],
+    this.missingEnv = const [],
+    this.knownIssues = const [],
+    this.pythonDependencies = const [],
+    this.mcpNotices = const [],
     this.restartRequired = false,
+    this.gatewayReloaded,
   });
 
-  factory PluginMutationResult.fromJson(Map<String, dynamic> json) =>
-      PluginMutationResult(
-        ok: json['ok'] == true,
-        consentRequired: json['consent_required'] == true,
-        deltaLines: _strings(json['delta_lines'], max: 300),
-        warnings: [
-          ..._strings(json['warnings'], max: 300),
-          ..._strings(json['missing_env'], max: 120),
-        ],
-        restartRequired: json['restart_required'] == true,
-      );
+  factory PluginMutationResult.fromJson(Map<String, dynamic> json) {
+    final activation = json['activation'];
+    final live = activation is Map ? activation['live_now'] : null;
+    final servers = live is Map
+        ? _rows(live['mcp_servers'], max: 40)
+        : const [];
+    return PluginMutationResult(
+      ok: json['ok'] == true,
+      consentRequired: json['consent_required'] == true,
+      deltaLines: _strings(json['delta_lines'], max: 300),
+      warnings: _strings(json['warnings'], max: 300),
+      missingEnv: _strings(json['missing_env'], max: 120),
+      knownIssues: _strings(json['known_issues'], max: 300),
+      pythonDependencies: _strings(json['python_dependencies'], max: 120),
+      mcpNotices: [
+        for (final server in servers)
+          if (server['connected'] == false)
+            [
+              _text(server['name'], max: 80),
+              _text(server['error'], max: 200),
+            ].where((part) => part.isNotEmpty).join(': '),
+      ].where((line) => line.isNotEmpty).toList(growable: false),
+      restartRequired: json['restart_required'] == true,
+      gatewayReloaded: json['gateway_reloaded'] is bool
+          ? json['gateway_reloaded'] as bool
+          : null,
+    );
+  }
+}
+
+/// One row of `plugins.manage list` (installed plugins of the hub profile).
+final class InstalledPluginRow {
+  final String name;
+  final String key;
+  final String catalogName;
+  final String installedSha;
+  final bool enabled;
+  final bool updateAvailable;
+
+  const InstalledPluginRow({
+    required this.name,
+    this.key = '',
+    this.catalogName = '',
+    this.installedSha = '',
+    this.enabled = true,
+    this.updateAvailable = false,
+  });
+
+  static InstalledPluginRow? tryParse(Map<String, dynamic> json) {
+    final name = _text(json['name'], max: 120);
+    if (name.isEmpty) return null;
+    final status = _text(json['status'], max: 40).toLowerCase();
+    return InstalledPluginRow(
+      name: name,
+      key: _text(json['key'], max: 120),
+      catalogName: _text(json['catalog_name'], max: 120),
+      installedSha: _text(json['installed_sha'], max: 64),
+      enabled: status != 'disabled' && status != 'off',
+      updateAvailable: json['update_available'] == true,
+    );
+  }
+}
+
+extension InstalledPluginRows on List<InstalledPluginRow> {
+  /// Desktop rule: `catalog_name` first, plugin name second.
+  InstalledPluginRow? match({required String catalogName, String? name}) {
+    for (final row in this) {
+      if (row.catalogName.isNotEmpty && row.catalogName == catalogName) {
+        return row;
+      }
+    }
+    final wanted = name ?? catalogName;
+    for (final row in this) {
+      if (row.name == wanted || row.key == wanted) return row;
+    }
+    return null;
+  }
 }
 
 /// Hosted connector (Nous account connectors: `connectors.*`).

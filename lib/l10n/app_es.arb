@@ -8802,6 +8802,135 @@
   "cphFailRejected": "El servidor rechazó la acción.",
   "cphFailBlockedByScan": "El escaneo de seguridad bloqueó esta instalación.",
   "cphFailUnavailable": "El servidor no respondió a tiempo.",
+  "cphFailUncertain": "No hubo respuesta a tiempo. Puede que se haya aplicado: actualiza la lista antes de reintentar.",
+  "cphStateUnknown": "Estado no disponible",
+  "cphStateUnknownBody": "No se pudo leer qué hay instalado en este perfil. Reintenta más tarde.",
+  "cphLinkInvalid": "Este enlace no es válido.",
+  "cphLinkQueueFull": "Hay demasiados enlaces de catálogo pendientes. Ábrelos o espera e inténtalo de nuevo.",
+  "cphLinkGit": "Este enlace instala código desde un repositorio Git. Ábrelo en Desktop.",
+  "cphLinkUnknown": "{name} no está en el catálogo de este servidor.",
+  "@cphLinkUnknown": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphLinkAlready": "{name} ya está instalado.",
+  "@cphLinkAlready": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphLinkUnavailable": "No se pudo leer el catálogo del servidor.",
+  "cphLinkDestinationChanged": "Cambió el servidor o el perfil. Abre el enlace otra vez.",
+  "cphEnvRequired": "Falta este valor.",
+  "cphRowRepo": "Repositorio",
+  "cphRowPin": "Versión revisada",
+  "cphRowPlatforms": "Plataformas",
+  "cphRowRequiresHermes": "Requiere Hermes",
+  "cphRowHooks": "Hooks",
+  "cphRowMiddleware": "Middleware",
+  "cphRowKnownIssues": "Problemas conocidos",
+  "cphRowCloneFrom": "Se clona desde",
+  "cphRowCloneRef": "Referencia",
+  "cphRowBootstrap": "Se ejecuta en el servidor",
+  "cphRowAuthType": "Autenticación",
+  "cphRemovedFromCatalog": "Retirado del catálogo: {reason}",
+  "@cphRemovedFromCatalog": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "cphRowPreview": "Vista previa",
+  "cphRowScan": "Escaneo de seguridad",
+  "cphScanClean": "Sin hallazgos.",
+  "cphPreviewFiles": "Archivos",
+  "cphConfirmSource": "Origen: {source}",
+  "@cphConfirmSource": {
+    "placeholders": {
+      "source": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConfirmPublisher": "Publica: {publisher}",
+  "@cphConfirmPublisher": {
+    "placeholders": {
+      "publisher": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConfirmTier": "Nivel: {tier}",
+  "@cphConfirmTier": {
+    "placeholders": {
+      "tier": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConfirmDestination": "Se instala en: {destination}",
+  "@cphConfirmDestination": {
+    "placeholders": {
+      "destination": {
+        "type": "String"
+      }
+    }
+  },
+  "cphThirdPartyWarning": "Es código de terceros que se ejecutará en tu servidor.",
+  "cphEnvSheetTitle": "Credenciales de {name}",
+  "@cphEnvSheetTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphEnvSheetBody": "Se envían al servidor y no se guardan en el teléfono.",
+  "cphEnvOptional": "Opcional",
+  "cphEnvSubmit": "Instalar",
+  "cphBlockedByScanCount": "Bloqueada por el escaneo de seguridad ({count} hallazgos).",
+  "@cphBlockedByScanCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cphBlockedByScanPlain": "Bloqueada por el escaneo de seguridad.",
+  "cphViewScan": "Ver escaneo",
+  "cphNewSessionsNote": "Se aplica en las sesiones nuevas.",
+  "cphMissingEnvNotice": "Faltan credenciales: {names}",
+  "@cphMissingEnvNotice": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "cphAddCredentials": "Añadir credenciales",
+  "cphMcpNotConnected": "Servidor MCP sin conectar: {detail}",
+  "@cphMcpNotConnected": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "cphKnownIssuesNotice": "Problemas conocidos: {issues}",
+  "@cphKnownIssuesNotice": {
+    "placeholders": {
+      "issues": {
+        "type": "String"
+      }
+    }
+  },
+  "cphUncertainRefreshed": "No hubo respuesta a tiempo. Actualicé la lista: revisa si se aplicó.",
   "cphFailForbidden": "No está permitido con estas credenciales.",
   "cphFailUnsupported": "Este servidor no admite esta acción.",
   "cphFailInvalid": "El servidor envió una respuesta inesperada.",
