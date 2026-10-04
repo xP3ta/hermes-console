@@ -145,6 +145,7 @@ class _ServerConfigPageScreenState extends State<ServerConfigPageScreen> {
           _client ??= DashboardClient.lazy(widget.connection),
           profile: ticket.name,
           writable: writable,
+          isCurrent: () => mounted && ticket.isCurrent,
         );
     _controller = ServerConfigController(
       store: store,

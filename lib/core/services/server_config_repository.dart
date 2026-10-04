@@ -83,6 +83,7 @@ final class ServerConfigRepository implements ServerConfigStore {
   final DashboardClient _dashboard;
   final bool _writable;
   final String? _profile;
+  final bool Function() _isCurrent;
 
   bool _closed = false;
   final Map<String, Future<void>> _tails = {};
@@ -91,16 +92,27 @@ final class ServerConfigRepository implements ServerConfigStore {
     DashboardClient dashboard, {
     String? profile,
     bool writable = true,
-  }) =>
-      ServerConfigRepository._(dashboard, _normalizeProfile(profile), writable);
+    bool Function()? isCurrent,
+  }) => ServerConfigRepository._(
+    dashboard,
+    _normalizeProfile(profile),
+    writable,
+    isCurrent ?? _always,
+  );
 
-  ServerConfigRepository._(this._dashboard, this._profile, this._writable);
+  ServerConfigRepository._(
+    this._dashboard,
+    this._profile,
+    this._writable,
+    this._isCurrent,
+  );
 
   String? get profile => _profile;
   @override
   bool get isWritable => _writable;
 
-  /// Stops new work; a write already sent still finishes its re-read.
+  /// Stops new work, queued saves included; a write already sent still
+  /// finishes its re-read.
   void close() => _closed = true;
 
   /// The config tree, one read.
@@ -173,6 +185,11 @@ final class ServerConfigRepository implements ServerConfigStore {
         } catch (_) {}
       }
       try {
+        // Authority is checked again right before the PUT: a save that
+        // waited may belong to a screen or profile that is gone by now.
+        if (_closed || !_isCurrent()) {
+          throw const ServerConfigException(ServerConfigFailureKind.closed);
+        }
         done.complete(await _saveNow(path, value));
       } catch (error, stack) {
         done.completeError(serverConfigFailureOf(error), stack);
@@ -214,6 +231,8 @@ final class ServerConfigRepository implements ServerConfigStore {
     }
   }
 }
+
+bool _always() => true;
 
 /// `a.b.c` and 1 → `{a: {b: {c: 1}}}`.
 Map<String, dynamic> _branch(String path, Object? value) {
