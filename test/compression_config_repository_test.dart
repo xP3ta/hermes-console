@@ -789,15 +789,25 @@ void main() {
       DashboardClient dashboard,
       Map<String, dynamic> config,
       List<double> sentThresholds,
+      List<String> events,
     })
-    server(Completer<void> gate) {
+    server(Completer<void> gate, {Completer<void>? rereadGate}) {
       final config = _cloneMap(_fixture()['config']!);
       final schema = _cloneMap(_fixture()['schema']!);
       final sent = <double>[];
+      final events = <String>[];
       var first = true;
+      var rereadGated = rereadGate != null;
       final dashboard = _dashboard(
         MockClient((request) async {
           if (request.method == 'GET') {
+            // The confirmation read of the first save is the first GET of
+            // /api/config after its PUT has been applied.
+            if (!first && rereadGated && request.url.path == '/api/config') {
+              rereadGated = false;
+              events.add('reread started');
+              await rereadGate!.future;
+            }
             return http.Response(
               jsonEncode(request.url.path == '/api/config' ? config : schema),
               200,
@@ -808,6 +818,7 @@ void main() {
               (body['config'] as Map<String, dynamic>)['compression']
                   as Map<String, dynamic>;
           sent.add((compression['threshold'] as num).toDouble());
+          events.add('PUT ${compression['threshold']}');
           if (first) {
             first = false;
             await gate.future;
@@ -816,7 +827,12 @@ void main() {
           return http.Response('{"ok":true}', 200);
         }),
       );
-      return (dashboard: dashboard, config: config, sentThresholds: sent);
+      return (
+        dashboard: dashboard,
+        config: config,
+        sentThresholds: sent,
+        events: events,
+      );
     }
 
     Future<void> settle() async {
@@ -853,6 +869,46 @@ void main() {
           (fake.config['compression'] as Map<String, dynamic>)['threshold'],
           0.7,
         );
+      },
+    );
+
+    test(
+      'the next save waits for the confirmation read of the previous one',
+      () async {
+        final gate = Completer<void>();
+        final rereadGate = Completer<void>();
+        final fake = server(gate, rereadGate: rereadGate);
+        final repository = CompressionConfigRepository(fake.dashboard);
+        addTearDown(() {
+          repository.close();
+          fake.dashboard.close();
+        });
+        final base = await repository.load();
+
+        final first = repository.save(
+          base,
+          base.configuration!.copyWith(threshold: 0.6),
+        );
+        final second = repository.save(
+          base,
+          base.configuration!.copyWith(threshold: 0.7),
+        );
+        await settle();
+        gate.complete();
+        await settle();
+        expect(fake.events, [
+          'PUT 0.6',
+          'reread started',
+        ], reason: 'the first confirmation read is in flight');
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(fake.sentThresholds, [
+          0.6,
+        ], reason: 'the second PUT does not start before that read settles');
+
+        rereadGate.complete();
+        await first;
+        await second;
+        expect(fake.sentThresholds, [0.6, 0.7]);
       },
     );
 
