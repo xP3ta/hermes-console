@@ -594,11 +594,14 @@ void main() {
 
     // `session.close` has not been acknowledged yet.
     expect(gateway.closed, ['watch-1']);
+    expect(gateway.released, ['watch-1']);
     expect(gateway.hasListeners, isFalse);
     expect(invalidation.listeners, 0);
 
     gateway.closeGate!.complete();
     await pumpEventQueue();
+    expect(gateway.closed, ['watch-1']);
+    expect(gateway.released, ['watch-1']);
   });
 
   test('a corrected final after a tool line is still appended', () async {
@@ -616,6 +619,23 @@ void main() {
     expect(
       watch.value.text,
       'SELECT * FROMusers\n› read_file\nSELECT * FROM users',
+    );
+  });
+
+  test('a final shown before a tool is kept when other text follows', () async {
+    final gateway = FakeWatchGateway();
+    final watch = _watch(gateway)..start();
+    await pumpEventQueue();
+
+    gateway.emit('watch-1', 'message.delta', {'text': 'Resultado: 42'});
+    gateway.emit('watch-1', 'tool.start', {'name': 'read_file'});
+    gateway.emit('watch-1', 'message.delta', {'text': 'Despues'});
+    gateway.emit('watch-1', 'message.complete', {'text': 'Resultado: 42'});
+    await pumpEventQueue();
+
+    expect(
+      watch.value.text,
+      'Resultado: 42\n› read_file\nDespues\nResultado: 42',
     );
   });
 
