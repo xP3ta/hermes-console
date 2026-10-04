@@ -462,6 +462,23 @@ void main() {
       });
     });
 
+    test('a keyless toggle is rejected before any request', () async {
+      final rest = FakeRest();
+      final repo = repoFor('work', rest);
+      await expectLater(
+        repo.setPluginEnabled('fal', false),
+        throwsA(
+          isA<CapabilityFailure>().having(
+            (e) => e.kind,
+            'kind',
+            CapabilityFailureKind.rejected,
+          ),
+        ),
+      );
+      expect(sent, isEmpty);
+      expect(rest.calls, isEmpty);
+    });
+
     test('list keeps the canonical key of a row', () async {
       reply = {
         'plugins': [
@@ -643,6 +660,34 @@ void main() {
         throwsA(isA<CapabilityActionAbandoned>()),
       );
       expect(rest.calls, isEmpty);
+    });
+
+    test('a paused token makes no request until it resumes', () async {
+      final rest = runningServer()
+        ..posts['mcp/catalog/install'] = {
+          'ok': true,
+          'background': true,
+          'action': 'a',
+        };
+      final repo = CapabilitiesRepository(rest: rest, sleep: (_) async {});
+      for (final start in <Future<Object?> Function(CapabilityActionToken)>[
+        (t) => repo.installMcp('docs', token: t),
+        (t) => repo.installSkill('x/y', token: t),
+      ]) {
+        rest.calls.clear();
+        final token = CapabilityActionToken()..pause();
+        final run = start(token);
+        final settled = expectLater(
+          run,
+          throwsA(isA<CapabilityActionAbandoned>()),
+        );
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+        expect(rest.calls, isEmpty, reason: 'paused: no POST, no GET');
+        token.cancel();
+        await settled;
+        expect(rest.calls, isEmpty);
+      }
     });
 
     test('an MCP background install follows the returned action', () async {

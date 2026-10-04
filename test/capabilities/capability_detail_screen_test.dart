@@ -62,6 +62,7 @@ const _weather = CapabilityItem(
   version: '1.2.0',
   installId: 'weather',
   installedName: 'weather',
+  installedKey: 'weather',
   installed: true,
   enabled: true,
   updateAvailable: true,
@@ -100,6 +101,16 @@ void main() {
         CapabilityAction.install,
       ]);
       expect(capabilityActions(_docker, readOnly: true), isEmpty);
+    });
+
+    test('a keyless plugin row stays read-only for toggles', () {
+      // Names collide across categories; only the canonical key addresses a
+      // plugin, so a legacy row without one cannot be toggled.
+      final keyless = _weather.copyWith(installedKey: '');
+      expect(capabilityActions(keyless, readOnly: false), [
+        CapabilityAction.update,
+        CapabilityAction.remove,
+      ]);
     });
 
     test('installed plugin with update → update first, remove last', () {
@@ -370,7 +381,22 @@ void main() {
     }
   });
 
-  testWidgets('skill preview and scan are on demand and hide on 404', (
+  testWidgets('preview and scan rows need confirmed server support', (
+    tester,
+  ) async {
+    // A legacy server declares neither route: nothing is painted, and the
+    // single open-time probe is not repeated by rebuilds.
+    final legacy = ScriptedRest();
+    await _pump(tester, _docker, legacy);
+    expect(find.byKey(const ValueKey('cph-row-preview')), findsNothing);
+    expect(find.byKey(const ValueKey('cph-row-scan')), findsNothing);
+    await tester.pump(const Duration(seconds: 1));
+    expect(legacy.calls.where((c) => c.startsWith('GET skills/hub')), [
+      'GET skills/hub/preview?identifier=official%2Fdevops%2Fdocker',
+    ]);
+  });
+
+  testWidgets('a confirmed preview shows its row and reads it only once', (
     tester,
   ) async {
     final rest = ScriptedRest()
@@ -380,8 +406,6 @@ void main() {
         'files': ['SKILL.md', 'scripts/run.sh'],
       };
     await _pump(tester, _docker, rest);
-    expect(rest.calls.where((c) => c.startsWith('GET skills/hub')), isEmpty);
-
     await tester.ensureVisible(find.byKey(const ValueKey('cph-row-preview')));
     await tester.tap(find.byKey(const ValueKey('cph-row-preview')));
     await tester.pumpAndSettle();
@@ -390,14 +414,25 @@ void main() {
     ]);
     expect(find.textContaining('Runs **containers**'), findsOneWidget);
     expect(find.textContaining('scripts/run.sh'), findsOneWidget);
-    await tester.tapAt(const Offset(10, 10));
-    await tester.pumpAndSettle();
-
-    // No scan route on this server: the first tap discovers it and hides it.
-    await tester.ensureVisible(find.byKey(const ValueKey('cph-row-scan')));
-    await tester.tap(find.byKey(const ValueKey('cph-row-scan')));
-    await tester.pumpAndSettle();
+    // Scan support was never confirmed: no row.
     expect(find.byKey(const ValueKey('cph-row-scan')), findsNothing);
+  });
+
+  testWidgets('the scan row appears once the route is confirmed', (
+    tester,
+  ) async {
+    final rest = ScriptedRest()
+      ..gets['skills/hub/scan'] = {'summary': 'Clean', 'findings': <Object>[]};
+    final repo = repoOf(rest);
+    await repo.skillScan('official/devops/docker');
+    rest.calls.clear();
+    await setPhone(tester);
+    await tester.pumpWidget(
+      spanishApp(CapabilityDetailScreen(item: _docker, repository: repo)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('cph-row-scan')), findsOneWidget);
+    expect(rest.calls.where((c) => c.contains('scan')), isEmpty);
   });
 
   testWidgets('a blocked skill install offers the scan, never an override', (
