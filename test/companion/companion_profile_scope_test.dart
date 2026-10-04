@@ -350,11 +350,19 @@ Future<void> _waitForController(
   }
 
   controller.addListener(observe);
+  final waited = Stopwatch()..start();
   try {
     observe();
     await reached.future.timeout(
       const Duration(seconds: 5),
-      onTimeout: () => throw TestFailure(reason),
+      // Name what the controller published so a timeout can be told apart
+      // from a sync that settled on the wrong pet.
+      onTimeout: () => throw TestFailure(
+        '$reason (after ${waited.elapsedMilliseconds} ms: '
+        'selected=${controller.selectedSlug}, '
+        'active=${controller.activeCompanion?.slug}, '
+        'origin=${controller.activeCompanion?.origin.name})',
+      ),
     );
   } finally {
     controller.removeListener(observe);

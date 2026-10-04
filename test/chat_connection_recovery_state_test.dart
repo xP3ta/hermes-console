@@ -158,10 +158,18 @@ ActiveChat _chat(_DroppingGateway gateway) => ActiveChat(
   desktopRecoveryBackoff: const [Duration.zero, Duration(seconds: 1)],
 );
 
+/// Fake-async clock of the running widget test.
+///
+/// The row measures its grace from `disconnectedSince`. Stamping that with the
+/// wall clock while the row's timers run on fake time lets real scheduling
+/// delay (a loaded host) eat into the grace, so a 2 s blip could cross the 3 s
+/// threshold. Both sides read the tester's clock instead.
+DateTime _testNow() => TestWidgetsFlutterBinding.instance.clock.now();
+
 ChatTransportStatus _disconnected(
   ChatTransportState state, {
   DateTime? since,
-}) => ChatTransportStatus(state, disconnectedSince: since ?? DateTime.now());
+}) => ChatTransportStatus(state, disconnectedSince: since ?? _testNow());
 
 Widget _recoveryHarness({
   required ChatTransportStatus status,
@@ -198,6 +206,7 @@ Widget _recoveryHarness({
           offlineLabel: 'Connection lost. You can keep drafting.',
           reconnectingLabel: 'Reconnecting… Your chat stays available.',
           recoveredLabel: 'Reconnected',
+          clock: _testNow,
         ),
         const Expanded(
           key: ValueKey('transcript'),
@@ -483,7 +492,7 @@ void main() {
         _recoveryHarness(
           status: _disconnected(
             ChatTransportState.reconnecting,
-            since: DateTime.now().subtract(const Duration(seconds: 4)),
+            since: _testNow().subtract(const Duration(seconds: 4)),
           ),
           activeTurn: true,
         ),
@@ -510,7 +519,7 @@ void main() {
         _recoveryHarness(
           status: _disconnected(
             ChatTransportState.offline,
-            since: DateTime.now().subtract(const Duration(seconds: 5)),
+            since: _testNow().subtract(const Duration(seconds: 5)),
           ),
           activeTurn: true,
         ),
@@ -543,7 +552,7 @@ void main() {
   ) async {
     final down = _disconnected(
       ChatTransportState.offline,
-      since: DateTime.now().subtract(const Duration(seconds: 10)),
+      since: _testNow().subtract(const Duration(seconds: 10)),
     );
     await tester.pumpWidget(
       _recoveryHarness(status: down, activeTurn: true, appForeground: false),
@@ -590,7 +599,7 @@ void main() {
       _recoveryHarness(
         status: _disconnected(
           ChatTransportState.offline,
-          since: DateTime.now().subtract(const Duration(minutes: 6)),
+          since: _testNow().subtract(const Duration(minutes: 6)),
         ),
         activeTurn: false,
         authRequired: true,
@@ -616,7 +625,7 @@ void main() {
         _recoveryHarness(
           status: _disconnected(
             ChatTransportState.reconnecting,
-            since: DateTime.now().subtract(const Duration(seconds: 4)),
+            since: _testNow().subtract(const Duration(seconds: 4)),
           ),
           activeTurn: true,
           textScale: 2,
@@ -649,7 +658,7 @@ void main() {
         _recoveryHarness(
           status: _disconnected(
             ChatTransportState.reconnecting,
-            since: DateTime.now().subtract(const Duration(seconds: 4)),
+            since: _testNow().subtract(const Duration(seconds: 4)),
           ),
           activeTurn: true,
           theme: theme,
