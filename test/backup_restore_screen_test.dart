@@ -325,4 +325,76 @@ void main() {
     expect(verified, 1);
     expect(find.byKey(const ValueKey('backup-create')), findsOneWidget);
   });
+
+  testWidgets('App Lock re-locking during the probe never shows the controls', (
+    tester,
+  ) async {
+    final appLock = await lock(enabled: true);
+    final gate = Completer<bool>();
+    gateway.availableGate = gate;
+    await tester.pumpWidget(app(appLock));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(gateway.calls, ['probe'], reason: 'the probe is pending');
+    appLock.locked.value = false;
+    appLock.locked.value = true;
+    await tester.pump();
+    gate.complete(true);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('backup-create')), findsNothing);
+    expect(find.byKey(const ValueKey('backup-restore-pick')), findsNothing);
+    expect(find.byKey(const ValueKey('backup-unlock')), findsOneWidget);
+  });
+
+  testWidgets('a probe that fails after a re-lock stays locked', (
+    tester,
+  ) async {
+    final appLock = await lock(enabled: true);
+    final gate = Completer<bool>();
+    gateway.availableGate = gate;
+    await tester.pumpWidget(app(appLock));
+    await tester.pump(const Duration(milliseconds: 50));
+    appLock.locked.value = false;
+    appLock.locked.value = true;
+    await tester.pump();
+    gate.completeError(StateError('down'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('backup-unlock')), findsOneWidget);
+    expect(find.byKey(const ValueKey('backup-retry')), findsNothing);
+  });
+
+  testWidgets('leaving before FLAG_SECURE lands releases it and never opens', (
+    tester,
+  ) async {
+    final applied = Completer<void>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('hermes/security'), (
+          call,
+        ) async {
+          if (call.method == 'setSecureScreen') {
+            await applied.future;
+            secure.add(call.arguments as bool);
+          }
+          return null;
+        });
+    var verified = 0;
+    await tester.pumpWidget(
+      app(
+        await lock(enabled: true),
+        verify: (_, _, _) async {
+          verified++;
+          return true;
+        },
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    applied.complete();
+    await tester.pumpAndSettle();
+    expect(verified, 0);
+    expect(
+      secure.isEmpty || secure.last == false,
+      isTrue,
+      reason: 'a lease that landed after leaving is released',
+    );
+  });
 }

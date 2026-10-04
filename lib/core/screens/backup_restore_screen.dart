@@ -191,8 +191,13 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen>
       setState(() => _access = _Access.appLockRequired);
       return;
     }
+    final epoch = _lockEpoch;
     final ok = await _verify('open');
     if (_disposed) return;
+    if (_relocked(epoch)) {
+      setState(() => _access = _Access.locked);
+      return;
+    }
     if (!ok) {
       setState(() => _access = _Access.locked);
       return;
@@ -202,15 +207,30 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen>
       available = await _gateway.available();
     } catch (_) {
       if (_disposed) return;
-      setState(() => _access = _Access.unreachable);
+      // A re-lock while the probe was pending already put the page in the
+      // locked state; never replace it with a retry prompt.
+      setState(
+        () => _access = _relocked(epoch) ? _Access.locked : _Access.unreachable,
+      );
       return;
     }
     if (_disposed) return;
+    if (_relocked(epoch)) {
+      setState(() => _access = _Access.locked);
+      return;
+    }
     setState(() => _access = available ? _Access.ready : _Access.unsupported);
   }
 
+  /// Bumped every time App Lock re-locks; an answer that was pending across
+  /// one is stale and must not open the page.
+  int _lockEpoch = 0;
+
+  bool _relocked(int epoch) => epoch != _lockEpoch;
+
   void _onAppLocked() {
     if (_disposed || _appLock?.locked.value != true) return;
+    _lockEpoch++;
     _flow.cancel();
     setState(() => _access = _Access.locked);
   }

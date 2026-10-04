@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:hermes_android/core/services/backup_restore_flow.dart';
@@ -31,11 +32,17 @@ class FakeBackupGateway implements HermesBackupGateway {
   /// When set, the probe cannot tell and throws it.
   Object? availableError;
 
+  /// When set, the probe waits on it, so a test can change the world while the
+  /// answer is pending.
+  Completer<bool>? availableGate;
+
   @override
   Future<bool> available() async {
     calls.add('probe');
     final error = availableError;
     if (error != null) throw error;
+    final gate = availableGate;
+    if (gate != null) return gate.future;
     return isAvailable;
   }
 
