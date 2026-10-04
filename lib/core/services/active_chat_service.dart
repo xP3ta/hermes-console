@@ -8007,6 +8007,10 @@ class ActiveChat {
   /// its head by identity once the send settles, so replacing the object or
   /// putting another row in front of it would send the turn a second time.
   String? _queueDrainInFlightId;
+
+  /// Queue id the open editor holds. The drain waits on a held head instead of
+  /// sending it, and no other row may overtake it meanwhile.
+  String? _queueEditHeldId;
   bool _queueDrainSuspended = false;
   bool _queueAdmissionFrozen = false;
   QueueLease _queueLease = QueueLease.active;
@@ -23800,7 +23804,7 @@ class ActiveChat {
 
   bool promoteQueuedTurn(String id) {
     if (mutationsBlockedByOwnershipConflict || _disposed) return false;
-    if (_queueDrainInFlightId != null) return false;
+    if (_queueDrainInFlightId != null || _queueEditHeldId != null) return false;
     final occupiedOrders = <int>[
       ..._messageQueue.map((item) => item.queueOrder),
       ..._preparedTurnQueue.map((item) => item.queueOrder),
@@ -23854,6 +23858,42 @@ class ActiveChat {
     return true;
   }
 
+  /// Opening the editor on a queued row holds it: the drain skips a held head
+  /// and waits, so the text being edited is the text that gets sent. Refused
+  /// when the drain already took the row, when its transport started, or when
+  /// it is not in the queue. Pair every successful hold with
+  /// [releaseQueuedTurn].
+  bool holdQueuedTurn(String id) {
+    if (mutationsBlockedByOwnershipConflict ||
+        _disposed ||
+        id == _queueDrainInFlightId ||
+        (_queueEditHeldId != null && _queueEditHeldId != id)) {
+      return false;
+    }
+    final matches = queuedEntries.where((entry) => entry.id == id);
+    if (matches.isEmpty ||
+        matches.first.kind == QueuedEntryKind.desktopAccepted) {
+      return false;
+    }
+    final delivery = _preparedDeliveryFor(id);
+    if (matches.first.kind == QueuedEntryKind.prepared &&
+        (delivery == null ||
+            delivery.transportStarted ||
+            delivery.acknowledged)) {
+      return false;
+    }
+    _queueEditHeldId = id;
+    return true;
+  }
+
+  void releaseQueuedTurn(String id) {
+    if (_queueEditHeldId != id) return;
+    _queueEditHeldId = null;
+    if (!_disposed && !_queueDrainSuspended && !isStreaming) {
+      Timer.run(_drainQueue);
+    }
+  }
+
   bool _queueMoveInFlight = false;
 
   /// Swaps the queue position of [id] with the row above ([up]) or below it.
@@ -23865,7 +23905,8 @@ class ActiveChat {
     if (mutationsBlockedByOwnershipConflict ||
         _disposed ||
         _queueMoveInFlight ||
-        _queueDrainInFlightId != null) {
+        _queueDrainInFlightId != null ||
+        _queueEditHeldId != null) {
       return false;
     }
     final entries = queuedEntries
@@ -24216,6 +24257,7 @@ class ActiveChat {
       return;
     }
     _queueGeneration++;
+    _queueEditHeldId = null;
     _messageQueue.clear();
     final prepared = _preparedTurnQueue.toList(growable: false);
     _preparedTurnQueue.clear();
@@ -24459,6 +24501,7 @@ class ActiveChat {
     if (preparedComesFirst) {
       final next = _preparedTurnQueue.first;
       if (_queuedRetriesExhausted.contains(next.turn.clientTurnId)) return;
+      if (_queueEditHeldId == 'prepared:${next.turn.clientTurnId}') return;
       final owner = _preparedTurnOwners[next.turn.clientTurnId];
       if (owner?.state == _PreparedTurnOwnershipState.cancelling ||
           _blockedPreparedTurnId == next.turn.clientTurnId ||
@@ -24528,6 +24571,7 @@ class ActiveChat {
     if (_messageQueue.isEmpty) return;
     final next = _messageQueue.first;
     if (_queuedRetriesExhausted.contains(next.id)) return;
+    if (_queueEditHeldId == next.id) return;
     // La rama prepared ya se serializa con esta misma bandera. La de texto no
     // lo hacía: `send()` tarda varios `await` en publicar `connecting`, así que
     // dos drenajes solapados (terminal, retry, park levantado, inventario
