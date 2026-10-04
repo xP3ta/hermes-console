@@ -8302,10 +8302,32 @@ class ActiveChat {
   void _setConnectionCard(ConnectionCardState next) {
     if (identical(next, _connectionCard)) return;
     _connectionCard = next;
-    if (next.request == null || next.request!.settled) {
+    final request = next.request;
+    if (request == null || request.settled) {
       _connectionLinkOpened = false;
+    } else {
+      _projectPendingConnectionRow(request);
     }
     _emit(ActiveChatEvent.toolProgress);
+  }
+
+  /// The card binds to the tool row named by `tool_call_id`. When that row
+  /// never arrived (tool.start missed, or only the resume snapshot knows the
+  /// pending call) the row is synthesized so the card still has a place.
+  void _projectPendingConnectionRow(ConnectionRequest request) {
+    final present = _messages.any(
+      (message) =>
+          message['role'] == 'assistant' &&
+          normalizeAssistantActivityTrace(
+            message[assistantActivityTraceKey],
+          ).any((step) => step['id']?.toString() == request.toolCallId),
+    );
+    if (present) return;
+    _upsertAssistantToolActivity(
+      {'tool_call_id': request.toolCallId, 'name': 'manage_connections'},
+      running: true,
+      startsNew: false,
+    );
   }
 
   void _handleConnectionFrame(String type, Map<String, dynamic> payload) {

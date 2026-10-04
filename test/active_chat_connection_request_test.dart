@@ -11,6 +11,7 @@ import 'package:hermes_android/core/models/connection_request.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/connection_request_gateway.dart';
+import 'package:hermes_android/core/services/session_reconciler.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -187,6 +188,14 @@ Future<(ActiveChat, _Gateway, List<ActiveChatEvent>)> _liveChat({
   return (chat, gateway, emitted);
 }
 
+bool _traceHas(ActiveChat chat, String id) => chat.messages.any(
+  (m) =>
+      m['role'] == 'assistant' &&
+      normalizeAssistantActivityTrace(
+        m[assistantActivityTraceKey],
+      ).any((step) => step['id']?.toString() == id),
+);
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -345,6 +354,45 @@ void main() {
     expect(restored.opId, 'op-1');
     expect(restored.seq, 7);
     expect(restored.deadlineAt, 1790000000.0);
+  });
+
+  test(
+    'a resume without the tool row projects the row the card binds to',
+    () async {
+      // tool.start was missed: only the snapshot knows the pending call.
+      final pending = normalizeConnectionRequest(
+        _requestPayload(toolCallId: 'call-missed'),
+      )!;
+      final (chat, _, _) = await _liveChat(pendingOnResume: pending);
+
+      expect(chat.connectionRequest!.toolCallId, 'call-missed');
+      expect(_traceHas(chat, 'call-missed'), isTrue);
+    },
+  );
+
+  test('a request whose tool.start was missed projects its row too', () async {
+    final (chat, gateway, _) = await _liveChat();
+    gateway.emit(
+      'connection.request',
+      _requestPayload(toolCallId: 'call-late'),
+    );
+    expect(_traceHas(chat, 'call-late'), isTrue);
+  });
+
+  test('an existing tool row is not duplicated', () async {
+    final (chat, gateway, _) = await _liveChat();
+    gateway.emit('tool.start', {
+      'tool_id': 'call-1',
+      'name': 'manage_connections',
+    });
+    gateway.emit('connection.request', _requestPayload());
+    final rows = chat.messages
+        .where((m) => m['role'] == 'assistant')
+        .expand(
+          (m) => normalizeAssistantActivityTrace(m[assistantActivityTraceKey]),
+        )
+        .where((step) => step['id']?.toString() == 'call-1');
+    expect(rows, hasLength(1));
   });
 
   test('a resume never revives an operation that already settled', () async {
