@@ -16,6 +16,7 @@ import '../services/screen_security.dart';
 import '../services/shared_gateway_pool.dart';
 import '../services/terminal_availability.dart';
 import '../services/terminal_pane_controller.dart';
+import '../design/modal.dart' show HermesAction, showHermesMenu;
 import '../design/page.dart' show HermesActionButton;
 import '../theme/app_theme.dart';
 import '../widgets/hermes_notice.dart';
@@ -303,6 +304,17 @@ class _TerminalPaneScreenState extends State<TerminalPaneScreen> {
     null => null,
   };
 
+  Future<void> _pickFromHistory() async {
+    final command = await showHermesMenu<String>(
+      context: context,
+      actions: [
+        for (final entry in _controller.history)
+          HermesAction(value: entry, label: entry),
+      ],
+    );
+    if (command != null && mounted) _input.text = command;
+  }
+
   void _run() {
     unawaited(_controller.run(_input.text));
   }
@@ -330,22 +342,11 @@ class _TerminalPaneScreenState extends State<TerminalPaneScreen> {
             errorText: problem,
             suffixIcon: _controller.history.isEmpty
                 ? null
-                : PopupMenuButton<String>(
+                : IconButton(
                     key: const ValueKey('terminal-history'),
                     tooltip: s.termHistory,
                     icon: const Icon(Icons.history),
-                    onSelected: (command) => _input.text = command,
-                    itemBuilder: (_) => [
-                      for (final command in _controller.history)
-                        PopupMenuItem(
-                          value: command,
-                          child: Text(
-                            command,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                    ],
+                    onPressed: _pickFromHistory,
                   ),
           ),
         ),

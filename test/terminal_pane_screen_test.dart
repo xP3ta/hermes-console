@@ -205,6 +205,28 @@ void main() {
     expect(secure.last, isTrue);
   });
 
+  testWidgets('history brings an earlier command back into the input', (
+    tester,
+  ) async {
+    final gateway = FakeTerminalGateway();
+    await tester.pumpWidget(app(gateway, await lock(enabled: true)));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('terminal-input')),
+      'echo one',
+    );
+    await tester.tap(find.byKey(const ValueKey('terminal-run')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('terminal-history')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('echo one').last);
+    await tester.pumpAndSettle();
+    final field = tester.widget<TextField>(
+      find.byKey(const ValueKey('terminal-input')),
+    );
+    expect(field.controller!.text, 'echo one');
+  });
+
   testWidgets('without a chat there is no agent segment', (tester) async {
     await tester.pumpWidget(
       app(FakeTerminalGateway(), await lock(enabled: true)),

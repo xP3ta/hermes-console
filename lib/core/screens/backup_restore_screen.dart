@@ -10,6 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../design/content.dart' show HermesToggleRow;
+import '../design/modal.dart'
+    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 import '../design/page.dart' show HermesActionButton;
 import '../services/action_follower.dart';
 import '../services/app_lock.dart';
@@ -231,23 +233,22 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen>
 
   Future<void> _create() async {
     final s = Strings.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showHermesDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(s.backupCreateWarnTitle),
-        content: Text(s.backupCreateWarn),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(s.backupCancel),
-          ),
-          FilledButton(
-            key: const ValueKey('backup-create-confirm'),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(s.backupCreate),
-          ),
-        ],
-      ),
+      title: s.backupCreateWarnTitle,
+      message: s.backupCreateWarn,
+      actions: [
+        HermesDialogAction(
+          label: s.backupCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          key: const ValueKey('backup-create-confirm'),
+          label: s.backupCreate,
+          value: true,
+        ),
+      ],
     );
     if (confirmed != true || !mounted) return;
     await _flow.createBackup(confirmed: true);
