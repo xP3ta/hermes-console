@@ -8,6 +8,8 @@
 /// si no hay ninguno, el primero pintado.
 library;
 
+import '../utils/chat_turn.dart';
+
 const int chatPromptPreviewMax = 120;
 const double chatPromptActiveSlack = 8;
 
@@ -37,11 +39,18 @@ String chatPromptPreview(String text) {
 
 /// True when [message] is a user row with text: the rows that open a turn and
 /// appear in the prompt list.
+///
+/// Process-notification carriers (Hermes writes them as user rows) are not
+/// prompts: Desktop's timeline skips them too.
 bool isChatPromptMessage(Map<String, dynamic> message) {
   if (message['role'] != 'user') return false;
   final content = message['content'];
-  return content is String && content.trim().isNotEmpty;
+  if (content is! String || content.trim().isEmpty) return false;
+  if (content.trimLeft().startsWith(_processNotificationHead)) return false;
+  return projectedUserVisibleContent(message).trim().isNotEmpty;
 }
+
+const String _processNotificationHead = '[IMPORTANT: Background process ';
 
 /// Índice, en [newestFirst], del prompt que abrió el turno al que pertenece la
 /// fila [topIndex] (la que cruza el borde superior del viewport). El prompt es
