@@ -319,6 +319,100 @@ void main() {
     expect(watch.value.text, 'uno\ndos');
   });
 
+  test(
+    'an authoritative final survives a delta that filled the buffer',
+    () async {
+      final gateway = FakeWatchGateway();
+      final watch = _watch(gateway)..start();
+      await pumpEventQueue();
+
+      gateway.emit('watch-1', 'message.delta', {'text': 'x' * 1000000});
+      gateway.emit('watch-1', 'message.complete', {'text': 'FINAL_CORREGIDO'});
+      await pumpEventQueue();
+
+      expect(watch.value.status, SubagentLiveWatchStatus.finished);
+      expect(watch.value.text, endsWith('FINAL_CORREGIDO'));
+      expect(
+        watch.value.text.length,
+        lessThanOrEqualTo(SubagentLiveWatch.maxLiveChars),
+      );
+      expect(
+        watch.liveRawCharsForTesting,
+        lessThanOrEqualTo(SubagentLiveWatch.maxLiveChars),
+      );
+    },
+  );
+
+  test('a final larger than the budget keeps its tail, bounded', () async {
+    final gateway = FakeWatchGateway();
+    final watch = _watch(gateway)..start();
+    await pumpEventQueue();
+
+    gateway.emit('watch-1', 'message.delta', {'text': 'corto'});
+    gateway.emit('watch-1', 'message.complete', {
+      'text': '${'y' * 1000000}CONCLUSION',
+    });
+    await pumpEventQueue();
+
+    expect(watch.value.text, endsWith('CONCLUSION'));
+    expect(
+      watch.value.text.length,
+      lessThanOrEqualTo(SubagentLiveWatch.maxLiveChars),
+    );
+  });
+
+  test('truncation never leaves half a surrogate pair', () async {
+    bool wellFormed(String text) {
+      for (var i = 0; i < text.length; i++) {
+        final unit = text.codeUnitAt(i);
+        if (unit >= 0xD800 && unit <= 0xDBFF) {
+          if (i + 1 >= text.length) return false;
+          final next = text.codeUnitAt(i + 1);
+          if (next < 0xDC00 || next > 0xDFFF) return false;
+          i++;
+        } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    // Head: the emoji straddles the very last code unit of the budget.
+    var gateway = FakeWatchGateway();
+    var watch = _watch(gateway)..start();
+    await pumpEventQueue();
+    gateway.emit('watch-1', 'message.delta', {
+      'text': '${'a' * (SubagentLiveWatch.maxLiveChars - 1)}😀 fin',
+    });
+    expect(wellFormed(watch.value.text), isTrue);
+    expect(watch.value.text, 'a' * (SubagentLiveWatch.maxLiveChars - 1));
+    expect(wellFormed(watch.deltaTextForTesting), isTrue);
+
+    // Tail: the cut falls between the two halves of an emoji.
+    gateway = FakeWatchGateway();
+    watch = _watch(gateway)..start();
+    await pumpEventQueue();
+    gateway.emit('watch-1', 'message.complete', {
+      'text': '😀${'b' * (SubagentLiveWatch.maxLiveChars - 1)}',
+    });
+    await pumpEventQueue();
+    expect(wellFormed(watch.value.text), isTrue);
+    expect(watch.value.text, 'b' * (SubagentLiveWatch.maxLiveChars - 1));
+  });
+
+  test('a normal finish cancels the event subscription', () async {
+    final gateway = FakeWatchGateway();
+    final watch = _watch(gateway)..start();
+    await pumpEventQueue();
+    expect(gateway.hasListeners, isTrue);
+
+    gateway.emit('watch-1', 'message.complete', {'text': 'listo'});
+    await pumpEventQueue();
+
+    expect(watch.value.status, SubagentLiveWatchStatus.finished);
+    expect(gateway.hasListeners, isFalse);
+  });
+
   test('a normal finish releases the invalidation listener too', () async {
     final gateway = FakeWatchGateway();
     final invalidation = _CountingListenable();

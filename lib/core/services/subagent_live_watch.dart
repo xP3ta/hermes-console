@@ -133,6 +133,9 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
   @visibleForTesting
   int get liveRawCharsForTesting => _liveRaw.length;
 
+  @visibleForTesting
+  String get deltaTextForTesting => _deltaText;
+
   /// Opens the watch. Idempotent; the caller is the page that became visible.
   void start() {
     if (_started || _closed) return;

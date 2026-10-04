@@ -40,6 +40,9 @@ class FakeWatchGateway implements SubagentWatchGateway {
   @override
   Stream<TuiGatewayEvent> get events => _events.stream;
 
+  /// Whether anything still listens to the shared event stream.
+  bool get hasListeners => _events.hasListener;
+
   @override
   Future<DesktopSessionSnapshot> resumeWatchSession(
     String childSessionId, {
