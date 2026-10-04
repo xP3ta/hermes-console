@@ -285,6 +285,38 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('a refused refresh after a good one still shows the error '
+      'and its retry next to the kept list', (tester) async {
+    final hermes = _Hermes();
+    await pumpHome(tester, hermes);
+    expect(find.text('Builder chat'), findsWidgets);
+    expect(find.byKey(const ValueKey('home-profile-list-error')), findsNothing);
+    hermes.dashboardStatus = 401;
+    final reads = hermes.dashboardQueries.length;
+    unawaited(
+      tester
+          .state<RefreshIndicatorState>(find.byType(RefreshIndicator).first)
+          .show(),
+    );
+    await settle(tester);
+    expect(hermes.dashboardQueries.length, greaterThan(reads));
+    expect(find.byKey(const ValueKey('home-offline-retry')), findsNothing);
+    final card = find.byKey(const ValueKey('home-profile-list-error'));
+    expect(card, findsOneWidget);
+    expect(
+      find.descendant(of: card, matching: find.text('Retry')),
+      findsOneWidget,
+    );
+    expect(find.text('Builder chat'), findsWidgets);
+    // The retry clears the warning once the profile's list answers again.
+    hermes.dashboardStatus = 200;
+    await tester.tap(find.descendant(of: card, matching: find.text('Retry')));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('home-profile-list-error')), findsNothing);
+    expect(find.text('Builder chat'), findsWidgets);
+    await unmount(tester);
+  });
+
   testWidgets('a profile error leaves with its profile: the next profile '
       'loads without it', (tester) async {
     final hermes = _Hermes()..dashboardStatus = 401;

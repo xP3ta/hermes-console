@@ -2173,6 +2173,18 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                           dockBottomClearance,
                         ),
                         children: [
+                          // A failed refresh keeps the last good list, but
+                          // still says so and offers the retry above it.
+                          if (_recentListFailed && !isRemoteAndOffline) ...[
+                            const SizedBox(height: 10),
+                            _ProfileListErrorCard(
+                              profile: ProfileScopeLabel.display(
+                                Strings.of(context),
+                                widget.connManager.activeProfileFor(active.id),
+                              ),
+                              onRetry: _refreshStatus,
+                            ),
+                          ],
                           if (_visibleRecentSessions.isNotEmpty) ...[
                             Padding(
                               padding: const EdgeInsets.only(
@@ -2212,17 +2224,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                               ),
                             ),
                             ..._buildRecentRows(active, recentLimit),
-                          ] else if (_recentListFailed &&
+                          ] else if (!_recentListFailed &&
                               !isRemoteAndOffline) ...[
-                            const SizedBox(height: 10),
-                            _ProfileListErrorCard(
-                              profile: ProfileScopeLabel.display(
-                                Strings.of(context),
-                                widget.connManager.activeProfileFor(active.id),
-                              ),
-                              onRetry: _refreshStatus,
-                            ),
-                          ] else if (!isRemoteAndOffline) ...[
                             const SizedBox(height: 10),
                             HermesEmptyState(
                               key: const ValueKey('home-empty-conversations'),
