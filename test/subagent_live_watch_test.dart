@@ -639,6 +639,73 @@ void main() {
     );
   });
 
+  test('a full tool cycle does not make the repeated final look new', () async {
+    final gateway = FakeWatchGateway();
+    final watch = _watch(gateway)..start();
+    await pumpEventQueue();
+
+    gateway.emit('watch-1', 'message.delta', {'text': 'Resultado: 42'});
+    gateway.emit('watch-1', 'tool.start', {'name': 'read_file'});
+    gateway.emit('watch-1', 'tool.complete', {'name': 'read_file'});
+    gateway.emit('watch-1', 'message.complete', {'text': 'Resultado: 42'});
+    await pumpEventQueue();
+
+    expect(watch.value.text, 'Resultado: 42\n› read_file\n');
+  });
+
+  test('a corrected final after a full tool cycle is still appended', () async {
+    final gateway = FakeWatchGateway();
+    final watch = _watch(gateway)..start();
+    await pumpEventQueue();
+
+    gateway.emit('watch-1', 'message.delta', {'text': 'SELECT * FROMusers'});
+    gateway.emit('watch-1', 'tool.start', {'name': 'read_file'});
+    gateway.emit('watch-1', 'tool.complete', {'name': 'read_file'});
+    gateway.emit('watch-1', 'message.complete', {
+      'text': 'SELECT * FROM users',
+    });
+    await pumpEventQueue();
+
+    expect(
+      watch.value.text,
+      'SELECT * FROMusers\n› read_file\nSELECT * FROM users',
+    );
+  });
+
+  test('a refused close after dispose is swallowed, not unhandled', () async {
+    final gateway = FakeWatchGateway()
+      ..closeGate = Completer<void>()
+      ..closeFails = true;
+    final watch = SubagentLiveWatch(
+      gateway: gateway,
+      childSessionId: _child,
+      profile: _parentProfile,
+      isCurrent: () => true,
+    )..start();
+    await pumpEventQueue();
+
+    watch.dispose();
+    await pumpEventQueue();
+    gateway.closeGate!.complete();
+    // An unhandled asynchronous error would fail this test.
+    await pumpEventQueue();
+
+    expect(gateway.closed, ['watch-1']);
+    expect(gateway.released, ['watch-1']);
+  });
+
+  test('a refused close after a finish is swallowed, not unhandled', () async {
+    final gateway = FakeWatchGateway()..closeFails = true;
+    final watch = _watch(gateway)..start();
+    await pumpEventQueue();
+
+    gateway.emit('watch-1', 'message.complete', {'text': 'listo'});
+    await pumpEventQueue();
+
+    expect(watch.value.status, SubagentLiveWatchStatus.finished);
+    expect(gateway.closed, ['watch-1']);
+  });
+
   test('a normal finish cancels the event subscription', () async {
     final gateway = FakeWatchGateway();
     final watch = _watch(gateway)..start();

@@ -37,6 +37,9 @@ class FakeWatchGateway implements SubagentWatchGateway {
   /// While set, `session.close` stays pending until it completes.
   Completer<void>? closeGate;
 
+  /// Makes `session.close` reject once it answers.
+  bool closeFails = false;
+
   /// Completes each resume; defaults to a fresh runtime with no history.
   Future<DesktopSessionSnapshot> Function(String runtime)? answer;
 
@@ -60,6 +63,7 @@ class FakeWatchGateway implements SubagentWatchGateway {
   Future<bool> closeSession(String runtimeSessionId) async {
     closed.add(runtimeSessionId);
     await closeGate?.future;
+    if (closeFails) throw StateError('close refused');
     return true;
   }
 
