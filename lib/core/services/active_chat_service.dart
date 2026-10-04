@@ -278,6 +278,18 @@ enum DesktopPassiveActivityState { idle, busy, unknown }
 /// Evidencia durable sobre un turno `ambiguous` antes de un retry manual.
 enum AmbiguousRetryEvidence { notDelivered, delivered, unknown }
 
+/// A named profile's transcript is unreachable: its gateway route answered
+/// 401 (no own API key) and the Dashboard `?profile=` read failed too.
+final class ProfileTranscriptAccessRequired implements Exception {
+  const ProfileTranscriptAccessRequired();
+
+  /// Stable marker for error classification.
+  static const marker = 'profile_dashboard_access_required';
+
+  @override
+  String toString() => 'ProfileTranscriptAccessRequired: $marker';
+}
+
 /// Bounded display-safe summary of durable passive work.
 ///
 /// Opaque tool-call identities stay private to [ActiveChat]. The UI receives
@@ -10532,6 +10544,13 @@ class ActiveChat {
         unawaited(_hydrateEditorialDisplayMetadataFromDurableHistory());
       }
 
+      if (prefetchError is ProfileTranscriptAccessRequired &&
+          _messages.isEmpty) {
+        // Neither route serves this profile: waiting for the server-side
+        // hydration would only repeat the same refused reads.
+        messagesLoaded = false;
+        throw const ProfileTranscriptAccessRequired();
+      }
       final snapshot = resumedSnapshot;
       if (snapshot != null) {
         final expectsTranscript =
@@ -10770,8 +10789,49 @@ class ActiveChat {
     if (injected != null) {
       return injected(serverSessionId, normalizedProfile);
     }
-    return _api.getMessages(serverSessionId, profile: normalizedProfile);
+    return _readWholeTranscript(serverSessionId, profile: normalizedProfile);
   }
+
+  /// Whole transcript of [storedSessionId] (this chat or one of its
+  /// subagent children). A named profile follows the same rule as the paged
+  /// reads: once its gateway route said 401, it is read from the Dashboard
+  /// (`?profile=`) and the gateway is not asked again.
+  Future<List<Map<String, dynamic>>> _readWholeTranscript(
+    String storedSessionId, {
+    required String profile,
+    ApiClient? gateway,
+  }) async {
+    final owner = profile.trim();
+    final client = gateway ?? _api;
+    if (!profileRoutes(owner)) {
+      return client.getMessages(storedSessionId, profile: owner);
+    }
+    _throwIfProfileTranscriptAccessBlocked();
+    if (!_profileGatewayTranscriptUnauthorized) {
+      try {
+        return await client.getMessages(storedSessionId, profile: owner);
+      } on CoreReadException catch (error) {
+        if (error.kind != CoreReadErrorKind.auth) rethrow;
+        _profileGatewayTranscriptUnauthorized = true;
+      }
+    }
+    return _readProfileDashboard(
+      () => (_transcriptDashboard ??= DashboardClient.lazy(
+        connection,
+      )).getSessionMessages(storedSessionId, profile: owner),
+    );
+  }
+
+  /// Read-only transcript of a subagent child session, for its transcript
+  /// page. [gateway] is the caller's read-only client.
+  Future<List<Map<String, dynamic>>> loadChildTranscript(
+    String childSessionId, {
+    ApiClient? gateway,
+  }) => _readWholeTranscript(
+    childSessionId,
+    profile: sessionProfile,
+    gateway: gateway,
+  );
 
   _SessionMessagesPageReadContext _captureSessionMessagesPageRead({
     required _SessionMessagesPageConsumer consumer,
@@ -11024,6 +11084,51 @@ class ActiveChat {
   /// does, instead of waiting for hydration and retrying the same 401.
   bool _profileGatewayTranscriptUnauthorized = false;
 
+  /// The Dashboard could not serve this named profile's transcript either.
+  /// Every transcript read of this chat stops here (no request) until the
+  /// user retries: one actionable error instead of a polling loop.
+  bool _profileTranscriptAccessBlocked = false;
+
+  /// The named profile's transcript is reachable neither through its gateway
+  /// route nor through the Dashboard.
+  bool get profileTranscriptAccessBlocked => _profileTranscriptAccessBlocked;
+
+  /// Explicit user retry: allows one more Dashboard read. The gateway 401
+  /// latch stays set.
+  void retryProfileTranscriptAccess() {
+    if (!_profileTranscriptAccessBlocked) return;
+    _profileTranscriptAccessBlocked = false;
+    _emit(ActiveChatEvent.dashboardAuthChanged);
+  }
+
+  void _throwIfProfileTranscriptAccessBlocked() {
+    if (_profileTranscriptAccessBlocked) {
+      throw const ProfileTranscriptAccessRequired();
+    }
+  }
+
+  /// Runs a Dashboard read for a named profile whose gateway route is
+  /// unauthorized. A missing session (404) keeps its own meaning; any other
+  /// failure blocks further reads and is reported once.
+  Future<T> _readProfileDashboard<T>(Future<T> Function() read) async {
+    _throwIfProfileTranscriptAccessBlocked();
+    try {
+      return await read();
+    } on DashboardHttpException catch (error) {
+      if (error.statusCode == 404) rethrow;
+      _blockProfileTranscriptAccess();
+    } on Object {
+      _blockProfileTranscriptAccess();
+    }
+    throw const ProfileTranscriptAccessRequired();
+  }
+
+  void _blockProfileTranscriptAccess() {
+    if (_profileTranscriptAccessBlocked || _disposed) return;
+    _profileTranscriptAccessBlocked = true;
+    _emit(ActiveChatEvent.dashboardAuthChanged);
+  }
+
   /// lc1215: the gateway API (:8642) ignores `include_compacted` and pages
   /// only the ACTIVE generation, so after an in-place compaction its last
   /// page ends at the compaction carrier and closed history there, while
@@ -11068,6 +11173,7 @@ class ActiveChat {
       }
       _compactedDisplayDashboardUnavailable = true;
     }
+    if (profileRoutes(owner)) _throwIfProfileTranscriptAccessBlocked();
     if (!profileRoutes(owner) || !_profileGatewayTranscriptUnauthorized) {
       try {
         final page = await _api.getMessagesPage(
@@ -11084,11 +11190,13 @@ class ActiveChat {
         _profileGatewayTranscriptUnauthorized = true;
       }
     }
-    return _readDashboardMessagesPage(
-      storedSessionId,
-      profile: owner,
-      limit: limit,
-      offset: offset,
+    return _readProfileDashboard(
+      () => _readDashboardMessagesPage(
+        storedSessionId,
+        profile: owner,
+        limit: limit,
+        offset: offset,
+      ),
     );
   }
 
