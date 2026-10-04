@@ -7720,5 +7720,7 @@
   "profileSwitcherHint": "Switch profile",
   "profileSwitcherBody": "Each profile has its own chats, memory, SOUL, skills and model.",
   "profileSwitcherLoadFailed": "Couldn't load the profiles. Tap to retry.",
-  "profileSwitcherManage": "Manage profiles"
+  "profileSwitcherManage": "Manage profiles",
+  "pj1215PromptsAction": "Prompts",
+  "pj1215PromptsEmpty": "No prompts in this chat yet."
 }
