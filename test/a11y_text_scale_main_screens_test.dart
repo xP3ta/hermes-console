@@ -14,6 +14,11 @@ final _bottomNavigation = <String, Finder>{
   'settings tab': find.text('Settings'),
 };
 
+// The compact dock pins its labels at 1.0x so they fit the fixed 48dp tile
+// (see dock_style.dart); the full label stays available via Tooltip and
+// Semantics.
+final _fixedSizeDockLabels = _bottomNavigation.keys.toSet();
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -38,7 +43,7 @@ void main() {
       'add instance': find.text('add instance'),
       'navigation menu': find.byTooltip('Open navigation menu'),
       ..._bottomNavigation,
-    });
+    }, fixedSizeText: _fixedSizeDockLabels);
   });
 
   testWidgets('session list remains usable at 200 percent on a compact phone', (
@@ -71,7 +76,7 @@ void main() {
       'session title': find.text('Accessible conversation'),
       'session preview': find.text('Review the release'),
       ..._bottomNavigation,
-    });
+    }, fixedSizeText: _fixedSizeDockLabels);
   });
 
   testWidgets('chat remains usable at 200 percent on a compact phone', (
@@ -136,7 +141,7 @@ void main() {
       'default delete': find.byTooltip('The default profile cannot be deleted'),
       'reload': find.byTooltip('Reload'),
       ..._bottomNavigation,
-    });
+    }, fixedSizeText: _fixedSizeDockLabels);
   });
 
   testWidgets('onboarding remains usable at 200 percent on a compact phone', (

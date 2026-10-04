@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
@@ -148,22 +149,35 @@ void useA11yPhoneView(WidgetTester tester) {
 /// Matching one control is not enough: a layout that clamps or overlays the
 /// rest of the screen would still leave that control visible. AppBar titles
 /// are exempt from the scale check because Flutter clamps them at 1.34x.
+///
+/// The scale check reads the scaler every rendered paragraph of a target
+/// lays out with, not the ambient MediaQuery. Targets whose text production
+/// pins on purpose must be named in [fixedSizeText]; they keep every other
+/// check.
 Future<void> expectA11yLayoutUsable(
   WidgetTester tester,
   Map<String, Finder> targets, {
   double textScale = 2,
+  Set<String> fixedSizeText = const {},
 }) async {
   expect(tester.takeException(), isNull);
   final viewport =
       Offset.zero & (tester.view.physicalSize / tester.view.devicePixelRatio);
 
+  for (final name in fixedSizeText) {
+    expect(targets, contains(name), reason: '$name is not a target');
+  }
+
   final resolved = <String, Finder>{};
+  final fixedSize = <String>{};
   for (final entry in targets.entries) {
     final elements = entry.value.evaluate().toList();
     expect(elements, isNotEmpty, reason: '${entry.key} is not on screen');
     for (var index = 0; index < elements.length; index++) {
       final element = elements[index];
-      resolved['${entry.key}[$index]'] = find.byElementPredicate(
+      final name = '${entry.key}[$index]';
+      if (fixedSizeText.contains(entry.key)) fixedSize.add(name);
+      resolved[name] = find.byElementPredicate(
         (candidate) => identical(candidate, element),
         description: entry.key,
       );
@@ -207,6 +221,21 @@ Future<void> expectA11yLayoutUsable(
         greaterThanOrEqualTo(10 * textScale - 0.01),
         reason: '$name is not laid out at ${textScale}x text',
       );
+      // The ambient MediaQuery says nothing about what is painted: a Text
+      // can pass its own scaler. Check the scaler each rendered paragraph
+      // actually lays out with.
+      final paragraphs = fixedSize.contains(name)
+          ? const <RenderParagraph>[]
+          : _renderedTextOf(tester.element(target));
+      for (final paragraph in paragraphs) {
+        expect(
+          paragraph.textScaler.scale(14) / 14,
+          greaterThanOrEqualTo(textScale - 0.01),
+          reason:
+              '$name renders "${paragraph.text.toPlainText()}" with '
+              '${paragraph.textScaler}, not at ${textScale}x text',
+        );
+      }
     }
 
     final rect = rectOf(target)!;
@@ -239,6 +268,23 @@ Future<void> expectA11yLayoutUsable(
       );
     }
   }
+}
+
+/// Every text paragraph rendered at or below [root]. Icon glyphs are skipped
+/// because Flutter never scales them with the text scaler.
+List<RenderParagraph> _renderedTextOf(Element root) {
+  final paragraphs = <RenderParagraph>[];
+  void visit(Element element) {
+    if (element.widget is Icon) return;
+    final renderObject = element.renderObject;
+    if (element is RenderObjectElement && renderObject is RenderParagraph) {
+      paragraphs.add(renderObject);
+    }
+    element.visitChildren(visit);
+  }
+
+  visit(root);
+  return paragraphs;
 }
 
 final class A11yApiClient extends ApiClient {
