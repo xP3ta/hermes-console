@@ -21,12 +21,15 @@ import '../../l10n/app_localizations.dart';
 import '../../main.dart';
 import '../services/bridge_manager.dart';
 import '../services/connection_manager.dart';
+import '../services/custom_endpoints_api.dart';
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
 import '../utils/transport_privacy.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
+import '../widgets/hermes_premium_ui.dart'
+    show HermesListRow, HermesListSection;
 
 // ── Provider type ────────────────────────────────────────────────────────────
 
@@ -73,6 +76,8 @@ List<String> externalProviderBaseUrlCandidates(String raw) {
 }
 
 typedef ExternalProviderProbe = ({String baseUrl, List<String> models});
+
+enum _SavedEndpointAction { activate, delete }
 
 /// Recorre las variantes compatibles y conserva la URL exacta que respondió.
 /// Los fallos de una raíz sin `/v1` no impiden probar su variante OpenAI.
@@ -146,6 +151,8 @@ String humanizeExternalProviderError(Object error) {
 
 class ExternalProviderScreen extends StatefulWidget {
   final SavedConnection connection;
+  final String profile;
+  final DashboardClient? dashboardClientForTesting;
 
   /// URL pre-cargada cuando se abre en modo edición.
   final String? prefillUrl;
@@ -159,6 +166,8 @@ class ExternalProviderScreen extends StatefulWidget {
 
   const ExternalProviderScreen({
     required this.connection,
+    this.profile = '',
+    this.dashboardClientForTesting,
     this.prefillUrl,
     this.prefillName,
     this.isEditing = false,
@@ -184,6 +193,16 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
   String? _activeModel;
   String? _testedInputBaseUrl;
   String? _resolvedBaseUrl;
+  String? _testMessage;
+  List<Map<String, dynamic>> _modelDetails = const [];
+
+  late final DashboardClient _dashboard;
+  late final bool _ownsDashboard;
+  bool? _savedEndpointsSupported;
+  List<CustomEndpoint> _savedEndpoints = const [];
+  CustomEndpoint? _editingEndpoint;
+  bool _makeDefault = false;
+  bool _changed = false;
 
   BridgeManager? _bridgeMgr;
 
@@ -192,12 +211,17 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
   @override
   void initState() {
     super.initState();
+    _ownsDashboard = widget.dashboardClientForTesting == null;
+    _dashboard =
+        widget.dashboardClientForTesting ??
+        DashboardClient.lazy(widget.connection);
     if (widget.prefillUrl != null && widget.prefillUrl!.isNotEmpty) {
       _urlCtrl.text = widget.prefillUrl!;
     }
     if (widget.prefillName != null && widget.prefillName!.isNotEmpty) {
       _nameCtrl.text = widget.prefillName!;
     }
+    _loadSavedEndpoints();
   }
 
   @override
@@ -210,10 +234,141 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
 
   @override
   void dispose() {
+    if (_ownsDashboard) _dashboard.close();
     _urlCtrl.dispose();
     _keyCtrl.dispose();
     _nameCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadSavedEndpoints() async {
+    try {
+      final catalog = await _dashboard.listCustomEndpoints(
+        profile: widget.profile,
+      );
+      if (!mounted) return;
+      setState(() {
+        _savedEndpointsSupported = catalog != null;
+        _savedEndpoints = catalog?.endpoints ?? const [];
+      });
+    } catch (_) {
+      if (mounted) setState(() => _savedEndpointsSupported = false);
+    }
+  }
+
+  void _editSavedEndpoint(CustomEndpoint endpoint) {
+    setState(() {
+      _editingEndpoint = endpoint;
+      _makeDefault = false;
+      _nameCtrl.text = endpoint.name;
+      _urlCtrl.text = endpoint.baseUrl;
+      _keyCtrl.clear();
+      _models = endpoint.models;
+      _activeModel = endpoint.model.isEmpty ? null : endpoint.model;
+      _testError = null;
+      _testMessage = null;
+      _testedInputBaseUrl = null;
+      _resolvedBaseUrl = null;
+      _modelDetails = const [];
+    });
+  }
+
+  CustomEndpointDraft _endpointDraft({bool makeDefault = false}) =>
+      CustomEndpointDraft(
+        id: _editingEndpoint?.id ?? '',
+        name: _nameCtrl.text,
+        baseUrl: _urlCtrl.text,
+        model: _activeModel ?? _editingEndpoint?.model ?? '',
+        apiKey: _keyCtrl.text,
+        apiMode: _editingEndpoint?.apiMode ?? '',
+        contextLength: _editingEndpoint?.contextLength,
+        discoverModels: _editingEndpoint?.discoverModels ?? true,
+        makeDefault: makeDefault,
+        models: _models,
+        modelDetails: _modelDetails,
+      );
+
+  Future<void> _activateSavedEndpoint(CustomEndpoint endpoint) async {
+    setState(() => _setting = true);
+    try {
+      await _dashboard.activateCustomEndpoint(
+        endpoint.id,
+        profile: widget.profile,
+      );
+      _changed = true;
+      await _loadSavedEndpoints();
+    } catch (error) {
+      if (mounted) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(humanizeExternalProviderError(error))),
+          kind: HermesNoticeKind.error,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _setting = false);
+    }
+  }
+
+  Future<void> _deleteSavedEndpoint(CustomEndpoint endpoint) async {
+    final s = Strings.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(s.mdlEndpointDeleteTitle(endpoint.name)),
+        content: Text(s.mdlEndpointDeleteBody),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(s.commonCancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(s.mdlEndpointDelete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _setting = true);
+    try {
+      await _dashboard.deleteCustomEndpoint(
+        endpoint.id,
+        profile: widget.profile,
+      );
+      if (_editingEndpoint?.id == endpoint.id) _editingEndpoint = null;
+      _changed = true;
+      await _loadSavedEndpoints();
+    } catch (error) {
+      if (mounted) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(humanizeExternalProviderError(error))),
+          kind: HermesNoticeKind.error,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _setting = false);
+    }
+  }
+
+  Future<void> _saveEndpoint() async {
+    setState(() => _setting = true);
+    try {
+      await _dashboard.saveCustomEndpoint(
+        _endpointDraft(makeDefault: _makeDefault),
+        profile: widget.profile,
+      );
+      _changed = true;
+      await _loadSavedEndpoints();
+    } catch (error) {
+      if (mounted) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(humanizeExternalProviderError(error))),
+          kind: HermesNoticeKind.error,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _setting = false);
+    }
   }
 
   // ── Test connection ──────────────────────────────────────────────────────
@@ -232,10 +387,29 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
     setState(() {
       _testing = true;
       _testError = null;
+      _testMessage = null;
       _models = [];
     });
     try {
       final inputBase = normalizeExternalProviderUrl(rawUrl);
+      if (!_isLocal && _savedEndpointsSupported == true) {
+        final validation = await _dashboard.validateCustomEndpoint(
+          _endpointDraft(),
+        );
+        if (!mounted) return;
+        final resolved = validation.resolvedBaseUrl.trim();
+        setState(() {
+          if (resolved.isNotEmpty) _urlCtrl.text = resolved;
+          _models = validation.models;
+          _modelDetails = validation.modelDetails;
+          _testedInputBaseUrl = inputBase;
+          _resolvedBaseUrl = resolved.isEmpty ? inputBase : resolved;
+          _testMessage = validation.message;
+          _testError = validation.ok ? null : validation.message;
+          _testing = false;
+        });
+        return;
+      }
       final probe = _isLocal
           ? await _probeDirect(inputBase, headers)
           : await _probeFromHermes(inputBase, apiKey, headers);
@@ -264,35 +438,30 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
     String apiKey,
     Map<String, String> directHeaders,
   ) async {
-    final dash = DashboardClient.lazy(widget.connection);
-    try {
-      for (final candidate in externalProviderBaseUrlCandidates(inputBase)) {
-        try {
-          final result = await dash.validateExternalProvider(
-            baseUrl: candidate,
-            apiKey: apiKey,
-          );
-          final models = (result['models'] as List? ?? const [])
-              .map((value) => value.toString().trim())
-              .where((value) => value.isNotEmpty)
-              .toList();
-          if (models.isNotEmpty) {
-            return (baseUrl: candidate, models: models);
-          }
-          final reachable = result['reachable'] != false;
-          final message = (result['message'] ?? '').toString().trim();
-          if (!reachable && message.isNotEmpty) throw Exception(message);
-        } on DashboardHttpException catch (error) {
-          // Hermes antiguos no tienen /api/providers/validate. Conservamos el
-          // flujo anterior como compatibilidad, sin ocultar otros 4xx.
-          if (error.statusCode != 404 && error.statusCode != 405) rethrow;
-          return await _probeDirect(inputBase, directHeaders);
+    for (final candidate in externalProviderBaseUrlCandidates(inputBase)) {
+      try {
+        final result = await _dashboard.validateExternalProvider(
+          baseUrl: candidate,
+          apiKey: apiKey,
+        );
+        final models = (result['models'] as List? ?? const [])
+            .map((value) => value.toString().trim())
+            .where((value) => value.isNotEmpty)
+            .toList();
+        if (models.isNotEmpty) {
+          return (baseUrl: candidate, models: models);
         }
+        final reachable = result['reachable'] != false;
+        final message = (result['message'] ?? '').toString().trim();
+        if (!reachable && message.isNotEmpty) throw Exception(message);
+      } on DashboardHttpException catch (error) {
+        // Hermes antiguos no tienen /api/providers/validate. Conservamos el
+        // flujo anterior como compatibilidad, sin ocultar otros 4xx.
+        if (error.statusCode != 404 && error.statusCode != 405) rethrow;
+        return await _probeDirect(inputBase, directHeaders);
       }
-      return (baseUrl: inputBase, models: const <String>[]);
-    } finally {
-      dash.close();
     }
+    return (baseUrl: inputBase, models: const <String>[]);
   }
 
   Future<ExternalProviderProbe> _probeDirect(
@@ -402,18 +571,13 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
           client.close();
         }
       } else {
-        final dash = DashboardClient.lazy(widget.connection);
-        try {
-          final ok = await dash.setActiveModel(
-            providerSlug: _type.hermesProvider,
-            modelId: modelId,
-            baseUrl: base,
-            apiKey: apiKey,
-          );
-          if (!ok) throw Exception(s.extApplyRejected);
-        } finally {
-          dash.close();
-        }
+        final ok = await _dashboard.setActiveModel(
+          providerSlug: _type.hermesProvider,
+          modelId: modelId,
+          baseUrl: base,
+          apiKey: apiKey,
+        );
+        if (!ok) throw Exception(s.extApplyRejected);
       }
       if (!mounted) return;
       // No cerramos la pantalla: el usuario puede cambiar de modelo sin salir.
@@ -447,6 +611,56 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
 
   // ── Build ────────────────────────────────────────────────────────────────
 
+  Widget _buildSavedEndpoints(HermesThemeColors colors) {
+    final s = Strings.of(context);
+    return HermesListSection(
+      title: s.mdlSavedEndpoints,
+      margin: EdgeInsets.zero,
+      children: [
+        for (final endpoint in _savedEndpoints)
+          HermesListRow(
+            key: ValueKey('saved-endpoint-${endpoint.id}'),
+            icon: Icons.dns_outlined,
+            title: endpoint.name,
+            subtitle: [
+              Uri.tryParse(endpoint.baseUrl)?.host ?? endpoint.baseUrl,
+              endpoint.model,
+              if (endpoint.hasApiKey) s.mdlEndpointKeySet,
+              if (endpoint.isCurrent) s.mdlEndpointCurrent,
+            ].where((value) => value.trim().isNotEmpty).join(' · '),
+            onTap: () => _editSavedEndpoint(endpoint),
+            trailing:
+                (!endpoint.isCurrent || endpoint.source != 'direct-config')
+                ? PopupMenuButton<_SavedEndpointAction>(
+                    onSelected: (action) {
+                      switch (action) {
+                        case _SavedEndpointAction.activate:
+                          _activateSavedEndpoint(endpoint);
+                          break;
+                        case _SavedEndpointAction.delete:
+                          _deleteSavedEndpoint(endpoint);
+                          break;
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      if (!endpoint.isCurrent)
+                        PopupMenuItem(
+                          value: _SavedEndpointAction.activate,
+                          child: Text(s.mdlEndpointActivate),
+                        ),
+                      if (endpoint.source != 'direct-config')
+                        PopupMenuItem(
+                          value: _SavedEndpointAction.delete,
+                          child: Text(s.mdlEndpointDelete),
+                        ),
+                    ],
+                  )
+                : null,
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
@@ -456,13 +670,18 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
         title: Text(widget.isEditing ? s.extEditTitle : s.extTitle),
         leading: IconButton(
           icon: const Icon(Icons.close),
-          onPressed: () => Navigator.of(context).pop(false),
+          onPressed: () => Navigator.of(context).pop(_changed),
         ),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           HermesInfoBanner(s.extReachabilityInfo, icon: Icons.info_outline),
+          if (_savedEndpointsSupported == true &&
+              _savedEndpoints.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _buildSavedEndpoints(colors),
+          ],
           const SizedBox(height: 20),
           _label(s.extProviderType, colors),
           const SizedBox(height: 8),
@@ -522,31 +741,50 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
             hint: s.extApiKeyHint,
           ),
           const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: _testing ? null : _testConnection,
-            icon: _testing
-                ? SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: colors.onAccent,
-                    ),
-                  )
-                : const Icon(Icons.wifi_tethering_rounded, size: 18),
-            label: Text(
-              _testing
-                  ? Strings.of(context).commonTesting
-                  : Strings.of(context).extTestConnection,
+          if (_savedEndpointsSupported == true)
+            OutlinedButton.icon(
+              onPressed: _testing ? null : _testConnection,
+              icon: _testing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.wifi_tethering_rounded, size: 18),
+              label: Text(_testing ? s.commonTesting : s.extTestConnection),
+            )
+          else
+            FilledButton.icon(
+              onPressed: _testing ? null : _testConnection,
+              icon: _testing
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colors.onAccent,
+                      ),
+                    )
+                  : const Icon(Icons.wifi_tethering_rounded, size: 18),
+              label: Text(
+                _testing
+                    ? Strings.of(context).commonTesting
+                    : Strings.of(context).extTestConnection,
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.accent,
+                foregroundColor: colors.onAccent,
+              ),
             ),
-            style: FilledButton.styleFrom(
-              backgroundColor: colors.accent,
-              foregroundColor: colors.onAccent,
-            ),
-          ),
           if (_testError != null) ...[
             const SizedBox(height: 12),
             _ErrorBanner(_testError!, colors),
+          ],
+          if (_testError == null &&
+              _testMessage != null &&
+              _testMessage!.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            HermesInfoBanner(_testMessage!, icon: Icons.check_circle_outline),
           ],
           if (_models.isNotEmpty) ...[
             const SizedBox(height: 24),
@@ -558,7 +796,31 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
                 isActive: _activeModel == m,
                 colors: colors,
                 setting: _setting,
-                onUse: () => _useModel(m),
+                onUse: _savedEndpointsSupported == true
+                    ? () => setState(() {
+                        _activeModel = m;
+                        _makeDefault = true;
+                      })
+                    : () => _useModel(m),
+              ),
+            ),
+          ],
+          if (_savedEndpointsSupported == true) ...[
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: _setting ? null : _saveEndpoint,
+              icon: _setting
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colors.onAccent,
+                      ),
+                    )
+                  : const Icon(Icons.save_outlined, size: 18),
+              label: Text(
+                !_makeDefault ? s.mdlEndpointSave : s.mdlEndpointSaveAndUse,
               ),
             ),
           ],
