@@ -8031,6 +8031,38 @@
   "roomSettingsName": "Nombre",
   "roomSettingsPicture": "Foto",
   "roomSettingsPictureReadOnly": "Se cambia en Hermes Desktop",
+  "roomCompressHistory": "Comprimir historial",
+  "roomCompressHistorySubtitle": "Resume los turnos antiguos de un miembro",
+  "roomCompressPickMember": "Elige un miembro",
+  "roomCompressConfirmTitle": "¿Comprimir el historial de @{handle}?",
+  "@roomCompressConfirmTitle": {
+    "placeholders": {
+      "handle": {
+        "type": "String"
+      }
+    }
+  },
+  "roomCompressConfirmBody": "El resumen sustituye los turnos anteriores.",
+  "roomCompressConfirm": "Comprimir",
+  "roomCompressing": "Comprimiendo…",
+  "roomCompressPending": "La compresión continúa en segundo plano",
+  "roomCompressNothing": "No hay nada que comprimir",
+  "roomCompressSuccess": "Comprimido: {detail}",
+  "@roomCompressSuccess": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "roomCompressBusy": "@{handle} está ocupado; inténtalo cuando la sala esté inactiva",
+  "@roomCompressBusy": {
+    "placeholders": {
+      "handle": {
+        "type": "String"
+      }
+    }
+  },
   "roomRename": "Renombrar",
   "roomSave": "Guardar",
   "roomCancel": "Cancelar",
@@ -8059,6 +8091,15 @@
   "roomFileSaved": "Archivo guardado",
   "roomFileFailed": "No se pudo obtener el archivo",
   "roomComposerHint": "Mensaje",
+  "roomUnknownMention": "No hay ningún miembro llamado @{handle}; responderán todos.",
+  "@roomUnknownMention": {
+    "placeholders": {
+      "handle": {
+        "type": "String"
+      }
+    }
+  },
+  "roomSlashUnsupported": "Las salas no ejecutan comandos. Quita la / inicial…",
   "roomDesktopReadOnly": "Sala de Desktop · solo lectura",
   "roomDesktopReadOnlyBody": "Hermes Desktop dirige esta sala por su cuenta; aquí ves sus últimos mensajes.",
   "roomDesktopOmitted": "{count, plural, =1{1 mensaje anterior no se muestra} other{{count} mensajes anteriores no se muestran}}",

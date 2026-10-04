@@ -467,69 +467,159 @@ Future<String?> showRoomSettingsSheet(
   BuildContext context, {
   required String name,
   required bool canRename,
+  required HostedGroupRoom room,
+  List<HostedGroupMember> localMembers = const [],
+  RoomProfileResolver? profileFor,
+  MissionProfileAvatarCache? avatarCache,
+  Future<void> Function(HostedGroupMember member)? onCompress,
+  bool compressDisabled = false,
 }) {
   final s = Strings.of(context);
   final controller = TextEditingController(text: name);
+  var compressing = false;
   return showHermesFloatingSurface<String>(
     context: context,
     surfaceKey: const ValueKey('room-settings-sheet'),
     maxWidth: 460,
-    builder: (sheet) => DisposeControllersOnUnmount(
-      controllers: [controller],
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              s.roomMenuSettings,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: Theme.of(sheet).hermes.textPrimary,
+    builder: (sheet) => StatefulBuilder(
+      builder: (context, setSheet) => DisposeControllersOnUnmount(
+        controllers: [controller],
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                s.roomMenuSettings,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: Theme.of(sheet).hermes.textPrimary,
+                ),
               ),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              key: const ValueKey('room-settings-name'),
-              controller: controller,
-              enabled: canRename,
-              maxLength: 200,
-              decoration: InputDecoration(labelText: s.roomSettingsName),
-            ),
-            HermesListRow(
-              icon: Icons.image_outlined,
-              title: s.roomSettingsPicture,
-              subtitle: s.roomSettingsPictureReadOnly,
-              padding: EdgeInsets.zero,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.of(sheet).pop(),
-                  child: Text(s.roomCancel),
-                ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  key: const ValueKey('room-settings-save'),
-                  onPressed: canRename
-                      ? () {
-                          final value = controller.text.trim();
-                          Navigator.of(
+              const SizedBox(height: 14),
+              TextField(
+                key: const ValueKey('room-settings-name'),
+                controller: controller,
+                enabled: canRename,
+                maxLength: 200,
+                decoration: InputDecoration(labelText: s.roomSettingsName),
+              ),
+              HermesListRow(
+                icon: Icons.image_outlined,
+                title: s.roomSettingsPicture,
+                subtitle: s.roomSettingsPictureReadOnly,
+                padding: EdgeInsets.zero,
+              ),
+              if (onCompress != null && localMembers.isNotEmpty)
+                HermesListRow(
+                  key: const ValueKey('room-settings-compress'),
+                  icon: Icons.compress_rounded,
+                  title: s.roomCompressHistory,
+                  subtitle: compressing
+                      ? s.roomCompressing
+                      : s.roomCompressHistorySubtitle,
+                  padding: EdgeInsets.zero,
+                  onTap: compressing || compressDisabled
+                      ? null
+                      : () async {
+                          final member = await _pickCompressionMember(
                             sheet,
-                          ).pop(value.isEmpty || value == name ? null : value);
-                        }
-                      : null,
-                  child: Text(s.roomSave),
+                            members: localMembers,
+                            profileFor: profileFor,
+                            avatarCache: avatarCache,
+                          );
+                          if (member == null || !sheet.mounted) return;
+                          final confirmed = await showHermesConfirmDialog(
+                            context: sheet,
+                            title: s.roomCompressConfirmTitle(member.handle),
+                            message: s.roomCompressConfirmBody,
+                            confirmLabel: s.roomCompressConfirm,
+                            cancelLabel: s.roomCancel,
+                            destructive: true,
+                          );
+                          if (!confirmed || !sheet.mounted) return;
+                          setSheet(() => compressing = true);
+                          try {
+                            await onCompress(member);
+                          } finally {
+                            if (sheet.mounted) {
+                              setSheet(() => compressing = false);
+                            }
+                          }
+                        },
                 ),
-              ],
-            ),
-          ],
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(sheet).pop(),
+                    child: Text(s.roomCancel),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    key: const ValueKey('room-settings-save'),
+                    onPressed: canRename
+                        ? () {
+                            final value = controller.text.trim();
+                            Navigator.of(sheet).pop(
+                              value.isEmpty || value == name ? null : value,
+                            );
+                          }
+                        : null,
+                    child: Text(s.roomSave),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
+    ),
+  );
+}
+
+Future<HostedGroupMember?> _pickCompressionMember(
+  BuildContext context, {
+  required List<HostedGroupMember> members,
+  required RoomProfileResolver? profileFor,
+  required MissionProfileAvatarCache? avatarCache,
+}) {
+  final s = Strings.of(context);
+  return showHermesFloatingSurface<HostedGroupMember>(
+    context: context,
+    surfaceKey: const ValueKey('room-compress-member-sheet'),
+    maxWidth: 460,
+    builder: (sheet) => Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SheetTitle(s.roomCompressPickMember),
+        Flexible(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.only(bottom: 16),
+            children: [
+              for (final member in members)
+                HermesListRow(
+                  key: ValueKey('room-compress-member-${member.memberId}'),
+                  leading: RoomMemberFace(
+                    member: member,
+                    fallbackName: member.handle,
+                    profile: profileFor?.call(member),
+                    avatarCache: avatarCache,
+                    size: 32,
+                  ),
+                  title: roomMemberName(member, null),
+                  subtitle: '@${member.handle}',
+                  onTap: () => Navigator.of(sheet).pop(member),
+                ),
+            ],
+          ),
+        ),
+      ],
     ),
   );
 }

@@ -13,6 +13,7 @@ import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
 import 'package:hermes_android/core/bots/ui/room/room_widgets.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
+import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/artifact_export_service.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -195,6 +196,7 @@ Future<FakeRoomGateway> _pump(
   AgentProfile? Function(HostedGroupMember member)? profileFor,
   void Function(HostedGroupMember member)? onOpenMember,
   RoomDictation? dictation,
+  GatewayRoomMemberCompressor? memberCompressor,
 }) async {
   tester.view.physicalSize = const Size(1080, 2400);
   tester.view.devicePixelRatio = 3;
@@ -216,6 +218,7 @@ Future<FakeRoomGateway> _pump(
         attachmentActions: actions,
         uploader: uploader,
         dictation: dictation,
+        memberCompressor: memberCompressor,
         pollTimer: (_, _) => _FakeTimer(),
         clock: () => DateTime.fromMillisecondsSinceEpoch(1790000400 * 1000),
       ),
@@ -258,7 +261,7 @@ void main() {
   setUpAll(loadInterFont);
 
   testWidgets('group layout: one header per run, user bubble, no side rail', (
-    tester,
+      tester,
   ) async {
     final seq = EventSeq();
     final u = seq.user('status? @builder');
@@ -672,6 +675,117 @@ void main() {
     },
   );
 
+  testWidgets('reply to a member seeds its handle once and focuses', (
+    tester,
+  ) async {
+    final seq = EventSeq();
+    final user = seq.user('status?');
+    final member = seq.member(
+      'm-builder',
+      'builder',
+      'ready',
+      user['event_id'] as String,
+    );
+    final gateway = await _pump(tester, events: [user, member]);
+    final field = find.descendant(
+      of: find.byType(ConsoleComposer),
+      matching: find.byType(TextField),
+    );
+
+    final memberReply = find.byKey(
+      ValueKey('room-reply-${member['event_id']}'),
+    );
+    await tester.tap(memberReply);
+    await tester.pump();
+    expect(tester.widget<TextField>(field).controller!.text, '@builder ');
+    expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
+    expect(find.byKey(const ValueKey('room-thread-banner')), findsOneWidget);
+    await tester.tap(memberReply);
+    await tester.pump();
+    expect(tester.widget<TextField>(field).controller!.text, '@builder ');
+    expect(gateway.calls.where((call) => call.$1 == 'send'), isEmpty);
+
+    await tester.enterText(field, '');
+    await tester.tap(find.byKey(ValueKey('room-reply-${user['event_id']}')));
+    await tester.pump();
+    expect(tester.widget<TextField>(field).controller!.text, isEmpty);
+  });
+
+  testWidgets('unknown mention note follows local composer text', (
+    tester,
+  ) async {
+    await _pump(tester, events: const []);
+    final field = find.descendant(
+      of: find.byType(ConsoleComposer),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(field, '@nobody hi');
+    await tester.pump();
+    expect(find.byKey(const ValueKey('room-unknown-mention')), findsOneWidget);
+    expect(
+      find.text('No member is called @nobody — everyone will answer.'),
+      findsOneWidget,
+    );
+    await tester.enterText(field, '@builder hi');
+    await tester.pump();
+    expect(find.byKey(const ValueKey('room-unknown-mention')), findsNothing);
+    await tester.enterText(field, '@all hi');
+    await tester.pump();
+    expect(find.byKey(const ValueKey('room-unknown-mention')), findsNothing);
+  });
+
+  testWidgets('slash guard keeps text and attachments but paths still send', (
+    tester,
+  ) async {
+    final gateway = await _pump(
+      tester,
+      events: const [],
+      uploader: _Uploader(),
+    );
+    final field = find.descendant(
+      of: find.byType(ConsoleComposer),
+      matching: find.byType(TextField),
+    );
+    const attachment = AttachmentDraft(
+      localId: 'draft-1',
+      type: AttachmentType.document,
+      name: 'notes.txt',
+      mimeType: 'text/plain',
+      sizeBytes: 5,
+      localPath: '/tmp/notes.txt',
+    );
+    await tester.enterText(field, '/compress');
+    tester.widget<ConsoleComposer>(find.byType(ConsoleComposer)).onSend(
+      '/compress',
+      const [attachment],
+    );
+    await tester.pump();
+    expect(gateway.calls.where((call) => call.$1 == 'send'), isEmpty);
+    expect(tester.widget<TextField>(field).controller!.text, '/compress');
+    expect(
+      find.text("Rooms don't run commands. Remove the leading /…"),
+      findsOneWidget,
+    );
+
+    await tester.enterText(field, '/model x');
+    await tester.tap(
+      find.byKey(const ValueKey('composer-primary-action-switcher')),
+    );
+    await tester.pumpAndSettle();
+    expect(gateway.calls.where((call) => call.$1 == 'send'), isEmpty);
+    expect(tester.widget<TextField>(field).controller!.text, '/model x');
+
+    await tester.enterText(field, '/etc/hosts is broken');
+    await tester.tap(
+      find.byKey(const ValueKey('composer-primary-action-switcher')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      gateway.calls.where((call) => call.$1 == 'send').single.$2['text'],
+      '/etc/hosts is broken',
+    );
+  });
+
   // Every keystroke and focus change rebuilt the whole RoomScreen (app
   // bar, status strip, transcript lookup); only the composer depends on
   // the text, the focus and the dictation state.
@@ -827,6 +941,136 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('room-notify-muted')));
     await tester.pumpAndSettle();
     expect(prefs.levels.values.single, RoomNotificationLevel.muted);
+  });
+
+  testWidgets('settings compresses only a picked local member', (tester) async {
+    final calls = <(String, Map<String, dynamic>)>[];
+    final compressor = GatewayRoomMemberCompressor((method, params) async {
+      calls.add((method, params));
+      return switch (method) {
+        'session.list' => {
+          'sessions': [
+            {'resolved_id': 'stored-builder'},
+          ],
+        },
+        'session.resume' => {'session_id': 'runtime-builder'},
+        'session.compress' => {
+          'status': 'compressed',
+          'summary': {'headline': 'Short room history'},
+        },
+        _ => <String, dynamic>{},
+      };
+    });
+    await _pump(tester, events: const [], memberCompressor: compressor);
+    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('room-settings-compress')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('room-settings-compress')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('room-compress-member-m-builder')),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('room-compress-member-m-builder')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text("Compress @builder's room history?"), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(calls.map((call) => call.$1), [
+      'session.list',
+      'session.resume',
+      'session.compress',
+    ]);
+    expect(find.text('Compressed: Short room history'), findsOneWidget);
+  });
+
+  testWidgets('compress row is disabled while working and hidden read-only', (
+    tester,
+  ) async {
+    final compressor = GatewayRoomMemberCompressor(
+      (method, params) async => const {},
+    );
+    await _pump(
+      tester,
+      events: const [],
+      status: driver(working: true),
+      memberCompressor: compressor,
+    );
+    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-settings-compress')));
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('room-compress-member-sheet')),
+      findsNothing,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await _pump(
+      tester,
+      events: const [],
+      caps: const RoomCapabilities(canRename: true),
+    );
+    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('room-settings-compress')), findsNothing);
+  });
+
+  testWidgets('compression is single-flight and drops a result after dispose', (
+    tester,
+  ) async {
+    final gate = Completer<Map<String, dynamic>>();
+    var calls = 0;
+    final compressor = GatewayRoomMemberCompressor((method, params) {
+      calls++;
+      return gate.future;
+    });
+    await _pump(tester, events: const [], memberCompressor: compressor);
+    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-settings-compress')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('room-compress-member-m-builder')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(calls, 1);
+    expect(find.text('Compressing…'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('room-settings-compress')));
+    await tester.pump();
+    expect(calls, 1);
+    expect(
+      find.byKey(const ValueKey('room-compress-member-sheet')),
+      findsNothing,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    gate.complete({'sessions': const []});
+    await tester.pump();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('passes are one quiet line that opens the Activity sheet', (

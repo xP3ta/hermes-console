@@ -4265,6 +4265,12 @@ class _HostedRoomWorkspaceState extends State<_HostedRoomWorkspace> {
               (method, params) =>
                   pooledRoomPromptRequest(connection, method, params),
             ),
+      memberCompressor: connection == null || connection.readOnly
+          ? null
+          : GatewayRoomMemberCompressor(
+              (method, params) =>
+                  pooledRoomPromptRequest(connection, method, params),
+            ),
       onOpenMemberChat: switch (widget.onOpenMemberSession) {
         final open? => (member, stored) {
           if (_profileFor(member) != null) {
