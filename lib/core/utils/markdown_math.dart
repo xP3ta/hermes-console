@@ -103,12 +103,21 @@ String _displayBlock(String tex) {
   return '$fence\n$tex\n$fence';
 }
 
+final RegExp _wordChar = RegExp(r'[\p{L}\p{N}]', unicode: true);
+
+bool _isWord(String c) => _wordChar.hasMatch(c);
+
 /// Índice del `$` que cierra el tramo que abre `s[open]`, o `null` si no es
-/// matemática: el de apertura no puede ir seguido de espacio, el de cierre no
-/// puede ir precedido de espacio ni seguido de un dígito, y el tramo no cruza
-/// líneas.
+/// matemática. El tramo no cruza líneas ni queda vacío. Con delimitadores
+/// pegados (`$x$`) el de cierre no puede ir precedido de espacio ni seguido de
+/// un dígito (`$5 and $10` es dinero). Con apertura espaciada (`$ 2 * 2 $`,
+/// como admite Desktop) se exige además que el `$` no cuelgue de una palabra
+/// (`R$ 12`), que el de cierre no preceda a un número (`$ 5 and $ 10`) ni a
+/// una palabra pegada.
 int? _inlineDollarEnd(String s, int open) {
-  if (open + 1 >= s.length || _isSpace(s[open + 1])) return null;
+  if (open + 1 >= s.length) return null;
+  final spacedOpen = _isSpace(s[open + 1]);
+  if (spacedOpen && open > 0 && _isWord(s[open - 1])) return null;
   for (var j = open + 1; j < s.length; j++) {
     final ch = s[j];
     if (ch == '\n') return null;
@@ -117,11 +126,21 @@ int? _inlineDollarEnd(String s, int open) {
       j++;
       continue;
     }
-    if (ch == r'$') {
-      if (_isSpace(s[j - 1])) return null;
-      if (j + 1 < s.length && _isDigit(s[j + 1])) return null;
-      return j;
+    if (ch != r'$') continue;
+    if (s.substring(open + 1, j).trim().isEmpty) return null;
+    final spacedClose = _isSpace(s[j - 1]);
+    if (spacedClose && !spacedOpen) return null;
+    var next = j + 1;
+    if (spacedOpen || spacedClose) {
+      while (next < s.length && (s[next] == ' ' || s[next] == '\t')) {
+        next++;
+      }
     }
+    if (next < s.length) {
+      if (_isDigit(s[next])) return null;
+      if (spacedClose && next == j + 1 && _isWord(s[next])) return null;
+    }
+    return j;
   }
   return null;
 }
@@ -231,7 +250,7 @@ String _protectProse(String s) {
       }
       final end = _inlineDollarEnd(s, i);
       if (end != null) {
-        out.write(_inlineCode(s.substring(i + 1, end)));
+        out.write(_inlineCode(s.substring(i + 1, end).trim()));
         i = end + 1;
         continue;
       }
