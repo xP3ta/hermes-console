@@ -12,16 +12,48 @@ import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/server_diagnostics_models.dart';
 import 'package:hermes_android/core/capabilities/server_diagnostics_probe.dart'
     show DiagnosticsAvailability;
+import 'package:hermes_android/core/screens/advanced_settings_screen.dart';
 import 'package:hermes_android/core/screens/server_diagnostics_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/server_config_repository.dart';
 import 'package:hermes_android/core/services/server_restart_signal.dart';
+import 'package:hermes_android/core/services/server_toolsets_repository.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/hermes_pill.dart' show TuiLoader;
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'capabilities/capabilities_fakes.dart';
+import 'support/fake_toolsets_server.dart';
 
 const _host = 'hermes.example.test';
+
+/// The config side of Advanced, with one field so a page exists.
+final class _ConfigStore implements ServerConfigStore {
+  _ConfigStore({this.error});
+
+  final ServerConfigException? error;
+
+  @override
+  bool get isWritable => true;
+
+  @override
+  Future<Map<String, dynamic>> readConfig() async => {'timezone': 'UTC'};
+
+  @override
+  Future<Map<String, dynamic>> readSchema() async {
+    final failure = error;
+    if (failure != null) throw failure;
+    return {
+      'fields': {
+        'timezone': {'type': 'string'},
+      },
+    };
+  }
+
+  @override
+  Future<Object?> save(String path, Object? value) async => value;
+}
 
 Map<String, dynamic> _status({
   bool running = false,
@@ -162,6 +194,147 @@ void main() {
 
   Strings strings(WidgetTester tester) =>
       Strings.of(tester.element(find.byType(Scaffold).first));
+
+  group('Advanced', () {
+    Future<void> pumpAdvanced(
+      WidgetTester tester,
+      ScriptedRest rest, {
+      ServerConfigStore? store,
+    }) {
+      final toolsets = FakeToolsetsServer()..toolsets = [];
+      return pumpApp(
+        tester,
+        AdvancedSettingsScreen(
+          connection: _connection(),
+          connManager: manager,
+          storeFor: (profile, {required writable}) => store ?? _ConfigStore(),
+          toolsetsFor: (profile, {required writable}) =>
+              ServerToolsetsRepository(
+                toolsets.dashboard,
+                profile: profile,
+                writable: writable,
+              ),
+          repositoryFor: repos(rest),
+          mcpReader: (_) async => const [],
+        ),
+      );
+    }
+
+    testWidgets('probes three cheap reads and lists Diagnostics with the '
+        'config pages', (tester) async {
+      final rest = _server();
+      await pumpAdvanced(tester, rest);
+      final s = strings(tester);
+
+      expect(find.text(s.sd1215Diagnostics), findsOneWidget);
+      expect(find.text(s.adv1215PageBehavior), findsOneWidget);
+      expect(rest.calls, [
+        'GET actions/doctor/status?lines=200',
+        'GET actions/security-audit/status?lines=200',
+        'GET health',
+      ]);
+      expect(rest.mutations, isEmpty);
+    });
+
+    testWidgets('a server with none of the routes has no Diagnostics row', (
+      tester,
+    ) async {
+      await pumpAdvanced(tester, ScriptedRest());
+      final s = strings(tester);
+      expect(find.text(s.sd1215Diagnostics), findsNothing);
+      expect(find.text(s.adv1215PageBehavior), findsOneWidget);
+    });
+
+    testWidgets('an unreachable dashboard ends the probe and shows no row', (
+      tester,
+    ) async {
+      final rest = ScriptedRest()
+        ..gets['actions/doctor/status'] = Exception('Dashboard not accessible')
+        ..gets['actions/security-audit/status'] = Exception('unreachable')
+        ..gets['health'] = Exception('unreachable');
+      await pumpAdvanced(tester, rest);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(TuiLoader), findsNothing);
+      expect(find.text(strings(tester).sd1215Diagnostics), findsNothing);
+    });
+
+    testWidgets('server errors on every route are no support evidence', (
+      tester,
+    ) async {
+      final rest = ScriptedRest()
+        ..gets['actions/doctor/status'] = const DashboardHttpException(503)
+        ..gets['actions/security-audit/status'] = const DashboardHttpException(
+          500,
+        )
+        ..gets['health'] = const DashboardHttpException(503);
+      await pumpAdvanced(tester, rest);
+
+      expect(find.text(strings(tester).sd1215Diagnostics), findsNothing);
+    });
+
+    testWidgets('one route is enough to keep the row', (tester) async {
+      final rest = ScriptedRest()
+        ..gets['health'] = {'ok': true, 'version': '1'};
+      await pumpAdvanced(tester, rest);
+      expect(find.text(strings(tester).sd1215Diagnostics), findsOneWidget);
+    });
+
+    testWidgets('a server without a readable config schema still lists '
+        'Diagnostics', (tester) async {
+      await pumpAdvanced(
+        tester,
+        _server(),
+        store: _ConfigStore(
+          error: const ServerConfigException(
+            ServerConfigFailureKind.unsupported,
+          ),
+        ),
+      );
+      final s = strings(tester);
+      expect(find.text(s.sd1215Diagnostics), findsOneWidget);
+      expect(find.text(s.adv1215Unreadable), findsNothing);
+    });
+
+    testWidgets('opening Diagnostics does not probe health again', (
+      tester,
+    ) async {
+      final rest = _server();
+      await pumpAdvanced(tester, rest);
+      await tester.tap(find.text(strings(tester).sd1215Diagnostics));
+      await tester.pumpAndSettle();
+
+      expect(count(rest, 'GET health'), 2, reason: 'probe + idle, no repeat');
+      expect(find.text('v0.20.1'), findsOneWidget);
+    });
+
+    testWidgets('the search finds Diagnostics and opens it', (tester) async {
+      final rest = _server();
+      await pumpAdvanced(tester, rest);
+      await tester.enterText(find.byType(TextField), 'diagnos');
+      await tester.pump();
+
+      final hit = find.byKey(const ValueKey('adv1215-hit-diagnostics'));
+      expect(hit, findsOneWidget);
+      final callsBefore = rest.calls.length;
+      await tester.tap(hit);
+      await tester.pumpAndSettle();
+      expect(find.byType(ServerDiagnosticsScreen), findsOneWidget);
+      expect(rest.calls.length, greaterThan(callsBefore));
+    });
+
+    testWidgets('the search does not offer Diagnostics when it is absent', (
+      tester,
+    ) async {
+      await pumpAdvanced(tester, ScriptedRest());
+      await tester.enterText(find.byType(TextField), 'diagnos');
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('adv1215-hit-diagnostics')),
+        findsNothing,
+      );
+    });
+  });
 
   testWidgets('Diagnostics opened from two saved connections to one server '
       'launches doctor once', (tester) async {
