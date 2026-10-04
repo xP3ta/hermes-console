@@ -21,6 +21,7 @@ class FakeLiveRtcTransport implements LiveRtcTransport {
   String localSdp =
       'v=0\r\no=- 1 2 IN IP4 0.0.0.0\r\ns=-\r\na=ice-complete\r\n';
   Completer<void> iceGathering = Completer<void>()..complete();
+  @override
   bool channelOpen = true;
   bool micEnabled = true;
   bool micOpen = false;

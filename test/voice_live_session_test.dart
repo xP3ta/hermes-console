@@ -1,5 +1,6 @@
 import 'dart:async';
 
+// ignore: depend_on_referenced_packages
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/voice/live/live_rtc_transport.dart';
@@ -44,12 +45,7 @@ class _Harness {
 }
 
 Map<String, dynamic> _delta(String type, String text, {int? start, int? end}) =>
-    {
-      'type': type,
-      'delta': text,
-      if (start != null) 'start_ms': start,
-      if (end != null) 'end_ms': end,
-    };
+    {'type': type, 'delta': text, 'start_ms': ?start, 'end_ms': ?end};
 
 void main() {
   test('start order: channel before offer, POST after ICE, answer last', () {
@@ -430,6 +426,8 @@ void main() {
         final gate = Completer<VoiceLiveSessionAnswer>();
         h.api.createGate = gate;
         h.start(async);
+        // Before the answer is applied the data channel is not open yet.
+        h.transport.channelOpen = false;
         unawaited(h.session.close());
         async.flushMicrotasks();
         expect(h.transport.disposeCalls, 1);
