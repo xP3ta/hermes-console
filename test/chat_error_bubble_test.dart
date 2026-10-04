@@ -698,11 +698,11 @@ void main() {
       await tester.pumpWidget(card('chat-2'));
       first.complete(true);
       await tester.pump();
-      expect(find.text('Iniciar sesión gratis'), findsNothing);
 
-      // The replacement runs its own check and gets its own answer.
+      // The replacement runs its own check; the old answer must not show.
       await _openDetails(tester);
       expect(checks, 2);
+      expect(find.text('Iniciar sesión gratis'), findsNothing);
       second.complete(true);
       await tester.pump();
       expect(find.text('Iniciar sesión gratis'), findsOneWidget);
