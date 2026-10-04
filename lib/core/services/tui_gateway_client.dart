@@ -43,6 +43,7 @@ import 'json_rpc_wire.dart';
 import 'recovery_proof.dart';
 import 'replay_batch_proof.dart';
 import 'replay_coordinator.dart';
+import 'subagent_live_watch.dart';
 import '../utils/transport_privacy.dart';
 
 class TuiGatewayRpcError implements Exception {
@@ -1360,6 +1361,7 @@ class TuiGatewayClient
         HermesDesktopSessionLifecycleGateway,
         HermesDesktopSessionHistoryGateway,
         HermesDesktopSessionCloseGateway,
+        SubagentWatchGateway,
         HermesDesktopRecoverySessionLifecycleGateway,
         HermesDesktopRosterBoundRecoveryGateway,
         HermesDesktopTypedRecoveryGateway,
@@ -1521,6 +1523,7 @@ class TuiGatewayClient
   final Map<String, int> _runtimeReaders = <String, int>{};
 
   /// A chat bound [runtimeSessionId] on this multiplexed socket.
+  @override
   void retainSessionRuntime(String runtimeSessionId) {
     final runtime = runtimeSessionId.trim();
     if (runtime.isEmpty || _closed || !_multiplexed) return;
@@ -1544,6 +1547,7 @@ class TuiGatewayClient
   /// replay coordinator poisons every runtime past its bound). After a
   /// reconnect nobody resumes it, so Hermes detaches and reaps it exactly as
   /// when a per-chat socket closed.
+  @override
   void releaseSessionRuntime(String runtimeSessionId) {
     final runtime = runtimeSessionId.trim();
     if (runtime.isEmpty || _closed || !_multiplexed) return;
@@ -4734,6 +4738,12 @@ class TuiGatewayClient
       method: 'session.resume',
     );
   }
+
+  @override
+  Future<DesktopSessionSnapshot> resumeWatchSession(
+    String childSessionId, {
+    required String profile,
+  }) => resumeExisting(childSessionId, profile: profile);
 
   @override
   Future<DesktopSessionSnapshot> resumeExistingForRecovery(
