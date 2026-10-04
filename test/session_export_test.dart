@@ -111,6 +111,62 @@ void main() {
     });
   });
 
+  group('ApiClient.getMessages bounded read', () {
+    // The cap must hold while the body arrives, not after it was decoded: a
+    // first page with one huge message is abandoned part way through.
+    ApiClient streamingApi({
+      required int totalBytes,
+      required void Function(int) onChunk,
+      int? declaredLength,
+    }) => ApiClient(
+      baseUrl: 'https://hermes.example.test',
+      apiKey: 'k',
+      httpClient: MockClient.streaming((request, _) async {
+        Stream<List<int>> body() async* {
+          var sent = 0;
+          while (sent < totalBytes) {
+            const chunk = 64 * 1024;
+            sent += chunk;
+            onChunk(sent);
+            yield List<int>.filled(chunk, 0x61);
+          }
+        }
+
+        return http.StreamedResponse(
+          body(),
+          200,
+          contentLength: declaredLength,
+        );
+      }),
+    );
+
+    test('stops reading the body once it passes the cap', () async {
+      var delivered = 0;
+      await expectLater(
+        streamingApi(
+          totalBytes: 40 * 1024 * 1024,
+          onChunk: (n) => delivered = n,
+        ).getMessages('s1', maxJsonChars: 100000),
+        throwsA(isA<SessionTranscriptTooLargeException>()),
+      );
+      // 100 000 chars allow at most 400 000 bytes (+ one chunk in flight).
+      expect(delivered, lessThanOrEqualTo(512 * 1024));
+    });
+
+    test('a declared length over the cap is refused without reading', () async {
+      var delivered = 0;
+      await expectLater(
+        streamingApi(
+          totalBytes: 40 * 1024 * 1024,
+          declaredLength: 20 * 1024 * 1024,
+          onChunk: (n) => delivered = n,
+        ).getMessages('s1', maxJsonChars: 100000),
+        throwsA(isA<SessionTranscriptTooLargeException>()),
+      );
+      expect(delivered, lessThanOrEqualTo(64 * 1024));
+    });
+  });
+
   group('sessionExportFileName', () {
     test('slugs the title and the first 8 characters of the id', () {
       expect(
