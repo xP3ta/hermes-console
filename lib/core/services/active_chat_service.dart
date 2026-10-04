@@ -8314,6 +8314,8 @@ class ActiveChat {
   /// The card binds to the tool row named by `tool_call_id`. When that row
   /// never arrived (tool.start missed, or only the resume snapshot knows the
   /// pending call) the row is synthesized so the card still has a place.
+  /// `startsNew` adopts an id-less running placeholder (assigning the id) but
+  /// never reuses another call's row.
   void _projectPendingConnectionRow(ConnectionRequest request) {
     final present = _messages.any(
       (message) =>
@@ -8326,7 +8328,7 @@ class ActiveChat {
     _upsertAssistantToolActivity(
       {'tool_call_id': request.toolCallId, 'name': 'manage_connections'},
       running: true,
-      startsNew: false,
+      startsNew: true,
     );
   }
 

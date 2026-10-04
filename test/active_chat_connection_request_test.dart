@@ -379,6 +379,43 @@ void main() {
     expect(_traceHas(chat, 'call-late'), isTrue);
   });
 
+  test(
+    'an id-less running placeholder is adopted with the requested id',
+    () async {
+      final (chat, gateway, _) = await _liveChat();
+      gateway.emit('tool.generating', {'name': 'manage_connections'});
+      gateway.emit(
+        'connection.request',
+        _requestPayload(toolCallId: 'call-missed'),
+      );
+
+      expect(_traceHas(chat, 'call-missed'), isTrue);
+      final steps = chat.messages
+          .where((m) => m['role'] == 'assistant')
+          .expand(
+            (m) =>
+                normalizeAssistantActivityTrace(m[assistantActivityTraceKey]),
+          )
+          .where((step) => step['label'] == 'manage_connections');
+      expect(steps, hasLength(1));
+    },
+  );
+
+  test('another running call keeps its own row', () async {
+    final (chat, gateway, _) = await _liveChat();
+    gateway.emit('tool.start', {
+      'tool_id': 'call-other',
+      'name': 'manage_connections',
+    });
+    gateway.emit(
+      'connection.request',
+      _requestPayload(toolCallId: 'call-missed'),
+    );
+
+    expect(_traceHas(chat, 'call-other'), isTrue);
+    expect(_traceHas(chat, 'call-missed'), isTrue);
+  });
+
   test('an existing tool row is not duplicated', () async {
     final (chat, gateway, _) = await _liveChat();
     gateway.emit('tool.start', {
