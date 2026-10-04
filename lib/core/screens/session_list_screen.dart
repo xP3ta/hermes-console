@@ -213,8 +213,18 @@ class _SessionListScreenState extends State<SessionListScreen>
   SessionCategory _activeCategory = SessionCategory.chats;
   bool _showArchived = false;
 
+  /// Archive shows the hidden chats instead of the archived ones. Hermes'
+  /// listing omits hidden rows and Desktop has no hidden view, so this is
+  /// the one place to find them and show them again.
+  bool _showHiddenInArchive = false;
+  bool get _hiddenView => _showArchived && _showHiddenInArchive;
+
   SessionArchive? _archive;
   SessionPinSync? _pinSync;
+
+  /// This screen's writer of hidden/title/read state on the shared store
+  /// (detached on dispose, when [_repository] may close).
+  SessionStateWriter? _stateWriter;
   bool _archiveReady = false;
 
   /// Servicio singleton de chats activos: observamos [ActiveChatService.activeIds]
@@ -335,6 +345,10 @@ class _SessionListScreenState extends State<SessionListScreen>
           error is DashboardHttpException &&
           (error.statusCode == 404 || error.statusCode == 405),
     );
+    if (repository != null && !widget.connection.readOnly) {
+      final writer = _stateWriter = repository.patchSessionState;
+      archive.attachRemoteState(writer, httpStatusOf: dashboardHttpStatusOf);
+    }
     setState(() {
       // Shared per-connection store: a rename, archive, pin or hide made on
       // another screen (Home, chat auto-title, detail) repaints this list.
@@ -481,6 +495,8 @@ class _SessionListScreenState extends State<SessionListScreen>
   @override
   void dispose() {
     _archive?.removeListener(_onArchiveChanged);
+    final stateWriter = _stateWriter;
+    if (stateWriter != null) _archive?.detachRemoteState(stateWriter);
     hermesRouteObserver.unsubscribe(this);
     unawaited(DrawerGestureExclusion.setEnabled(false));
     _retryTimer?.cancel();
@@ -818,14 +834,14 @@ class _SessionListScreenState extends State<SessionListScreen>
     final scope = _libraryQuery;
     setState(() {
       _searchResults = null;
-      _searching = query.isNotEmpty && _repository != null;
-      _searchExhaustive = query.isEmpty || _repository == null;
+      _searching = query.isNotEmpty && _searchesServer;
+      _searchExhaustive = query.isEmpty || !_searchesServer;
     });
     // Categoría y archivo se resuelven en Agent antes de limit/offset. La
     // búsqueda se reinicia con el mismo scope para invalidar respuestas de la
     // categoría anterior aunque el texto no haya cambiado.
     unawaited(_fetchSessions());
-    if (query.isNotEmpty && _repository != null) {
+    if (query.isNotEmpty && _searchesServer) {
       unawaited(_runSearch(query, requestEpoch, scope));
     }
   }
@@ -961,6 +977,10 @@ class _SessionListScreenState extends State<SessionListScreen>
     return keep;
   }
 
+  /// Archive > Hidden filters its own list locally: no server search runs
+  /// there (its hits would also be applied as list reads).
+  bool get _searchesServer => _repository != null && !_hiddenView;
+
   void _onSearchChanged(String value) {
     _searchTimer?.cancel();
     final query = value.trim();
@@ -968,10 +988,10 @@ class _SessionListScreenState extends State<SessionListScreen>
     setState(() {
       _searchQuery = value;
       _searchResults = null;
-      _searching = query.isNotEmpty && _repository != null;
-      _searchExhaustive = query.isEmpty || _repository == null;
+      _searching = query.isNotEmpty && _searchesServer;
+      _searchExhaustive = query.isEmpty || !_searchesServer;
     });
-    if (query.isEmpty || _repository == null) return;
+    if (query.isEmpty || !_searchesServer) return;
     _searchTimer = Timer(const Duration(milliseconds: 220), () {
       unawaited(_runSearch(query, requestEpoch, _libraryQuery));
     });
@@ -1269,7 +1289,16 @@ class _SessionListScreenState extends State<SessionListScreen>
       return;
     }
 
-    await _archive!.setSessionTitle(session, trimmed);
+    try {
+      await _archive!.renameSession(session, trimmed);
+    } catch (_) {
+      if (!mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).slRenameFailed)),
+        kind: HermesNoticeKind.error,
+      );
+      return;
+    }
     if (!mounted) return;
     setState(() {});
     HermesNotice.of(context).showSnackBar(
@@ -1362,6 +1391,46 @@ class _SessionListScreenState extends State<SessionListScreen>
       await _archive!.pinSession(session);
     }
     if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleUnread(Session session) async {
+    final archive = _archive;
+    if (archive == null) return;
+    try {
+      await archive.setSessionUnread(
+        session,
+        !archive.isSessionUnread(session),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).slUnreadFailed)),
+        kind: HermesNoticeKind.error,
+      );
+    }
+  }
+
+  void _selectArchiveView(bool hidden) {
+    if (hidden == _showHiddenInArchive) return;
+    setState(() => _showHiddenInArchive = hidden);
+    // Entering Hidden drops a pending search; leaving it searches the text.
+    _onSearchChanged(_searchQuery);
+  }
+
+  /// Archive > Hidden: the chats hidden from this device, filtered by the
+  /// search text.
+  List<Session> _hiddenSessionsView() {
+    final archive = _archive;
+    if (archive == null) return const [];
+    final query = _searchQuery.trim().toLowerCase();
+    return [
+      for (final session in archive.hiddenSessions)
+        if (!archive.isSessionDeleted(session) &&
+            (query.isEmpty ||
+                _titleFor(session).toLowerCase().contains(query) ||
+                session.preview.toLowerCase().contains(query)))
+          session,
+    ];
   }
 
   Future<void> _toggleHidden(Session session) async {
@@ -1650,6 +1719,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     final archived = _isArchived(session);
     final pinned = _isPinned(session);
     final hidden = _isHidden(session);
+    final unread = _archive?.isSessionUnread(session) ?? false;
     return showHermesFloatingSurface<void>(
       context: context,
       surfaceKey: const ValueKey('session-actions-surface'),
@@ -1709,6 +1779,21 @@ class _SessionListScreenState extends State<SessionListScreen>
                 await _showRenameSessionDialog(session);
               },
             ),
+            // Desktop's row toggle; only when the server keeps read state.
+            if (_archive?.canToggleUnread(session) ?? false)
+              ListTile(
+                key: const ValueKey('session-menu-unread'),
+                leading: Icon(
+                  unread
+                      ? Icons.mark_email_read_outlined
+                      : Icons.mark_email_unread_outlined,
+                ),
+                title: Text(unread ? s.slMenuMarkRead : s.slMenuMarkUnread),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _toggleUnread(session);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.info_outline),
               title: Text(s.slMenuDetails),
@@ -1723,7 +1808,13 @@ class _SessionListScreenState extends State<SessionListScreen>
                     ? Icons.visibility_outlined
                     : Icons.visibility_off_outlined,
               ),
-              title: Text(hidden ? s.slMenuShow : s.slMenuHide),
+              title: Text(
+                hidden
+                    ? s.slMenuShow
+                    : (_archive?.hidesOnServer(session) ?? false)
+                    ? s.slMenuHideSynced
+                    : s.slMenuHide,
+              ),
               subtitle: hidden
                   ? null
                   : Text(
@@ -1811,13 +1902,27 @@ class _SessionListScreenState extends State<SessionListScreen>
   List<Session> _computeFilteredSessions() {
     SessionListScreen.debugFilterPasses++;
     final query = _searchQuery.trim().toLowerCase();
-    final source = query.isNotEmpty && _repository != null
+    final searching = query.isNotEmpty;
+    final loaded = searching && _repository != null
         ? (_searchResults ?? const <Session>[])
         : _sessions;
+    // A chat just shown again, until a list read made after the server
+    // confirmed carries it.
+    final revealed = searching
+        ? const <Session>[]
+        : (_archive?.revealedSessions ?? const <Session>[]);
+    final source = revealed.isEmpty
+        ? loaded
+        : [
+            ...loaded,
+            for (final row in revealed)
+              if (!loaded.any((s) => s.logicalId == row.logicalId)) row,
+          ];
 
     final list = source.where((s) {
-      // Las ocultas localmente nunca aparecen (se restauran desde "limpiar").
-      if (_isHidden(s)) return false;
+      // Hidden chats stay out of the lists (Archive > Hidden lists them);
+      // a search still finds them, as on Desktop, to show them again.
+      if (!searching && _isHidden(s)) return false;
       // Deleted on the server (from any screen): never painted again.
       if (_archive?.isSessionDeleted(s) ?? false) return false;
 
@@ -1870,7 +1975,11 @@ class _SessionListScreenState extends State<SessionListScreen>
     }
 
     if (_showArchived) {
-      return card(str.slFilterArchived, sessions, first: true);
+      return card(
+        _hiddenView ? str.slArchiveViewHidden : str.slFilterArchived,
+        sessions,
+        first: true,
+      );
     }
     final pinned = <Session>[];
     final rest = <Session>[];
@@ -2072,7 +2181,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       );
     }
 
-    final filtered = _filteredSessions;
+    final filtered = _hiddenView ? _hiddenSessionsView() : _filteredSessions;
     // Entradas intercaladas con cabeceras de fecha (estilo Claude: Hoy / Ayer…).
     final entries = _groupedEntries(filtered);
 
@@ -2080,7 +2189,8 @@ class _SessionListScreenState extends State<SessionListScreen>
       children: [
         _buildSearchField(),
         _buildFilterControl(),
-        if (_searching)
+        if (_showArchived) _buildArchiveViewControl(),
+        if (_searching && !_hiddenView)
           LinearProgressIndicator(
             minHeight: 1,
             color: colors.accent,
@@ -2097,6 +2207,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                       ? const Center(child: TuiLoader())
                       : _FilteredEmptyState(
                           archived: _showArchived,
+                          hidden: _hiddenView,
                           automation:
                               _activeCategory == SessionCategory.automation,
                           searching: _searchQuery.isNotEmpty,
@@ -2153,7 +2264,9 @@ class _SessionListScreenState extends State<SessionListScreen>
                         return _SessionCardRow(
                           first: row.first,
                           last: row.last,
-                          child: _sessionRow(session, s, colors),
+                          child: _hiddenView
+                              ? _hiddenSessionRow(session, s)
+                              : _sessionRow(session, s, colors),
                         );
                       },
                     ),
@@ -2208,11 +2321,50 @@ class _SessionListScreenState extends State<SessionListScreen>
         title: _titleFor(session),
         formattedTime: _relativeTime(session.lastActivityAt, s),
         pinned: pinned,
+        unread: _archive?.isSessionUnread(session) ?? false,
         status: status,
         streamActive: streamActive,
         onStop: stoppable ? () => _stopSession(session) : null,
         onTap: () => _openChat(session),
         onLongPress: () => _showSessionContextMenu(session),
+      ),
+    );
+  }
+
+  /// A row of Archive > Hidden: where it is hidden, and a direct Show.
+  Widget _hiddenSessionRow(Session session, Strings s) {
+    final onServer = _archive?.isSessionHiddenOnServer(session) ?? false;
+    return _SessionTile(
+      session: session,
+      title: _titleFor(session),
+      formattedTime: _relativeTime(session.lastActivityAt, s),
+      hiddenNote: onServer ? s.slHiddenOnServerNote : s.slHiddenLocalNote,
+      onShow: () => _toggleHidden(session),
+      onTap: () => _openChat(session),
+      onLongPress: () => _showSessionContextMenu(session),
+    );
+  }
+
+  /// Archive's two views; only shown inside Archive.
+  Widget _buildArchiveViewControl() {
+    final s = Strings.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: HermesSegmentedControl<bool>(
+        value: _showHiddenInArchive,
+        onChanged: _selectArchiveView,
+        segments: [
+          HermesSegment(
+            key: const ValueKey('archive-view-archived'),
+            value: false,
+            label: s.slArchiveViewArchived,
+          ),
+          HermesSegment(
+            key: const ValueKey('archive-view-hidden'),
+            value: true,
+            label: s.slArchiveViewHidden,
+          ),
+        ],
       ),
     );
   }
@@ -2591,12 +2743,14 @@ class _LiveDotState extends State<_LiveDot>
 /// las deja fuera.
 class _FilteredEmptyState extends StatelessWidget {
   final bool archived;
+  final bool hidden;
   final bool automation;
   final bool searching;
   final VoidCallback? onCreateNew;
 
   const _FilteredEmptyState({
     required this.archived,
+    this.hidden = false,
     required this.automation,
     required this.searching,
     this.onCreateNew,
@@ -2612,6 +2766,10 @@ class _FilteredEmptyState extends StatelessWidget {
       icon = Icons.search_off_rounded;
       title = s.slEmptySearchTitle;
       subtitle = s.slEmptySearchSubtitle;
+    } else if (hidden) {
+      icon = Icons.visibility_off_outlined;
+      title = s.slEmptyHiddenTitle;
+      subtitle = s.slEmptyHiddenSubtitle;
     } else if (archived) {
       icon = Icons.archive_outlined;
       title = s.slEmptyArchivedTitle;
@@ -2829,6 +2987,9 @@ class _SessionTile extends StatelessWidget {
   final String formattedTime;
   final bool pinned;
 
+  /// The server's read state (Desktop's unread dot).
+  final bool unread;
+
   /// Hay un stream del chat en curso en segundo plano para esta sesión: la
   /// respuesta/ejecución sigue aunque saliste. Cuenta como "viva".
   final bool streamActive;
@@ -2839,16 +3000,24 @@ class _SessionTile extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
+  /// Archive > Hidden: where the chat is hidden (in place of the preview)
+  /// and the Show action (in place of the time).
+  final String? hiddenNote;
+  final VoidCallback? onShow;
+
   const _SessionTile({
     required this.session,
     required this.title,
     required this.formattedTime,
     this.pinned = false,
+    this.unread = false,
     this.streamActive = false,
     this.status = SessionLiveStatus.idle,
     this.onStop,
     required this.onTap,
     required this.onLongPress,
+    this.hiddenNote,
+    this.onShow,
   });
 
   /// Semantic state of the live row: the dot and the status line share its
@@ -2873,9 +3042,16 @@ class _SessionTile extends StatelessWidget {
     // vista previa ("Borrador · Resume los cambios…"), no como una píldora
     // de color aparte: es lo que pide el mockup y lo que evita las "cajitas".
     final draftLabel = _sentenceCase(strings.slDraftBadge);
-    final previewText = session.hasLocalDraft
-        ? <String>[draftLabel, if (preview.isNotEmpty) preview].join(' · ')
-        : preview;
+    final previewText =
+        hiddenNote ??
+        (session.hasLocalDraft
+            ? <String>[draftLabel, if (preview.isNotEmpty) preview].join(' · ')
+            : preview);
+    // A search hit paints its matched terms (Hermes' FTS delimiters), never
+    // the raw markers.
+    final highlights = session.hasLocalDraft || hiddenNote != null
+        ? null
+        : sessionSearchHighlights(session);
     final liveTone = sessionStatusColor(colors, _statusTone);
 
     return InkWell(
@@ -2929,6 +3105,23 @@ class _SessionTile extends StatelessWidget {
                             decoration: BoxDecoration(
                               color: colors.warning,
                               shape: BoxShape.circle,
+                            ),
+                          ),
+                        ],
+                        if (unread &&
+                            !streamActive &&
+                            status.phase != SessionLivePhase.waitingForUser) ...[
+                          const SizedBox(width: 7),
+                          Semantics(
+                            label: strings.slUnreadDot,
+                            child: Container(
+                              key: ValueKey('session-unread-${session.id}'),
+                              width: 7,
+                              height: 7,
+                              decoration: BoxDecoration(
+                                color: colors.accent,
+                                shape: BoxShape.circle,
+                              ),
                             ),
                           ),
                         ],
@@ -2986,6 +3179,34 @@ class _SessionTile extends StatelessWidget {
                           ),
                         ),
                       )
+                    else if (highlights != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              for (final span in highlights)
+                                TextSpan(
+                                  text: span.text,
+                                  style: span.highlighted
+                                      ? TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          color: colors.textPrimary,
+                                        )
+                                      : null,
+                                ),
+                            ],
+                          ),
+                          key: ValueKey('session-snippet-${session.id}'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.25,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      )
                     else if (previewText.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: 3),
@@ -3011,14 +3232,22 @@ class _SessionTile extends StatelessWidget {
                 SessionRowStopControl(onStop: onStop!),
               ],
               const SizedBox(width: 12),
-              Text(
-                formattedTime,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w500,
-                  color: colors.textDisabled,
+              if (onShow != null)
+                TextButton.icon(
+                  key: ValueKey('session-show-${session.id}'),
+                  onPressed: onShow,
+                  icon: const Icon(Icons.visibility_outlined, size: 18),
+                  label: Text(strings.slHiddenShowAction),
+                )
+              else
+                Text(
+                  formattedTime,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w500,
+                    color: colors.textDisabled,
+                  ),
                 ),
-              ),
             ],
           ),
         ),

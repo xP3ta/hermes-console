@@ -419,6 +419,10 @@ void main() {
         home: HomeDashboardScreen(
           connManager: manager,
           clientFactory: (_) => client,
+          // A server whose handler does not take titles: the rename stays
+          // a local override under the logical id.
+          sessionStateWriterFactory: (_) =>
+              (_, _, _) => Future.error(const DashboardHttpException(405)),
         ),
       ),
     );
@@ -461,6 +465,95 @@ void main() {
     expect(
       persistedRows?.map((row) => row.split('\t').first),
       contains('logical-session'),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('renombrar desde Inicio es un PATCH title en el servidor', (
+    tester,
+  ) async {
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    await manager.saveConnection(
+      'QA',
+      '127.0.0.2',
+      8642,
+      'test-key',
+      kind: InstanceKind.vps,
+    );
+    final connection = manager.getConnections().single;
+    await manager.setActiveConnection(connection.id);
+    final session = Session(
+      id: 'physical-session',
+      lineageRootId: 'logical-session',
+      title: 'Título del servidor',
+      model: 'hermes-agent',
+      source: 'mobile',
+      messageCount: 1,
+      isActive: false,
+      preview: 'Contenido',
+      startedAt: DateTime.now().millisecondsSinceEpoch / 1000,
+    );
+    final client = _RecentHomeClient(session);
+    final patches = <(String, Map<String, Object>)>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('es'),
+        theme: AppTheme.fromId('dark'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        home: HomeDashboardScreen(
+          connManager: manager,
+          clientFactory: (_) => client,
+          sessionStateWriterFactory: (_) => (id, fields, profile) async {
+            patches.add((id, fields));
+            return {'ok': true, ...fields};
+          },
+        ),
+      ),
+    );
+    for (var attempt = 0; attempt < 30; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      if (find.text('Título del servidor').evaluate().isNotEmpty) break;
+    }
+
+    await tester.drag(find.text('Título del servidor'), const Offset(-500, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('home-recent-actions')), findsOneWidget);
+    expect(find.text('Título del servidor'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('home-recent-action-rename')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('home-recent-action-delete')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('home-recent-action-rename')));
+    await tester.pumpAndSettle();
+    final field = find.byKey(const ValueKey('session-title-editor-field'));
+    expect(field, findsOneWidget);
+
+    await tester.enterText(field, 'Título local');
+    await tester.tap(find.text('Guardar'));
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Título local'), findsOneWidget);
+    expect(find.text('Título del servidor'), findsNothing);
+    final archive = await SessionArchive.load(manager.prefs, connection.id);
+    await archive.remoteStateSettled;
+    expect(patches.single.$1, 'physical-session');
+    expect(patches.single.$2, {'title': 'Título local'});
+    expect(archive.titleForSession(session), 'Título local');
+    // The server holds it: no local override is left behind.
+    expect(
+      manager.prefs.getStringList('session_titles_${connection.id}') ?? [],
+      isEmpty,
     );
     expect(tester.takeException(), isNull);
   });
