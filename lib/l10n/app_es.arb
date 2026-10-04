@@ -9442,6 +9442,14 @@
       }
     }
   },
+  "tc1215BgAnswerTitle": "bg {taskId}",
+  "@tc1215BgAnswerTitle": {
+    "placeholders": {
+      "taskId": {
+        "type": "String"
+      }
+    }
+  },
   "tc1215BtwAnswerTitle": "btw \"{question}\"",
   "@tc1215BtwAnswerTitle": {
     "placeholders": {

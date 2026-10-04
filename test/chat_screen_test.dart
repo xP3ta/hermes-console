@@ -32062,6 +32062,21 @@ void main() {
       expect(gateway.sideCalls.single.params['text'], 'resume el repo');
       expect(chat.queuedMessages, isEmpty);
       expect(find.text('Tarea en segundo plano iniciada'), findsOneWidget);
+
+      gateway.emit('background.complete', {
+        'task_id': 'bg-task',
+        'text': 'Resumen listo.',
+      });
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Resumen listo.'), findsWidgets);
+      expect(
+        chat.messages.any(
+          (message) =>
+              message['role'] == 'system' &&
+              message['content'] == '[bg bg-task]\nResumen listo.',
+        ),
+        isTrue,
+      );
       await finishTurns(tester, gateway);
     });
 

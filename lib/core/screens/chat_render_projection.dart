@@ -369,6 +369,14 @@ final class ChatRenderProjection {
         continue;
       }
 
+      // A local `/btw` or `/bg` answer is a system row; the event classifier
+      // only knows user/assistant/tool text, so it must not reach it.
+      if (role == 'system' && message['display_kind'] == 'side_answer') {
+        flushTools();
+        chronologicalUnits.add(ChatMessageUnitPlan(index));
+        continue;
+      }
+
       final event = ChatEventInfo.classify(message);
       final hasStructuredReasoning =
           role == 'assistant' && _hasCanonicalReasoning(message);

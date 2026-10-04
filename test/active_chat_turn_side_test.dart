@@ -1,8 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hermes_android/core/models/connection.dart';
+import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/utils/turn_control.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'support/in_memory_compression_restore_storage.dart';
 import 'support/turn_side_gateway.dart';
@@ -141,10 +145,12 @@ void main() {
       final row = chat.messages.firstWhere(
         (message) => message['display_kind'] == 'side_answer',
       );
-      expect(row['content'], 'Las tres.');
+      expect(row['role'], 'system');
+      expect(row['content'], '[btw "¿qué hora es?" (btw-1)]\nLas tres.');
       expect(row['display_metadata'], {
         'kind': 'btw',
         'question': '¿qué hora es?',
+        'answer': 'Las tres.',
         'is_error': false,
       });
       expect(chat.isStreaming, isTrue);
@@ -258,6 +264,28 @@ void main() {
     );
 
     test(
+      'background.complete writes the canonical [bg task_id] system row',
+      () async {
+        final gateway = FakeTurnSideGateway();
+        final chat = await _streamingChat(gateway);
+
+        gateway.emit('background.complete', {
+          'task_id': 'bg-task',
+          'text': 'Listo: 3 archivos.',
+        });
+        await _pump();
+
+        final row = chat.messages.singleWhere(
+          (message) => message['display_kind'] == 'side_answer',
+        );
+        expect(row['role'], 'system');
+        expect(row['content'], '[bg bg-task]\nListo: 3 archivos.');
+        expect((row['display_metadata'] as Map)['kind'], 'bg');
+        expect(chat.backgroundTaskOutcomes.keys, ['bg-task']);
+      },
+    );
+
+    test(
       'a completion for another runtime or without an id is ignored',
       () async {
         final gateway = FakeTurnSideGateway();
@@ -296,4 +324,94 @@ void main() {
       expect(gateway.callsTo('prompt.background'), hasLength(1));
     });
   });
+
+  group('side answers and transcript refresh', () {
+    Future<ActiveChat> open() async {
+      final gateway = FakeTurnSideGateway();
+      final rows = [
+        {'id': 1, 'message_id': 'm1', 'role': 'user', 'content': 'q1'},
+        {'id': 2, 'message_id': 'm2', 'role': 'assistant', 'content': 'a1'},
+      ];
+      final chat = ActiveChat(
+        compressionRestoreStore: testCompressionRestoreStore(),
+        connection: _connection(),
+        sessionId: 'session-turn-side',
+        sessionTitle: 'Turn side',
+        notifications: null,
+        onTerminal: () {},
+        api: ApiClient(
+          baseUrl: 'http://127.0.0.1:8642',
+          apiKey: 'test-key',
+          httpClient: MockClient(
+            (request) async => http.Response(
+              jsonEncode({
+                'object': 'list',
+                'session_id': 'session-turn-side',
+                'messages': rows,
+                'data': rows,
+                'pagination': {
+                  'limit': 120,
+                  'offset': 0,
+                  'order': 'latest',
+                  'returned': rows.length,
+                },
+              }),
+              200,
+              headers: {'content-type': 'application/json'},
+            ),
+          ),
+        ),
+        desktopGateway: gateway,
+        initialStoredSessionId: 'session-turn-side',
+        allowUnownedDesktopSnapshotForTesting: true,
+      );
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.loadMessages();
+      expect(
+        await chat.ensureDesktopRuntime(acquireForExplicitAction: true),
+        isTrue,
+      );
+      chat.state = ChatPipelineState.completed;
+      gateway.emit('btw.complete', {
+        'task_id': 'btw-1',
+        'question': 'hora',
+        'text': 'Las tres.',
+      });
+      gateway.emit('background.complete', {
+        'task_id': 'bg-task',
+        'text': 'Hecho.',
+      });
+      await _pump();
+      return chat;
+    }
+
+    test(
+      'a transcript refresh keeps both rows in the Desktop format',
+      () async {
+        final chat = await open();
+        expect(chat.messages.where(_isSide), hasLength(2));
+
+        await chat.loadMessages();
+        await _pump();
+
+        expect(chat.messages.where(_isSide).map((m) => m['content']).toSet(), {
+          '[btw "hora" (btw-1)]\nLas tres.',
+          '[bg bg-task]\nHecho.',
+        });
+        expect(
+          chat.messages.where(_isSide).every((m) => m['role'] == 'system'),
+          isTrue,
+        );
+      },
+    );
+
+    test('they are not branch history', () async {
+      final chat = await open();
+      expect(chat.messages.where(isBranchHistoryRow), hasLength(2));
+    });
+  });
 }
+
+bool _isSide(Map<String, dynamic> message) =>
+    message['display_kind'] == 'side_answer';

@@ -18172,18 +18172,28 @@ _timelineSystemEventPresentation(
         icon: Icons.terminal_rounded,
       );
     case 'side_answer':
-      // Local `/btw` answer: the question is the title, the answer the body.
+      // Local `/btw` or `/bg` answer: the header is the title, the answer the
+      // body (the full Desktop-format line stays in `content` for copy/export).
       final rawMetadata = message['display_metadata'];
       final metadata = rawMetadata is Map ? rawMetadata : const {};
       final question = metadata['question'];
       final asked = question is String ? question.trim() : '';
+      final answer = metadata['answer'];
+      final taskId = message['_btwTaskId'];
+      final isBackground = metadata['kind'] == 'bg';
       return (
-        title: asked.isEmpty
+        title: isBackground
+            ? strings.tc1215BgAnswerTitle(taskId is String ? taskId : '')
+            : asked.isEmpty
             ? strings.tc1215BtwAnswerNoQuestion
             : strings.tc1215BtwAnswerTitle(asked),
-        detail: (message['content'] ?? '').toString(),
+        detail: answer is String
+            ? answer
+            : (message['content'] ?? '').toString(),
         icon: metadata['is_error'] == true
             ? Icons.error_outline_rounded
+            : isBackground
+            ? Icons.task_alt_rounded
             : Icons.chat_bubble_outline_rounded,
       );
     case 'model_switch':

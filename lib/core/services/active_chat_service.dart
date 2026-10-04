@@ -531,9 +531,15 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
   final role = rawRole.trim().toLowerCase();
   final isPrivateTransportRole = role == 'tool';
   final isLocalError = role == 'assistant_error' && retainProjectionState;
+  final isLocalSideAnswer =
+      role == 'system' &&
+      retainProjectionState &&
+      message['_local'] == true &&
+      message['display_kind'] == 'side_answer';
   if (role != 'user' &&
       role != 'assistant' &&
       !isLocalError &&
+      !isLocalSideAnswer &&
       !(retainMediaEvidence && isPrivateTransportRole)) {
     return null;
   }
@@ -696,10 +702,12 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
   } else if (displayKind == 'side_answer') {
     final raw = message['display_metadata'];
     final question = raw is Map ? raw['question'] : null;
+    final answer = raw is Map ? raw['answer'] : null;
     normalized['display_kind'] = displayKind;
     normalized['display_metadata'] = <String, dynamic>{
-      'kind': 'btw',
+      'kind': raw is Map && raw['kind'] == 'bg' ? 'bg' : 'btw',
       'question': question is String ? question : '',
+      'answer': answer is String ? answer : content,
       'is_error': raw is Map && raw['is_error'] == true,
     };
     normalized['_local'] = true;
@@ -1948,6 +1956,7 @@ bool _isKnownLocalTranscriptProjection(
       message['_pipeline'] == true ||
       message['_desktopInterim'] == true ||
       message['_desktopSnapshotKind'] == 'inflight' ||
+      (message['display_kind'] == 'side_answer' && message['_local'] == true) ||
       message[_localCompactedTerminalProjectionKey] != null ||
       message['_cancelled'] == true ||
       message['_cancelledUser'] == true) {
@@ -16321,23 +16330,61 @@ class ActiveChat {
     }
   }
 
-  /// `btw.complete {task_id, text, question?}` becomes a local row, in memory
-  /// only: like Desktop, a side answer does not survive reopening the chat.
+  /// `btw.complete {task_id, text, question?}` becomes a local system row in
+  /// the Desktop format `[btw "question" (task_id)]` + newline + answer. Like
+  /// Desktop it lives in the session's messages only; a transcript refresh
+  /// keeps it, a reopened chat does not have it.
   void _applySideQuestionAnswer(Map<String, dynamic> payload) {
     final taskId = payload['task_id']?.toString().trim() ?? '';
     final answer = payload['text']?.toString() ?? '';
     if (taskId.isEmpty || answer.trim().isEmpty) return;
-    final isError = answer.startsWith('error:');
     final question = payload['question']?.toString().trim() ?? '';
-    _messages.removeWhere((message) => message['_btwTaskId'] == taskId);
+    final header = question.isEmpty
+        ? '[btw ($taskId)]'
+        : '[btw "$question" ($taskId)]';
+    _insertSideAnswerRow(
+      taskId: taskId,
+      kind: 'btw',
+      content: '$header\n$answer',
+      question: question,
+      answer: answer,
+    );
+  }
+
+  /// `background.complete {task_id, text}` becomes `[bg task_id]` + newline +
+  /// result, next to the existing result strip.
+  void _applyBackgroundAnswer(String taskId, String text) {
+    if (text.trim().isEmpty) return;
+    _insertSideAnswerRow(
+      taskId: taskId,
+      kind: 'bg',
+      content: '[bg $taskId]\n$text',
+      question: '',
+      answer: text,
+    );
+  }
+
+  void _insertSideAnswerRow({
+    required String taskId,
+    required String kind,
+    required String content,
+    required String question,
+    required String answer,
+  }) {
+    _messages.removeWhere(
+      (message) =>
+          message['_btwTaskId'] == taskId &&
+          (message['display_metadata'] as Map?)?['kind'] == kind,
+    );
     _messages.insert(0, <String, dynamic>{
-      'role': 'assistant',
-      'content': answer,
+      'role': 'system',
+      'content': content,
       'display_kind': 'side_answer',
       'display_metadata': <String, dynamic>{
-        'kind': 'btw',
+        'kind': kind,
         'question': question,
-        'is_error': isError,
+        'answer': answer,
+        'is_error': answer.startsWith('error:'),
       },
       '_local': true,
       '_btwTaskId': taskId,
@@ -21216,7 +21263,7 @@ class ActiveChat {
         final rawText = payload['text']?.toString() ?? '';
         final isError = rawText.startsWith('error:');
         _backgroundTaskOutcomes[taskId] = (text: rawText, isError: isError);
-        _emit(ActiveChatEvent.backgroundTaskComplete);
+        _applyBackgroundAnswer(taskId, rawText);
         unawaited(
           _notifications
                   ?.backgroundTaskFinished(
