@@ -15,6 +15,7 @@ import '../widgets/hermes_notice.dart';
 import 'capabilities_repository.dart';
 import 'capability_models.dart';
 import 'capability_ui.dart';
+import 'mcp_runtime_status.dart';
 
 enum CapabilityAction { install, update, enable, disable, remove, test, docs }
 
@@ -80,10 +81,30 @@ class CapabilityDetailScreen extends StatefulWidget {
 
 class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
   late CapabilityItem _item = widget.item;
+  McpRuntimeRow? _runtime;
   final GlobalKey _moreKey = GlobalKey(debugLabel: 'cph-detail-more');
   bool _busy = false;
 
   CapabilitiesRepository get _repo => widget.repository;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_item.kind == CapabilityKind.mcp && _item.installed) {
+      unawaited(_loadRuntime());
+    }
+  }
+
+  /// One cached-state read when an MCP server opens; no refresh timer, and
+  /// any failure just leaves the static status.
+  Future<void> _loadRuntime() async {
+    try {
+      final all = await _repo.mcpRuntimeStatus();
+      if (!mounted) return;
+      final row = all[_item.name];
+      if (row != null) setState(() => _runtime = row);
+    } catch (_) {}
+  }
 
   String _label(Strings s, CapabilityAction action) => switch (action) {
     CapabilityAction.install => s.cphActionInstall,
@@ -389,7 +410,10 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
       for (final action in actions)
         if (!hasPrimary || action != primary) action,
     ];
-    final status = capabilityDetailStatus(s, item);
+    final runtime = _runtime;
+    final status = runtime == null
+        ? capabilityDetailStatus(s, item)
+        : mcpRuntimeStatusLabel(s, runtime.status);
     final needsEnv = !item.installed && item.env.any((field) => field.required);
 
     String? reason;
@@ -548,6 +572,12 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
           HermesSectionHeader(s.cphSecTechnical),
           HermesListGroup(
             children: [
+              if (runtime != null && runtime.tools > 0)
+                HermesListRow(
+                  icon: Icons.build_outlined,
+                  title: s.cphRowTools,
+                  value: s.cphMcpToolCount(runtime.tools),
+                ),
               if (item.transport.isNotEmpty)
                 HermesListRow(
                   icon: Icons.swap_horiz_rounded,

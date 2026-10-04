@@ -430,8 +430,8 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
         final servers = result['servers'];
         if (servers is! List) throw const FormatException('list expected');
         return {
-          for (final row in servers.map(McpRuntimeRow.tryParse))
-            if (row != null) row.name: row,
+          for (final row in servers.map(McpRuntimeRow.tryParse).nonNulls)
+            row.name: row,
         };
       });
 
