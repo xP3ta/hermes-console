@@ -877,9 +877,22 @@ void main() {
     );
     await tester.tap(newButton);
     await tester.pumpAndSettle();
+    final chooserBot = find.byKey(const ValueKey('mission-create-chooser-bot'));
+    expect(chooserBot, findsOneWidget);
+    // "New profile" wears the profile icon, as Profiles and the switcher do.
     expect(
-      find.byKey(const ValueKey('mission-create-chooser-bot')),
+      find.descendant(
+        of: chooserBot,
+        matching: find.byIcon(Icons.account_circle_outlined),
+      ),
       findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: chooserBot,
+        matching: find.byIcon(Icons.smart_toy_outlined),
+      ),
+      findsNothing,
     );
   });
 
@@ -2707,7 +2720,22 @@ void main() {
       find.byKey(const ValueKey('bot-mode-create-actions')),
       findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('bot-mode-create-bot')), findsOneWidget);
+    final orbitBot = find.byKey(const ValueKey('bot-mode-create-bot'));
+    expect(orbitBot, findsOneWidget);
+    expect(
+      find.descendant(
+        of: orbitBot,
+        matching: find.byIcon(Icons.account_circle_outlined),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: orbitBot,
+        matching: find.byIcon(Icons.smart_toy_outlined),
+      ),
+      findsNothing,
+    );
     expect(find.byKey(const ValueKey('bot-mode-create-room')), findsOneWidget);
     expect(find.byType(BottomSheet), findsNothing);
 
