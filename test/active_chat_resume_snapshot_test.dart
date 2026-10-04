@@ -2523,6 +2523,52 @@ void main() {
   });
 
   test(
+    'resume retenido fallido conserva el error_surface con su restablecimiento',
+    () async {
+      final gateway = _SnapshotGateway()
+        ..snapshot = _snapshot({
+          'session_id': 'runtime-retained-surface',
+          'session_key': 'stored-chat',
+          'messages': <Object>[],
+          'running': false,
+          'status': 'idle',
+          'inflight': {
+            'user': 'haz la tarea',
+            'assistant': '',
+            'streaming': false,
+            'error': 'Rate limited by the provider',
+            'status': 'error',
+            'recoverable': true,
+            'error_surface': {
+              'layer': 'provider',
+              'code': 'rate_limit',
+              'retryable': true,
+              'resets_at': 1790000000.5,
+              'message': 'Try again later',
+            },
+          },
+        });
+      final chat = _chat(
+        'resume-retained-surface',
+        gateway,
+        client: MockClient((_) async => http.Response('{"data":[]}', 200)),
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages();
+
+      expect(chat.messages.first['role'], 'assistant_error');
+      expect(chat.messages.first['_errorSurface'], {
+        'layer': 'provider',
+        'code': 'rate_limit',
+        'retryable': true,
+        'message': 'Try again later',
+        'resets_at': 1790000000.5,
+      });
+    },
+  );
+
+  test(
     'reanudación recupera un turno durable tras agotar la ventana offline',
     () async {
       final gateway = _SnapshotGateway();

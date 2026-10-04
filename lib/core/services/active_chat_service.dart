@@ -53,6 +53,8 @@ import '../models/home_widget_snapshot.dart';
 import '../models/interactive_prompt.dart';
 import '../models/prepared_turn.dart';
 import '../models/provider_auth_failure.dart';
+import '../models/turn_error_surface.dart' hide providerWaitText;
+import '../models/turn_error_surface.dart' as turn_error show providerWaitText;
 import '../models/session_activity.dart';
 import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
@@ -755,6 +757,12 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
       if (authFailure != null) {
         normalized[providerAuthFailureKey] = authFailure.toJson();
       }
+      normalized.addAll(
+        turnFailureMetadata(
+          errorSurface: message[turnErrorSurfaceKey],
+          billing: message[turnBillingBlockKey],
+        ),
+      );
       final legacyPartial = message[_legacyRecoveryPartialProjectionKey];
       if (legacyPartial is Map<String, dynamic>) {
         final normalizedPartial = normalizeTranscriptMessageForDisplay(
@@ -6087,6 +6095,35 @@ class ActiveChat {
   @visibleForTesting
   bool get activityWatchdogArmed => _activityWatchdogTimer != null;
   bool get noActivityHint => _noActivityHint;
+
+  /// Provider wait notice of the live turn ("⏳ waiting on provider…"), shown
+  /// on the turn's status line; null when the provider is not being waited on.
+  String? get providerWaitText => isStreaming ? _providerWaitText : null;
+  String? _providerWaitText;
+
+  void _setProviderWaitText(String? value) {
+    if (_providerWaitText == value) return;
+    _providerWaitText = value;
+    _emit(ActiveChatEvent.toolProgress);
+  }
+
+  /// Events that mean the provider answered (or the turn ended): Desktop's
+  /// `PROVIDER_WAIT_SUPERSEDING_EVENT_TYPES` plus the live tool and reasoning
+  /// frames, which also prove output.
+  static const _providerWaitSupersedingEvents = {
+    'message.start',
+    'message.delta',
+    'message.interim',
+    'message.complete',
+    'error',
+    'reasoning.delta',
+    'reasoning.available',
+    'tool.start',
+    'tool.progress',
+    'tool.generating',
+    'tool.complete',
+    'approval.request',
+  };
 
   // Live control state refreshed by reads and `session.control.update` pushes.
   SessionGoalSnapshot? _goal;
@@ -14621,6 +14658,7 @@ class ActiveChat {
     _terminalTimer?.cancel();
     _terminalTimer = null;
     _runTerminal = false;
+    _providerWaitText = null;
     _stopConfirmationState = StopConfirmationState.idle;
     _lastStopAffectedLiveTurn = true;
     _backgroundStopVerificationInFlight = false;
@@ -21300,6 +21338,9 @@ class ActiveChat {
       return;
     }
 
+    if (_providerWaitSupersedingEvents.contains(event.type)) {
+      _setProviderWaitText(null);
+    }
     switch (event.type) {
       case 'message.start':
         _clearDesktopCompactingIndicator();
@@ -21310,6 +21351,16 @@ class ActiveChat {
       case 'thinking.delta':
         final delta = payload['text'] ?? payload['delta'];
         if (delta is String && delta.isNotEmpty) {
+          // A provider wait explained by the core is turn status, not model
+          // reasoning; every other thinking frame is a spinner phrase.
+          final wait = event.type == 'thinking.delta'
+              ? turn_error.providerWaitText(delta)
+              : null;
+          if (wait != null) {
+            _setProviderWaitText(wait);
+            break;
+          }
+          _setProviderWaitText(null);
           _appendAssistantReasoningActivity(delta);
           state = ChatPipelineState.executing;
           _emit(ActiveChatEvent.toolProgress);
@@ -21426,6 +21477,10 @@ class ActiveChat {
                 'recoverable': payload['recoverable'],
               if (authFailure != null)
                 providerAuthFailureKey: authFailure.toJson(),
+              ...turnFailureMetadata(
+                errorSurface: payload['error_surface'],
+                billing: payload['billing'],
+              ),
             },
           );
           break;

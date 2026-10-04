@@ -18,6 +18,7 @@ import 'package:hermes_android/core/models/desktop_session_config.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
+import 'package:hermes_android/core/models/turn_error_surface.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/json_rpc_wire.dart';
@@ -48,6 +49,27 @@ final class _Consumer {
     this.parse, {
     this.semanticallyEmpty,
   });
+}
+
+bool _renderableSurface(Object? surface) =>
+    surface is Map &&
+    const {
+      'provider',
+      'endpoint',
+      'streaming',
+      'auth',
+      'billing',
+      'gateway',
+      'runtime',
+      'disk',
+    }.contains(surface['layer']);
+
+bool _renderableBilling(Object? billing) {
+  if (billing is! Map) return false;
+  final label = billing['provider_label'];
+  return label is String &&
+      label.trim().isNotEmpty &&
+      label.trim().length <= 128;
 }
 
 String _id(Object? value, String fallback) =>
@@ -331,6 +353,31 @@ final List<_Consumer> _consumers = [
     }, expectedKey: DesktopSessionConfigKey.model);
     return true;
   }),
+  // A failed turn: the card reads `error_surface` and `billing`, each on its
+  // own (`turnFailureMetadata`).
+  _Consumer(
+    'event',
+    'message.complete',
+    (c) => c.eventPayloadSchema('message.complete'),
+    (s) {
+      final metadata = turnFailureMetadata(
+        errorSurface: s['error_surface'],
+        billing: s['billing'],
+      );
+      if (_renderableSurface(s['error_surface']) &&
+          metadata[turnErrorSurfaceKey] == null) {
+        return false;
+      }
+      return !(_renderableBilling(s['billing']) &&
+          metadata[turnBillingBlockKey] == null);
+    },
+    // Empty only when neither descriptor could be rendered: a layer Console
+    // does not know and a billing block that names no provider.
+    semanticallyEmpty: (s) =>
+        (s['error_surface'] is Map || s['billing'] is Map) &&
+        !_renderableSurface(s['error_surface']) &&
+        !_renderableBilling(s['billing']),
+  ),
   _Consumer(
     'result',
     'session.events.since',
