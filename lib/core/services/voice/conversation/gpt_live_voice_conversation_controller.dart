@@ -11,12 +11,12 @@ import '../live/live_rtc_transport.dart';
 import '../live/voice_live_api.dart';
 import '../live/voice_live_protocol.dart';
 import '../live/voice_live_session.dart';
-import '../session/voice_ui_surface.dart';
 import '../spoken_text.dart';
 import '../voice_phase.dart';
 import '../voice_service.dart' show SttCheck, SttStatus;
 import '../voice_settings.dart' show SttEngineKind;
 import 'local_voice_command_detector.dart';
+import 'voice_conversation_engine.dart';
 
 /// Why the app ends a live session on its own. None of them reconnects: the
 /// stage stays open with a note and a Retry the user can tap.
@@ -24,11 +24,8 @@ enum LiveSessionEnd {
   /// The app went to the background or the screen locked.
   appBackground,
 
-  /// Privacy mode asked every microphone to close.
+  /// Privacy (the app lock) asked every microphone to close.
   privacy,
-
-  /// The app lock covered the chat.
-  appLock,
 
   /// The chat route was left.
   routeLeave,
@@ -40,6 +37,13 @@ enum LiveSessionEnd {
   audioInterrupted,
 }
 
+/// A [VoiceConversationEngine] that can also be torn down by the app with a
+/// stated reason.
+abstract interface class LiveVoiceConversationEngine
+    implements VoiceConversationEngine {
+  Future<void> endSession(LiveSessionEnd reason);
+}
+
 /// GPT-Live conversation on the same [VoiceUiSurface] the chained engine uses.
 ///
 /// The voice model talks to the user over WebRTC; every request that needs
@@ -48,7 +52,7 @@ enum LiveSessionEnd {
 /// model as quiet context and commentary. Every exit goes through [_endSession]
 /// or [exit]; nothing here reconnects by itself.
 class GptLiveVoiceConversationController extends ChangeNotifier
-    implements VoiceUiSurface {
+    implements LiveVoiceConversationEngine {
   GptLiveVoiceConversationController({
     required this._apiFactory,
     required this._transportFactory,
@@ -188,7 +192,11 @@ class GptLiveVoiceConversationController extends ChangeNotifier
     return VoicePhase.listening;
   }
 
+  @override
+  String? get sessionId => active ? _chat?.serverSessionId : null;
+
   /// A live session or its start still holds the microphone.
+  @override
   bool get audioLeaseRequired => active && (_session != null || _starting);
 
   Strings get _strings => lookupStrings(Locale(_languageCode()));
@@ -324,6 +332,7 @@ class GptLiveVoiceConversationController extends ChangeNotifier
   }
 
   /// Tears the session down at once and leaves the stage open with a note.
+  @override
   Future<void> endSession(LiveSessionEnd reason) async {
     final session = _session;
     if (!active || session == null) return;
@@ -678,6 +687,35 @@ class GptLiveVoiceConversationController extends ChangeNotifier
     if (chat != null) unawaited(chat.cancel());
     _notify();
   }
+
+  // ---- app lifecycle ----
+
+  /// Privacy (app lock) closes the microphone for good: a live session never
+  /// resumes by itself, the user restarts it from the stage.
+  @override
+  Future<void> suspendForPrivacy() => endSession(LiveSessionEnd.privacy);
+
+  /// `main.dart` calls this only when the user did not opt in to keep voice
+  /// running with the screen locked.
+  @override
+  Future<void> onAppBackgrounded() => endSession(LiveSessionEnd.appBackground);
+
+  // The live stream has no half-duplex capture to arm or disarm, and a lost
+  // session is not revived on return.
+  @override
+  Future<void> suspendFullDuplexForAppBackground() async {}
+
+  @override
+  Future<void> resumeFullDuplexCaptureIfNeeded() async {}
+
+  @override
+  void onAppResumed({required bool appUnlocked}) {}
+
+  @override
+  Future<void> pauseFromSystemControl() async => pauseConversation();
+
+  @override
+  Future<void> resumeFromSystemControl() async => playConversation();
 
   @override
   void pauseForApproval() {
