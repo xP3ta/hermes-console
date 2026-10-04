@@ -387,4 +387,39 @@ void main() {
     expect(server.searches, ['QA pi', 'QA pi']);
     expect(find.text('QA ping'), findsOneWidget);
   });
+
+  testWidgets('a search hit in Conversations paints each matched term bold '
+      'in the title colour over the muted preview', (tester) async {
+    final server = _Server({
+      's1': _row('s1', 'QA ping'),
+      's2': _row('s2', 'Other'),
+    });
+    await pump(tester, server);
+    await _pumpUntil(tester, find.text('Other'));
+
+    server.snippets = {'s1': 'say >>>9484<<< and >>>more<<< end'};
+    await tester.enterText(find.byType(TextField).first, '9484');
+    await tester.pump(const Duration(milliseconds: 300));
+    final finder = find.byKey(const ValueKey('session-snippet-s1'));
+    await _pumpUntil(tester, finder);
+    expect(server.searches, ['9484']);
+
+    final colors = Theme.of(tester.element(finder)).hermes;
+    final snippet = tester.widget<Text>(finder);
+    expect(snippet.style?.color, colors.textSecondary);
+    final spans = (snippet.textSpan! as TextSpan).children!.cast<TextSpan>();
+    expect(
+      [for (final span in spans) span.text],
+      ['say ', '9484', ' and ', 'more', ' end'],
+    );
+    for (final span in spans) {
+      final matched = span.text == '9484' || span.text == 'more';
+      expect(span.style?.fontWeight, matched ? FontWeight.w700 : null);
+      expect(span.style?.color, matched ? colors.textPrimary : null);
+    }
+    final painted = tester.widget<RichText>(
+      find.descendant(of: finder, matching: find.byType(RichText)),
+    );
+    expect(painted.text.toPlainText(), 'say 9484 and more end');
+  });
 }
