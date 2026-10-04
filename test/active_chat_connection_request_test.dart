@@ -53,6 +53,7 @@ class _Gateway implements HermesDesktopGateway, HermesConnectionRequestGateway {
     storedSessionId: storedSessionId,
     created: false,
     pendingConnection: pendingOnResume,
+    pendingConnectionProvided: true,
   );
 
   @override

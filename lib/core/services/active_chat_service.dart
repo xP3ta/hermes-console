@@ -8360,11 +8360,19 @@ class ActiveChat {
     );
   }
 
-  void _restorePendingConnection(DesktopSessionSnapshot snapshot) {
-    final pending = snapshot.pendingConnection;
-    if (pending == null) return;
+  void _restorePendingConnection(
+    DesktopSessionSnapshot snapshot, {
+    required ConnectionRequest? heldAtResumeStart,
+  }) {
+    if (!snapshot.pendingConnectionProvided ||
+        snapshot.runtimeSessionId != _desktopRuntimeSessionId) {
+      return;
+    }
     _setConnectionCard(
-      _connectionCard.onResume(pending: pending, heldAtStart: null),
+      _connectionCard.onResume(
+        pending: snapshot.pendingConnection,
+        heldAtStart: heldAtResumeStart,
+      ),
     );
   }
 
@@ -9965,6 +9973,7 @@ class ActiveChat {
       // wait for the existing resume/activate to resolve its runtime identity.
       ({Object? error, SessionMessagesPage? value})?
       prefetchCompletedBeforeResume;
+      final connectionRequestAtResumeStart = _connectionCard.request;
       final prefetchContext = _captureSessionMessagesPageRead(
         consumer: _SessionMessagesPageConsumer.lifecyclePrefetch,
         loadEpoch: loadEpoch,
@@ -10392,7 +10401,10 @@ class ActiveChat {
         _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
         _hydrateAgentTasks(snapshot.todoState);
         _reconcileSubagentsFromTranscript();
-        _restorePendingClarify(snapshot);
+        _restorePendingClarify(
+          snapshot,
+          connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+        );
         _restorePendingApproval(
           snapshot,
           expectedGeneration: loadApprovalGeneration,
@@ -15770,6 +15782,7 @@ class ActiveChat {
         ? 'default'
         : previousProfile;
     final approvalGeneration = _approvalGeneration;
+    final connectionRequestAtResumeStart = _connectionCard.request;
     try {
       DesktopSessionSnapshot snapshot;
       var bindingOrigin = _DesktopRuntimeBindingOrigin.availabilityResumed;
@@ -15975,7 +15988,10 @@ class ActiveChat {
 
       // All destinations are fixed before callbacks. A callback can invalidate
       // admission, but can never be recaptured as authority for this operation.
-      _restorePendingClarify(snapshot);
+      _restorePendingClarify(
+        snapshot,
+        connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+      );
       _restorePendingApproval(snapshot, expectedGeneration: approvalGeneration);
       if (infoChanged || snapshot.info != const DesktopSessionRuntimeInfo()) {
         _emit(ActiveChatEvent.sessionInfo);
@@ -18030,6 +18046,7 @@ class ActiveChat {
         final draftSessionEpoch = _desktopSessionEpoch;
         final draftBindEpoch = _desktopBindEpoch;
         final draftWasUnbound = _desktopStoredSessionId == null;
+        final connectionRequestAtResumeStart = _connectionCard.request;
         final binding = await _bindDesktopSessionForFirstSubmit(
           gateway,
           profile: profile,
@@ -18079,7 +18096,10 @@ class ActiveChat {
         _desktopStoredSessionKnownMissing = false;
         _adoptDesktopRuntime(runtimeId, info: binding.info);
         _hydrateAgentTasks(binding.todoState);
-        _restorePendingConnection(binding);
+        _restorePendingConnection(
+          binding,
+          heldAtResumeStart: connectionRequestAtResumeStart,
+        );
         boundOrAvailabilityResumedForSubmit = true;
         if (binding.info != _desktopRuntimeInfo) {
           _desktopRuntimeInfo = binding.info;
@@ -18938,6 +18958,7 @@ class ActiveChat {
         if (!isCurrent()) return;
       }
       _publishTransportState(ChatTransportState.reconnecting);
+      final connectionRequestAtResumeStart = _connectionCard.request;
       try {
         DesktopRosterBoundRecovery? recovery;
         late final DesktopSessionSnapshot snapshot;
@@ -19001,7 +19022,10 @@ class ActiveChat {
             running: snapshot.running,
           );
           _usingDesktopGateway = true;
-          _restorePendingClarify(snapshot);
+          _restorePendingClarify(
+            snapshot,
+            connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+          );
           _restorePendingApproval(snapshot);
           _emit(ActiveChatEvent.sessionInfo);
           return;
@@ -19026,7 +19050,10 @@ class ActiveChat {
         _usingDesktopGateway = true;
         // The question the agent is waiting on survived the cut only on the
         // server: bring it back with the runtime.
-        _restorePendingClarify(snapshot);
+        _restorePendingClarify(
+          snapshot,
+          connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+        );
         _restorePendingApproval(snapshot);
         _emit(ActiveChatEvent.sessionInfo);
         return;
@@ -19371,6 +19398,7 @@ class ActiveChat {
           debugPrint('[active-chat] connected');
           debugPrint('[active-chat] resume start');
           final recoveryApprovalGeneration = _approvalGeneration;
+          final connectionRequestAtResumeStart = _connectionCard.request;
           final binding = await _desktopRecoveryOperationBeforeDeadline(
             _resumeDesktopSessionForRecovery(
               gateway,
@@ -19413,7 +19441,10 @@ class ActiveChat {
                 expectedGeneration: recoveryApprovalGeneration,
                 liveSnapshotAbsenceClears: true,
               );
-              _restorePendingClarify(binding);
+              _restorePendingClarify(
+                binding,
+                connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+              );
               _armActivityWatchdog();
               _emit(ActiveChatEvent.waiting);
               return;
@@ -19467,7 +19498,10 @@ class ActiveChat {
                 expectedGeneration: recoveryApprovalGeneration,
                 liveSnapshotAbsenceClears: true,
               );
-              _restorePendingClarify(binding);
+              _restorePendingClarify(
+                binding,
+                connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+              );
               _armActivityWatchdog();
               _emit(ActiveChatEvent.toolProgress);
               return;
@@ -19584,6 +19618,7 @@ class ActiveChat {
         );
         if (connected == null || !_canRecoverTurn(turnEpoch)) return;
         final storedSessionId = _desktopStoredSessionId ?? serverSessionId;
+        final connectionRequestAtResumeStart = _connectionCard.request;
         DesktopRosterBoundRecovery? rosterRecovery;
         DesktopSessionSnapshot? snapshot;
         if (gateway is HermesDesktopRosterBoundRecoveryGateway) {
@@ -19697,6 +19732,7 @@ class ActiveChat {
         _applyDesktopRecoverySnapshot(
           snapshot,
           turnEpoch,
+          connectionRequestAtResumeStart: connectionRequestAtResumeStart,
           ownedTurnStillOpen: ownedTurnStillOpen,
         );
         return;
@@ -19918,6 +19954,7 @@ class ActiveChat {
   void _applyDesktopRecoverySnapshot(
     DesktopSessionSnapshot snapshot,
     int turnEpoch, {
+    required ConnectionRequest? connectionRequestAtResumeStart,
     bool ownedTurnStillOpen = false,
   }) {
     if (!_canRecoverTurn(turnEpoch)) return;
@@ -19992,7 +20029,10 @@ class ActiveChat {
       _desktopStartedAt = snapshot.startedAt;
       _desktopTurnStartedAt = null;
       _replaceDesktopAcceptedQueue(snapshot.queued?.user);
-      _restorePendingClarify(snapshot);
+      _restorePendingClarify(
+        snapshot,
+        connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+      );
       _restorePendingApproval(snapshot);
       _usingDesktopGateway = true;
       _degradeLegacyTurnRecovery(
@@ -20118,7 +20158,10 @@ class ActiveChat {
         ? snapshot.resolvedTurnStartedAt
         : null;
     _replaceDesktopAcceptedQueue(projection.queuedUser);
-    _restorePendingClarify(snapshot);
+    _restorePendingClarify(
+      snapshot,
+      connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+    );
 
     if (projection.failed) {
       _sealRecoveredLiveActivity(completed: false);
@@ -21721,10 +21764,16 @@ class ActiveChat {
     }
   }
 
-  void _restorePendingClarify(DesktopSessionSnapshot snapshot) {
+  void _restorePendingClarify(
+    DesktopSessionSnapshot snapshot, {
+    required ConnectionRequest? connectionRequestAtResumeStart,
+  }) {
     _reconcilePendingClarifySnapshot(snapshot, unlockResponding: false);
     _restoreOpenServerRequests(snapshot);
-    _restorePendingConnection(snapshot);
+    _restorePendingConnection(
+      snapshot,
+      heldAtResumeStart: connectionRequestAtResumeStart,
+    );
   }
 
   Future<void>? _openRequestRehydration;

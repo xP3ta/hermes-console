@@ -719,6 +719,7 @@ class ActivityDoneSection extends StatelessWidget {
     this.dense = false,
     this.muted = false,
     this.showTitle = true,
+    this.rowAttachments = const {},
     super.key,
   });
 
@@ -728,6 +729,7 @@ class ActivityDoneSection extends StatelessWidget {
   final bool dense;
   final bool muted;
   final bool showTitle;
+  final Map<String, Widget> rowAttachments;
 
   @override
   Widget build(BuildContext context) {
@@ -745,7 +747,7 @@ class ActivityDoneSection extends StatelessWidget {
             title: s.liveSectionDone,
             keyName: 'activity-done-title',
           ),
-        for (final step in shown)
+        for (final step in shown) ...[
           ActivityStepRow(
             key: ValueKey('activity-done-${step.id}'),
             step: step,
@@ -753,6 +755,12 @@ class ActivityDoneSection extends StatelessWidget {
             dense: dense,
             muted: muted,
           ),
+          if (rowAttachments.containsKey(step.id))
+            KeyedSubtree(
+              key: ValueKey('activity-step-attachment-${step.id}'),
+              child: rowAttachments[step.id]!,
+            ),
+        ],
         if (hidden > 0)
           Padding(
             padding: const EdgeInsets.only(top: 4),

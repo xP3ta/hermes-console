@@ -43,6 +43,7 @@ class DesktopSessionSnapshot {
   /// session, so a client that missed `connection.request` restores the card
   /// with the server's deadline. Null when absent, null or unusable.
   final ConnectionRequest? pendingConnection;
+  final bool pendingConnectionProvided;
 
   /// `open_requests`: server→client requests (clarify, approval, sudo, …)
   /// still waiting on this session. Hermes only sends each request frame once,
@@ -83,6 +84,7 @@ class DesktopSessionSnapshot {
     this.pendingApproval,
     this.pendingApprovalProvided = false,
     this.pendingConnection,
+    this.pendingConnectionProvided = false,
     this.openRequests = const [],
     this.todoState,
   });
@@ -111,6 +113,7 @@ class DesktopSessionSnapshot {
     pendingApproval: pendingApproval,
     pendingApprovalProvided: pendingApprovalProvided,
     pendingConnection: pendingConnection,
+    pendingConnectionProvided: pendingConnectionProvided,
     openRequests: openRequests,
     todoState: todoState,
     raw: raw,
@@ -263,6 +266,7 @@ class DesktopSessionSnapshot {
       pendingApproval: _stringKeyedMap(json['pending_approval']),
       pendingApprovalProvided: json.containsKey('pending_approval'),
       pendingConnection: normalizeConnectionRequest(json['pending_connection']),
+      pendingConnectionProvided: json.containsKey('pending_connection'),
       openRequests: _openServerRequests(json['open_requests']),
       todoState: AgentTaskList.tryParse(json['todo_state']),
       // Keep only unknown, non-payload extension fields. The 0.19 snapshot can

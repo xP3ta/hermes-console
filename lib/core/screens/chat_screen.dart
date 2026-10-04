@@ -12358,18 +12358,6 @@ class _ChatScreenState extends State<ChatScreen>
                                         >()
                                         ?.companion,
                                   ),
-                                if (_chat.connectionRequest != null)
-                                  ChatConnectionCard(
-                                    request: _chat.connectionRequest!,
-                                    canAct: _chat.canActOnConnection,
-                                    onOpenLink: _openConnectionLink,
-                                    onSkip: (name) => _answerConnection(
-                                      () => _chat.skipConnectionTarget(name),
-                                    ),
-                                    onContinue: () => _answerConnection(
-                                      _chat.continueConnection,
-                                    ),
-                                  ),
                                 if (_chat.desktopContinuationNoticeVisible)
                                   Semantics(
                                     container: true,
@@ -16041,7 +16029,30 @@ class _ChatScreenState extends State<ChatScreen>
       onSuggestionSelected: suggestionsEnabled
           ? (suggestion) => _useAssistantSuggestion(msg, suggestion)
           : null,
+      connectionCard: role == 'assistant'
+          ? _connectionCardFor(metadataMsg)
+          : null,
       compact: compact,
+    );
+  }
+
+  _ConnectionCardBinding? _connectionCardFor(Map<String, dynamic> metadata) {
+    final request = _chat.connectionRequest;
+    if (request == null) return null;
+    final belongsToMessage = normalizeAssistantActivityTrace(
+      metadata[assistantActivityTraceKey],
+    ).any((step) => step['id']?.toString() == request.toolCallId);
+    if (!belongsToMessage) return null;
+    return _ConnectionCardBinding(
+      toolCallId: request.toolCallId,
+      card: ChatConnectionCard(
+        request: request,
+        canAct: _chat.canActOnConnection,
+        onOpenLink: _openConnectionLink,
+        onSkip: (name) =>
+            _answerConnection(() => _chat.skipConnectionTarget(name)),
+        onContinue: () => _answerConnection(_chat.continueConnection),
+      ),
     );
   }
 
@@ -16135,6 +16146,7 @@ class _ChatScreenState extends State<ChatScreen>
       isStreaming: frame.isStreaming,
       companionMood: frame.isStreaming ? _liveCompanionMood() : null,
       waitingForUser: frame.isStreaming && _turnWaitsForUser,
+      connectionCard: _connectionCardFor(metadata),
       compact: compact,
       performanceProbe: widget.performanceProbe,
     );
@@ -17700,6 +17712,7 @@ class _MessageBubble extends StatelessWidget {
   final ValueChanged<String>? onSaveEdit;
   final VoidCallback? onRegenerate;
   final AssistantSuggestionCallback? onSuggestionSelected;
+  final _ConnectionCardBinding? connectionCard;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
 
@@ -17732,6 +17745,7 @@ class _MessageBubble extends StatelessWidget {
     this.onSaveEdit,
     this.onRegenerate,
     this.onSuggestionSelected,
+    this.connectionCard,
     this.compact = false,
     this.performanceProbe,
   });
@@ -17773,6 +17787,7 @@ class _MessageBubble extends StatelessWidget {
             technicalDetails: technicalDetails,
             onRegenerate: onRegenerate,
             onSuggestionSelected: onSuggestionSelected,
+            connectionCard: connectionCard,
             compact: compact,
             performanceProbe: performanceProbe,
           );
@@ -19110,6 +19125,13 @@ class _AssistantLiveHeader extends StatelessWidget {
   }
 }
 
+final class _ConnectionCardBinding {
+  final String toolCallId;
+  final Widget card;
+
+  const _ConnectionCardBinding({required this.toolCallId, required this.card});
+}
+
 class _AssistantMessage extends StatelessWidget {
   final String content;
   final bool verbose;
@@ -19130,6 +19152,7 @@ class _AssistantMessage extends StatelessWidget {
   final List<String> technicalDetails;
   final VoidCallback? onRegenerate;
   final AssistantSuggestionCallback? onSuggestionSelected;
+  final _ConnectionCardBinding? connectionCard;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
 
@@ -19153,6 +19176,7 @@ class _AssistantMessage extends StatelessWidget {
     this.technicalDetails = const [],
     this.onRegenerate,
     this.onSuggestionSelected,
+    this.connectionCard,
     this.compact = false,
     this.performanceProbe,
   });
@@ -19464,6 +19488,9 @@ class _AssistantMessage extends StatelessWidget {
               waitingForUser: activityActive && waitingForUser,
               stopped: stopped,
               duration: _assistantActivityDuration(metadata),
+              rowAttachments: connectionCard == null
+                  ? const {}
+                  : {connectionCard!.toolCallId: connectionCard!.card},
               headerBuilder: (context, summary, details) => Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
