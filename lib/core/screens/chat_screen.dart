@@ -112,7 +112,9 @@ import '../services/turn_outbox_store.dart';
 import '../services/generated_image_service.dart';
 import '../services/generated_media_service.dart';
 import '../services/generated_artifact_registry.dart';
+import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
+import '../services/dashboard_session_timeline.dart';
 import '../services/session_archive.dart';
 import '../services/session_artifact_download_service.dart';
 import '../services/session_config_reducer.dart';
@@ -172,6 +174,7 @@ import '../models/turn_error_surface.dart';
 import 'recovery_center_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
+import 'chat_prompt_index.dart';
 import 'chat_render_projection.dart';
 import '../widgets/action_approval.dart';
 import '../widgets/agent_task_widgets.dart';
@@ -221,6 +224,7 @@ import '../widgets/voice_stage.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/chat_find_bar.dart';
+import '../widgets/chat_prompt_sheet.dart';
 import '../utils/transcript_search.dart';
 
 /// El streaming sustituye mapas de mensaje completos. Esta caché usa identidad
@@ -1037,6 +1041,7 @@ enum _ModelSource { desktop, bridge, dashboard, gateway }
 enum _ChatControlAction {
   permissions,
   refresh,
+  prompts,
   content,
   artifacts,
   details,
@@ -1272,6 +1277,12 @@ class ChatScreen extends StatefulWidget {
   final DashboardClient Function(SavedConnection connection)?
   providerReauthClientFactory;
 
+  /// Dashboard client for the optional prompt index read by the Prompts list;
+  /// tests inject a fake Dashboard.
+  @visibleForTesting
+  final DashboardClient Function(SavedConnection connection)?
+  promptTimelineClientFactory;
+
   /// Caché de identidad que Mission Control ya mantiene para Bot Chat.
   final MissionProfileAvatarCache? missionAvatarCache;
 
@@ -1316,6 +1327,7 @@ class ChatScreen extends StatefulWidget {
     this.restoredFromColdStart = false,
     this.newChatWorkspace,
     this.providerReauthClientFactory,
+    this.promptTimelineClientFactory,
     this.missionAvatarCache,
     this.missionBotProfile,
     this.performanceProbe,
@@ -1829,6 +1841,108 @@ class _ChatScreenState extends State<ChatScreen>
   // unread row. Each walk step is a real scroll offset; painting them would
   // show the transcript jumping upward screen by screen before it lands.
   final ValueNotifier<bool> _transcriptConcealed = ValueNotifier(false);
+
+  // Sticky prompt: the prompt of the turn whose reply spans the viewport top.
+  // Recomputed at most once per frame (post-frame, scheduled from the scroll
+  // listener and from a new transcript snapshot), reading only the attached
+  // anchors plus the snapshot the last build used: never a transcript walk
+  // and never a screen setState.
+  final ValueNotifier<Map<String, dynamic>?> _stickyPrompt = ValueNotifier(
+    null,
+  );
+  List<Map<String, dynamic>> _stickySource = const [];
+  Map<Map<String, dynamic>, int>? _stickyIndex;
+
+  /// Laid-out slices of long replies that own no reader anchor, with the
+  /// message they belong to. Only the sticky prompt reads it.
+  final Map<RenderBox, Map<String, dynamic>> _stickySliceAnchors =
+      Map<RenderBox, Map<String, dynamic>>.identity();
+  bool _stickyUpdateScheduled = false;
+
+  void _scheduleStickyPromptUpdate() {
+    if (_stickyUpdateScheduled || _disposed) return;
+    _stickyUpdateScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _stickyUpdateScheduled = false;
+      if (_disposed || !mounted) return;
+      final next =
+          _findOpen ||
+              _transcriptConcealed.value ||
+              !_scrollController.hasClients ||
+              _stickySource.isEmpty
+          ? null
+          : _stickyPromptCandidate();
+      if (!identical(_stickyPrompt.value, next)) _stickyPrompt.value = next;
+    });
+  }
+
+  /// True for user rows painted as a system chip (kanban work, skill
+  /// invocation, compaction hand-off, job notices): they are not prompts.
+  bool _isSystemChipRow(Map<String, dynamic> message) =>
+      _jobChipLabel(message['content'] as String, Strings.of(context)) != null;
+
+  /// The prompt to pin, or null when the reply at the top has none loaded or
+  /// the prompt's own bubble is (partly) on screen.
+  Map<String, dynamic>? _stickyPromptCandidate() {
+    Map<String, dynamic>? topMessage;
+    var topOffset = double.infinity;
+    void consider(RenderBox anchor, Map<String, dynamic> message) {
+      final top = _ChatStreamingViewportLock._visualOffsetInViewport(anchor);
+      final height = anchor is ChatAnswerAnchorRenderBox
+          ? anchor.laidOutHeight
+          : null;
+      if (top == null || height == null || top + height <= 0) return;
+      if (top < topOffset) {
+        topOffset = top;
+        topMessage = message;
+      }
+    }
+
+    for (final entry in _messageAnchors.entries) {
+      consider(entry.value, entry.key);
+    }
+    for (final entry in _stickySliceAnchors.entries) {
+      consider(entry.key, entry.value);
+    }
+    if (topMessage == null || topOffset > chatPromptActiveSlack) return null;
+    final source = _stickySource;
+    var index = _stickyIndex;
+    if (index == null) {
+      index = Map<Map<String, dynamic>, int>.identity();
+      for (var i = 0; i < source.length; i++) {
+        index[source[i]] = i;
+      }
+      _stickyIndex = index;
+    }
+    final topIndex = index[topMessage];
+    if (topIndex == null) return null;
+    final promptIndex = stickyPromptIndex(
+      source,
+      topIndex,
+      isSystemRow: _isSystemChipRow,
+    );
+    if (promptIndex == null) return null;
+    final prompt = source[promptIndex];
+    final promptAnchor = _messageAnchors[prompt];
+    final promptTop = _ChatStreamingViewportLock._visualOffsetInViewport(
+      promptAnchor,
+    );
+    final promptHeight = promptAnchor is ChatAnswerAnchorRenderBox
+        ? promptAnchor.laidOutHeight
+        : null;
+    if (promptTop != null &&
+        promptHeight != null &&
+        promptTop + promptHeight > 0) {
+      return null;
+    }
+    return prompt;
+  }
+
+  Future<void> _revealStickyPrompt(Map<String, dynamic> prompt) async {
+    final target = chatRefreshFindAnchorMessage(prompt, _messages) ?? prompt;
+    _freezeStreamingFollow();
+    await _revealTranscriptMessage(target);
+  }
 
   /// Walk budget of the entry landing: long enough to build a first unread
   /// row several screens up, short enough (~330 ms) that a blank transcript
@@ -2423,6 +2537,7 @@ class _ChatScreenState extends State<ChatScreen>
     _attachmentListener = _applyAttachmentProjection;
     _sessionUsageSnapshot = widget.session;
     _compaction.addListener(_onCompactionChanged);
+    _transcriptConcealed.addListener(_scheduleStickyPromptUpdate);
     WidgetsBinding.instance.addObserver(this);
     unawaited(_loadSharedArchive());
     _loadPrefs();
@@ -7296,7 +7411,10 @@ class _ChatScreenState extends State<ChatScreen>
     _liveAssistantFrame.dispose();
     _scrollToBottomVisibility.dispose();
     _newWhileAway.dispose();
-    _transcriptConcealed.dispose();
+    _transcriptConcealed
+      ..removeListener(_scheduleStickyPromptUpdate)
+      ..dispose();
+    _stickyPrompt.dispose();
     _findStatus.dispose();
     _findActiveMessage.dispose();
     _activityPillExtent.dispose();
@@ -7428,6 +7546,7 @@ class _ChatScreenState extends State<ChatScreen>
       _cancelMessageRefreshViewportAnchor();
     }
     _scheduleMessageRefreshViewportReanchor();
+    _scheduleStickyPromptUpdate();
     // Lista reverse:true → offset 0 es el FONDO (mensaje más nuevo) y
     // maxScrollExtent es lo más antiguo. "Estás abajo" = cerca de
     // minScrollExtent; medir contra maxScrollExtent detectaría lo contrario
@@ -10682,6 +10801,7 @@ class _ChatScreenState extends State<ChatScreen>
             refresh: strings.chaUpdateTitle,
             artifacts: strings.chaArtifactsAction,
             content: strings.sa1215ContentAction,
+            prompts: strings.pj1215PromptsAction,
             details: strings.chaSessionDetailsAction,
             cron: strings.crnOpenFromConversation,
             recovery: strings.chaControlRecovery,
@@ -10702,6 +10822,7 @@ class _ChatScreenState extends State<ChatScreen>
           onRefresh: () => select(_ChatControlAction.refresh),
           onArtifacts: () => select(_ChatControlAction.artifacts),
           onContent: () => select(_ChatControlAction.content),
+          onPrompts: () => select(_ChatControlAction.prompts),
           onDetails: () => select(_ChatControlAction.details),
           onCron: () => select(_ChatControlAction.cron),
           onRecovery:
@@ -10727,6 +10848,8 @@ class _ChatScreenState extends State<ChatScreen>
         if (policy != null) _showModeSheet(policy);
       case _ChatControlAction.refresh:
         unawaited(_fetchMessages());
+      case _ChatControlAction.prompts:
+        unawaited(_showPromptSheet());
       case _ChatControlAction.content:
         unawaited(_openChatContent());
       case _ChatControlAction.artifacts:
@@ -10744,6 +10867,173 @@ class _ChatScreenState extends State<ChatScreen>
       case _ChatControlAction.delete:
         unawaited(_deleteCurrentChat());
     }
+  }
+
+  /// Epoch of the open prompt list: a read that answers after the sheet was
+  /// closed (or the screen left) is dropped.
+  int _promptSheetEpoch = 0;
+
+  /// Rows the "Prompts" backfill may load to reach an unloaded prompt, the
+  /// same bound as the new-since-you-left lookback.
+  static const int _promptBackfillRows = 500;
+
+  /// Pages of the Dashboard index one open of the list may read.
+  static const int _promptIndexMaxPages = 3;
+
+  /// Lists the chat's prompts and reveals the chosen one. The loaded ones are
+  /// derived once per open; when older history exists, the Dashboard prompt
+  /// index adds the unloaded ones (one read on open, more only on request).
+  Future<void> _showPromptSheet() async {
+    final strings = Strings.of(context);
+    final epoch = ++_promptSheetEpoch;
+    final entries = deriveChatPromptEntries(
+      _messages,
+      isSystemRow: _isSystemChipRow,
+    );
+    final tops = <double?>[
+      for (final entry in entries)
+        _ChatStreamingViewportLock._visualOffsetInViewport(
+          _messageAnchors[entry.message],
+        ),
+    ];
+    final active = activeChatPromptIndex(tops);
+    final oldestLoaded = _messages.isEmpty
+        ? null
+        : chatPromptRowId(_messages.last);
+    final remote = <({int rowId, String preview})>[];
+    var items = mergeChatPromptItems(
+      entries,
+      remote,
+      oldestLoadedRowId: oldestLoaded,
+    );
+    var hasMore = false;
+    var loading = _chat.hasEarlierMessages;
+    var pages = 0;
+    int? cursor;
+    bool open() => mounted && epoch == _promptSheetEpoch;
+
+    ChatPromptSheetModel snapshot() => ChatPromptSheetModel(
+      previews: [for (final item in items) item.preview],
+      activeIndex: active,
+      hasMore: hasMore,
+      loading: loading,
+    );
+
+    final model = ValueNotifier<ChatPromptSheetModel>(snapshot());
+
+    // One client for the whole sheet, closed with it; one read at a time.
+    DashboardClient? indexClient;
+    var reading = false;
+
+    Future<void> readIndexPage() async {
+      if (reading) return;
+      reading = true;
+      loading = true;
+      model.value = snapshot();
+      try {
+        final client = indexClient ??=
+            widget.promptTimelineClientFactory?.call(widget.connection) ??
+            DashboardClient.lazy(widget.connection);
+        final page = await client.getSessionTimelinePage(
+          _chat.storedSessionId ?? widget.session.id,
+          profile: ProfileReadTicket.fixed(widget.session.profile ?? '').name,
+          afterRowId: cursor,
+        );
+        if (!open()) return;
+        if (page == null) {
+          hasMore = false;
+        } else {
+          remote.addAll([
+            for (final entry in page.entries)
+              (rowId: entry.rowId, preview: entry.preview),
+          ]);
+          pages += 1;
+          cursor = page.nextCursor;
+          hasMore = page.hasMore && pages < _promptIndexMaxPages;
+        }
+      } on Object {
+        // An optional read: the loaded prompts stay usable.
+        if (!open()) return;
+        hasMore = false;
+      }
+      reading = false;
+      loading = false;
+      items = mergeChatPromptItems(
+        entries,
+        remote,
+        oldestLoadedRowId: oldestLoaded,
+      );
+      model.value = snapshot();
+    }
+
+    if (loading) unawaited(readIndexPage());
+    final picked = await showHermesFloatingSurface<int>(
+      context: context,
+      surfaceKey: const ValueKey('chat-prompt-dialog'),
+      maxWidth: 480,
+      builder: (dialogContext) => ChatPromptSheet(
+        title: strings.pj1215PromptsAction,
+        emptyLabel: strings.pj1215PromptsEmpty,
+        moreLabel: strings.chaLoadEarlierMessages,
+        model: model,
+        onSelect: (index) => Navigator.of(dialogContext).pop(index),
+        onMore: () {
+          if (!loading) unawaited(readIndexPage());
+        },
+      ),
+    );
+    if (epoch == _promptSheetEpoch) _promptSheetEpoch++;
+    indexClient?.close();
+    if (!mounted || picked == null || picked >= items.length) return;
+    final item = items[picked];
+    var target = item.message;
+    if (target == null) {
+      final rowId = item.rowId;
+      target = rowId == null ? null : await _loadPromptByRowId(rowId);
+      if (!mounted) return;
+      if (target == null) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).sa1215LoadOlderFailed)),
+          kind: HermesNoticeKind.warning,
+        );
+        return;
+      }
+    }
+    final live = chatRefreshFindAnchorMessage(target, _messages) ?? target;
+    _freezeStreamingFollow();
+    final revealed = await _revealTranscriptMessage(live);
+    if (revealed == false && mounted) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).artifactSourceUnavailable)),
+        kind: HermesNoticeKind.warning,
+      );
+    }
+  }
+
+  /// Loads earlier pages, contiguously and within [_promptBackfillRows], until
+  /// the row with the durable [rowId] is part of the transcript. Null when it
+  /// was not reached: the reader stays where they were.
+  Future<Map<String, dynamic>?> _loadPromptByRowId(int rowId) async {
+    Map<String, dynamic>? find() {
+      for (final message in _messages) {
+        if (chatPromptRowId(message) == rowId) return message;
+      }
+      return null;
+    }
+
+    final startLength = _messages.length;
+    while (mounted) {
+      final found = find();
+      if (found != null) return found;
+      if (!_chat.hasEarlierMessages ||
+          _messages.length - startLength >= _promptBackfillRows) {
+        return null;
+      }
+      final before = _messages.length;
+      await _loadEarlierMessages();
+      if (_messages.length <= before) return find();
+    }
+    return null;
   }
 
   Future<void> _releaseRuntimeForDesktop() async {
@@ -12639,6 +12929,60 @@ class _ChatScreenState extends State<ChatScreen>
                                       ? null
                                       : latestAgentTaskStepId(_messages),
                                   child: _buildBody(),
+                                ),
+                                Positioned(
+                                  top: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: ListenableBuilder(
+                                    listenable: Listenable.merge([
+                                      _stickyPrompt,
+                                      _transcriptConcealed,
+                                    ]),
+                                    builder: (context, _) {
+                                      final prompt = _stickyPrompt.value;
+                                      if (prompt == null ||
+                                          _findOpen ||
+                                          _transcriptConcealed.value) {
+                                        return const SizedBox.shrink();
+                                      }
+                                      return Semantics(
+                                        button: true,
+                                        label: str.pj1215StickyPromptLabel,
+                                        child: GestureDetector(
+                                          key: const ValueKey(
+                                            'chat-sticky-prompt',
+                                          ),
+                                          behavior: HitTestBehavior.opaque,
+                                          onTap: () => unawaited(
+                                            _revealStickyPrompt(prompt),
+                                          ),
+                                          child: ClipRect(
+                                            child: ConstrainedBox(
+                                              constraints:
+                                                  const BoxConstraints(
+                                                    maxHeight: 96,
+                                                  ),
+                                              child: SingleChildScrollView(
+                                                physics:
+                                                    const NeverScrollableScrollPhysics(),
+                                                child: IgnorePointer(
+                                                  child: ExcludeSemantics(
+                                                    child: _UserMessage(
+                                                      content:
+                                                          prompt['content']
+                                                              as String,
+                                                      compact: true,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
                                 ),
                                 Positioned(
                                   top: 8,
@@ -15954,7 +16298,13 @@ class _ChatScreenState extends State<ChatScreen>
     }
 
     final entries = _currentListEntries;
-    pruneMessageAnchorCache(_messageAnchors, _messages);
+    final snapshot = _messages;
+    pruneMessageAnchorCache(_messageAnchors, snapshot);
+    if (!identical(snapshot, _stickySource)) {
+      _stickySource = snapshot;
+      _stickyIndex = null;
+      _scheduleStickyPromptUpdate();
+    }
 
     final transcript = ListenableBuilder(
       listenable: Listenable.merge([
@@ -16050,9 +16400,14 @@ class _ChatScreenState extends State<ChatScreen>
               if (ownsAnchor) {
                 result = ChatAnswerAnchor(
                   onLayout: (anchor) {
+                    var added = false;
                     for (final message in sourceMessages) {
-                      _messageAnchors[message] = anchor;
+                      if (!identical(_messageAnchors[message], anchor)) {
+                        _messageAnchors[message] = anchor;
+                        added = true;
+                      }
                     }
+                    if (added) _scheduleStickyPromptUpdate();
                   },
                   onDetach: (anchor) {
                     for (final message in sourceMessages) {
@@ -16061,6 +16416,22 @@ class _ChatScreenState extends State<ChatScreen>
                       }
                     }
                   },
+                  child: child,
+                );
+              } else if (sourceMessages.isNotEmpty) {
+                // A later slice of a long reply: it has no reader anchor of
+                // its own, but when it spans the viewport top the sticky
+                // prompt needs to know which reply it belongs to.
+                final replyMessage = sourceMessages.first;
+                result = ChatAnswerAnchor(
+                  onLayout: (anchor) {
+                    if (identical(_stickySliceAnchors[anchor], replyMessage)) {
+                      return;
+                    }
+                    _stickySliceAnchors[anchor] = replyMessage;
+                    _scheduleStickyPromptUpdate();
+                  },
+                  onDetach: (anchor) => _stickySliceAnchors.remove(anchor),
                   child: child,
                 );
               }
@@ -16220,7 +16591,11 @@ class _ChatScreenState extends State<ChatScreen>
       ),
     );
     return ChatAnswerAnchor(
-      onLayout: (anchor) => _messageAnchors[assistant] = anchor,
+      onLayout: (anchor) {
+        if (identical(_messageAnchors[assistant], anchor)) return;
+        _messageAnchors[assistant] = anchor;
+        _scheduleStickyPromptUpdate();
+      },
       onDetach: (anchor) {
         if (identical(_messageAnchors[assistant], anchor)) {
           _messageAnchors.remove(assistant);

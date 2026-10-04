@@ -17,6 +17,7 @@ import '../../screens/image_viewer_screen.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/assistant_content.dart';
 import '../../utils/byte_bounded_lru_cache.dart';
+import '../../utils/markdown_math.dart';
 import '../../utils/semantic_markdown.dart';
 import '../../utils/streaming_normalizer.dart';
 import '../../utils/transport_privacy.dart';
@@ -195,9 +196,10 @@ List<Widget> buildAssistantAnswerBlocks(
   // Conserva la estructura escrita por el modelo. Solo normalizamos comandos
   // inequívocos y encabezados Markdown pegados (`##Título`), sin convertir
   // prosa corta, etiquetas con `:` ni líneas sueltas en títulos o listas.
+  final protectedAnswer = protectMarkdownMath(answer);
   final enhanced = structured
-      ? answer
-      : prepareAssistantAnswerStructure(answer);
+      ? protectedAnswer
+      : prepareAssistantAnswerStructure(protectedAnswer);
   final blocks = enhanced.trim().isEmpty
       ? const <ContentBlock>[]
       : <ContentBlock>[MarkdownContentBlock(enhanced)];

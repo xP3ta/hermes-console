@@ -9644,5 +9644,8 @@
   "adv1215ToolNeedsNous": "Requiere cuenta de Nous",
   "adv1215ToolNothing": "No hay nada que configurar aquí",
   "adv1215Unreadable": "Este servidor no publica ajustes avanzados",
-  "adv1215AdvancedSub": "Ajustes del servidor, herramientas y búsqueda"
+  "adv1215AdvancedSub": "Ajustes del servidor, herramientas y búsqueda",
+  "pj1215PromptsAction": "Prompts",
+  "pj1215PromptsEmpty": "Aún no hay prompts en este chat.",
+  "pj1215StickyPromptLabel": "Prompt de esta respuesta; toca para ir a él"
 }

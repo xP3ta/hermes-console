@@ -7945,5 +7945,8 @@
   "adv1215ToolNeedsNous": "Requires a Nous account",
   "adv1215ToolNothing": "Nothing to configure here",
   "adv1215Unreadable": "This server does not offer advanced settings",
-  "adv1215AdvancedSub": "Server settings, tools and search"
+  "adv1215AdvancedSub": "Server settings, tools and search",
+  "pj1215PromptsAction": "Prompts",
+  "pj1215PromptsEmpty": "No prompts in this chat yet.",
+  "pj1215StickyPromptLabel": "Prompt of this reply; tap to jump to it"
 }
