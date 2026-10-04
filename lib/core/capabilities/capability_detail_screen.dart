@@ -15,6 +15,7 @@ import '../widgets/hermes_notice.dart';
 import 'capabilities_repository.dart';
 import 'capability_models.dart';
 import 'capability_ui.dart';
+import 'mcp_logs_screen.dart';
 import 'mcp_runtime_status.dart';
 
 enum CapabilityAction { install, update, enable, disable, remove, test, docs }
@@ -372,6 +373,20 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
     }
   }
 
+  Future<void> _openLogs() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => McpLogsScreen(
+          repository: _repo,
+          server: _item.name,
+          stdio: _item.transport == 'stdio',
+        ),
+      ),
+    );
+    // The route may have learned the server has no /api/logs.
+    if (mounted) setState(() {});
+  }
+
   Future<void> _openMore(List<CapabilityAction> secondary) async {
     final s = Strings.of(context);
     final chosen = await showHermesMenu<CapabilityAction>(
@@ -566,6 +581,21 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
               ),
           ],
         ),
+        if (item.kind == CapabilityKind.mcp &&
+            item.installed &&
+            _repo.supports(CapabilityFeature.mcpLogs) != false) ...[
+          const SizedBox(height: HermesSpace.x4),
+          HermesListGroup(
+            children: [
+              HermesListRow(
+                key: const ValueKey('cph-logs-row'),
+                icon: Icons.article_outlined,
+                title: s.cphLogsTitle,
+                onTap: _openLogs,
+              ),
+            ],
+          ),
+        ],
         if (item.transport.isNotEmpty ||
             item.command.isNotEmpty ||
             item.url.isNotEmpty) ...[

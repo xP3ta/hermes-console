@@ -7316,6 +7316,11 @@
     }
   },
   "cphRowStatus": "Status",
+  "cphLogsTitle": "Logs",
+  "cphLogsSourceServer": "Server",
+  "cphLogsSourceAgent": "Agent",
+  "cphLogsEmpty": "No logs for this server.",
+  "cphLogsRefresh": "Refresh logs",
   "cphRowAuth": "Authentication",
   "v1215VoiceServerError": "Hermes server replied: {detail}",
   "@v1215VoiceServerError": {

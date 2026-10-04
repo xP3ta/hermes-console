@@ -361,14 +361,12 @@ void main() {
       expect(logReads(rest).last, 'GET logs?file=agent&lines=300&search=files');
     });
 
-    testWidgets('a server without /api/logs hides the row afterwards', (
+    testWidgets('a server without /api/logs leaves and hides the row', (
       tester,
     ) async {
       final rest = populatedServer();
       await _pump(tester, stdio, rest);
       await tester.tap(find.byKey(const ValueKey('cph-logs-row')));
-      await tester.pumpAndSettle();
-      await tester.pageBack();
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('cph-logs-row')), findsNothing);

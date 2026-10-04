@@ -8840,6 +8840,11 @@
     }
   },
   "cphRowStatus": "Estado",
+  "cphLogsTitle": "Registros",
+  "cphLogsSourceServer": "Servidor",
+  "cphLogsSourceAgent": "Agente",
+  "cphLogsEmpty": "No hay registros para este servidor.",
+  "cphLogsRefresh": "Actualizar registros",
   "cphRowAuth": "Autenticación",
   "v1215VoiceServerError": "El servidor de Hermes respondió: {detail}",
   "@v1215VoiceServerError": {
