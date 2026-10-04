@@ -34,6 +34,9 @@ class FakeWatchGateway implements SubagentWatchGateway {
   final released = <String>[];
   int _runtimes = 0;
 
+  /// While set, `session.close` stays pending until it completes.
+  Completer<void>? closeGate;
+
   /// Completes each resume; defaults to a fresh runtime with no history.
   Future<DesktopSessionSnapshot> Function(String runtime)? answer;
 
@@ -56,6 +59,7 @@ class FakeWatchGateway implements SubagentWatchGateway {
   @override
   Future<bool> closeSession(String runtimeSessionId) async {
     closed.add(runtimeSessionId);
+    await closeGate?.future;
     return true;
   }
 

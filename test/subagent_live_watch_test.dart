@@ -487,6 +487,53 @@ void main() {
     },
   );
 
+  test('disposing while the close is still pending closes only once', () async {
+    final gateway = FakeWatchGateway()..closeGate = Completer<void>();
+    final watch = SubagentLiveWatch(
+      gateway: gateway,
+      childSessionId: _child,
+      profile: _parentProfile,
+      isCurrent: () => true,
+    )..start();
+    await pumpEventQueue();
+
+    gateway.emit('watch-1', 'message.complete', {'text': 'listo'});
+    await pumpEventQueue();
+    // The first close is on the wire and has not answered yet.
+    expect(gateway.closed, ['watch-1']);
+    expect(gateway.released, ['watch-1']);
+
+    watch.dispose();
+    await pumpEventQueue();
+    expect(gateway.closed, ['watch-1']);
+    expect(gateway.released, ['watch-1']);
+
+    gateway.closeGate!.complete();
+    await pumpEventQueue();
+    expect(gateway.closed, ['watch-1']);
+    expect(gateway.released, ['watch-1']);
+  });
+
+  test(
+    'a final that appeared mid-stream is kept when text follows it',
+    () async {
+      final gateway = FakeWatchGateway();
+      final watch = _watch(gateway)..start();
+      await pumpEventQueue();
+
+      gateway.emit('watch-1', 'message.delta', {
+        'text': 'Resultado: 42\nPero lo corrijo despues',
+      });
+      gateway.emit('watch-1', 'message.complete', {'text': 'Resultado: 42'});
+      await pumpEventQueue();
+
+      expect(
+        watch.value.text,
+        'Resultado: 42\nPero lo corrijo despues\nResultado: 42',
+      );
+    },
+  );
+
   test('a normal finish cancels the event subscription', () async {
     final gateway = FakeWatchGateway();
     final watch = _watch(gateway)..start();
