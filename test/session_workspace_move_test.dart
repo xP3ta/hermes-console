@@ -4,6 +4,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+// ignore: depend_on_referenced_packages
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
