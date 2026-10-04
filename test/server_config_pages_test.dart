@@ -13,7 +13,7 @@ void main() {
     const expected = <String, Set<ServerConfigPage>>{
       'model_context_length': {ServerConfigPage.main},
       'agent.reasoning_effort': {ServerConfigPage.main},
-      'agent.service_tier': {ServerConfigPage.main, ServerConfigPage.runtime},
+      'agent.service_tier': {ServerConfigPage.main},
       'model.context_length': {ServerConfigPage.main},
       'display.personality': {ServerConfigPage.behavior},
       'timezone': {ServerConfigPage.behavior},
@@ -41,6 +41,24 @@ void main() {
         expect(serverConfigPagesOf(entry.key), entry.value);
       });
     }
+
+    test('a field in two table rows belongs to the first page only', () {
+      final schema = _schema({
+        'agent.service_tier': {'type': 'string'},
+        'agent.max_turns': {'type': 'number'},
+      });
+      expect(
+        serverConfigFieldsOf(ServerConfigPage.main, schema).map((f) => f.path),
+        ['agent.service_tier'],
+      );
+      expect(
+        serverConfigFieldsOf(
+          ServerConfigPage.runtime,
+          schema,
+        ).map((f) => f.path),
+        ['agent.max_turns'],
+      );
+    });
 
     test('a path that is in no table row belongs to no page', () {
       for (final path in const [
