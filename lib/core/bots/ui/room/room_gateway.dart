@@ -64,6 +64,11 @@ final class RoomCapabilities {
   /// `room.members_changed` event), so membership is read-only.
   final bool canEditMembers;
 
+  /// Compress a local member's history (`session.compress`). Only a declared
+  /// server capability may enable it; never an RPC probe, since the method
+  /// mutates the session.
+  final bool canCompressMembers;
+
   const RoomCapabilities({
     this.canSend = false,
     this.canRename = false,
@@ -73,6 +78,7 @@ final class RoomCapabilities {
     this.canRetry = false,
     this.canAnswerPrompts = false,
     this.canEditMembers = false,
+    this.canCompressMembers = false,
   });
 
   static const none = RoomCapabilities();

@@ -4263,6 +4263,9 @@ class _HostedRoomWorkspaceState extends State<_HostedRoomWorkspace> {
         // to revision/log position (docs/hosted_identity_transition_matrix).
         canRetry: false,
         canAnswerPrompts: writable && widget.canSend,
+        // No capability RPC declares `session.compress` yet, so the room
+        // Compress history row stays hidden until the server publishes one.
+        canCompressMembers: false,
       ),
       // Member questions/approvals the room projection does not carry, read
       // from each member's own session on the pooled socket.

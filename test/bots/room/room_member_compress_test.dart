@@ -54,37 +54,6 @@ void main() {
     },
   );
 
-  test('probeSupport confirms session.compress only on its handler', () async {
-    Future<bool> probe(Object reply) {
-      return GatewayRoomMemberCompressor((method, params) async {
-        expect(method, 'session.compress');
-        expect(params, {'session_id': ''});
-        if (reply is Map<String, dynamic>) return reply;
-        throw reply;
-      }).probeSupport();
-    }
-
-    expect(
-      await probe(
-        const TuiGatewayRpcError('session.compress', 'missing', code: 4001),
-      ),
-      isTrue,
-    );
-    expect(
-      await probe(
-        const TuiGatewayRpcError('session.compress', 'unknown', code: -32601),
-      ),
-      isFalse,
-    );
-    expect(
-      await probe(
-        const TuiGatewayRpcError('session.compress', 'denied', code: 4120),
-      ),
-      isFalse,
-    );
-    expect(await probe(StateError('socket closed')), isFalse);
-  });
-
   test('missing session returns nothing before resume', () async {
     final calls = <String>[];
     final compressor = GatewayRoomMemberCompressor((method, params) async {

@@ -16,7 +16,6 @@ import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/artifact_export_service.dart';
-import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat/chat_message_selection_area.dart';
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
@@ -177,6 +176,16 @@ const _allCaps = RoomCapabilities(
   canRetry: true,
 );
 
+const _compressCaps = RoomCapabilities(
+  canSend: true,
+  canRename: true,
+  canStop: true,
+  canDisband: true,
+  canApprove: true,
+  canRetry: true,
+  canCompressMembers: true,
+);
+
 Widget _host(Widget child) => MaterialApp(
   localizationsDelegates: Strings.localizationsDelegates,
   supportedLocales: Strings.supportedLocales,
@@ -262,7 +271,7 @@ void main() {
   setUpAll(loadInterFont);
 
   testWidgets('group layout: one header per run, user bubble, no side rail', (
-      tester,
+    tester,
   ) async {
     final seq = EventSeq();
     final u = seq.user('status? @builder');
@@ -962,7 +971,12 @@ void main() {
         _ => <String, dynamic>{},
       };
     });
-    await _pump(tester, events: const [], memberCompressor: compressor);
+    await _pump(
+      tester,
+      events: const [],
+      caps: _compressCaps,
+      memberCompressor: compressor,
+    );
     await tester.tap(find.byKey(const ValueKey('room-overflow')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
@@ -971,6 +985,7 @@ void main() {
       find.byKey(const ValueKey('room-settings-compress')),
       findsOneWidget,
     );
+    expect(calls, isEmpty);
 
     await tester.tap(find.byKey(const ValueKey('room-settings-compress')));
     await tester.pumpAndSettle();
@@ -988,10 +1003,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // The first call is the side-effect-free capability probe.
-    expect(calls.first.$1, 'session.compress');
-    expect(calls.first.$2, {'session_id': ''});
-    expect(calls.skip(1).map((call) => call.$1), [
+    expect(calls.map((call) => call.$1), [
       'session.list',
       'session.resume',
       'session.compress',
@@ -1009,6 +1021,7 @@ void main() {
       tester,
       events: const [],
       status: driver(working: true),
+      caps: _compressCaps,
       memberCompressor: compressor,
     );
     await tester.tap(find.byKey(const ValueKey('room-overflow')));
@@ -1036,55 +1049,51 @@ void main() {
     expect(find.byKey(const ValueKey('room-settings-compress')), findsNothing);
   });
 
-  testWidgets('compress row needs server-confirmed session.compress', (
+  testWidgets('opening a room never probes session.compress', (tester) async {
+    final calls = <(String, Map<String, dynamic>)>[];
+    final compressor = GatewayRoomMemberCompressor((method, params) async {
+      calls.add((method, params));
+      return const <String, dynamic>{};
+    });
+    await _pump(tester, events: const [], memberCompressor: compressor);
+    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('room-settings-compress')), findsNothing);
+    expect(
+      calls.where((call) => call.$1 == 'session.compress'),
+      isEmpty,
+      reason: 'session.compress mutates a session and is never a probe',
+    );
+    expect(calls, isEmpty);
+  });
+
+  testWidgets('declared compress capability shows the row without a probe', (
     tester,
   ) async {
-    Future<void> openSettings() async {
-      await tester.tap(find.byKey(const ValueKey('room-overflow')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
-      await tester.pumpAndSettle();
-    }
-
-    // Legacy writable server: the method is unknown (-32601).
-    final legacyCalls = <(String, Map<String, dynamic>)>[];
-    final legacy = GatewayRoomMemberCompressor((method, params) async {
-      legacyCalls.add((method, params));
-      if (method == 'session.compress') {
-        throw TuiGatewayRpcError(method, 'unknown method', code: -32601);
-      }
-      return const {};
+    final calls = <(String, Map<String, dynamic>)>[];
+    final compressor = GatewayRoomMemberCompressor((method, params) async {
+      calls.add((method, params));
+      return const <String, dynamic>{};
     });
-    await _pump(tester, events: const [], memberCompressor: legacy);
-    await openSettings();
-    expect(find.byKey(const ValueKey('room-settings-compress')), findsNothing);
-    expect(legacyCalls.map((call) => call.$1), ['session.compress']);
-    expect(legacyCalls.single.$2, {'session_id': ''});
-
-    // Probe that never answers: nothing is shown until it is confirmed.
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-    final never = Completer<Map<String, dynamic>>();
     await _pump(
       tester,
       events: const [],
-      memberCompressor: GatewayRoomMemberCompressor((_, _) => never.future),
+      caps: _compressCaps,
+      memberCompressor: compressor,
     );
-    await openSettings();
-    expect(find.byKey(const ValueKey('room-settings-compress')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
+    await tester.pumpAndSettle();
 
-    // Current server: the handler answers 4001 for the empty probe id.
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-    final current = GatewayRoomMemberCompressor((method, params) async {
-      throw TuiGatewayRpcError(method, 'session not found', code: 4001);
-    });
-    await _pump(tester, events: const [], memberCompressor: current);
-    await openSettings();
     expect(
       find.byKey(const ValueKey('room-settings-compress')),
       findsOneWidget,
     );
+    expect(calls, isEmpty);
   });
 
   testWidgets('compression is single-flight and drops a result after dispose', (
@@ -1093,13 +1102,15 @@ void main() {
     final gate = Completer<Map<String, dynamic>>();
     var calls = 0;
     final compressor = GatewayRoomMemberCompressor((method, params) {
-      if (method == 'session.compress' && params['session_id'] == '') {
-        return Future.value(const <String, dynamic>{});
-      }
       calls++;
       return gate.future;
     });
-    await _pump(tester, events: const [], memberCompressor: compressor);
+    await _pump(
+      tester,
+      events: const [],
+      caps: _compressCaps,
+      memberCompressor: compressor,
+    );
     await tester.tap(find.byKey(const ValueKey('room-overflow')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
