@@ -10,9 +10,12 @@
 //
 // Privacy: reasoning deltas, tool arguments and previews are dropped; only
 // public text and public tool names reach [SubagentLiveWatchView].
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/desktop_session_snapshot.dart';
+import '../utils/assistant_content.dart';
 import 'tui_gateway_client.dart' show TuiGatewayEvent;
 
 /// Minimal gateway surface the watch needs. Deliberately has no prompt
@@ -66,6 +69,10 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     required this.isCurrent,
   }) : super(const SubagentLiveWatchView());
 
+  /// Upper bound of raw mirrored text kept in memory. The stored transcript
+  /// has the rest; the page only ever shows the tail.
+  static const int maxLiveChars = 262144;
+
   final SubagentWatchGateway gateway;
   final String childSessionId;
 
@@ -75,7 +82,210 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
   /// False once the owner (chat runtime, active profile) moved on.
   final bool Function() isCurrent;
 
-  void start() {}
+  StreamSubscription<TuiGatewayEvent>? _subscription;
+  bool _started = false;
+  bool _closed = false;
+  bool _retained = false;
 
-  Future<void> close() async {}
+  /// Runtime of the current watch session; null while none is bound.
+  String? _runtime;
+
+  /// Bumped by every resume attempt and by [close], so an answer that lost
+  /// the race is recognised and discarded.
+  int _generation = 0;
+  String _history = '';
+  String _liveRaw = '';
+
+  /// Opens the watch. Idempotent; the caller is the page that became visible.
+  void start() {
+    if (_started || _closed) return;
+    _started = true;
+    _subscription = gateway.events.listen(_onEvent, onError: _onTransportError);
+    _open(SubagentLiveWatchStatus.opening);
+  }
+
+  /// Leaves the watch: releases the runtime and sends one `session.close`.
+  /// Idempotent; nothing is painted or notified afterwards.
+  Future<void> close() async {
+    _closed = true;
+    _generation++;
+    final subscription = _subscription;
+    _subscription = null;
+    unawaited(subscription?.cancel());
+    await _closeRuntime();
+  }
+
+  @override
+  void dispose() {
+    unawaited(close());
+    super.dispose();
+  }
+
+  void _open(SubagentLiveWatchStatus status) {
+    final generation = ++_generation;
+    _publish(status);
+    Future<DesktopSessionSnapshot>.sync(
+      () => gateway.resumeWatchSession(childSessionId, profile: profile),
+    ).then(
+      (snapshot) => _onResumed(generation, snapshot),
+      onError: (Object _) {
+        // Old server (-32601) or any refusal: the polled tail takes over.
+        if (!_closed && generation == _generation) _giveUp();
+      },
+    );
+  }
+
+  void _onResumed(int generation, DesktopSessionSnapshot snapshot) {
+    final runtime = snapshot.runtimeSessionId;
+    if (_closed || generation != _generation) {
+      // Late answer: nobody reads this runtime, free it.
+      unawaited(_closeRemote(runtime));
+      return;
+    }
+    if (!isCurrent()) {
+      unawaited(_closeRemote(runtime));
+      _giveUp();
+      return;
+    }
+    _history = _publicHistory(snapshot.messages);
+    _liveRaw = '';
+    if (!snapshot.running) {
+      // Nothing is mirrored for a finished child: read once, keep nothing.
+      unawaited(_closeRemote(runtime));
+      _stopListening();
+      _publish(SubagentLiveWatchStatus.finished);
+      return;
+    }
+    _runtime = runtime;
+    _retained = true;
+    gateway.retainSessionRuntime(runtime);
+    _publish(SubagentLiveWatchStatus.live);
+  }
+
+  void _onEvent(TuiGatewayEvent event) {
+    final runtime = _runtime;
+    if (_closed || runtime == null || event.sessionId != runtime) return;
+    if (!isCurrent()) {
+      _giveUp();
+      return;
+    }
+    final payload = event.payload;
+    switch (event.type) {
+      case 'message.delta':
+        final text = payload['text'];
+        if (text is String) _appendRaw(text);
+      case 'tool.start':
+        final name = _publicToolName(payload['name']);
+        if (name != null) _appendRaw('${_onNewLine(_liveRaw)}› $name\n');
+      case 'message.complete':
+        final summary = finalizedPublicAssistantText(
+          payload['text'] is String ? payload['text'] as String : '',
+        ).trim();
+        if (summary.isNotEmpty && !_publicLive.trimRight().endsWith(summary)) {
+          _appendRaw('${_onNewLine(_liveRaw)}$summary');
+        }
+        _stopListening();
+        _publish(SubagentLiveWatchStatus.finished);
+        unawaited(_closeRuntime());
+      // `reasoning.delta` is private by policy; `message.start` and
+      // `tool.complete` carry nothing public to render.
+    }
+  }
+
+  void _onTransportError(Object error, [StackTrace? stackTrace]) {
+    if (_closed || _runtime == null) return;
+    // The socket died with its runtime: nothing to close on the old one. A
+    // fresh lazy resume rebuilds history from storage, so the live buffer is
+    // dropped instead of being appended to.
+    final lost = _runtime!;
+    _runtime = null;
+    if (_retained) {
+      _retained = false;
+      gateway.releaseSessionRuntime(lost);
+    }
+    _open(SubagentLiveWatchStatus.reconnecting);
+  }
+
+  void _giveUp() {
+    _stopListening();
+    _publish(SubagentLiveWatchStatus.unavailable);
+    unawaited(_closeRuntime());
+  }
+
+  void _stopListening() {
+    final subscription = _subscription;
+    _subscription = null;
+    unawaited(subscription?.cancel());
+  }
+
+  Future<void> _closeRuntime() async {
+    final runtime = _runtime;
+    if (runtime == null) return;
+    _runtime = null;
+    if (_retained) {
+      _retained = false;
+      // Release first so frames still in flight are dropped by the client.
+      gateway.releaseSessionRuntime(runtime);
+    }
+    await _closeRemote(runtime);
+  }
+
+  Future<void> _closeRemote(String runtime) async {
+    try {
+      await gateway.closeSession(runtime);
+    } catch (_) {
+      // The runtime is reaped by Hermes when the socket goes away.
+    }
+  }
+
+  void _appendRaw(String text) {
+    if (_liveRaw.length >= maxLiveChars) return;
+    _liveRaw += text;
+    _publish(value.status);
+  }
+
+  String get _publicLive =>
+      projectPublicAssistantText(_liveRaw, streaming: true).text;
+
+  void _publish(SubagentLiveWatchStatus status) {
+    if (_closed) return;
+    final live = _publicLive;
+    value = SubagentLiveWatchView(
+      status: status,
+      text: [_history, live].where((part) => part.isNotEmpty).join('\n'),
+    );
+  }
+
+  static String _onNewLine(String text) =>
+      text.isEmpty || text.endsWith('\n') ? '' : '\n';
+
+  /// Public assistant text of the stored child conversation. The first user
+  /// row is the delegated goal prompt and stays out of the live log.
+  static String _publicHistory(List<DesktopSessionMessage> messages) {
+    final parts = <String>[];
+    for (final message in messages) {
+      if (message.role != DesktopSessionMessageRole.assistant ||
+          !message.publiclyRenderable) {
+        continue;
+      }
+      final raw =
+          message.text ??
+          (message.content is String ? message.content as String : '');
+      final text = finalizedPublicAssistantText(raw).trim();
+      if (text.isNotEmpty) parts.add(text);
+    }
+    return parts.join('\n');
+  }
+
+  /// A tool's public name only; arguments and previews never reach the view.
+  static String? _publicToolName(Object? raw) {
+    if (raw is! String) return null;
+    final name = raw.trim();
+    if (name.isEmpty ||
+        name.length > 80 ||
+        name.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)) {
+      return null;
+    }
+    return name;
+  }
 }
