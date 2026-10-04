@@ -211,12 +211,21 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
       case 'message.delta':
         final text = payload['text'];
         if (text is String) {
-          _deltaText += text;
+          if (_deltaText.length < maxLiveChars) _deltaText += text;
           _appendRaw(text);
         }
       case 'tool.start':
         final name = _publicToolName(payload['name']);
-        if (name != null) _appendRaw('${_onNewLine(_liveRaw)}› $name\n');
+        if (name != null) {
+          // A tool line splits the streamed text: keep that boundary as a
+          // line break so the summary is compared with the same spacing.
+          if (_deltaText.isNotEmpty &&
+              !_deltaText.endsWith('\n') &&
+              _deltaText.length < maxLiveChars) {
+            _deltaText += '\n';
+          }
+          _appendRaw('${_onNewLine(_liveRaw)}› $name\n');
+        }
       case 'message.complete':
         final summary = finalizedPublicAssistantText(
           payload['text'] is String ? payload['text'] as String : '',
@@ -296,16 +305,16 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     _publish(value.status);
   }
 
-  /// The summary the child closes with usually repeats what was streamed,
-  /// with or without the tool lines between the deltas.
+  /// The summary the child closes with usually repeats what was streamed. Runs
+  /// of whitespace compare as one space, but a missing space is a difference:
+  /// a corrected summary must not be swallowed.
   bool _alreadyShown(String summary) {
-    String squash(String text) => text.replaceAll(RegExp(r'\s+'), '');
-    final streamed = squash(
+    String norm(String text) => text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final wanted = norm(summary);
+    final streamed = norm(
       projectPublicAssistantText(_deltaText, streaming: false).text,
     );
-    final wanted = squash(summary);
-    return streamed.endsWith(wanted) ||
-        squash(_publicLive).endsWith(wanted);
+    return streamed.endsWith(wanted) || norm(_publicLive).endsWith(wanted);
   }
 
   String get _publicLive =>
