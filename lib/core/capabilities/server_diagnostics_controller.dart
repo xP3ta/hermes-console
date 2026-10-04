@@ -55,7 +55,11 @@ class ServerDiagnosticsController extends ChangeNotifier {
     required this.repoFor,
     required this.mcpReader,
     required this.restartHosts,
+    ServerHealth? knownHealth,
+    Set<OpsAction> missing = const {},
   }) {
+    _knownHealth = knownHealth;
+    _missing.addAll(missing);
     _repo = repoFor(scope.name);
     scope.addListener(_onProfileChanged);
   }
@@ -74,6 +78,10 @@ class ServerDiagnosticsController extends ChangeNotifier {
   final List<String> restartHosts;
 
   late CapabilitiesRepository _repo;
+
+  /// The health the Advanced screen already read while probing: used by the
+  /// first load instead of reading it twice.
+  ServerHealth? _knownHealth;
   bool _disposed = false;
   bool _foreground = true;
 
@@ -134,14 +142,17 @@ class ServerDiagnosticsController extends ChangeNotifier {
   Future<void> _loadServer(int generation, CapabilitiesRepository repo) async {
     serverPhase = DiagPhase.loading;
     _notify();
-    ServerHealth? nextHealth;
+    ServerHealth? nextHealth = _knownHealth;
+    _knownHealth = null;
     ServerIdle? nextIdle;
     var healthMissing = false;
     var idleMissing = false;
-    try {
-      nextHealth = await repo.serverHealth();
-    } on CapabilityFailure catch (failure) {
-      healthMissing = failure.kind == CapabilityFailureKind.unsupported;
+    if (nextHealth == null) {
+      try {
+        nextHealth = await repo.serverHealth();
+      } on CapabilityFailure catch (failure) {
+        healthMissing = failure.kind == CapabilityFailureKind.unsupported;
+      }
     }
     try {
       nextIdle = await repo.serverIdle();
@@ -285,6 +296,7 @@ class ServerDiagnosticsController extends ChangeNotifier {
   void _onProfileChanged() {
     if (_disposed) return;
     _generation++;
+    _knownHealth = null;
     _loop.updateAll((_, value) => value + 1);
     _ops.clear();
     health = null;
