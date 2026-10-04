@@ -1814,6 +1814,11 @@ class _ChatScreenState extends State<ChatScreen>
     });
   }
 
+  /// True for user rows painted as a system chip (kanban work, skill
+  /// invocation, compaction hand-off, job notices): they are not prompts.
+  bool _isSystemChipRow(Map<String, dynamic> message) =>
+      _jobChipLabel(message['content'] as String, Strings.of(context)) != null;
+
   /// The prompt to pin, or null when the reply at the top has none loaded or
   /// the prompt's own bubble is (partly) on screen.
   Map<String, dynamic>? _stickyPromptCandidate() {
@@ -1843,13 +1848,13 @@ class _ChatScreenState extends State<ChatScreen>
     }
     final topIndex = index[topMessage];
     if (topIndex == null) return null;
-    final promptIndex = stickyPromptIndex(source, topIndex);
+    final promptIndex = stickyPromptIndex(
+      source,
+      topIndex,
+      isSystemRow: _isSystemChipRow,
+    );
     if (promptIndex == null) return null;
     final prompt = source[promptIndex];
-    if (_jobChipLabel(prompt['content'] as String, Strings.of(context)) !=
-        null) {
-      return null;
-    }
     final promptAnchor = _messageAnchors[prompt];
     final promptTop = _ChatStreamingViewportLock._visualOffsetInViewport(
       promptAnchor,
@@ -10435,7 +10440,10 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _showPromptSheet() async {
     final strings = Strings.of(context);
     final epoch = ++_promptSheetEpoch;
-    final entries = deriveChatPromptEntries(_messages);
+    final entries = deriveChatPromptEntries(
+      _messages,
+      isSystemRow: _isSystemChipRow,
+    );
     final tops = <double?>[
       for (final entry in entries)
         _ChatStreamingViewportLock._visualOffsetInViewport(

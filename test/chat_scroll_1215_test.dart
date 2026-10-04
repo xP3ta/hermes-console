@@ -1153,7 +1153,9 @@ void main() {
         ..insert(1, {
           'id': 'carrier-u',
           'role': 'user',
-          'content': '[IMPORTANT: Background process 7 finished]',
+          'content':
+              '[IMPORTANT: Background process proc_0b5fab8a4839 exited '
+              '(exit code 1).\nCommand: echo hi\nOutput:\nhi\n]',
         });
       await pumpChat(tester, gateway, history: history);
       await settle(tester);
@@ -1183,7 +1185,9 @@ void main() {
         ..insert(1, {
           'id': 'carrier-u',
           'role': 'user',
-          'content': '[IMPORTANT: Background process 7 finished]',
+          'content':
+              '[IMPORTANT: Background process proc_0b5fab8a4839 exited '
+              '(exit code 1).\nCommand: echo hi\nOutput:\nhi\n]',
         });
       await pumpChat(tester, gateway, history: history);
       await settle(tester);

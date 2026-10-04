@@ -7,6 +7,10 @@ Map<String, dynamic> _msg(String role, String content, {Object? rowId}) => {
   '_desktopRowId': ?rowId,
 };
 
+const String _carrier =
+    '[IMPORTANT: Background process proc_0b5fab8a4839 exited '
+    '(exit code 1).\nCommand: echo hi\nOutput:\nhi\n]';
+
 void main() {
   group('chatPromptPreview', () {
     test('collapses whitespace and trims', () {
@@ -63,17 +67,43 @@ void main() {
           '[IMPORTANT: Background process proc_0b5fab8a4839 exited '
               '(exit code 1).\nCommand: echo hi\nOutput:\nhi\n]',
         ),
-        _msg('user', '[IMPORTANT: Background process 7 finished]'),
+        _msg('user', _carrier),
         _msg('user', 'pregunta real'),
       ]);
       expect(entries.map((e) => e.preview), ['pregunta real']);
       expect(entries.single.messageIndex, 2);
     });
 
+    test('a prompt that only starts like a carrier stays a prompt', () {
+      const nearMiss =
+          '[IMPORTANT: Background process 7 finished] qué hago ahora?';
+      final entries = deriveChatPromptEntries([
+        _msg('user', nearMiss),
+        _msg('user', '[IMPORTANT: Background process notes] para mí'),
+      ]);
+      expect(entries.length, 2);
+      expect(stickyPromptIndex([_msg('user', nearMiss)], 0), 0);
+    });
+
+    test('rows the screen paints as system chips are skipped', () {
+      bool chip(Map<String, dynamic> m) => m['content'] == 'chip';
+      final rows = [
+        _msg('assistant', 'respuesta'),
+        _msg('user', 'chip'),
+        _msg('user', 'pregunta real'),
+      ];
+      expect(
+        deriveChatPromptEntries(rows, isSystemRow: chip)
+            .map((e) => e.preview),
+        ['pregunta real'],
+      );
+      expect(stickyPromptIndex(rows, 0, isSystemRow: chip), 2);
+    });
+
     test('a carrier row does not open a turn for the sticky prompt', () {
       final rows = [
         _msg('assistant', 'respuesta'),
-        _msg('user', '[IMPORTANT: Background process 7 finished]'),
+        _msg('user', _carrier),
         _msg('user', 'pregunta real'),
       ];
       expect(stickyPromptIndex(rows, 0), 2);

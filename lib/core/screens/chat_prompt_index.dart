@@ -41,25 +41,33 @@ String chatPromptPreview(String text) {
 /// appear in the prompt list.
 ///
 /// Process-notification carriers (Hermes writes them as user rows) are not
-/// prompts: Desktop's timeline skips them too.
-bool isChatPromptMessage(Map<String, dynamic> message) {
+/// prompts: Desktop's timeline skips them too. Only a row that is entirely the
+/// canonical carrier is dropped (via the visible-content projection), so a real
+/// prompt that merely starts with the same words stays a prompt. [isSystemRow]
+/// drops other rows the transcript paints as system chips instead of prompts.
+bool isChatPromptMessage(
+  Map<String, dynamic> message, {
+  bool Function(Map<String, dynamic> message)? isSystemRow,
+}) {
   if (message['role'] != 'user') return false;
   final content = message['content'];
   if (content is! String || content.trim().isEmpty) return false;
-  if (content.trimLeft().startsWith(_processNotificationHead)) return false;
-  return projectedUserVisibleContent(message).trim().isNotEmpty;
+  if (projectedUserVisibleContent(message).trim().isEmpty) return false;
+  return isSystemRow == null || !isSystemRow(message);
 }
-
-const String _processNotificationHead = '[IMPORTANT: Background process ';
 
 /// Índice, en [newestFirst], del prompt que abrió el turno al que pertenece la
 /// fila [topIndex] (la que cruza el borde superior del viewport). El prompt es
 /// la fila de usuario más próxima hacia atrás en el tiempo; recorre solo la
 /// longitud de ese turno.
-int? stickyPromptIndex(List<Map<String, dynamic>> newestFirst, int topIndex) {
+int? stickyPromptIndex(
+  List<Map<String, dynamic>> newestFirst,
+  int topIndex, {
+  bool Function(Map<String, dynamic> message)? isSystemRow,
+}) {
   if (topIndex < 0 || topIndex >= newestFirst.length) return null;
   for (var i = topIndex; i < newestFirst.length; i++) {
-    if (isChatPromptMessage(newestFirst[i])) return i;
+    if (isChatPromptMessage(newestFirst[i], isSystemRow: isSystemRow)) return i;
   }
   return null;
 }
@@ -67,12 +75,13 @@ int? stickyPromptIndex(List<Map<String, dynamic>> newestFirst, int topIndex) {
 /// Entradas de [newestFirst] (el orden de la transcripción del chat), más
 /// reciente primero.
 List<ChatPromptEntry> deriveChatPromptEntries(
-  List<Map<String, dynamic>> newestFirst,
-) {
+  List<Map<String, dynamic>> newestFirst, {
+  bool Function(Map<String, dynamic> message)? isSystemRow,
+}) {
   final entries = <ChatPromptEntry>[];
   for (var i = 0; i < newestFirst.length; i++) {
     final message = newestFirst[i];
-    if (!isChatPromptMessage(message)) continue;
+    if (!isChatPromptMessage(message, isSystemRow: isSystemRow)) continue;
     entries.add(
       ChatPromptEntry(
         message: message,
