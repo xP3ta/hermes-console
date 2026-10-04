@@ -7321,6 +7321,29 @@
   "cphLogsSourceAgent": "Agent",
   "cphLogsEmpty": "No logs for this server.",
   "cphLogsRefresh": "Refresh logs",
+  "cphConnectorEnabled": "Enabled",
+  "cphConnectorLockedByOrg": "Locked by your organization.",
+  "cphConnectorPolicyManaged": "Your organization manages these rules; they are view-only here.",
+  "cphConnectorPolicyForbidden": "You are not allowed to change these rules.",
+  "cphConnectorToolsFailed": "The tools could not be loaded.",
+  "cphToolFacetRead": "Read",
+  "cphToolFacetWrite": "Write",
+  "cphToolFacetDestructive": "Destructive",
+  "cphToolFacetUnclassified": "Unclassified",
+  "cphToolLockedByOrg": "Locked by your organization",
+  "cphConnectorSaved": "Changes saved",
+  "cphConnectorConflictTitle": "The rules changed",
+  "cphConnectorConflictBody": "They were modified elsewhere while you were editing. Your changes are still here.",
+  "cphConnectorConflictChanged": "Changed elsewhere: {names}",
+  "@cphConnectorConflictChanged": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConnectorKeepMine": "Keep mine",
+  "cphConnectorDiscard": "Discard",
   "cphRowAuth": "Authentication",
   "v1215VoiceServerError": "Hermes server replied: {detail}",
   "@v1215VoiceServerError": {

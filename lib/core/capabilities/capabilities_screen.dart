@@ -21,6 +21,7 @@ import 'capabilities_repository.dart';
 import 'capability_detail_screen.dart';
 import 'capability_models.dart';
 import 'capability_ui.dart';
+import 'connector_detail_screen.dart';
 import 'mcp_runtime_status.dart';
 
 enum CapabilitiesSegment { catalog, installed, connectors }
@@ -36,6 +37,9 @@ final class CapabilitiesSnapshot {
   /// Live MCP state by server name; empty when the server lacks it.
   final Map<String, McpRuntimeRow> mcpRuntime;
   final HostedConnectorsSnapshot? connectors;
+
+  /// `connectors.policy.get` answered: hosted rows may open their detail.
+  final bool connectorPolicyReadable;
   final bool connectorsFailed;
   final bool partial;
   final bool skillsUpdatable;
@@ -46,6 +50,7 @@ final class CapabilitiesSnapshot {
     this.mcpServers = const [],
     this.mcpRuntime = const {},
     this.connectors,
+    this.connectorPolicyReadable = false,
     this.connectorsFailed = false,
     this.partial = false,
     this.skillsUpdatable = false,
@@ -84,8 +89,16 @@ final class CapabilitiesSnapshot {
     }
     HostedConnectorsSnapshot? connectors;
     var connectorsFailed = false;
+    var connectorPolicyReadable = false;
     try {
       connectors = await repo.hostedConnectors();
+      if (connectors.availability == ConnectorAvailability.available &&
+          connectors.connectors.isNotEmpty) {
+        try {
+          await repo.connectorPolicy();
+          connectorPolicyReadable = true;
+        } catch (_) {}
+      }
     } catch (_) {
       connectorsFailed = true;
     }
@@ -118,6 +131,7 @@ final class CapabilitiesSnapshot {
       mcpServers: lists[5],
       mcpRuntime: mcpRuntime,
       connectors: connectors,
+      connectorPolicyReadable: connectorPolicyReadable,
       connectorsFailed: connectorsFailed,
       partial: real.isNotEmpty,
       skillsUpdatable:
@@ -515,6 +529,21 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
     if (changed && mounted) unawaited(_load());
   }
 
+  Future<void> _openConnector(HostedConnector connector) async {
+    var changed = false;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ConnectorDetailScreen(
+          connector: connector,
+          repository: _repo,
+          readOnly: widget.readOnly,
+          onChanged: () => changed = true,
+        ),
+      ),
+    );
+    if (changed && mounted) unawaited(_load());
+  }
+
   // ── Building ────────────────────────────────────────────────────────────
 
   Widget _row(CapabilityItem item) {
@@ -684,13 +713,17 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
       if (accounts.isNotEmpty)
         HermesListGroup(
           children: [
-            // Read-only rows: connecting accounts is not wired in Console
-            // yet, so the rows carry state but no tap affordance.
+            // Rows open the policy detail only when the server answers
+            // `connectors.policy.get`; connecting accounts is not wired in
+            // Console yet, so otherwise they carry state without a tap.
             for (final connector in accounts)
               HermesListRow(
                 key: ValueKey('cph-account-${connector.slug}'),
                 icon: Icons.account_circle_outlined,
                 title: connector.name,
+                onTap: snapshot.connectorPolicyReadable
+                    ? () => _openConnector(connector)
+                    : null,
                 subtitle: connector.statusReason.isNotEmpty
                     ? connector.statusReason
                     : connector.description,

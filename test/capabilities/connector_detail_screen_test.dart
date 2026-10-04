@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/capability_models.dart';
 import 'package:hermes_android/core/capabilities/connector_detail_screen.dart';
 import 'package:hermes_android/core/design/hermes_design.dart';
@@ -152,9 +151,9 @@ void main() {
 
       expect(gateway.count('connectors.policy.get'), 1);
       expect(gateway.count('connectors.tools'), 1);
-      expect(find.text('Lectura'), findsOneWidget);
-      expect(find.text('Escritura'), findsOneWidget);
-      expect(find.text('Destructivas'), findsOneWidget);
+      expect(find.text('LECTURA'), findsOneWidget);
+      expect(find.text('ESCRITURA'), findsOneWidget);
+      expect(find.text('DESTRUCTIVAS'), findsOneWidget);
       expect(find.byKey(const ValueKey('cph-tool-old_tool')), findsNothing);
 
       // Locked by the organisation: off and not toggleable.
@@ -231,7 +230,7 @@ void main() {
     await _pump(tester, gateway);
     await _tapTool(tester, 'create_issue');
 
-    // The other side disabled list_repos meanwhile.
+    // The other side disabled list_repos meanwhile; "mine" wins on Keep.
     gateway.policy = _memberPolicy(
       revision: _revisionOther,
       disabled: ['list_repos'],
@@ -247,7 +246,6 @@ void main() {
     expect(gateway.sets().last['expected_revision'], _revisionOther);
     expect((gateway.sets().last['change'] as Map)['disabled_tools'], [
       'create_issue',
-      'list_repos',
     ]);
   });
 

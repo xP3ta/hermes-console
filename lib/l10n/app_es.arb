@@ -8845,6 +8845,29 @@
   "cphLogsSourceAgent": "Agente",
   "cphLogsEmpty": "No hay registros para este servidor.",
   "cphLogsRefresh": "Actualizar registros",
+  "cphConnectorEnabled": "Activo",
+  "cphConnectorLockedByOrg": "Bloqueado por tu organización.",
+  "cphConnectorPolicyManaged": "Tu organización gestiona estas reglas; aquí solo se pueden ver.",
+  "cphConnectorPolicyForbidden": "No tienes permiso para cambiar estas reglas.",
+  "cphConnectorToolsFailed": "No se pudieron cargar las herramientas.",
+  "cphToolFacetRead": "Lectura",
+  "cphToolFacetWrite": "Escritura",
+  "cphToolFacetDestructive": "Destructivas",
+  "cphToolFacetUnclassified": "Sin clasificar",
+  "cphToolLockedByOrg": "Bloqueada por tu organización",
+  "cphConnectorSaved": "Cambios guardados",
+  "cphConnectorConflictTitle": "Las reglas cambiaron",
+  "cphConnectorConflictBody": "Se modificaron en otro sitio mientras editabas. Tus cambios siguen aquí.",
+  "cphConnectorConflictChanged": "Cambiado fuera: {names}",
+  "@cphConnectorConflictChanged": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConnectorKeepMine": "Mantener los míos",
+  "cphConnectorDiscard": "Descartar",
   "cphRowAuth": "Autenticación",
   "v1215VoiceServerError": "El servidor de Hermes respondió: {detail}",
   "@v1215VoiceServerError": {
