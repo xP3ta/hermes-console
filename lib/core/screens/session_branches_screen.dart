@@ -27,9 +27,17 @@ class SessionBranchesScreen extends StatefulWidget {
     super.key,
   });
 
-  /// The entry is only worth showing for a family of two or more rows.
-  static bool isAvailable(List<Session> sessions, String id) =>
-      branchFamily(sessions, id).length >= 2;
+  /// The entry is worth showing for a family of two or more rows. While
+  /// [mayHaveMore] (the list has pages left to read) a loaded row on its own
+  /// still qualifies: its family may sit on a page not read yet.
+  static bool isAvailable(
+    List<Session> sessions,
+    String id, {
+    bool mayHaveMore = false,
+  }) {
+    final size = branchFamily(sessions, id).length;
+    return size >= 2 || (mayHaveMore && size == 1);
+  }
 
   @override
   State<SessionBranchesScreen> createState() => _SessionBranchesScreenState();

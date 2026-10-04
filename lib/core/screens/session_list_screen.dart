@@ -1759,11 +1759,13 @@ class _SessionListScreenState extends State<SessionListScreen>
     await _openChat(session);
   }
 
+  bool get _branchesMayHaveMore =>
+      _repository != null &&
+      _librarySource == SessionLibrarySource.dashboard &&
+      !_libraryExhaustive;
+
   Future<void> _openBranches(Session session) {
-    final canLoadMore =
-        _repository != null &&
-        _librarySource == SessionLibrarySource.dashboard &&
-        !_libraryExhaustive;
+    final canLoadMore = _branchesMayHaveMore;
     return Navigator.push<void>(
       context,
       MaterialPageRoute<void>(
@@ -1882,7 +1884,11 @@ class _SessionListScreenState extends State<SessionListScreen>
                   },
                 ),
               ),
-            if (SessionBranchesScreen.isAvailable(_sessions, session.id))
+            if (SessionBranchesScreen.isAvailable(
+              _sessions,
+              session.id,
+              mayHaveMore: _branchesMayHaveMore,
+            ))
               ListTile(
                 key: const ValueKey('session-menu-branches'),
                 leading: const Icon(Icons.account_tree_outlined),

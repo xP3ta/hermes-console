@@ -41,6 +41,25 @@ void main() {
     expect(SessionBranchesScreen.isAvailable(rows, 'missing'), isFalse);
   });
 
+  test(
+    'a lone row is still offered while more pages could reveal its family',
+    () {
+      expect(
+        SessionBranchesScreen.isAvailable(rows, 'lonely', mayHaveMore: true),
+        isTrue,
+      );
+      expect(
+        SessionBranchesScreen.isAvailable(rows, 'lonely', mayHaveMore: false),
+        isFalse,
+      );
+      expect(
+        SessionBranchesScreen.isAvailable(rows, 'missing', mayHaveMore: true),
+        isFalse,
+        reason: 'a row that is not loaded has nothing to extend',
+      );
+    },
+  );
+
   testWidgets('lists the family in tree order with stems', (tester) async {
     await tester.pumpWidget(
       _app(
