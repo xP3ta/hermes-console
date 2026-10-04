@@ -198,7 +198,7 @@ void main() {
       expect(find.text(s.sd1215NothingToShow), findsOneWidget);
     });
 
-    testWidgets('an unreachable dashboard ends the probe without a row', (
+    testWidgets('an unreachable dashboard ends the probe and keeps the row', (
       tester,
     ) async {
       final rest = ScriptedRest()
@@ -210,8 +210,10 @@ void main() {
       final s = strings(tester);
       expect(tester.takeException(), isNull);
       expect(find.byType(TuiLoader), findsNothing);
-      expect(find.text(s.sd1215Diagnostics), findsNothing);
-      expect(find.text(s.sd1215NothingToShow), findsOneWidget);
+      // Unreachable proves nothing about support, like a 5xx: Diagnostics
+      // itself reports the sections as unavailable.
+      expect(find.text(s.sd1215Diagnostics), findsOneWidget);
+      expect(find.text(s.sd1215NothingToShow), findsNothing);
     });
 
     testWidgets('one route is enough to keep the row', (tester) async {

@@ -181,6 +181,9 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
       throw const CapabilityFailure(CapabilityFailureKind.invalidResponse);
     } on TimeoutException {
       throw const CapabilityFailure(CapabilityFailureKind.unavailable);
+    } on Exception {
+      // The dashboard could not be reached (socket error, no dashboard).
+      throw const CapabilityFailure(CapabilityFailureKind.unavailable);
     }
   }
 

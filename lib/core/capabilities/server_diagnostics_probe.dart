@@ -4,7 +4,7 @@ import 'server_diagnostics_models.dart';
 /// Which read-only diagnostics the server has, from three cheap reads
 /// (`actions/doctor/status`, `actions/security-audit/status`, `health`).
 /// Nothing is launched. A server error (not 404 / 405) still means the route
-/// exists; a dashboard that cannot be reached counts as none.
+/// exists.
 final class DiagnosticsAvailability {
   final bool doctor;
   final bool audit;
@@ -38,10 +38,6 @@ Future<DiagnosticsAvailability> probeDiagnostics(
       return true;
     } on CapabilityFailure catch (failure) {
       return failure.kind != CapabilityFailureKind.unsupported;
-    } on Object {
-      // The dashboard could not be reached at all: nothing proves the route
-      // exists, so it is not advertised.
-      return false;
     }
   }
 
