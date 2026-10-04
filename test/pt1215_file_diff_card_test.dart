@@ -152,6 +152,45 @@ void main() {
       }
     });
 
+    test('only the exact emitted review header is chrome', () {
+      // Every `display.diff.review_header` in Hermes locales/*.yaml.
+      for (final header in [
+        '  ┊ hersien diff',
+        '  ┊ مراجعة الفرق (diff)',
+        '  ┊ Review-Diff',
+        '  ┊ review diff',
+        '  ┊ revisar diff',
+        '  ┊ diff de revue',
+        '  ┊ diff athbhreithnithe',
+        '  ┊ diff áttekintése',
+        '  ┊ diff della revisione',
+        '  ┊ レビュー diff',
+        '  ┊ 리뷰 변경 사항',
+        '  ┊ diff de revisão',
+        '  ┊ проверить diff',
+        '  ┊ inceleme farkı',
+        '  ┊ diff перевірки',
+        '  ┊ 檢閱差異',
+        '  ┊ 审查 diff',
+      ]) {
+        expect(cleanInlineDiff('$header  \n-a\n+b'), '-a\n+b', reason: header);
+      }
+      // A context line (one diff space) whose source starts with a space,
+      // with no hunk header before it: body, not chrome.
+      for (final first in ['  ┊ indented source', ' ┊ status rail']) {
+        expect(
+          cleanInlineDiff('$first\n-a\n+b').split('\n').first,
+          first,
+          reason: first,
+        );
+        expect(
+          cleanInlineDiff('  ┊ review diff\n$first\n-a').split('\n').first,
+          first,
+          reason: first,
+        );
+      }
+    });
+
     test('a section without any change or hunk is no diff card', () {
       final record = ToolOutputRecord.fromCompletePayload(
         _complete(inlineDiff: 'stray preamble\n$_inlineDiff'),

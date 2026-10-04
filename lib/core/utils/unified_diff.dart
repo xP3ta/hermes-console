@@ -52,13 +52,40 @@ final class FileDiff {
   String get name => fileBasename(path);
 }
 
-/// The CLI `┊ review diff` header. Hermes localizes its text
-/// (`display.diff.review_header`: «  ┊ revisar diff», «  ┊ Review-Diff»…),
-/// so only the `┊` gutter marks it. A single leading space is a diff
-/// context line (` ┊ status rail`), never the header.
-final RegExp _reviewHeader = RegExp(r'^(?:\s{2,})?┊');
+/// The CLI review header, exactly as Hermes emits it: `_emit_inline_diff`
+/// in `agent/display.py` prints `t("display.diff.review_header")`, one value
+/// per `locales/<lang>.yaml`. Keep in sync with those files. Matching the
+/// exact text (not a `┊` pattern) keeps body lines such as `  ┊ indented
+/// source` (context space + source) or ` ┊ status rail`.
+const List<String> kInlineDiffReviewHeaders = [
+  '  ┊ hersien diff', // af
+  '  ┊ مراجعة الفرق (diff)', // ar
+  '  ┊ Review-Diff', // de
+  '  ┊ review diff', // en
+  '  ┊ revisar diff', // es
+  '  ┊ diff de revue', // fr
+  '  ┊ diff athbhreithnithe', // ga
+  '  ┊ diff áttekintése', // hu
+  '  ┊ diff della revisione', // it
+  '  ┊ レビュー diff', // ja
+  '  ┊ 리뷰 변경 사항', // ko
+  '  ┊ diff de revisão', // pt
+  '  ┊ проверить diff', // ru
+  '  ┊ inceleme farkı', // tr
+  '  ┊ diff перевірки', // uk
+  '  ┊ 檢閱差異', // zh-hant
+  '  ┊ 审查 diff', // zh
+];
 
-/// Strips ANSI and the CLI `┊ review diff` header in any locale (Desktop
+/// Exact headers, plus their unindented form (no diff body line starts
+/// with `┊`), compared after trimRight.
+final Set<String> _reviewHeaders = {
+  for (final h in kInlineDiffReviewHeaders) ...[h, h.trimLeft()],
+};
+
+bool _isReviewHeader(String line) => _reviewHeaders.contains(line.trimRight());
+
+/// Strips ANSI and the CLI review header in any locale (Desktop
 /// `stripInlineDiffChrome`). Only leading chrome goes: once the diff body
 /// starts, a `┊` is source text. Returns '' for blank input.
 String cleanInlineDiff(String raw) {
@@ -66,7 +93,7 @@ String cleanInlineDiff(String raw) {
   final lines = stripAnsi(raw).split('\n');
   var start = 0;
   while (start < lines.length &&
-      (lines[start].trim().isEmpty || _reviewHeader.hasMatch(lines[start]))) {
+      (lines[start].trim().isEmpty || _isReviewHeader(lines[start]))) {
     start++;
   }
   // trimRight only: a leading space is the first context line's prefix.
