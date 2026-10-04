@@ -52,6 +52,9 @@ String capabilityTrustBody(Strings s, CapabilityTrust trust) => switch (trust) {
   Strings s,
   CapabilityItem item,
 ) {
+  if (item.stateUnknown) {
+    return (label: s.cphStateUnknown, tone: HermesStatusTone.warn);
+  }
   if (!item.installed) return null;
   if (item.updateAvailable) {
     return (label: s.cphStatusUpdateShort, tone: HermesStatusTone.warn);
@@ -67,6 +70,9 @@ String capabilityTrustBody(Strings s, CapabilityTrust trust) => switch (trust) {
   Strings s,
   CapabilityItem item,
 ) {
+  if (item.stateUnknown) {
+    return (label: s.cphStateUnknown, tone: HermesStatusTone.warn);
+  }
   if (!item.installed) {
     return (label: s.cphStatusNotInstalled, tone: HermesStatusTone.neutral);
   }
@@ -82,6 +88,29 @@ String capabilityTrustBody(Strings s, CapabilityTrust trust) => switch (trust) {
   return (label: s.cphStatusInstalled, tone: HermesStatusTone.ok);
 }
 
+/// Title and body of the install confirmation: name, publisher, source,
+/// tier, destination and, for anything not official, a third-party warning.
+({String title, String detail}) capabilityInstallConfirmation(
+  Strings s,
+  CapabilityItem item, {
+  String destination = '',
+}) {
+  final source = item.disclosure.repo.isNotEmpty
+      ? item.disclosure.repo
+      : item.disclosure.installUrl.isNotEmpty
+      ? item.disclosure.installUrl
+      : capabilityLabel(item.source);
+  final lines = [
+    if (item.author.isNotEmpty) s.cphConfirmPublisher(item.author),
+    if (source.isNotEmpty) s.cphConfirmSource(source),
+    s.cphConfirmTier(capabilityTrustLabel(s, item.trust)),
+    if (destination.isNotEmpty) s.cphConfirmDestination(destination),
+    s.cphConfirmInstallBody,
+    if (item.trust != CapabilityTrust.official) s.cphThirdPartyWarning,
+  ];
+  return (title: s.cphConfirmInstall(item.name), detail: lines.join('\n'));
+}
+
 CapabilityFailureKind capabilityFailureKindOf(Object error) =>
     error is CapabilityFailure ? error.kind : CapabilityFailureKind.unavailable;
 
@@ -93,6 +122,7 @@ String capabilityFailureMessage(Strings s, Object error) {
     CapabilityFailureKind.rejected => s.cphFailRejected,
     CapabilityFailureKind.unavailable => s.cphFailUnavailable,
     CapabilityFailureKind.blockedByScan => s.cphFailBlockedByScan,
+    CapabilityFailureKind.uncertain => s.cphFailUncertain,
     CapabilityFailureKind.invalidResponse => s.cphFailInvalid,
   };
   final detail = error is CapabilityFailure ? error.detail.trim() : '';
@@ -151,7 +181,7 @@ Future<T> runCapabilityProgress<T>(
                 valueListenable: line,
                 builder: (context, value, _) => Text(
                   value.isEmpty ? s.cphProgressKeepOpen : value,
-                  maxLines: 2,
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: HermesType.support.copyWith(
                     color: colors.textSecondary,

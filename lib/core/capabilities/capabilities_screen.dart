@@ -69,6 +69,17 @@ final class CapabilitiesSnapshot {
       guard(repo.mcpCatalog),
       guard(repo.mcpServers),
     ]);
+    // Per-profile installed state (Desktop rule); a server without
+    // `plugins.manage` keeps the REST flags.
+    List<InstalledPluginRow>? pluginRows;
+    try {
+      pluginRows = await repo.installedPluginsRpc();
+    } catch (_) {
+      pluginRows = null;
+    }
+    // On a named profile the REST flags describe the launch profile, so a
+    // missing list means the installed state is unknown, not "as REST says".
+    final pluginStateUnknown = pluginRows == null && !repo.usesDefaultProfile;
     HostedConnectorsSnapshot? connectors;
     var connectorsFailed = false;
     try {
@@ -89,7 +100,12 @@ final class CapabilitiesSnapshot {
     }
 
     final skills = mergeSkills(installed: lists[0], official: lists[1]);
-    final plugins = _mergePlugins(catalog: lists[2], installed: lists[3]);
+    final plugins = _mergePlugins(
+      catalog: lists[2],
+      installed: lists[3],
+      rows: pluginRows,
+      stateUnknown: pluginStateUnknown,
+    );
     final catalog = [
       ...skills.where((item) => item.installId.isNotEmpty),
       ...plugins.where((item) => item.installId.isNotEmpty),
@@ -105,7 +121,7 @@ final class CapabilitiesSnapshot {
       mcpServers: lists[5],
       connectors: connectors,
       connectorsFailed: connectorsFailed,
-      partial: real.isNotEmpty,
+      partial: real.isNotEmpty || pluginStateUnknown,
       skillsUpdatable:
           repo.supports(CapabilityFeature.skillsUpdate) != false &&
           skills.any((s) => s.installed && s.provenance == 'hub'),
@@ -115,11 +131,53 @@ final class CapabilitiesSnapshot {
   static List<CapabilityItem> _mergePlugins({
     required List<CapabilityItem> catalog,
     required List<CapabilityItem> installed,
+    List<InstalledPluginRow>? rows,
+    bool stateUnknown = false,
   }) {
     final byName = {for (final p in installed) p.installedName: p};
     final used = <String>{};
     final out = <CapabilityItem>[];
     for (final entry in catalog) {
+      if (stateUnknown) {
+        out.add(
+          entry.copyWith(
+            installed: false,
+            stateUnknown: true,
+            enabled: false,
+            updateAvailable: false,
+          ),
+        );
+        continue;
+      }
+      if (rows != null) {
+        final row = rows.match(
+          catalogName: entry.installId,
+          name: entry.installedName,
+        );
+        if (row == null) {
+          out.add(
+            entry.copyWith(
+              installed: false,
+              enabled: false,
+              updateAvailable: false,
+            ),
+          );
+          continue;
+        }
+        final local = byName[row.name];
+        used.add(row.name);
+        out.add(
+          entry.copyWith(
+            installed: true,
+            enabled: row.enabled,
+            updateAvailable: row.updateAvailable,
+            installedName: row.name,
+            installedKey: row.key,
+            canRemove: local?.canRemove ?? true,
+          ),
+        );
+        continue;
+      }
       final local = byName[entry.installedName];
       if (local != null) {
         used.add(local.installedName);
@@ -128,6 +186,7 @@ final class CapabilitiesSnapshot {
             installed: true,
             enabled: local.enabled,
             canRemove: local.canRemove,
+            installedKey: local.installedKey,
           ),
         );
       } else {
@@ -189,6 +248,8 @@ class _CapabilitiesHubState extends State<CapabilitiesHub> {
     repository: _repository,
     readOnly: widget.connection.readOnly,
     instanceId: widget.connection.id,
+    destinationLabel:
+        '${widget.connection.label} · ${widget.profile.trim().isEmpty ? 'default' : widget.profile.trim()}',
     advancedBuilder: widget.advancedBuilder,
     classicSkillsBuilder: widget.classicSkillsBuilder,
   );
@@ -198,6 +259,9 @@ class CapabilitiesScreen extends StatefulWidget {
   final CapabilitiesRepository repository;
   final bool readOnly;
   final String instanceId;
+
+  /// `<server label> · <profile>` shown in install confirmations.
+  final String destinationLabel;
   final WidgetBuilder? advancedBuilder;
   final WidgetBuilder? classicSkillsBuilder;
   final CapabilitiesSegment initialSegment;
@@ -208,6 +272,7 @@ class CapabilitiesScreen extends StatefulWidget {
     required this.repository,
     this.readOnly = false,
     this.instanceId = '',
+    this.destinationLabel = '',
     this.advancedBuilder,
     this.classicSkillsBuilder,
     this.initialSegment = CapabilitiesSegment.catalog,
@@ -494,6 +559,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
           repository: _repo,
           readOnly: widget.readOnly,
           instanceId: widget.instanceId,
+          destinationLabel: widget.destinationLabel,
           onChanged: () => changed = true,
         ),
       ),

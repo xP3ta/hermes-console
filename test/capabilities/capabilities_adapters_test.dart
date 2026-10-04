@@ -119,7 +119,6 @@ void main() {
     for (final method in const [
       'prompt.submit',
       'session.activate',
-      'plugins.manage',
       'connectors.policy.set',
     ]) {
       expect(
@@ -127,6 +126,25 @@ void main() {
         isFalse,
         reason: method,
       );
+    }
+  });
+
+  test('plugins.manage is admitted per action', () {
+    bool allowed(String? action, {required bool readOnly}) =>
+        TuiGatewayClient.capabilitiesRpcAllowed(
+          'plugins.manage',
+          action: action,
+          readOnly: readOnly,
+        );
+    expect(allowed('list', readOnly: true), isTrue);
+    expect(allowed('list', readOnly: false), isTrue);
+    for (final action in const ['install', 'toggle', 'update', 'remove']) {
+      expect(allowed(action, readOnly: true), isFalse, reason: action);
+      expect(allowed(action, readOnly: false), isTrue, reason: action);
+    }
+    for (final action in const ['settings', 'onboarding', '', null, 'x']) {
+      expect(allowed(action, readOnly: false), isFalse, reason: '$action');
+      expect(allowed(action, readOnly: true), isFalse, reason: '$action');
     }
   });
 }

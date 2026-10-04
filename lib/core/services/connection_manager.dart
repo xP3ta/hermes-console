@@ -4238,8 +4238,16 @@ class DashboardClient {
 
   /// PUT /api/env — fija una variable de entorno (p.ej. la API key de un
   /// proveedor). El servidor rechaza nombres peligrosos (denylist).
-  Future<bool> setEnvVar(String key, String value) async {
-    final res = await apiPut('env', body: {'key': key, 'value': value});
+  Future<bool> setEnvVar(String key, String value, {String? profile}) async {
+    final target = profile?.trim() ?? '';
+    final res = await apiPut(
+      'env',
+      body: {
+        'key': key,
+        'value': value,
+        if (target.isNotEmpty && target != 'default') 'profile': target,
+      },
+    );
     return (res['ok'] as bool?) ?? false;
   }
 
