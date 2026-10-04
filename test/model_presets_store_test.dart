@@ -24,6 +24,46 @@ void main() {
     );
   });
 
+  test('concurrent merges on one connection keep both dimensions', () async {
+    final prefs = _CommitLaterPrefs();
+    final reasoning = ModelPresetsStore(prefs, connectionId: 'server-a');
+    final fast = ModelPresetsStore(prefs, connectionId: 'server-a');
+
+    await Future.wait([
+      reasoning.merge('nous', 'model-a', effort: DesktopReasoningEffort.high),
+      fast.merge('nous', 'model-a', fast: DesktopFastMode.fast),
+      reasoning.merge('nous', 'model-b', fast: DesktopFastMode.fast),
+    ]);
+
+    const expected = ModelPreset(
+      effort: DesktopReasoningEffort.high,
+      fast: DesktopFastMode.fast,
+    );
+    expect(reasoning.read('nous', 'model-a'), expected);
+    expect(
+      fast.read('nous', 'model-b'),
+      const ModelPreset(fast: DesktopFastMode.fast),
+    );
+    final reread = ModelPresetsStore(prefs, connectionId: 'server-a');
+    expect(reread.read('nous', 'model-a'), expected);
+  });
+
+  test('a merge queued behind a restore sees the restored value', () async {
+    final prefs = _CommitLaterPrefs();
+    final store = ModelPresetsStore(prefs, connectionId: 'server-a');
+    await store.merge('nous', 'model-a', effort: DesktopReasoningEffort.low);
+
+    await Future.wait([
+      store.restore('nous', 'model-a', null),
+      store.merge('nous', 'model-a', fast: DesktopFastMode.fast),
+    ]);
+
+    expect(
+      store.read('nous', 'model-a'),
+      const ModelPreset(fast: DesktopFastMode.fast),
+    );
+  });
+
   test('corrupt JSON loads as empty', () async {
     SharedPreferences.setMockInitialValues({
       'model_presets_v1.server-a': '{not-json',
@@ -76,4 +116,23 @@ void main() {
 
     expect(applied, ['fast:fast']);
   });
+}
+
+/// Commits writes after an async gap, like a store without a synchronous
+/// in-memory cache: a read issued before the commit sees the old blob.
+final class _CommitLaterPrefs implements SharedPreferences {
+  final Map<String, String> _committed = {};
+
+  @override
+  String? getString(String key) => _committed[key];
+
+  @override
+  Future<bool> setString(String key, String value) async {
+    await Future<void>.delayed(Duration.zero);
+    _committed[key] = value;
+    return true;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

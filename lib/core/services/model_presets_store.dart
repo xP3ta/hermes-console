@@ -46,6 +46,8 @@ final class ModelPreset {
   int get hashCode => Object.hash(effort, fast);
 }
 
+final Expando<Map<String, Future<void>>> _writeChains = Expando();
+
 final class ModelPresetsStore {
   final SharedPreferences _prefs;
   final String connectionId;
@@ -78,7 +80,7 @@ final class ModelPresetsStore {
     String model, {
     DesktopReasoningEffort? effort,
     DesktopFastMode? fast,
-  }) async {
+  }) => _serialized(() async {
     final all = _readAll();
     final key = modelPresetKey(provider, model);
     final previous = all[key];
@@ -88,21 +90,34 @@ final class ModelPresetsStore {
     );
     await _writeAll(all);
     return previous;
-  }
+  });
 
-  Future<void> restore(
-    String provider,
-    String model,
-    ModelPreset? preset,
-  ) async {
-    final all = _readAll();
-    final key = modelPresetKey(provider, model);
-    if (preset == null) {
-      all.remove(key);
-    } else {
-      all[key] = preset;
-    }
-    await _writeAll(all);
+  Future<void> restore(String provider, String model, ModelPreset? preset) =>
+      _serialized(() async {
+        final all = _readAll();
+        final key = modelPresetKey(provider, model);
+        if (preset == null) {
+          all.remove(key);
+        } else {
+          all[key] = preset;
+        }
+        await _writeAll(all);
+      });
+
+  /// Runs one read-modify-write of the shared blob after every earlier one
+  /// for the same preferences and connection has finished writing, so the
+  /// read always sees the latest blob. The chain lives on the preferences
+  /// object because callers build a fresh store per update.
+  Future<T> _serialized<T>(Future<T> Function() update) {
+    final chains = _writeChains[_prefs] ??= <String, Future<void>>{};
+    final key = _storageKey;
+    final result = (chains[key] ?? Future<void>.value()).then((_) => update());
+    final tail = result.then<void>((_) {}, onError: (Object _) {});
+    chains[key] = tail;
+    tail.whenComplete(() {
+      if (identical(chains[key], tail)) chains.remove(key);
+    });
+    return result;
   }
 
   Future<void> _writeAll(Map<String, ModelPreset> values) => _prefs.setString(
