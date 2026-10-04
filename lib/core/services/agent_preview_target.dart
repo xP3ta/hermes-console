@@ -68,21 +68,36 @@ AgentPreviewTarget? classifyAgentPreviewTarget(String raw) {
   } else {
     candidate = 'http://$value';
   }
-  final uri = Uri.tryParse(candidate);
-  if (uri == null || uri.host.isEmpty) return null;
-  final scheme = uri.scheme.toLowerCase();
+  final parsed = Uri.tryParse(candidate);
+  if (parsed == null || parsed.host.isEmpty || parsed.userInfo.isNotEmpty) {
+    return null;
+  }
+  final scheme = parsed.scheme.toLowerCase();
   if (scheme != 'http' && scheme != 'https') return null;
 
-  final serverOnly = _isServerOnlyHost(uri.host);
+  final serverOnly = _isServerOnlyHost(parsed.host);
   // The tool defaults a bare host to http for the machine itself and https
   // for everything else.
-  final url = _hasScheme.hasMatch(value)
-      ? value
-      : '${serverOnly ? 'http' : 'https'}://$value';
+  final uri = _hasScheme.hasMatch(value)
+      ? parsed
+      : Uri.tryParse('${serverOnly ? 'http' : 'https'}://$value');
+  if (uri == null) return null;
   return AgentPreviewTarget(
-    url: url,
+    url: _canonicalWebUrl(uri),
     reach: serverOnly ? AgentPreviewReach.serverOnly : AgentPreviewReach.web,
   );
+}
+
+/// One spelling per target, so a `close` finds the `open` it undoes: scheme
+/// and host in lower case, the scheme's default port dropped.
+String _canonicalWebUrl(Uri uri) {
+  final scheme = uri.scheme.toLowerCase();
+  final host = uri.host.contains(':') ? '[${uri.host}]' : uri.host;
+  final defaultPort = scheme == 'https' ? 443 : 80;
+  final port = uri.hasPort && uri.port != defaultPort ? ':${uri.port}' : '';
+  final query = uri.hasQuery ? '?${uri.query}' : '';
+  final fragment = uri.hasFragment ? '#${uri.fragment}' : '';
+  return '$scheme://$host$port${uri.path}$query$fragment';
 }
 
 final RegExp _numericLabel = RegExp(r'^(?:0x[0-9a-f]+|\d+)$');
@@ -105,7 +120,11 @@ AgentPreviewTarget? _fileUrl(String value) {
   } on ArgumentError {
     return null;
   }
-  if (!path.startsWith('/') || path.length < 2) return null;
+  if (!path.startsWith('/') ||
+      path.length < 2 ||
+      path.contains(_controlChars)) {
+    return null;
+  }
   return AgentPreviewTarget(
     url: value,
     reach: AgentPreviewReach.serverFile,
@@ -130,23 +149,25 @@ bool _isServerOnlyHost(String rawHost) {
     return true;
   }
   if (host.contains(':')) return _isServerOnlyIpv6(host);
-  // A numeric host in any notation (`2130706433`, `0x7f.1`, `127.1`) can
-  // hide a loopback address: only a plain dotted quad is judged by range.
+  // A numeric host in any notation (`2130706433`, `0x7f.1`, `012.0.0.1`,
+  // `127.1`) is read by a browser as an address that may be private: only a
+  // canonical dotted quad is judged by range, everything else is refused.
   final labels = host.split('.');
   if (labels.every((label) => _numericLabel.hasMatch(label))) {
     final octets = _dottedQuad(host);
     return octets == null || _isServerOnlyIpv4(octets);
   }
   // A single label has no public DNS name (`intranet`, `printer`).
-  return !host.contains('.');
+  return labels.length == 1;
 }
 
+/// Four decimal octets without leading zeros (`012` is octal to a browser).
 List<int>? _dottedQuad(String host) {
   final parts = host.split('.');
   if (parts.length != 4) return null;
   final octets = <int>[];
   for (final part in parts) {
-    if (!RegExp(r'^\d{1,3}$').hasMatch(part)) return null;
+    if (!RegExp(r'^(?:0|[1-9]\d{0,2})$').hasMatch(part)) return null;
     final value = int.parse(part);
     if (value > 255) return null;
     octets.add(value);
@@ -167,24 +188,66 @@ bool _isServerOnlyIpv4(List<int> o) {
       a >= 224; // multicast, reserved, broadcast
 }
 
+bool _embeddedIpv4ServerOnly(int high, int low) =>
+    _isServerOnlyIpv4([high >> 8, high & 0xff, low >> 8, low & 0xff]);
+
 bool _isServerOnlyIpv6(String host) {
-  final address = host.startsWith('[')
-      ? host.substring(1, host.length - 1)
-      : host;
-  final lower = address.toLowerCase();
-  if (lower == '::' || lower == '::1') return true;
-  // IPv4-mapped (`::ffff:127.0.0.1`): judge the embedded address.
-  final mapped = RegExp(
-    r'^(?:0:0:0:0:0:|::)ffff:(\d+\.\d+\.\d+\.\d+)$',
-  ).firstMatch(lower);
-  if (mapped != null) {
-    final octets = _dottedQuad(mapped.group(1)!);
-    return octets == null || _isServerOnlyIpv4(octets);
+  final groups = _parseIpv6(host);
+  if (groups == null) return true; // zone ids and anything odd: refuse
+  final g = groups;
+  final zeroHead = g.take(5).every((group) => group == 0);
+  // `::`, `::1`, IPv4-compatible `::a.b.c.d` and IPv4-mapped `::ffff:a.b.c.d`
+  // in every spelling (dotted, hex, expanded): judge the embedded address.
+  if (zeroHead && (g[5] == 0 || g[5] == 0xffff)) {
+    return _embeddedIpv4ServerOnly(g[6], g[7]);
   }
-  final first = lower.split(':').first;
-  final head = first.isEmpty ? 0 : int.tryParse(first, radix: 16);
-  if (head == null) return true;
-  return (head & 0xfe00) == 0xfc00 || // fc00::/7 unique local
-      (head & 0xffc0) == 0xfe80 || // fe80::/10 link-local
-      (head & 0xff00) == 0xff00; // multicast
+  // NAT64 `64:ff9b::/96` and 6to4 `2002::/16` carry an IPv4 address too.
+  if (g[0] == 0x64 &&
+      g[1] == 0xff9b &&
+      g.skip(2).take(4).every((group) => group == 0)) {
+    return _embeddedIpv4ServerOnly(g[6], g[7]);
+  }
+  if (g[0] == 0x2002) return _embeddedIpv4ServerOnly(g[1], g[2]);
+  return (g[0] & 0xfe00) == 0xfc00 || // fc00::/7 unique local
+      (g[0] & 0xffc0) == 0xfe80 || // fe80::/10 link-local
+      (g[0] & 0xffc0) == 0xfec0 || // fec0::/10 site-local
+      (g[0] & 0xff00) == 0xff00; // multicast
+}
+
+/// The eight 16-bit groups of [host], or null when it is not an IPv6 literal.
+List<int>? _parseIpv6(String host) {
+  if (host.contains('%')) return null;
+  final compression = host.indexOf('::');
+  if (compression != host.lastIndexOf('::')) return null;
+
+  List<int>? side(String text) {
+    if (text.isEmpty) return <int>[];
+    final groups = <int>[];
+    final tokens = text.split(':');
+    for (var i = 0; i < tokens.length; i++) {
+      final token = tokens[i];
+      if (i == tokens.length - 1 && token.contains('.')) {
+        final octets = _dottedQuad(token);
+        if (octets == null) return null;
+        groups
+          ..add(octets[0] << 8 | octets[1])
+          ..add(octets[2] << 8 | octets[3]);
+        continue;
+      }
+      if (!RegExp(r'^[0-9a-f]{1,4}$').hasMatch(token)) return null;
+      groups.add(int.parse(token, radix: 16));
+    }
+    return groups;
+  }
+
+  if (compression < 0) {
+    final all = side(host);
+    return all != null && all.length == 8 ? all : null;
+  }
+  final head = side(host.substring(0, compression));
+  final tail = side(host.substring(compression + 2));
+  if (head == null || tail == null || head.length + tail.length > 7) {
+    return null;
+  }
+  return [...head, ...List.filled(8 - head.length - tail.length, 0), ...tail];
 }
