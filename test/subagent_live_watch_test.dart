@@ -689,6 +689,10 @@ void main() {
     ),
     'timeout': TimeoutException('session.close'),
     'state error': StateError('close refused'),
+    // Anything else a plugin, the auth layer or the channel may throw.
+    'format error': const FormatException('bad frame'),
+    'unrelated exception': _UnrelatedFailure(),
+    'non-exception object': 'refused',
   };
 
   for (final MapEntry(key: name, value: error) in refusals.entries) {
@@ -1066,3 +1070,5 @@ class _CountingListenable implements Listenable {
   @override
   void removeListener(VoidCallback listener) => _listeners.remove(listener);
 }
+
+class _UnrelatedFailure implements Exception {}
