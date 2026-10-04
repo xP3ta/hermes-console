@@ -127,4 +127,43 @@ void main() {
     )!;
     expect(out, contains('title="a&quot;b"'));
   });
+
+  group('stylesheets that can fetch are refused whole', () {
+    const cases = {
+      'escaped import': r'@\69mport url(https://evil.example.test/a.css);',
+      'escaped import, no url': r'@\69mport "https://evil.example.test/a.css";',
+      'string import': '@import "https://evil.example.test/a.css";',
+      'import after comment':
+          '/* x */@import"https://evil.example.test/a.css";',
+      'entity-encoded at sign':
+          '&#64;import "https://evil.example.test/a.css";',
+      'escaped url function': r'rect{fill:ur\6c(https://evil.example.test/a)}',
+      'image-set string':
+          'rect{fill:image-set("https://evil.example.test/a.png" 1x)}',
+      'font-face': '@font-face{src:url(https://evil.example.test/f.woff)}',
+      'namespace': '@namespace url(https://evil.example.test/);',
+    };
+    for (final entry in cases.entries) {
+      test(entry.key, () {
+        expect(
+          sanitizeSvgForEmbed(
+            '<svg xmlns="http://www.w3.org/2000/svg"><style>${entry.value}</style><rect/></svg>',
+          ),
+          isNull,
+        );
+      });
+    }
+    test('a plain stylesheet is still kept', () {
+      final out = sanitizeSvgForEmbed(
+        '<svg xmlns="http://www.w3.org/2000/svg"><style>rect{fill:#f00;stroke:blue}</style><rect/></svg>',
+      );
+      expect(out, contains('rect{fill:#f00;stroke:blue}'));
+    });
+    test('a style attribute with an escape is dropped', () {
+      final out = sanitizeSvgForEmbed(
+        r'<svg xmlns="http://www.w3.org/2000/svg"><rect style="fill:ur\6c(https://evil.example.test/a)" width="1"/></svg>',
+      )!;
+      expect(out, isNot(contains('style=')));
+    });
+  });
 }

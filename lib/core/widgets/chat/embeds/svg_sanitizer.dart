@@ -43,13 +43,27 @@ bool _safeReference(String value) {
       RegExp(r'^data:image/(png|jpe?g|gif|webp);').hasMatch(v);
 }
 
+/// CSS is accepted only in a plain form. Escapes (`\69mport`), entity
+/// references (`&#64;import`) and every at-rule are refused outright instead
+/// of being decoded and inspected, so no spelling of `@import`, `@font-face`
+/// or `url()` can slip past a text match. Functions that take a bare string
+/// URL (`image-set`, `src`, `image`, `cross-fade`, `element`, `paint`) are
+/// refused too.
+final RegExp _cssFetchFunction = RegExp(
+  r'(?:^|[^\w-])(?:-webkit-)?(?:image-set|src|image|cross-fade|element|paint)\s*\(',
+  caseSensitive: false,
+);
+
 bool _safeCss(String css) {
   final lower = css.toLowerCase();
-  if (lower.contains('@import') ||
+  if (css.contains(r'\') ||
+      css.contains('&') ||
+      css.contains('@') ||
       lower.contains('expression(') ||
       lower.contains('javascript:') ||
       lower.contains('behavior:') ||
-      lower.contains('-moz-binding')) {
+      lower.contains('-moz-binding') ||
+      _cssFetchFunction.hasMatch(css)) {
     return false;
   }
   for (final match in _cssUrl.allMatches(css)) {
