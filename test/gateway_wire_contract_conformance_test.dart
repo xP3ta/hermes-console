@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/foreign_session.dart';
 import 'package:hermes_android/core/models/agent_task_list.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
@@ -289,6 +290,32 @@ final List<_Consumer> _consumers = [
       SessionControlSnapshot.fromJson(s['control']);
       return true;
     },
+  ),
+  _Consumer(
+    'result',
+    'session.foreign.list',
+    (c) => c.methodResultSchema('session.foreign.list'),
+    (s) {
+      final page = ForeignSessionPage.fromJson(s);
+      return page.sessions.length ==
+          ((s['sessions'] as List?) ?? const []).length;
+    },
+  ),
+  _Consumer(
+    'result',
+    'session.foreign.preview',
+    (c) => c.methodResultSchema('session.foreign.preview'),
+    (s) {
+      final preview = ForeignPreview.fromJson(s);
+      return preview.messages.length ==
+          ((s['messages'] as List?) ?? const []).length;
+    },
+  ),
+  _Consumer(
+    'result',
+    'session.foreign.import',
+    (c) => c.methodResultSchema('session.foreign.import'),
+    (s) => ForeignImportResult.tryParse(s) != null,
   ),
   _Consumer(
     'result',

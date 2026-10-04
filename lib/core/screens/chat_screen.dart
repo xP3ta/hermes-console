@@ -9,7 +9,9 @@ export '../widgets/chat/chat_message_selection_area.dart';
 
 import '../models/bot_mention.dart';
 import '../widgets/chat_mention_palette.dart';
+import '../services/message_reaction_prefs.dart';
 import '../widgets/chat/chat_markdown_body.dart';
+import '../widgets/chat/message_reaction_bar.dart';
 import '../widgets/chat/chat_message_frame.dart';
 import '../widgets/chat/console_composer.dart';
 import '../widgets/chat/chat_message_selection_area.dart';
@@ -6536,6 +6538,7 @@ class _ChatScreenState extends State<ChatScreen>
       // The generic setState above already repaints _buildGoalStrip; no
       // extra behavior (scrolling, etc.) is needed for a status change.
       case ActiveChatEvent.backgroundTaskComplete:
+      case ActiveChatEvent.reactionsChanged:
         break;
     }
   }
@@ -15370,6 +15373,11 @@ class _ChatScreenState extends State<ChatScreen>
                 unit: unit,
                 sourceMessages: sourceMessages,
               );
+              child = _wrapReactions(
+                child,
+                unit: unit,
+                assistantSlice: assistantSlice,
+              );
               if (_newSinceFirstUnread != null &&
                   (assistantSlice?.showHeader ?? true) &&
                   sourceMessages.any(_isNewSinceFirstUnread)) {
@@ -15524,6 +15532,70 @@ class _ChatScreenState extends State<ChatScreen>
   /// Resaltado del resultado actual de la búsqueda. Envuelve solo el
   /// contenido de filas estables: el host vivo del streaming queda fuera para
   /// no interponer nada en la geometría que mide el lock del viewport.
+  /// Reaction row under a persisted message, only while the user has turned
+  /// reactions on and the connection can store them. Live rows that have no
+  /// transcript id yet get the row once they are persisted.
+  Widget _wrapReactions(
+    Widget child, {
+    required Object unit,
+    required _AssistantRenderSlice? assistantSlice,
+  }) {
+    if (unit is! Map<String, dynamic>) return child;
+    if (assistantSlice != null && !assistantSlice.showFooter) return child;
+    final role = unit['role'];
+    if ((role != 'user' && role != 'assistant') || unit['_pipeline'] == true) {
+      return child;
+    }
+    final rowId = canonicalTranscriptRowId(unit);
+    if (rowId == null) return child;
+    return ListenableBuilder(
+      listenable: MessageReactionPrefs.shared,
+      child: child,
+      builder: (context, child) {
+        if (!MessageReactionPrefs.shared.enabled) return child!;
+        if (!_chat.canReact) {
+          // Hidden until the server has confirmed message.react. ActiveChat
+          // asks on connect and when the preference turns on, never a build.
+          return child!;
+        }
+        final reactions = _chat.reactionsFor(rowId);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            child!,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: Align(
+                alignment: role == 'user'
+                    ? Alignment.centerRight
+                    : Alignment.centerLeft,
+                child: MessageReactionBar(
+                  key: ValueKey('message-reactions-$rowId'),
+                  reactions: reactions,
+                  addTooltip: Strings.of(context).reactAdd,
+                  onPick: (emoji) => _react(rowId, emoji),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _react(int rowId, String emoji) async {
+    try {
+      await _chat.reactToMessage(rowId: rowId, emoji: emoji);
+    } catch (_) {
+      if (!mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(Strings.of(context).reactFailed)),
+        kind: HermesNoticeKind.warning,
+      );
+    }
+  }
+
   Widget _wrapFindHighlight(
     Widget child, {
     required Object unit,
@@ -19223,7 +19295,8 @@ class _AssistantMessage extends StatelessWidget {
 
     // Un bloque de Markdown de la respuesta, con la presentación de siempre.
     // El [data] ya viene normalizado por [buildAssistantAnswerBlocks].
-    Widget markdownWidget(String data) => ChatMarkdownBlock(data: data);
+    Widget markdownWidget(String data) =>
+        ChatMarkdownBlock(data: data, embeds: !isStreaming);
 
     /// Reparte un segmento vivo en prefijo estable cacheable + cola mutable.
     /// Solo la cola se reconstruye en cada frame; el prefijo conserva el mismo
@@ -21167,7 +21240,7 @@ class AssistantMarkdownView extends StatelessWidget {
         : buildAssistantAnswerBlocks(
             split.answer,
             isStreaming: isStreaming,
-            markdown: (d) => ChatMarkdownBlock(data: d),
+            markdown: (d) => ChatMarkdownBlock(data: d, embeds: !isStreaming),
             callout: (b) =>
                 CalloutCard(kind: b.kind, title: b.title, body: b.body),
             onLinkTap: (href) => openChatMarkdownLink(context, href),

@@ -1050,6 +1050,7 @@ class LocalVoiceConversationController extends ChangeNotifier
     if (event == ActiveChatEvent.responseMetrics ||
         event == ActiveChatEvent.dashboardAuthChanged ||
         event == ActiveChatEvent.goalUpdated ||
+        event == ActiveChatEvent.reactionsChanged ||
         event == ActiveChatEvent.backgroundTaskComplete) {
       return;
     }
@@ -1226,6 +1227,7 @@ class LocalVoiceConversationController extends ChangeNotifier
       case ActiveChatEvent.warning:
       case ActiveChatEvent.dashboardAuthChanged:
       case ActiveChatEvent.goalUpdated:
+      case ActiveChatEvent.reactionsChanged:
       case ActiveChatEvent.backgroundTaskComplete:
         break;
     }

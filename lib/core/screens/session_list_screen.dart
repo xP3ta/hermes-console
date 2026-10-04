@@ -43,6 +43,10 @@ import '../widgets/session_title_editor_route.dart';
 import '../widgets/session_row_stop_control.dart';
 import 'chat_screen.dart';
 import 'mission_control_screen.dart';
+import '../services/session_pull_requests.dart';
+import '../widgets/session_pull_request_row.dart';
+import 'foreign_session_import_screen.dart';
+import 'session_branches_screen.dart';
 import 'session_detail_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/session_status_tone.dart';
@@ -172,6 +176,7 @@ class _SessionListScreenState extends State<SessionListScreen>
   late final SessionRepository? _repository;
   late final bool _ownsRepository;
   TuiGatewayClient? _ownedActivityClient;
+  PullRequestTagService? _pullRequests;
   SharedGatewayLease? _activityLease;
   StreamSubscription<TuiGatewayEvent>? _eventSubscription;
   StreamSubscription<HistoryCleanupInvalidation>? _historyCleanupSubscription;
@@ -303,6 +308,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       final lease = SharedGatewayPool.instance.acquire(widget.connection);
       _activityLease = lease;
       _ownedActivityClient = lease.client;
+      unawaited(_confirmForeignImport(lease.client));
     }
     _startEventUpdates();
     unawaited(_refreshRemoteActivity());
@@ -1683,6 +1689,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         builder: (_) => SessionDetailScreen(
           connection: widget.connection,
           session: session,
+          knownSessions: _sessions,
         ),
       ),
     );
@@ -1693,6 +1700,100 @@ class _SessionListScreenState extends State<SessionListScreen>
       // El detalle puede haber ramificado o reanudado: refrescar barato.
       _fetchSessions();
     }
+  }
+
+  /// The PR read behind the session menu: on demand, never on list build.
+  Future<PullRequestInfo?> Function()? _pullRequestLoader(Session session) {
+    final client = _ownedActivityClient;
+    if (client == null || session.gitRepoRoot?.trim().isNotEmpty != true) {
+      return null;
+    }
+    return () async {
+      var service = _pullRequests;
+      if (service == null) {
+        final prefs = await SharedPreferences.getInstance();
+        service = _pullRequests ??= PullRequestTagService(
+          gateway: client,
+          connectionId: widget.connection.id,
+          prefs: prefs,
+        );
+      }
+      return service.tagFor(session);
+    };
+  }
+
+  void _openForeignImport() {
+    final client = _ownedActivityClient;
+    if (client == null) return;
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => ForeignSessionImportScreen(
+          gateway: client,
+          profile: Session.profileOwner(_libraryQuery.profile),
+          onOpenSession: _openImportedSession,
+        ),
+      ),
+    );
+  }
+
+  /// One list refresh, then the imported (or already imported) session.
+  Future<void> _openImportedSession(String sessionId) async {
+    await _fetchSessions(showLoader: false);
+    if (!mounted) return;
+    final known = _sessions.where(
+      (row) => row.id == sessionId || row.lineageIds.contains(sessionId),
+    );
+    final session = known.isNotEmpty
+        ? known.first
+        : Session(
+            id: sessionId,
+            title: '',
+            model: '',
+            source: 'mobile',
+            messageCount: 0,
+            isActive: false,
+            preview: '',
+            startedAt: 0,
+            profile: _libraryQuery.profile,
+          );
+    await _openChat(session);
+  }
+
+  Future<void> _confirmForeignImport(TuiGatewayClient client) async {
+    final offered = await client.confirmForeignSessions();
+    if (offered && mounted && identical(client, _ownedActivityClient)) {
+      setState(() {});
+    }
+  }
+
+  bool get _branchesMayHaveMore =>
+      _repository != null &&
+      _librarySource == SessionLibrarySource.dashboard &&
+      !_libraryExhaustive;
+
+  Future<void> _openBranches(Session session) {
+    final canLoadMore = _branchesMayHaveMore;
+    return Navigator.push<void>(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => SessionBranchesScreen(
+          sessions: _sessions,
+          currentId: session.id,
+          titleOf: _titleFor,
+          onOpen: (row) {
+            Navigator.pop(context);
+            _openChat(row);
+          },
+          onLoadMore: canLoadMore
+              ? () async {
+                  await _loadNextPage();
+                  return _sessions;
+                }
+              : null,
+        ),
+      ),
+    );
   }
 
   // ── Context menu ─────────────────────────────────────────────────────────
@@ -1776,6 +1877,33 @@ class _SessionListScreenState extends State<SessionListScreen>
                 onTap: () async {
                   Navigator.pop(ctx);
                   await _toggleUnread(session);
+                },
+              ),
+            if (_pullRequestLoader(session) case final load?)
+              SessionPullRequestRow(
+                key: ValueKey('session-menu-pr-${session.id}'),
+                load: load,
+                builder: (context, label, onTap) => ListTile(
+                  leading: const Icon(Icons.merge_type_rounded),
+                  title: Text(label),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    onTap();
+                  },
+                ),
+              ),
+            if (SessionBranchesScreen.isAvailable(
+              _sessions,
+              session.id,
+              mayHaveMore: _branchesMayHaveMore,
+            ))
+              ListTile(
+                key: const ValueKey('session-menu-branches'),
+                leading: const Icon(Icons.account_tree_outlined),
+                title: Text(s.sesBranchesTitle),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openBranches(session);
                 },
               ),
             ListTile(
@@ -2057,6 +2185,8 @@ class _SessionListScreenState extends State<SessionListScreen>
               switch (value) {
                 case 'refresh':
                   if (!_loading) _fetchSessions();
+                case 'import':
+                  _openForeignImport();
               }
             },
             itemBuilder: (ctx) => [
@@ -2069,6 +2199,16 @@ class _SessionListScreenState extends State<SessionListScreen>
                   title: Text(s.slMenuRefresh),
                 ),
               ),
+              if (_ownedActivityClient?.foreignSessionsAvailable == true)
+                PopupMenuItem(
+                  value: 'import',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.download_for_offline_outlined),
+                    title: Text(s.fsImportMenu),
+                  ),
+                ),
             ],
           ),
         ],

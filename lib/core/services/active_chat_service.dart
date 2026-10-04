@@ -1,4 +1,6 @@
 import '../models/bot_mention.dart';
+import '../models/message_reaction.dart';
+import 'message_reaction_prefs.dart';
 import 'bot_mention_roster.dart';
 // Servicio singleton que posee el streaming SSE de los chats. Vive por encima
 // del Navigator (en HermesAppState), así que la respuesta/ejecución del agente
@@ -3671,6 +3673,7 @@ enum ActiveChatEvent {
   dashboardAuthChanged,
   goalUpdated,
   backgroundTaskComplete,
+  reactionsChanged,
 }
 
 Future<({Object? error, T? value})> _captureAsync<T>(
@@ -4535,6 +4538,106 @@ class ActiveChat {
   final Map<String, ({String text, bool isError})> _backgroundTaskOutcomes = {};
   Map<String, ({String text, bool isError})> get backgroundTaskOutcomes =>
       Map.unmodifiable(_backgroundTaskOutcomes);
+
+  /// Reactions per transcript row id. Memory only: the gateway returns them
+  /// with each reaction and pushes the agent's as `message.reaction`.
+  final Map<int, List<MessageReaction>> _reactions = {};
+
+  List<MessageReaction> reactionsFor(int rowId) =>
+      _reactions[rowId] ?? const <MessageReaction>[];
+
+  /// True while the bound gateway can store reactions: it implements them and
+  /// has not learned that the server (or this connection) refuses them.
+  bool get canReact {
+    final gateway = _desktopGateway as Object?;
+    return gateway is HermesMessageReactionGateway &&
+        gateway.messageReactionsAvailable;
+  }
+
+  bool _reactionProbeRunning = false;
+
+  /// Asks the gateway whether the server takes reactions (a probe that writes
+  /// nothing) and repaints when that settles. Called from lifecycle and user
+  /// actions only: when the chat connects with reactions on, and when the
+  /// person turns them on. Never from a build. One probe runs at a time.
+  Future<void> confirmReactions() async {
+    if (_reactionProbeRunning || _disposed || canReact) return;
+    final runtimeId = _desktopRuntimeSessionId;
+    final gateway = _desktopGateway as Object?;
+    if (runtimeId == null || gateway is! HermesMessageReactionGateway) return;
+    _reactionProbeRunning = true;
+    try {
+      await gateway.confirmMessageReactions(runtimeId);
+    } catch (_) {
+      // Nothing learned; the entry stays hidden.
+    } finally {
+      _reactionProbeRunning = false;
+    }
+    if (!_disposed) _emit(ActiveChatEvent.reactionsChanged);
+  }
+
+  /// Sets, replaces or retracts the user's reaction. A persisted row (with
+  /// [rowId]) shows it at once and rolls back if the gateway refuses; a live
+  /// row that has no id yet names [newestRole] and shows the server's answer.
+  Future<void> reactToMessage({
+    int? rowId,
+    String? newestRole,
+    required String? emoji,
+  }) async {
+    final runtimeId = _desktopRuntimeSessionId;
+    final gateway = _desktopGateway as Object?;
+    if (runtimeId == null ||
+        gateway is! HermesMessageReactionGateway ||
+        !gateway.messageReactionsAvailable) {
+      throw const TuiGatewayRpcError(
+        'message.react',
+        'Reactions are unavailable',
+        code: -32601,
+      );
+    }
+    final before = rowId == null ? null : _reactions[rowId];
+    if (rowId != null) {
+      _setReactions(
+        rowId,
+        applyReaction(
+          before ?? const <MessageReaction>[],
+          MessageReactionAuthor.user,
+          emoji,
+        ),
+      );
+    }
+    try {
+      final result = await gateway
+          .reactToMessage(
+            runtimeId,
+            rowId: rowId,
+            newestRole: newestRole,
+            emoji: emoji,
+            profile: _storedSessionProfile,
+          );
+      if (_disposed) return;
+      _setReactions(result.rowId, result.reactions);
+    } catch (_) {
+      if (!_disposed) {
+        if (rowId != null) {
+          _setReactions(rowId, before ?? const <MessageReaction>[]);
+        }
+        // The refusal may have ended the capability; repaint so the reaction
+        // controls disappear instead of waiting for the next unrelated event.
+        _emit(ActiveChatEvent.reactionsChanged);
+      }
+      rethrow;
+    }
+  }
+
+  void _setReactions(int rowId, List<MessageReaction> list) {
+    if (list.isEmpty) {
+      _reactions.remove(rowId);
+    } else {
+      _reactions[rowId] = list;
+    }
+    _emit(ActiveChatEvent.reactionsChanged);
+  }
 
   /// El usuario ya vio/descartó este resultado — lo quita del strip.
   void dismissBackgroundTaskOutcome(String taskId) {
@@ -8585,6 +8688,27 @@ class ActiveChat {
     if (sessionProfile != null) _bindSessionProfile(sessionProfile);
     bindKnownStoredSession(initialStoredSessionId);
     unawaited(_restoreCompressionFromRecord());
+    _reactionsWereEnabled = MessageReactionPrefs.shared.enabled;
+    _watchedReactionPrefs = MessageReactionPrefs.shared
+      ..addListener(_onReactionPrefChanged);
+  }
+
+  MessageReactionPrefs? _watchedReactionPrefs;
+  bool _reactionsWereEnabled = false;
+
+  /// Turning reactions on is when a live chat asks the server whether it
+  /// takes them, whether or not a chat screen is mounted at that moment. A
+  /// store loaded later replaces the shared one, so the watch follows it.
+  void _onReactionPrefChanged() {
+    if (_disposed) return;
+    final current = MessageReactionPrefs.shared;
+    if (!identical(current, _watchedReactionPrefs)) {
+      _watchedReactionPrefs?.removeListener(_onReactionPrefChanged);
+      _watchedReactionPrefs = current..addListener(_onReactionPrefChanged);
+    }
+    final turnedOn = current.enabled && !_reactionsWereEnabled;
+    _reactionsWereEnabled = current.enabled;
+    if (turnedOn) Timer.run(() => unawaited(confirmReactions()));
   }
 
   /// Adopts a durable state.db identity without ever retargeting a live runtime.
@@ -9125,6 +9249,9 @@ class ActiveChat {
   }
 
   void _emit(ActiveChatEvent e) {
+    if (e == ActiveChatEvent.connected && MessageReactionPrefs.shared.enabled) {
+      Timer.run(() => unawaited(confirmReactions()));
+    }
     // Un transcript recién hidratado o un turno recién terminado es la
     // evidencia que puede demostrar entregado un turno encolado incierto.
     if ((e == ActiveChatEvent.messagesHydrated || e == ActiveChatEvent.done) &&
@@ -20910,6 +21037,14 @@ class ActiveChat {
       }
       return;
     }
+    if (event.type == 'message.reaction') {
+      final rowId = payload['row_id'];
+      final list = payload['reactions'];
+      if (rowId is int && list is List) {
+        _setReactions(rowId, parseReactions(list));
+      }
+      return;
+    }
     if (event.type == 'agent.terminal.output' ||
         event.type == 'terminal.close') {
       _signalAdaptiveRefresh(processes: true);
@@ -28818,6 +28953,8 @@ class ActiveChat {
     _restoredCompressionProbeTimer?.cancel();
     _restoredCompressionProbeTimer = null;
     _disposed = true;
+    _watchedReactionPrefs?.removeListener(_onReactionPrefChanged);
+    _watchedReactionPrefs = null;
     _messageLoadEpoch++;
     _storedMessagesRestFlights.clear();
     final stop = _stopTransition;

@@ -261,6 +261,12 @@ final Map<String, _Effect> _handled = {
     );
     return _emits(emitted, ActiveChatEvent.backgroundTaskComplete, label);
   }),
+  'message.reaction': _Effect((chat, payload, emitted, label) {
+    final row = payload['row_id'];
+    if (row is! int) return false;
+    expect(chat.reactionsFor(row), isNotNull, reason: label);
+    return _emits(emitted, ActiveChatEvent.reactionsChanged, label);
+  }),
   'agent.terminal.output': _emitsAlways(ActiveChatEvent.subagentActivity),
   'terminal.close': _emitsAlways(ActiveChatEvent.subagentActivity),
   for (final type in const [
@@ -299,8 +305,7 @@ const Map<String, String> _ignored = {
   'connection.update': 'connector OAuth runs on Desktop',
   'bot_relay.outbox.pending': 'bot relay is a gateway-side queue',
   'btw.complete': 'side-question answers are rendered by Desktop only',
-  'message.reaction': 'reactions are not rendered by Console',
-  'reaction': 'reactions are not rendered by Console',
+  'reaction': 'legacy spelling of message.reaction; Console reads the new one',
   'review.summary': 'review panes are Desktop-only',
   'tool.output_risk': 'risk banner is Desktop-only',
   'notice': _desktopOnly,

@@ -8,6 +8,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'core/services/message_reaction_prefs.dart';
 import 'core/app_header_title.dart';
 import 'core/companion/data/companion_preferences.dart';
 import 'core/companion/data/companion_repository.dart';
@@ -73,6 +74,7 @@ import 'core/theme/component_profile.dart';
 import 'core/theme/scroll_behavior.dart';
 import 'core/theme/theme_profile_store.dart';
 import 'core/widgets/attachment_source_sheet.dart';
+import 'core/widgets/chat/embeds/embed_consent_store.dart';
 import 'core/widgets/frosted_backdrop.dart';
 import 'core/widgets/hermes_notice.dart';
 import 'core/widgets/hermes_premium_ui.dart';
@@ -243,6 +245,9 @@ void main() async {
 @visibleForTesting
 Future<Widget> bootstrapHermesApp() async {
   final prefs = await SharedPreferences.getInstance();
+  // Rich-embed consent is per device; until it loads every type reads as off.
+  await EmbedConsentStore.load(prefs);
+  await MessageReactionPrefs.load(prefs);
   final themeProfileStore = ThemeProfileStore(prefs);
   final cancelledTurnStore = CancelledTurnTombstoneStore.secure();
   final compressionRestoreStore = CompressionRestoreStore();
