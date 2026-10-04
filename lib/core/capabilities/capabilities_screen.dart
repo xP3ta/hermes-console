@@ -69,6 +69,14 @@ final class CapabilitiesSnapshot {
       guard(repo.mcpCatalog),
       guard(repo.mcpServers),
     ]);
+    // Per-profile installed state (Desktop rule); a server without
+    // `plugins.manage` keeps the REST flags.
+    List<InstalledPluginRow>? pluginRows;
+    try {
+      pluginRows = await repo.installedPluginsRpc();
+    } catch (_) {
+      pluginRows = null;
+    }
     HostedConnectorsSnapshot? connectors;
     var connectorsFailed = false;
     try {
@@ -89,7 +97,11 @@ final class CapabilitiesSnapshot {
     }
 
     final skills = mergeSkills(installed: lists[0], official: lists[1]);
-    final plugins = _mergePlugins(catalog: lists[2], installed: lists[3]);
+    final plugins = _mergePlugins(
+      catalog: lists[2],
+      installed: lists[3],
+      rows: pluginRows,
+    );
     final catalog = [
       ...skills.where((item) => item.installId.isNotEmpty),
       ...plugins.where((item) => item.installId.isNotEmpty),
@@ -115,11 +127,40 @@ final class CapabilitiesSnapshot {
   static List<CapabilityItem> _mergePlugins({
     required List<CapabilityItem> catalog,
     required List<CapabilityItem> installed,
+    List<InstalledPluginRow>? rows,
   }) {
     final byName = {for (final p in installed) p.installedName: p};
     final used = <String>{};
     final out = <CapabilityItem>[];
     for (final entry in catalog) {
+      if (rows != null) {
+        final row = rows.match(
+          catalogName: entry.installId,
+          name: entry.installedName,
+        );
+        if (row == null) {
+          out.add(
+            entry.copyWith(
+              installed: false,
+              enabled: false,
+              updateAvailable: false,
+            ),
+          );
+          continue;
+        }
+        final local = byName[row.name];
+        used.add(row.name);
+        out.add(
+          entry.copyWith(
+            installed: true,
+            enabled: row.enabled,
+            updateAvailable: row.updateAvailable,
+            installedName: row.name,
+            canRemove: local?.canRemove ?? true,
+          ),
+        );
+        continue;
+      }
       final local = byName[entry.installedName];
       if (local != null) {
         used.add(local.installedName);
