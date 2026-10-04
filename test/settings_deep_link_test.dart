@@ -9,8 +9,10 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 Widget _host(ScrollController controller) => MaterialApp(
   theme: AppTheme.fromId('dark'),
   home: Scaffold(
+    // Like the Settings list: sections far from the viewport stay built.
     body: ListView(
       controller: controller,
+      cacheExtent: 6000,
       children: [
         const SizedBox(height: 1600),
         SettingsDeepLinkTarget(
