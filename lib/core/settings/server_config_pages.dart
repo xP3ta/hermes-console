@@ -94,15 +94,17 @@ final _secretHint = RegExp(r'key|token|secret|password|api_');
 bool _isTableField(String path) =>
     _rules.values.any((rule) => rule.fields.contains(path));
 
-/// The pages that own [path], in page order. Empty for the model (the picker
-/// changes it), for what is never shown and for anything that is in no table
-/// row. `agent.service_tier` is in two rows of the Desktop table, so it is on
-/// two pages.
-List<ServerConfigPage> serverConfigPagesOf(String path) => [
-  if (!_excluded(path))
-    for (final page in ServerConfigPage.values)
-      if (_rules[page]!.owns(path)) page,
-];
+/// The page that owns [path]. Empty for the model (the picker changes it), for
+/// what is never shown and for anything that is in no table row. Like Desktop's
+/// `configSubpageForField`, the first matching page wins: `agent.service_tier`
+/// is in two rows of the table but is edited on Main only.
+List<ServerConfigPage> serverConfigPagesOf(String path) {
+  if (_excluded(path)) return const [];
+  for (final page in ServerConfigPage.values) {
+    if (_rules[page]!.owns(path)) return [page];
+  }
+  return const [];
+}
 
 /// Whether a path is never shown, whatever page claims it. The explicit
 /// fields of the table are exempt from the secret-name check: the rule is
@@ -126,6 +128,7 @@ List<ServerConfigField> serverConfigFieldsOf(
     final spec = entry.value;
     if (path is! String || spec is! Map) continue;
     if (!rule.owns(path) || _excluded(path)) continue;
+    if (serverConfigPagesOf(path).first != page) continue;
     final field = _parseField(path, spec);
     if (field != null) fields.add(field);
   }

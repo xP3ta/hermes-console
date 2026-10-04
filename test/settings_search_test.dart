@@ -54,7 +54,7 @@ void main() {
       ]);
     });
 
-    test('a field on two pages is found on each', () {
+    test('a field in two table rows is found on its first page only', () {
       final index = buildSettingsSearchIndex(
         s: lookupStrings(const Locale('es')),
         schema: {
@@ -70,7 +70,7 @@ void main() {
         index
             .where((e) => e.kind == SettingsSearchKind.field)
             .map((e) => e.page),
-        [ServerConfigPage.main, ServerConfigPage.runtime],
+        [ServerConfigPage.main],
       );
     });
 
