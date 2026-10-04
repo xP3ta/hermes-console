@@ -261,6 +261,7 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
   }
 
   void _stopListening() {
+    invalidation?.removeListener(_onInvalidated);
     final subscription = _subscription;
     _subscription = null;
     unawaited(subscription?.cancel());
