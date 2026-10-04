@@ -1,6 +1,7 @@
 // The Dashboard side of backups: exact routes, `?profile=` on every call
 // (default included), force as a form field, and 404/405 meaning "no backups
 // on this server".
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -14,9 +15,12 @@ final class _Dashboard extends DashboardClient {
   final List<String> calls = [];
   Map<String, String>? lastFields;
   int? failStatus;
+  Object? failWith;
   Map<String, dynamic> answer = {};
 
   void _maybeFail() {
+    final other = failWith;
+    if (other != null) throw other;
     final status = failStatus;
     if (status != null) throw DashboardHttpException(status);
   }
@@ -174,8 +178,28 @@ void main() {
       }
     });
 
-    test('an unrelated failure is not read as unavailable', () async {
-      dashboard.failStatus = 500;
+    test('a failure that does not name the route proves nothing', () async {
+      for (final status in [400, 401, 403, 500, 502, 503]) {
+        dashboard.failStatus = status;
+        await expectLater(
+          gateway.available(),
+          throwsA(isA<DashboardHttpException>()),
+          reason: '$status is neither present nor missing',
+        );
+      }
+    });
+
+    test('a timeout or a dropped connection proves nothing', () async {
+      for (final error in <Object>[
+        TimeoutException('slow'),
+        const SocketException('down'),
+      ]) {
+        dashboard.failWith = error;
+        await expectLater(gateway.available(), throwsA(same(error)));
+      }
+    });
+
+    test('a plain success proves the route exists', () async {
       expect(await gateway.available(), isTrue);
     });
 

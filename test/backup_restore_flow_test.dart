@@ -1,4 +1,3 @@
-import 'dart:async';
 // Backup and restore, step by step: confirmation before anything is sent,
 // `?profile=` on every call (default included), the safety backup first and
 // required to succeed, `force=true` only after the confirmation, the status

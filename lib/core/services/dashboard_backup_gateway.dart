@@ -26,17 +26,20 @@ class DashboardBackupGateway implements HermesBackupGateway {
     throw error;
   }
 
+  /// True only when the server positively shows the route: a plain success
+  /// or the 422 the download route answers without its required `archive`.
+  /// 404/405 mean it is missing (false). Anything else (401, 403, 5xx, a
+  /// timeout, a dropped connection) proves nothing and is rethrown, so the
+  /// page keeps its controls hidden until a retry succeeds.
   @override
   Future<bool> available() async {
     try {
-      // The download route without its required `archive` answers 422 when it
-      // exists and 404/405 when it does not; nothing is created or read.
       await _dashboard.apiGet('ops/backup/download');
       return true;
     } on DashboardHttpException catch (error) {
-      return error.statusCode != 404 && error.statusCode != 405;
-    } catch (_) {
-      return true;
+      if (error.statusCode == 422) return true;
+      if (error.statusCode == 404 || error.statusCode == 405) return false;
+      rethrow;
     }
   }
 

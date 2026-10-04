@@ -28,9 +28,14 @@ class FakeBackupGateway implements HermesBackupGateway {
 
   bool isAvailable = true;
 
+  /// When set, the probe cannot tell and throws it.
+  Object? availableError;
+
   @override
   Future<bool> available() async {
     calls.add('probe');
+    final error = availableError;
+    if (error != null) throw error;
     return isAvailable;
   }
 

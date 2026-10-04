@@ -7790,5 +7790,7 @@
   "backupRefreshFailed": "Restored. Reopen the app to reload profiles and conversations.",
   "backupCancel": "Cancel",
   "termUnreachable": "Couldn't check this server's terminal",
-  "termRetry": "Retry"
+  "termRetry": "Retry",
+  "backupUnreachable": "Couldn't check whether this server supports backups",
+  "backupRetry": "Retry"
 }

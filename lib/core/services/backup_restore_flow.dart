@@ -26,6 +26,8 @@ class BackupRouteMissing implements Exception {
 abstract class HermesBackupGateway {
   /// False when the server has no backup routes (404 or 405). Sends nothing
   /// that creates or changes anything.
+  /// Whether the server has the backup routes. Throws when it cannot tell
+  /// (timeout, authentication, a server error): nothing is assumed.
   Future<bool> available();
 
   Future<BackupCreated> createBackup(String profile);

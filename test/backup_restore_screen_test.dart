@@ -140,6 +140,22 @@ void main() {
     expect(gateway.calls, ['probe']);
   });
 
+  testWidgets('a probe that cannot tell leaves the page without actions', (
+    tester,
+  ) async {
+    gateway.availableError = StateError('timeout');
+    await open(tester, app(await lock(enabled: true)));
+    expect(find.byKey(const ValueKey('backup-create')), findsNothing);
+    expect(find.byKey(const ValueKey('backup-restore-pick')), findsNothing);
+    expect(find.byKey(const ValueKey('backup-retry')), findsOneWidget);
+    expect(gateway.calls, ['probe']);
+    gateway.availableError = null;
+    await tester.tap(find.byKey(const ValueKey('backup-retry')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('backup-create')), findsOneWidget);
+    expect(gateway.calls, ['probe', 'probe']);
+  });
+
   testWidgets('create: the warning comes first and cancel sends nothing', (
     tester,
   ) async {

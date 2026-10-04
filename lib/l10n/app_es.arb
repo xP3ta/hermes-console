@@ -9479,5 +9479,7 @@
   "backupRefreshFailed": "Restaurado. Reabre la app para recargar perfiles y conversaciones.",
   "backupCancel": "Cancelar",
   "termUnreachable": "No se pudo comprobar el terminal de este servidor",
-  "termRetry": "Reintentar"
+  "termRetry": "Reintentar",
+  "backupUnreachable": "No se pudo comprobar si este servidor admite copias de seguridad",
+  "backupRetry": "Reintentar"
 }

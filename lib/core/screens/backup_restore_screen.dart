@@ -34,7 +34,7 @@ typedef BackupLockVerifier =
       String reason,
     );
 
-enum _Access { idle, appLockRequired, locked, unsupported, ready }
+enum _Access { idle, appLockRequired, locked, unsupported, unreachable, ready }
 
 /// Settings › Data › Backup and restore. Creating, saving and restoring a
 /// server backup, each behind App Lock and an explicit confirmation. The page
@@ -197,7 +197,14 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen>
       setState(() => _access = _Access.locked);
       return;
     }
-    final available = await _gateway.available();
+    final bool available;
+    try {
+      available = await _gateway.available();
+    } catch (_) {
+      if (_disposed) return;
+      setState(() => _access = _Access.unreachable);
+      return;
+    }
     if (_disposed) return;
     setState(() => _access = available ? _Access.ready : _Access.unsupported);
   }
@@ -312,6 +319,7 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen>
           ),
           _Access.locked => _locked(s),
           _Access.unsupported => _notice(s.backupUnsupported),
+          _Access.unreachable => _unreachable(s),
           _Access.ready => _ready(s),
         },
       ),
@@ -342,6 +350,22 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen>
           label: s.backupUnlock,
           primary: true,
           onPressed: () => unawaited(_unlock()),
+        ),
+      ],
+    ),
+  );
+
+  Widget _unreachable(Strings s) => Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(s.backupUnreachable),
+        const SizedBox(height: 16),
+        HermesActionButton(
+          key: const ValueKey('backup-retry'),
+          label: s.backupRetry,
+          primary: true,
+          onPressed: () => unawaited(_open()),
         ),
       ],
     ),
