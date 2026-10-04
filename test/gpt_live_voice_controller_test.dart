@@ -361,26 +361,30 @@ void main() {
       },
     );
 
-    test(
-      'a turn that ran and ended silently finishes without waiting 15 s',
-      () {
-        fakeAsync((async) {
-          final rig = _Rig();
-          rig.enter(async);
-          rig.delegate('del_1');
-          async.flushMicrotasks();
-          rig.desktop.emit('message.start');
-          rig.desktop.emit('message.complete', {'text': ''});
-          async.elapse(const Duration(milliseconds: 200));
-          expect(
-            rig.transport.sent
-                .where((e) => e['type'] == 'session.thinking.append')
-                .map((e) => e['content']),
-            ['Hermes finished that request without a spoken result.'],
-          );
-        });
-      },
-    );
+    test('a turn that ended silently is closed out by the 15 s grace', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.enter(async);
+        rig.delegate('del_1');
+        async.flushMicrotasks();
+        rig.desktop.emit('message.start');
+        rig.desktop.emit('message.complete', {'text': ''});
+        async.elapse(const Duration(seconds: 14));
+        expect(
+          rig.transport.sent.where(
+            (e) => e['type'] == 'session.thinking.append',
+          ),
+          isEmpty,
+        );
+        async.elapse(const Duration(seconds: 2));
+        expect(
+          rig.transport.sent
+              .where((e) => e['type'] == 'session.thinking.append')
+              .map((e) => e['content']),
+          ['Hermes finished that request without a spoken result.'],
+        );
+      });
+    });
   });
 
   group('submit failure', () {

@@ -61,9 +61,6 @@ class GptLiveVoiceConversationController extends ChangeNotifier
   });
 
   static const Duration _noReplyGrace = Duration(seconds: 15);
-  // An empty terminal publishes no event until the stored transcript is
-  // reconciled, so the turn state is also sampled while a delegation runs.
-  static const Duration _turnPoll = Duration(milliseconds: 150);
   static const Duration _stopQuietWindow = Duration(milliseconds: 1500);
   static const String _nudge =
       'The user has finished speaking. Respond now to what they said.';
@@ -95,7 +92,6 @@ class GptLiveVoiceConversationController extends ChangeNotifier
   StreamSubscription<ActiveChatEvent>? _chatSub;
   StreamSubscription<LiveAudioEvent>? _audioSub;
   Timer? _graceTimer;
-  Timer? _turnPollTimer;
   Timer? _stopTimer;
   Future<void>? _exitInFlight;
   bool _disposed = false;
@@ -404,7 +400,6 @@ class GptLiveVoiceConversationController extends ChangeNotifier
     _disposed = true;
     active = false;
     _graceTimer?.cancel();
-    _turnPollTimer?.cancel();
     _stopTimer?.cancel();
     unawaited(_chatSub?.cancel());
     unawaited(_audioSub?.cancel());
@@ -480,8 +475,6 @@ class GptLiveVoiceConversationController extends ChangeNotifier
       _staleContent = chat.assistantNarrationContent;
       _spokeAnything = false;
       _turnLive = false;
-      _turnPollTimer?.cancel();
-      _turnPollTimer = Timer.periodic(_turnPoll, (_) => _pollTurn(session, id));
       _notify();
       await _onBeforeSend?.call(text);
       if (!current()) return;
@@ -511,21 +504,6 @@ class GptLiveVoiceConversationController extends ChangeNotifier
     }
   }
 
-  void _pollTurn(VoiceLiveSession session, String id) {
-    if (_disposed || !active || _delegationId != id) return;
-    _observe();
-    final state = _chat?.state;
-    // Only a terminal state proves the turn ran; an idle chat that never
-    // started one is left to the no-reply grace timer.
-    if (_turnLive &&
-        (state == ChatPipelineState.completed ||
-            state == ChatPipelineState.failed ||
-            state == ChatPipelineState.cancelled)) {
-      _settle(session, id);
-      _notify();
-    }
-  }
-
   void _apologize(VoiceLiveSession session, String id) {
     session.commentary(id, _strings.voiceGptLiveDelegationFailed);
     if (_delegationId == id) _clearDelegation(keepGeneration: true);
@@ -536,8 +514,6 @@ class GptLiveVoiceConversationController extends ChangeNotifier
     if (!keepGeneration) _delegationGen++;
     _graceTimer?.cancel();
     _graceTimer = null;
-    _turnPollTimer?.cancel();
-    _turnPollTimer = null;
     _delegationId = null;
     _spokenCursor = 0;
     _lastContent = '';
