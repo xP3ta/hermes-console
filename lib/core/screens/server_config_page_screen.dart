@@ -13,19 +13,29 @@ import '../design/modal.dart'
         showHermesOptions;
 import '../design/page.dart';
 import '../services/active_profile_scope.dart';
+import '../services/compression_config_repository.dart';
 import '../services/connection_manager.dart';
 import '../services/server_config_repository.dart';
 import '../settings/server_config_controller.dart';
 import '../settings/server_config_labels.dart';
 import '../settings/server_config_pages.dart';
 import '../theme/app_theme.dart';
+import '../widgets/compression_config_card.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import '../widgets/hermes_ui.dart';
+import 'voice_settings_screen.dart';
 
 /// How a page gets its store for a profile (tests pass their own).
 typedef ServerConfigStoreFactory =
     ServerConfigStore Function(String profile, {required bool writable});
+
+/// How the Context page gets the compression repository for a profile.
+typedef CompressionRepositoryFactory =
+    CompressionConfigRepository Function(
+      String profile, {
+      required bool writable,
+    });
 
 /// One page of Settings › Advanced: the fields the schema brings for it,
 /// with their values read when the page opens.
@@ -48,6 +58,9 @@ class ServerConfigPageScreen extends StatefulWidget {
   @visibleForTesting
   final ServerConfigStoreFactory? storeFor;
 
+  @visibleForTesting
+  final CompressionRepositoryFactory? compressionFor;
+
   const ServerConfigPageScreen({
     super.key,
     required this.connection,
@@ -56,6 +69,7 @@ class ServerConfigPageScreen extends StatefulWidget {
     required this.schema,
     this.highlightPath,
     this.storeFor,
+    this.compressionFor,
   });
 
   @override
@@ -73,6 +87,11 @@ class _ServerConfigPageScreenState extends State<ServerConfigPageScreen> {
   late ServerConfigController _controller;
   late List<ServerConfigField> _fields;
 
+  /// The Context page hands the `compression.*` fields to the existing card.
+  late final bool _hasCompression;
+  CompressionConfigRepository? _compression;
+  late ProfileReadTicket _ticket;
+
   String? _highlight;
   bool _highlightPending = false;
   Timer? _highlightTimer;
@@ -86,7 +105,14 @@ class _ServerConfigPageScreenState extends State<ServerConfigPageScreen> {
   @override
   void initState() {
     super.initState();
-    _fields = serverConfigFieldsOf(widget.page, widget.schema);
+    final all = serverConfigFieldsOf(widget.page, widget.schema);
+    _hasCompression =
+        widget.page == ServerConfigPage.context &&
+        all.any((field) => field.path.startsWith('compression.'));
+    _fields = [
+      for (final field in all)
+        if (!(_hasCompression && field.path.startsWith('compression.'))) field,
+    ];
     final target = widget.highlightPath;
     if (target != null && _fields.any((field) => field.path == target)) {
       _highlight = target;
@@ -103,12 +129,14 @@ class _ServerConfigPageScreenState extends State<ServerConfigPageScreen> {
     _controller
       ..removeListener(_onController)
       ..dispose();
+    _compression?.close();
     _client?.close();
     super.dispose();
   }
 
   void _open() {
     final ticket = _scope.capture();
+    _ticket = ticket;
     final writable = !_readOnly;
     final custom = widget.storeFor;
     final store =
@@ -122,6 +150,15 @@ class _ServerConfigPageScreenState extends State<ServerConfigPageScreen> {
       store: store,
       isCurrent: () => mounted && ticket.isCurrent,
     )..addListener(_onController);
+    if (_hasCompression) {
+      _compression =
+          widget.compressionFor?.call(ticket.name, writable: writable) ??
+          CompressionConfigRepository(
+            _client ??= DashboardClient.lazy(widget.connection),
+            profile: ticket.name,
+            writable: writable,
+          );
+    }
     unawaited(_controller.load());
   }
 
@@ -129,6 +166,8 @@ class _ServerConfigPageScreenState extends State<ServerConfigPageScreen> {
     _controller
       ..removeListener(_onController)
       ..dispose();
+    _compression?.close(abortActiveOperations: true);
+    _compression = null;
     _open();
     setState(() {});
   }
@@ -194,6 +233,42 @@ class _ServerConfigPageScreenState extends State<ServerConfigPageScreen> {
       children.add(HermesInfoBanner(s.chaCompressionConfigReadOnly));
       children.add(const SizedBox(height: 12));
     }
+    if (widget.page == ServerConfigPage.conversation) {
+      children.add(
+        HermesGroup(
+          children: [
+            HermesNavRow(
+              key: const ValueKey('adv1215-voice-link'),
+              icon: Icons.record_voice_over_outlined,
+              title: s.setVoiceTitle,
+              subtitle: s.setVoice,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      VoiceSettingsScreen(connection: widget.connection),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+      children.add(const SizedBox(height: 12));
+    }
+    final compression = _compression;
+    if (compression != null) {
+      children.add(
+        CompressionConfigCard(
+          key: ValueKey('adv1215-compression-${_ticket.owner}'),
+          profile: _ticket.name.isEmpty ? null : _ticket.name,
+          canRead: true,
+          canWrite: controller.canWrite,
+          load: compression.load,
+          save: compression.save,
+        ),
+      );
+      children.add(const SizedBox(height: 12));
+    }
     switch (controller.phase) {
       case ServerConfigPhase.idle:
       case ServerConfigPhase.loading:
@@ -207,13 +282,16 @@ class _ServerConfigPageScreenState extends State<ServerConfigPageScreen> {
         children.add(HermesInfoBanner(_loadError(s, controller.loadFailure)));
       case ServerConfigPhase.ready:
         if (_highlightPending) _revealHighlight();
-        children.add(
-          HermesGroup(
-            children: [
-              for (final field in _fields) _row(context, s, controller, field),
-            ],
-          ),
-        );
+        if (_fields.isNotEmpty) {
+          children.add(
+            HermesGroup(
+              children: [
+                for (final field in _fields)
+                  _row(context, s, controller, field),
+              ],
+            ),
+          );
+        }
     }
     return HermesPage(
       title: serverConfigPageTitle(s, widget.page),
