@@ -1205,6 +1205,7 @@ void main() {
           'runs_gone': '[]',
           'approval_rules_gone': '[]',
           'hidden_sessions_gone': <String>['x'],
+          'hidden_rows_gone': <String>['{"id":"x"}'],
           'session_auto_titles_gone': <String>['x\tTitle'],
           'mission_control.organizations.v1.gone': '[]',
           'mission_control.rooms.v1.gone': '[]',
@@ -1224,6 +1225,7 @@ void main() {
         expect(prefs.containsKey('runs_gone'), isFalse);
         expect(prefs.containsKey('approval_rules_gone'), isFalse);
         expect(prefs.containsKey('hidden_sessions_gone'), isFalse);
+        expect(prefs.containsKey('hidden_rows_gone'), isFalse);
         expect(prefs.containsKey('session_auto_titles_gone'), isFalse);
         expect(
           prefs.containsKey('mission_control.organizations.v1.gone'),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,6 +18,10 @@ import '../utils/session_title.dart';
 ///  - `hidden_sessions_<connectionId>` — sesiones OCULTAS localmente cuando el
 ///    servidor no permitió borrarlas (PRIORIDAD 4): salida visual sin tocar el
 ///    backend. Difiere de "archivada": ocultar = "limpiar la vista".
+///  - `hidden_rows_<connectionId>` — the chats hidden from this device (on
+///    the server or only here), as small row snapshots: the server's default
+///    listing omits hidden rows, so this is what lets Archive list them and
+///    show them again.
 ///  - `session_titles_<connectionId>` — local title overrides: renames made
 ///    while the server could not take them, and those of older builds.
 ///  - `session_auto_titles_<connectionId>` — the chat's prompt-derived title,
@@ -40,6 +45,7 @@ class SessionArchive extends ChangeNotifier {
   static const _prefix = 'archived_sessions_';
   static const _pinnedPrefix = 'pinned_sessions_';
   static const _hiddenPrefix = 'hidden_sessions_';
+  static const _hiddenRowsPrefix = 'hidden_rows_';
   static const _titlePrefix = 'session_titles_';
   static const _deletedPrefix = 'deleted_sessions_';
   static const _autoTitlePrefix = 'session_auto_titles_';
@@ -51,6 +57,14 @@ class SessionArchive extends ChangeNotifier {
   Set<String> _archived = {};
   Set<String> _pinned = {};
   Set<String> _hidden = {};
+
+  /// Snapshots of the chats hidden from this device, by logical id. A
+  /// snapshot with `hidden: true` is hidden on the server (confirmed).
+  Map<String, Session> _hiddenRows = {};
+
+  /// Chats just shown again, kept in the lists until a read made after the
+  /// server confirmed carries them (a read begun earlier omits them).
+  final Map<String, Session> _revealed = {};
   Map<String, String> _titles = {};
   Map<String, String> _autoTitles = {};
 
@@ -115,6 +129,7 @@ class SessionArchive extends ChangeNotifier {
   String get _key => '$_prefix$_connectionId';
   String get _pinnedKey => '$_pinnedPrefix$_connectionId';
   String get _hiddenKey => '$_hiddenPrefix$_connectionId';
+  String get _hiddenRowsKey => '$_hiddenRowsPrefix$_connectionId';
   String get _titleKey => '$_titlePrefix$_connectionId';
   String get _deletedKey => '$_deletedPrefix$_connectionId';
   String get _autoTitleKey => '$_autoTitlePrefix$_connectionId';
@@ -123,6 +138,9 @@ class SessionArchive extends ChangeNotifier {
     _archived = (_prefs.getStringList(_key) ?? []).toSet();
     _pinned = (_prefs.getStringList(_pinnedKey) ?? []).toSet();
     _hidden = (_prefs.getStringList(_hiddenKey) ?? []).toSet();
+    _hiddenRows = _decodeHiddenRows(
+      _prefs.getStringList(_hiddenRowsKey) ?? const [],
+    );
     _titles = _decodeTitles(_prefs.getStringList(_titleKey) ?? const []);
     _autoTitles = _decodeTitles(
       _prefs.getStringList(_autoTitleKey) ?? const [],
@@ -138,6 +156,7 @@ class SessionArchive extends ChangeNotifier {
     final archived = _archived;
     final pinned = _pinned;
     final hidden = _hidden;
+    final hiddenRows = _encodeHiddenRows(_hiddenRows);
     final titles = _titles;
     final autoTitles = _autoTitles;
     final deleted = _deleted;
@@ -146,6 +165,7 @@ class SessionArchive extends ChangeNotifier {
     if (setEquals(archived, _archived) &&
         setEquals(pinned, _pinned) &&
         setEquals(hidden, _hidden) &&
+        listEquals(hiddenRows, _encodeHiddenRows(_hiddenRows)) &&
         mapEquals(titles, _titles) &&
         mapEquals(autoTitles, _autoTitles) &&
         mapEquals(deleted, _deleted) &&
@@ -235,14 +255,65 @@ class SessionArchive extends ChangeNotifier {
 
   /// Hidden on any surface: a write not yet confirmed (or a newer local
   /// toggle) wins, then the server's flag, then the local fallback set.
+  /// A row without the flag (a search hit) is hidden when this device hid
+  /// it on the server.
   bool isSessionHidden(Session session) {
     final overlay = _hiddenOverlay[session.logicalId];
     if (overlay != null) return overlay.value;
     if (session.hidden == true) return true;
-    return _hidden.contains(session.logicalId);
+    if (_hidden.contains(session.logicalId)) return true;
+    return session.hidden == null &&
+        _hiddenRows[session.logicalId]?.hidden == true;
+  }
+
+  /// Hidden on the server (so on Desktop too), not only on this device.
+  bool isSessionHiddenOnServer(Session session) {
+    final overlay = _hiddenOverlay[session.logicalId];
+    if (overlay != null) return overlay.value && overlay.ack != null;
+    if (session.hidden == true) return true;
+    return session.hidden == null &&
+        _hiddenRows[session.logicalId]?.hidden == true;
   }
 
   int get hiddenCount => _hidden.length;
+
+  /// Every chat hidden from this device, newest first: what Archive >
+  /// Hidden lists. Hermes' default listing omits hidden rows and Desktop has
+  /// no hidden view, so these come from the snapshots taken when hiding (or
+  /// when a read showed a legacy local id); a local id never seen in a read
+  /// is listed by id alone.
+  List<Session> get hiddenSessions {
+    final rows = <Session>[];
+    final covered = <String>{};
+    for (final row in _hiddenRows.values) {
+      if (!isSessionHidden(row)) continue;
+      rows.add(row);
+      covered.addAll(_aliases(row));
+    }
+    for (final id in _hidden) {
+      if (!covered.add(id)) continue;
+      rows.add(_placeholderRow(id));
+    }
+    rows.sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
+    return List<Session>.unmodifiable(rows);
+  }
+
+  /// Chats shown again whose row a list may still omit: a read begun before
+  /// the server confirmed does not carry them. Lists add them back until a
+  /// later read does.
+  List<Session> get revealedSessions =>
+      List<Session>.unmodifiable(_revealed.values);
+
+  static Session _placeholderRow(String id) => Session(
+    id: id,
+    title: '',
+    model: '',
+    source: '',
+    messageCount: 0,
+    isActive: false,
+    preview: '',
+    startedAt: 0,
+  );
 
   Future<void> hide(String sessionId) async {
     _hidden.add(sessionId);
@@ -256,6 +327,7 @@ class SessionArchive extends ChangeNotifier {
 
   Future<void> unhide(String sessionId) async {
     _hidden.remove(sessionId);
+    _hiddenRows.remove(sessionId);
     _hiddenOverlay.remove(sessionId);
     await _flush();
   }
@@ -269,6 +341,9 @@ class SessionArchive extends ChangeNotifier {
     final generation = _newIntent(_hiddenField, id);
     _hiddenOverlay.remove(id);
     _hidden.add(id);
+    _revealed.remove(id);
+    final known = _hiddenRows[id];
+    _hiddenRows[id] = known != null && session.hidden == null ? known : session;
     await _flush();
     if (_canWriteHidden(session)) _writeHidden(session, true, generation);
   }
@@ -279,15 +354,33 @@ class SessionArchive extends ChangeNotifier {
     final aliases = _aliases(session);
     final heldLocally = aliases.where(_hidden.contains).toSet();
     _hidden.removeAll(aliases);
-    final remote = _canWriteHidden(session);
+    final snapshot = _hiddenRows[id];
+    _hiddenRows.removeWhere((key, _) => aliases.contains(key));
+    // A search hit carries no hidden flag: the snapshot says whether the
+    // server holds the hide.
+    final remote =
+        _writable(_hiddenField) &&
+        !session.isUnpersistedMobileDraft &&
+        (session.hidden != null || snapshot?.hidden == true);
     if (remote) {
       _hiddenOverlay[id] = _StateOverlay(false, generation);
     } else {
       _hiddenOverlay.remove(id);
     }
+    if (session.startedAt > 0 || snapshot == null) {
+      _revealed[id] = session.copyWith(hidden: false);
+    } else {
+      _revealed[id] = snapshot.copyWith(hidden: false);
+    }
     await _flush();
     if (remote) {
-      _writeHidden(session, false, generation, restore: heldLocally);
+      _writeHidden(
+        session,
+        false,
+        generation,
+        restore: heldLocally,
+        restoreRow: snapshot,
+      );
     }
   }
 
@@ -760,6 +853,7 @@ class SessionArchive extends ChangeNotifier {
     bool hidden,
     int generation, {
     Set<String> restore = const {},
+    Session? restoreRow,
   }) {
     final id = row.logicalId;
     if (hidden) _hiddenQueued.add(id);
@@ -780,13 +874,25 @@ class SessionArchive extends ChangeNotifier {
             } else if (_httpStatusOf(error) == 404) {
               _hiddenMissing.add(id);
             }
-            await _hiddenWriteFailed(id, generation, restore, rejected);
+            await _hiddenWriteFailed(
+              id,
+              generation,
+              restore,
+              rejected,
+              restoreRow,
+            );
             return;
           }
           if (answer['hidden'] != hidden) {
             final rejected = !answer.containsKey('hidden');
             if (rejected) _rejectedFields.add(_hiddenField);
-            await _hiddenWriteFailed(id, generation, restore, rejected);
+            await _hiddenWriteFailed(
+              id,
+              generation,
+              restore,
+              rejected,
+              restoreRow,
+            );
             return;
           }
           final ack = ++_ackSeq;
@@ -796,6 +902,7 @@ class SessionArchive extends ChangeNotifier {
             // local copy go.
             _hiddenOverlay[id] = _StateOverlay(true, generation)..ack = ack;
             _hidden.removeAll(_aliases(row));
+            _hiddenRows[id] = (_hiddenRows[id] ?? row).copyWith(hidden: true);
             await _flush();
           } else {
             _hiddenOverlay[id]?.ack ??= ack;
@@ -815,11 +922,16 @@ class SessionArchive extends ChangeNotifier {
     int generation,
     Set<String> restore,
     bool rejected,
+    Session? restoreRow,
   ) async {
     if (!_isCurrent(_hiddenField, id, generation)) return;
     final dropped = _dropOverlay(_hiddenOverlay, id, generation);
-    if (!rejected && restore.isNotEmpty) {
+    if (!rejected && (restore.isNotEmpty || restoreRow != null)) {
       _hidden.addAll(restore);
+      if (restoreRow != null) {
+        _hiddenRows[id] = restoreRow;
+        _revealed.remove(id);
+      }
       await _flush();
     } else if (dropped) {
       _changed();
@@ -864,10 +976,32 @@ class SessionArchive extends ChangeNotifier {
       if (settle(_hiddenOverlay, id)) changed = true;
       if (settle(_unreadOverlay, id)) changed = true;
       if (settle(_titleOverlay, id)) changed = true;
-      if (row.hidden == true && _hiddenOverlay[id] == null) {
+      final overlay = _hiddenOverlay[id];
+      final heldLocally = _aliases(row).any(_hidden.contains);
+      // A legacy local id gets the row it needs to be listed in Hidden.
+      if (heldLocally && overlay == null && !_hiddenRows.containsKey(id)) {
+        _hiddenRows[id] = row;
+        persist = true;
+      }
+      if (row.hidden == true && overlay == null) {
         final before = _hidden.length;
         _hidden.removeAll(_aliases(row));
         if (_hidden.length != before) persist = true;
+        final known = _hiddenRows[id];
+        if (known != null && known.hidden != true) {
+          _hiddenRows[id] = known.copyWith(hidden: true);
+          persist = true;
+        }
+      } else if (row.hidden == false &&
+          overlay == null &&
+          !heldLocally &&
+          !_hiddenQueued.contains(id) &&
+          _hiddenRows.remove(id) != null) {
+        // Shown again elsewhere (another device, or a pin on Desktop).
+        persist = true;
+      }
+      if (overlay == null && _revealed.remove(id) != null) {
+        changed = true;
       }
       // An override equal to the server's title is redundant; dropping it
       // lets a later rename from Desktop show here.
@@ -1006,6 +1140,8 @@ class SessionArchive extends ChangeNotifier {
       _prefs.setStringList(_key, _archived.toList()),
       _prefs.setStringList(_pinnedKey, _pinned.toList()),
       _prefs.setStringList(_hiddenKey, _hidden.toList()),
+      if (_hiddenRows.isNotEmpty || _prefs.containsKey(_hiddenRowsKey))
+        _prefs.setStringList(_hiddenRowsKey, _encodeHiddenRows(_hiddenRows)),
       _writeTitles(),
       _writeAutoTitles(),
       if (_deleted.isNotEmpty || _prefs.containsKey(_deletedKey))
@@ -1037,6 +1173,39 @@ class SessionArchive extends ChangeNotifier {
     _titleKey,
     _titles.entries.map((e) => '${e.key}\t${e.value}').toList(),
   );
+
+  /// The few fields a Hidden row needs, in the server's JSON shape.
+  static List<String> _encodeHiddenRows(Map<String, Session> rows) => [
+    for (final row in rows.values)
+      jsonEncode({
+        'id': row.id,
+        'title': row.title,
+        'source': row.source,
+        'profile': ?row.profile,
+        'started_at': row.startedAt,
+        'last_active': row.lastActivityAt,
+        'lineage_root': ?row.lineageRootId,
+        'parent_session_id': ?row.parentSessionId,
+        'message_count': row.messageCount,
+        'archived': row.archived,
+        'hidden': ?row.hidden,
+      }),
+  ];
+
+  static Map<String, Session> _decodeHiddenRows(List<String> rows) {
+    final decoded = <String, Session>{};
+    for (final raw in rows) {
+      Object? json;
+      try {
+        json = jsonDecode(raw);
+      } on FormatException {
+        continue;
+      }
+      final row = Session.tryParse(json);
+      if (row != null) decoded[row.logicalId] = row;
+    }
+    return decoded;
+  }
 
   static Map<String, String> _decodeTitles(List<String> rows) {
     final titles = <String, String>{};

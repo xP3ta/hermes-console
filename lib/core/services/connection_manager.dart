@@ -989,6 +989,7 @@ class ConnectionManager {
     'approval_rules_',
     'archived_sessions_',
     'hidden_sessions_',
+    'hidden_rows_',
     'deleted_sessions_',
     'session_auto_titles_',
     'mission_control.organizations.v1.',
