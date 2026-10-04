@@ -70,6 +70,9 @@ void _apply(Map<String, AgentPreview> open, Object? arguments) {
       // Opening an open target keeps its place and refreshes its label.
       open[target.url] = AgentPreview(target: target, label: label);
     case 'close':
+      // No url (absent, null or blank) closes everything; a url of the wrong
+      // type is a malformed call and closes nothing.
+      if (url != null && url is! String) return;
       final text = url is String ? url.trim() : '';
       if (text.isEmpty) {
         open.clear();
@@ -99,8 +102,8 @@ String _label(Object? raw, AgentPreviewTarget target) {
   return host.startsWith('www.') ? host.substring(4) : host;
 }
 
-/// Largest evidence kept for a preview call, after encoding.
-const int _maxEvidenceChars = 4096;
+/// Largest evidence kept for a preview call, in UTF-8 bytes once encoded.
+const int _maxEvidenceBytes = 4096;
 
 /// What a coalesced transcript row keeps of a `desktop_preview` call: its
 /// `action`, `url` and `label` and nothing else, as a JSON string. Also the
@@ -134,5 +137,5 @@ String? agentPreviewEvidenceArguments(String toolName, Object? rawArguments) {
   } else {
     return null;
   }
-  return encoded.length > _maxEvidenceChars ? null : encoded;
+  return utf8.encode(encoded).length > _maxEvidenceBytes ? null : encoded;
 }
