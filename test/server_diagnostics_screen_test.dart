@@ -258,9 +258,30 @@ void main() {
       expect(count(rest, 'GET actions/'), 0);
     });
 
-    testWidgets('idle null reads as unknown, idle true as free', (
-      tester,
-    ) async {
+    for (final (idle, label) in [
+      (true, (Strings s) => s.sd1215ServerFree),
+      (false, (Strings s) => s.sd1215ServerBusy),
+    ]) {
+      testWidgets('idle $idle reads as its own label, not the others', (
+        tester,
+      ) async {
+        final rest = _server()
+          ..gets['health/idle'] = {'ok': true, 'idle': idle};
+        await pumpDiagnostics(tester, rest);
+        final s = strings(tester);
+
+        expect(find.text(label(s)), findsOneWidget);
+        for (final other in [
+          s.sd1215ServerFree,
+          s.sd1215ServerBusy,
+          s.sd1215ServerUnknown,
+        ].where((text) => text != label(s))) {
+          expect(find.text(other), findsNothing);
+        }
+      });
+    }
+
+    testWidgets('idle null reads as unknown', (tester) async {
       final rest = _server()
         ..gets['health/idle'] = {
           'ok': true,
