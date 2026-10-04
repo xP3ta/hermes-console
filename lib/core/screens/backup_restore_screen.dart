@@ -115,8 +115,14 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen>
       followerFor: widget.followerFor,
     )..addListener(_onFlow);
     _appLock?.locked.addListener(_onAppLocked);
-    unawaited(_enterSecureScope());
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    // Nothing is verified, probed or shown until FLAG_SECURE is applied.
+    final secured = _enterSecureScope();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        await secured;
+      } catch (_) {
+        return;
+      }
       if (!_disposed) unawaited(_open());
     });
   }

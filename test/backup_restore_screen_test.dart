@@ -1,3 +1,4 @@
+import 'dart:async';
 // The backup page as the user meets it: a notice when App Lock is off, the
 // warning before a backup, the summary and checkbox before a restore, the
 // server's own words when it fails, and FLAG_SECURE for as long as it shows.
@@ -273,5 +274,39 @@ void main() {
   testWidgets('FLAG_SECURE also covers the App Lock notice', (tester) async {
     await open(tester, app(await lock(enabled: false)));
     expect(secure.last, isTrue);
+  });
+
+  testWidgets('nothing is verified or shown before FLAG_SECURE is applied', (
+    tester,
+  ) async {
+    final applied = Completer<void>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('hermes/security'), (
+          call,
+        ) async {
+          if (call.method == 'setSecureScreen') {
+            await applied.future;
+            secure.add(call.arguments as bool);
+          }
+          return null;
+        });
+    var verified = 0;
+    await tester.pumpWidget(
+      app(
+        await lock(enabled: true),
+        verify: (_, _, _) async {
+          verified++;
+          return true;
+        },
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(verified, 0);
+    expect(gateway.calls, isEmpty);
+    expect(find.byKey(const ValueKey('backup-create')), findsNothing);
+    applied.complete();
+    await tester.pumpAndSettle();
+    expect(verified, 1);
+    expect(find.byKey(const ValueKey('backup-create')), findsOneWidget);
   });
 }
