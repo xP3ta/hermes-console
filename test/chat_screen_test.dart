@@ -30973,7 +30973,11 @@ void main() {
       final resubmissions = gateway.submissions
           .where((text) => text == 'Resume el informe')
           .length;
-      expect(resubmissions, lessThanOrEqualTo(2));
+      expect(
+        resubmissions,
+        2,
+        reason: 'the initial send plus the one armed retry, never a third',
+      );
     });
 
     testWidgets('context_overflow compacts through the existing command', (
