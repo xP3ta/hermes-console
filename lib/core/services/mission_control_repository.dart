@@ -605,6 +605,8 @@ final class MissionControlRepository
         legacyGatewayLoader: () => gateway.getSessions(includeChildren: true),
       ),
       boardLoader: kanban.getCurrentBoard,
+      // The same pooled socket: no extra connection for the live sessions.
+      activeSessionsLoader: desktop.listActiveSessions,
       kanbanEventsLoader: (since) => kanban.events(since: since),
       profileAvatarLoader: desktop.profileAvatar,
       hostedGroupsGateway: _TuiMissionHostedGroupsGateway(desktop),
@@ -636,16 +638,19 @@ final class MissionControlRepository
   @override
   Future<MissionBackendSnapshot> load() async {
     if (_closed) throw StateError('MissionControlRepository is closed');
+    final activeObservedAt = DateTime.now();
     final results = await Future.wait<Object>([
       _capture(profilesLoader),
       _capture(sessionsLoader),
       _capture(boardLoader),
       _capture(_loadHostedGroups),
+      _loadActiveSessions(),
     ]);
     final profilesResult = results[0] as _MissionLoadResult<List<AgentProfile>>;
     final sessionsResult = results[1] as _MissionLoadResult<List<Session>>;
     final boardResult = results[2] as _MissionLoadResult<KanbanBoard>;
     final groupsResult = results[3] as _MissionLoadResult<HostedGroupsSnapshot>;
+    final activeSessions = results[4] as List<DesktopActiveSession>;
     final failures = <String, Object>{
       'profiles': ?profilesResult.error,
       'sessions': ?sessionsResult.error,
@@ -667,7 +672,21 @@ final class MissionControlRepository
           : _capability(groupsResult),
       failures: failures,
       loadedAt: DateTime.now(),
+      activeSessions: activeSessions,
+      activeSessionsObservedAt: activeObservedAt,
     );
+  }
+
+  /// `session.active_list` of the read in progress. A refusal or failure is
+  /// the legacy behaviour (an empty list), never an error of the read.
+  Future<List<DesktopActiveSession>> _loadActiveSessions() async {
+    final loader = activeSessionsLoader;
+    if (loader == null) return const [];
+    try {
+      return (await loader()).sessions;
+    } catch (_) {
+      return const [];
+    }
   }
 
   @override
@@ -685,12 +704,15 @@ final class MissionControlRepository
   @override
   Future<MissionRosterRead> loadRoster() async {
     if (_closed) throw StateError('MissionControlRepository is closed');
+    final activeObservedAt = DateTime.now();
     final results = await Future.wait<Object>([
       _capture(profilesLoader),
       _capture(sessionsLoader),
+      _loadActiveSessions(),
     ]);
     final profiles = results[0] as _MissionLoadResult<List<AgentProfile>>;
     final sessions = results[1] as _MissionLoadResult<List<Session>>;
+    final activeSessions = results[2] as List<DesktopActiveSession>;
     return MissionRosterRead(
       profiles: profiles.value ?? const [],
       sessions: sessions.value ?? const [],
@@ -698,6 +720,8 @@ final class MissionControlRepository
       sessionsCapability: _capability(sessions),
       profilesError: profiles.error,
       sessionsError: sessions.error,
+      activeSessions: activeSessions,
+      activeSessionsObservedAt: activeObservedAt,
     );
   }
 
