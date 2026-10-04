@@ -459,4 +459,56 @@ void main() {
       expect(calls, 1);
     });
   });
+
+  group('mcp logs', () {
+    test(
+      'stdio reads the mcp log once, scoped to profile, and filters',
+      () async {
+        final rest = FakeRest()
+          ..gets['logs'] = {
+            'file': 'mcp',
+            'lines': [
+              "===== [10:00:05] starting MCP server 'git' =====",
+              'git: cloning',
+              "2026-10-04 10:01:00,000 ===== starting MCP server 'files' =====",
+              'files: ready',
+            ],
+          };
+        final repo = CapabilitiesRepository(rest: rest, profile: 'work');
+        final lines = await repo.mcpLogLines('files', stdio: true);
+        expect(lines, [
+          "2026-10-04 10:01:00,000 ===== starting MCP server 'files' =====",
+          'files: ready',
+        ]);
+        expect(rest.calls, ['GET logs?file=mcp&lines=500&profile=work']);
+      },
+    );
+
+    test('the agent log is searched by server name', () async {
+      final rest = FakeRest()
+        ..gets['logs'] = {
+          'file': 'agent',
+          'lines': ['agent: mcp files connected'],
+        };
+      final repo = CapabilitiesRepository(rest: rest);
+      final lines = await repo.mcpLogLines('my server', stdio: false);
+      expect(lines, ['agent: mcp files connected']);
+      expect(rest.calls, ['GET logs?file=agent&lines=300&search=my%20server']);
+    });
+
+    test('404 marks logs unsupported and is not asked again', () async {
+      final rest = FakeRest();
+      final repo = CapabilitiesRepository(rest: rest);
+      await expectLater(
+        repo.mcpLogLines('files', stdio: true),
+        throwsA(isA<CapabilityFailure>()),
+      );
+      expect(repo.supports(CapabilityFeature.mcpLogs), isFalse);
+      await expectLater(
+        repo.mcpLogLines('files', stdio: true),
+        throwsA(isA<CapabilityFailure>()),
+      );
+      expect(rest.calls, hasLength(1));
+    });
+  });
 }
