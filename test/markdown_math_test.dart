@@ -61,6 +61,13 @@ void main() {
       );
     });
 
+    test('spaced delimiters protect formulas without emphasis characters', () {
+      expect(
+        protectMarkdownMath(r'si $ x + y $ entonces'),
+        r'si `x + y` entonces',
+      );
+    });
+
     test('spaced delimiters do not confuse prefixed or spaced currency', () {
       const reais = r'Entre R$ 12 e R$ 20 * 2 hoy.';
       expect(protectMarkdownMath(reais), reais);
