@@ -7791,5 +7791,16 @@
   "profileSwitcherHint": "Switch profile",
   "profileSwitcherBody": "Each profile has its own chats, memory, SOUL, skills and model.",
   "profileSwitcherLoadFailed": "Couldn't load the profiles. Tap to retry.",
-  "profileSwitcherManage": "Manage profiles"
+  "profileSwitcherManage": "Manage profiles",
+  "cxnTitle": "Connect your accounts",
+  "cxnOpen": "Open link",
+  "cxnSkip": "Not now",
+  "cxnContinue": "Continue",
+  "cxnStatePending": "Waiting",
+  "cxnStateInitiated": "In progress",
+  "cxnStateConnected": "Connected",
+  "cxnStateSkipped": "Skipped",
+  "cxnStateFailed": "Failed",
+  "cxnStateExpired": "Expired",
+  "cxnStateNotConnected": "Not connected"
 }

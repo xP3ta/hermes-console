@@ -9476,5 +9476,16 @@
   "profileSwitcherHint": "Cambiar de perfil",
   "profileSwitcherBody": "Cada perfil tiene sus propios chats, memoria, SOUL, skills y modelo.",
   "profileSwitcherLoadFailed": "No se pudieron cargar los perfiles. Toca para reintentar.",
-  "profileSwitcherManage": "Gestionar perfiles"
+  "profileSwitcherManage": "Gestionar perfiles",
+  "cxnTitle": "Conecta tus cuentas",
+  "cxnOpen": "Abrir enlace",
+  "cxnSkip": "Ahora no",
+  "cxnContinue": "Continuar",
+  "cxnStatePending": "Pendiente",
+  "cxnStateInitiated": "En curso",
+  "cxnStateConnected": "Conectado",
+  "cxnStateSkipped": "Omitido",
+  "cxnStateFailed": "Falló",
+  "cxnStateExpired": "Caducó",
+  "cxnStateNotConnected": "No conectado"
 }
