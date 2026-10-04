@@ -11,6 +11,7 @@
 //   MCP      GET /api/mcp/{catalog,servers} · POST /api/mcp/catalog/install
 //            PUT /api/mcp/servers/{n}/enabled · DELETE /api/mcp/servers/{n}
 //            POST /api/mcp/servers[/{n}/test|/{n}/auth] · GET /api/mcp/oauth/flows/{id}
+//   MCP live RPC mcp.servers.status
 //   hosted   RPC connectors.{list,catalog,accounts,connect,operation.status,
 //            operation.wake,accounts.remove} · connection.respond
 //
@@ -26,6 +27,7 @@ import '../services/connection_manager.dart'
 import '../services/desktop_control_gateway.dart';
 import '../services/tui_gateway_client.dart' show TuiGatewayRpcError;
 import 'capability_models.dart';
+import 'mcp_runtime_status.dart';
 
 /// Minimal REST surface (implemented by `DashboardClient`).
 abstract interface class CapabilitiesRest {
@@ -59,6 +61,7 @@ enum CapabilityFeature {
   pluginMutations,
   mcpCatalog,
   mcpServers,
+  mcpStatus,
   hostedConnectors,
 }
 
@@ -415,6 +418,23 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
             .toList(growable: false);
       });
 
+  /// Cached runtime state per configured server, keyed by name. One RPC;
+  /// `-32601` marks it unsupported and callers keep today's static rows.
+  Future<Map<String, McpRuntimeRow>> mcpRuntimeStatus() =>
+      _call(CapabilityFeature.mcpStatus, () async {
+        final result = await _rpc(
+          'mcp.servers.status',
+          const {},
+          feature: CapabilityFeature.mcpStatus,
+        );
+        final servers = result['servers'];
+        if (servers is! List) throw const FormatException('list expected');
+        return {
+          for (final row in servers.map(McpRuntimeRow.tryParse))
+            if (row != null) row.name: row,
+        };
+      });
+
   Future<void> installMcp(
     String name, {
     Map<String, String> environment = const {},
@@ -523,10 +543,14 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
 
   static const Map<String, String> _account = {'type': 'account'};
 
-  Future<Map<String, dynamic>> _rpc(String method, Map<String, dynamic> p) {
+  Future<Map<String, dynamic>> _rpc(
+    String method,
+    Map<String, dynamic> p, {
+    CapabilityFeature feature = CapabilityFeature.hostedConnectors,
+  }) {
     final call = rpc;
     if (call == null) {
-      _support[CapabilityFeature.hostedConnectors] = false;
+      _support[feature] = false;
       throw const CapabilityFailure(CapabilityFailureKind.unsupported);
     }
     final value = profile.trim();

@@ -452,7 +452,10 @@ void main() {
         ),
       );
       expect(repo.supports(CapabilityFeature.mcpStatus), isFalse);
-      await expectLater(repo.mcpRuntimeStatus(), throwsA(isA<CapabilityFailure>()));
+      await expectLater(
+        repo.mcpRuntimeStatus(),
+        throwsA(isA<CapabilityFailure>()),
+      );
       expect(calls, 1);
     });
   });
