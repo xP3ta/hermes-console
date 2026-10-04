@@ -1992,6 +1992,167 @@ void main() {
     expect(gateway.resumeCalls, 0);
   });
 
+  // A socket loss during the automatic reattach's own resume retires the
+  // runtime again and moves the bind/session epochs, so the in-flight loop
+  // can never adopt. That loss must hand recovery to a fresh loop instead of
+  // being dropped behind the stale one.
+  test(
+    'socket loss during the automatic reattach resume schedules a fresh one',
+    () async {
+      final heldResume = Completer<DesktopSessionSnapshot>();
+      final gateway = _ActivityLifecycleRecoverableGateway()
+        ..initialSnapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-mid-resume-1',
+          storedSessionId: 'session-mid-resume',
+          created: false,
+          messagesProvided: true,
+          running: false,
+          status: 'completed',
+        )
+        ..recoverySnapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-mid-resume-2',
+          storedSessionId: 'session-mid-resume',
+          created: false,
+          messagesProvided: true,
+          running: false,
+          status: 'completed',
+        );
+      gateway.scriptedResumeExisting.add(heldResume.future);
+      final chat = _productionAttachChat(
+        'mid-resume',
+        gateway,
+        storedMessageLoader: (_, _) async => const [
+          {
+            'message_id': 'mid-resume-answer',
+            'role': 'assistant',
+            'content': 'durable before the cuts',
+          },
+        ],
+      );
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      expect(chat.desktopRuntimeSessionId, 'runtime-mid-resume-1');
+
+      gateway.drop();
+      await _waitUntil(() => gateway.resumeExistingCalls == 1);
+      // The second cut lands while the first reattach resume is in flight.
+      gateway.drop();
+      heldResume.completeError(
+        const TuiGatewayRpcError(
+          'session.resume',
+          'Hermes Desktop connection lost',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        ),
+      );
+
+      await _waitUntil(
+        () => chat.desktopRuntimeSessionId == 'runtime-mid-resume-2',
+      );
+      await pumpEventQueue();
+      expect(gateway.resumeExistingCalls, 2);
+      expect(gateway.committedRecoveryRuntimeIds, ['runtime-mid-resume-2']);
+      expect(gateway.viewerAttachmentCommits, 1);
+      expect(gateway.submitCalls, 0);
+      expect(gateway.createForFirstSubmitCalls, 0);
+      expect(gateway.activateCalls, 1);
+      expect(gateway.interruptCalls, 0);
+      expect(gateway.resumeCalls, 0);
+    },
+  );
+
+  test(
+    'superseded reattach resume answering late cannot adopt its runtime',
+    () async {
+      final heldResume = Completer<DesktopSessionSnapshot>();
+      final gateway = _ActivityLifecycleRecoverableGateway()
+        ..initialSnapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-late-1',
+          storedSessionId: 'session-late',
+          created: false,
+          messagesProvided: true,
+          running: false,
+          status: 'completed',
+        )
+        ..recoverySnapshot = const DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-late-2',
+          storedSessionId: 'session-late',
+          created: false,
+          messagesProvided: true,
+          running: false,
+          status: 'completed',
+        );
+      gateway.scriptedResumeExisting.add(heldResume.future);
+      final chat = _productionAttachChat('late', gateway);
+      addTearDown(chat.dispose);
+
+      await chat.loadMessages(profile: 'owner-profile');
+      gateway.drop();
+      await _waitUntil(() => gateway.resumeExistingCalls == 1);
+      gateway.drop();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-late-2');
+
+      // The stale loop's resume answers only now, with the same runtime the
+      // fresh loop already adopted: it must neither commit nor rebind.
+      heldResume.complete(gateway.recoverySnapshot!);
+      await pumpEventQueue();
+      expect(chat.desktopRuntimeSessionId, 'runtime-late-2');
+      expect(gateway.committedRecoveryRuntimeIds, ['runtime-late-2']);
+      expect(gateway.viewerAttachmentCommits, 1);
+      expect(gateway.resumeExistingCalls, 2);
+    },
+  );
+
+  test('socket loss while the automatic reattach waits out its backoff '
+      'restarts recovery at once', () async {
+    final gateway = _ActivityLifecycleRecoverableGateway()
+      ..initialSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-backoff-1',
+        storedSessionId: 'session-backoff',
+        created: false,
+        messagesProvided: true,
+        running: false,
+        status: 'completed',
+      )
+      ..recoverySnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-backoff-2',
+        storedSessionId: 'session-backoff',
+        created: false,
+        messagesProvided: true,
+        running: false,
+        status: 'completed',
+      );
+    gateway
+      ..resumeExistingError = const TuiGatewayRpcError(
+        'session.resume',
+        'Hermes Desktop connection lost',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      )
+      ..resumeExistingFailuresRemaining = 1;
+    final chat = _productionAttachChat(
+      'backoff',
+      gateway,
+      // The second attempt of a loop would wait an hour: only a fresh loop
+      // (whose first attempt is immediate) can reattach within the test.
+      desktopRecoveryBackoff: const [Duration.zero, Duration(hours: 1)],
+      desktopRecoveryRandom: () => 1.0,
+    );
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages(profile: 'owner-profile');
+    gateway.drop();
+    await _waitUntil(() => gateway.resumeExistingCalls == 1);
+    await pumpEventQueue();
+    expect(chat.desktopRuntimeSessionId, isNull);
+
+    gateway.drop();
+    await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-backoff-2');
+    expect(gateway.resumeExistingCalls, 2);
+    expect(gateway.committedRecoveryRuntimeIds, ['runtime-backoff-2']);
+    expect(gateway.submitCalls, 0);
+    expect(gateway.resumeCalls, 0);
+  });
+
   test(
     'authoritative stored-session replacement rejects old held reattach response',
     () async {

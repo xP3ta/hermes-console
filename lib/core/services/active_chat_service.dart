@@ -18715,6 +18715,12 @@ class ActiveChat {
         }
         _usingDesktopGateway = false;
         _retireDesktopRuntime(reason: _RuntimeRetirement.transportLoss);
+        // The retirement moved the bind/session epochs, so an automatic
+        // reattach still in flight (in its resume or its backoff) fails its
+        // fence and can never adopt again. Forget it so this loss schedules
+        // the one live loop instead of being dropped behind a loop that will
+        // exit silently.
+        _desktopAutomaticReattach = null;
         // qr1215: the queue gets a fresh budget once this socket is back.
         if (_hasQueuedWork) _armQueuedTransportWait();
         if (viewerRecoveryClosed) _closeViewerRecovery(gateway);
