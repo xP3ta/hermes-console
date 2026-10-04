@@ -265,7 +265,7 @@ void main() {
 
     test('remote previews are collapsed and bounded like local ones', () {
       final items = mergeChatPromptItems(loaded, [
-        (rowId: 1, preview: 'a\n\nb ' + 'c' * 300),
+        (rowId: 1, preview: 'a\n\nb ${'c' * 300}'),
       ]);
       final remote = items.last.preview;
       expect(remote.startsWith('a b '), isTrue);

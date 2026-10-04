@@ -1054,6 +1054,23 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
     }
 
+    // The sheet list builds rows lazily and `scrollUntilVisible` judges
+    // visibility against the whole screen, so drag until the row is inside
+    // the sheet itself.
+    Future<void> scrollSheetTo(WidgetTester tester, Finder target) async {
+      final sheet = find.byKey(const ValueKey('chat-prompt-sheet'));
+      final list = find.descendant(of: sheet, matching: find.byType(ListView));
+      for (var i = 0; i < 40; i++) {
+        if (target.evaluate().isNotEmpty) {
+          final y = tester.getCenter(target.last).dy;
+          final box = tester.getRect(sheet);
+          if (y > box.top + 60 && y < box.bottom - 30) return;
+        }
+        await tester.drag(list, const Offset(0, -80));
+        await tester.pump();
+      }
+    }
+
     testWidgets('the sticky prompt shows while its reply spans the top', (
       tester,
     ) async {
@@ -1125,12 +1142,12 @@ void main() {
         ),
         findsOneWidget,
       );
-      await tester.tap(
-        find.descendant(
-          of: sheet,
-          matching: find.text('Pregunta histórica 20 con contexto adicional.'),
-        ),
+      final target = find.descendant(
+        of: sheet,
+        matching: find.text('Pregunta histórica 20 con contexto adicional.'),
       );
+      await scrollSheetTo(tester, target);
+      await tester.tap(target);
       for (var frame = 0; frame < 80; frame++) {
         await tester.pump(const Duration(milliseconds: 16));
       }
@@ -1218,9 +1235,9 @@ void main() {
       final chat = await pumpChat(tester, gateway, history: _history());
       await settle(tester);
       await openPrompts(tester);
-      await tester.tap(
-        find.text('Pregunta histórica 20 con contexto adicional.').last,
-      );
+      final target = find.text('Pregunta histórica 20 con contexto adicional.');
+      await scrollSheetTo(tester, target);
+      await tester.tap(target.last);
       for (var frame = 0; frame < 80; frame++) {
         await tester.pump(const Duration(milliseconds: 16));
       }

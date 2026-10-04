@@ -1795,6 +1795,11 @@ class _ChatScreenState extends State<ChatScreen>
   );
   List<Map<String, dynamic>> _stickySource = const [];
   Map<Map<String, dynamic>, int>? _stickyIndex;
+
+  /// Laid-out slices of long replies that own no reader anchor, with the
+  /// message they belong to. Only the sticky prompt reads it.
+  final Map<RenderBox, Map<String, dynamic>> _stickySliceAnchors =
+      Map<RenderBox, Map<String, dynamic>>.identity();
   bool _stickyUpdateScheduled = false;
 
   void _scheduleStickyPromptUpdate() {
@@ -1824,17 +1829,23 @@ class _ChatScreenState extends State<ChatScreen>
   Map<String, dynamic>? _stickyPromptCandidate() {
     Map<String, dynamic>? topMessage;
     var topOffset = double.infinity;
-    for (final entry in _messageAnchors.entries) {
-      final anchor = entry.value;
+    void consider(RenderBox anchor, Map<String, dynamic> message) {
       final top = _ChatStreamingViewportLock._visualOffsetInViewport(anchor);
       final height = anchor is ChatAnswerAnchorRenderBox
           ? anchor.laidOutHeight
           : null;
-      if (top == null || height == null || top + height <= 0) continue;
+      if (top == null || height == null || top + height <= 0) return;
       if (top < topOffset) {
         topOffset = top;
-        topMessage = entry.key;
+        topMessage = message;
       }
+    }
+
+    for (final entry in _messageAnchors.entries) {
+      consider(entry.value, entry.key);
+    }
+    for (final entry in _stickySliceAnchors.entries) {
+      consider(entry.key, entry.value);
     }
     if (topMessage == null || topOffset > chatPromptActiveSlack) return null;
     final source = _stickySource;
@@ -2469,6 +2480,7 @@ class _ChatScreenState extends State<ChatScreen>
     _attachmentListener = _applyAttachmentProjection;
     _sessionUsageSnapshot = widget.session;
     _compaction.addListener(_onCompactionChanged);
+    _transcriptConcealed.addListener(_scheduleStickyPromptUpdate);
     WidgetsBinding.instance.addObserver(this);
     unawaited(_loadSharedArchive());
     _loadPrefs();
@@ -7124,7 +7136,9 @@ class _ChatScreenState extends State<ChatScreen>
     _liveAssistantFrame.dispose();
     _scrollToBottomVisibility.dispose();
     _newWhileAway.dispose();
-    _transcriptConcealed.dispose();
+    _transcriptConcealed
+      ..removeListener(_scheduleStickyPromptUpdate)
+      ..dispose();
     _stickyPrompt.dispose();
     _findStatus.dispose();
     _findActiveMessage.dispose();
@@ -12330,12 +12344,14 @@ class _ChatScreenState extends State<ChatScreen>
                                               child: SingleChildScrollView(
                                                 physics:
                                                     const NeverScrollableScrollPhysics(),
-                                                child: ExcludeSemantics(
-                                                  child: _UserMessage(
-                                                    content:
-                                                        prompt['content']
-                                                            as String,
-                                                    compact: true,
+                                                child: IgnorePointer(
+                                                  child: ExcludeSemantics(
+                                                    child: _UserMessage(
+                                                      content:
+                                                          prompt['content']
+                                                              as String,
+                                                      compact: true,
+                                                    ),
                                                   ),
                                                 ),
                                               ),
@@ -15734,9 +15750,14 @@ class _ChatScreenState extends State<ChatScreen>
               if (ownsAnchor) {
                 result = ChatAnswerAnchor(
                   onLayout: (anchor) {
+                    var added = false;
                     for (final message in sourceMessages) {
-                      _messageAnchors[message] = anchor;
+                      if (!identical(_messageAnchors[message], anchor)) {
+                        _messageAnchors[message] = anchor;
+                        added = true;
+                      }
                     }
+                    if (added) _scheduleStickyPromptUpdate();
                   },
                   onDetach: (anchor) {
                     for (final message in sourceMessages) {
@@ -15745,6 +15766,22 @@ class _ChatScreenState extends State<ChatScreen>
                       }
                     }
                   },
+                  child: child,
+                );
+              } else if (sourceMessages.isNotEmpty) {
+                // A later slice of a long reply: it has no reader anchor of
+                // its own, but when it spans the viewport top the sticky
+                // prompt needs to know which reply it belongs to.
+                final replyMessage = sourceMessages.first;
+                result = ChatAnswerAnchor(
+                  onLayout: (anchor) {
+                    if (identical(_stickySliceAnchors[anchor], replyMessage)) {
+                      return;
+                    }
+                    _stickySliceAnchors[anchor] = replyMessage;
+                    _scheduleStickyPromptUpdate();
+                  },
+                  onDetach: (anchor) => _stickySliceAnchors.remove(anchor),
                   child: child,
                 );
               }
@@ -15902,7 +15939,11 @@ class _ChatScreenState extends State<ChatScreen>
       ),
     );
     return ChatAnswerAnchor(
-      onLayout: (anchor) => _messageAnchors[assistant] = anchor,
+      onLayout: (anchor) {
+        if (identical(_messageAnchors[assistant], anchor)) return;
+        _messageAnchors[assistant] = anchor;
+        _scheduleStickyPromptUpdate();
+      },
       onDetach: (anchor) {
         if (identical(_messageAnchors[assistant], anchor)) {
           _messageAnchors.remove(assistant);
