@@ -30,6 +30,7 @@ import 'bridge_client.dart';
 import 'local_transcript_store.dart';
 import 'mission_bot_chat_store.dart';
 import 'secure_storage.dart';
+import 'server_restart_signal.dart';
 import 'turn_outbox_store.dart';
 import '../utils/byte_bounded_lru_cache.dart';
 
@@ -3704,7 +3705,13 @@ class DashboardClient {
         'profile=${Uri.encodeQueryComponent(profile)}',
     ];
     final suffix = params.isEmpty ? '' : '?${params.join('&')}';
-    final data = await apiGet('model/options$suffix');
+    final Map<String, dynamic> data;
+    try {
+      data = await apiGet('model/options$suffix');
+    } on DashboardHttpException catch (error) {
+      _noteRestartRequired(error);
+      rethrow;
+    }
     final rawProviders = data['providers'];
     final providers = rawProviders is Map
         ? rawProviders.entries.map((entry) {
@@ -3720,7 +3727,15 @@ class DashboardClient {
         : (rawProviders as List? ?? const []).whereType<Map>().map(
             (provider) => provider.cast<String, dynamic>(),
           );
-    return providers.map(ModelProvider.fromJson).toList();
+    final result = providers.map(ModelProvider.fromJson).toList();
+    // Only a catalog the server actually sent counts as it being well again:
+    // a map, or a list in which every entry is a provider. An absent member,
+    // another type or a list with a bad entry is not a validated catalog.
+    final wellFormed =
+        rawProviders is Map ||
+        (rawProviders is List && rawProviders.every((entry) => entry is Map));
+    if (wellFormed) _noteRestartRecovered();
+    return result;
   }
 
   /// GET /api/model/auxiliary — asignaciones por función + principal.
@@ -3737,19 +3752,40 @@ class DashboardClient {
     String apiKey = '',
     String? profile,
   }) async {
-    final res = await apiPost(
-      'model/set${_profileQuery(profile)}',
-      body: {
-        'provider': providerSlug,
-        'model': modelId,
-        'scope': scope,
-        if (task.isNotEmpty) 'task': task,
-        if (baseUrl.isNotEmpty) 'base_url': baseUrl,
-        if (apiKey.isNotEmpty) 'api_key': apiKey,
-      },
-    );
-    return (res['ok'] as bool?) ?? false;
+    final Map<String, dynamic> res;
+    try {
+      res = await apiPost(
+        'model/set${_profileQuery(profile)}',
+        body: {
+          'provider': providerSlug,
+          'model': modelId,
+          'scope': scope,
+          if (task.isNotEmpty) 'task': task,
+          if (baseUrl.isNotEmpty) 'base_url': baseUrl,
+          if (apiKey.isNotEmpty) 'api_key': apiKey,
+        },
+      );
+    } on DashboardHttpException catch (error) {
+      _noteRestartRequired(error);
+      rethrow;
+    }
+    final accepted = (res['ok'] as bool?) ?? false;
+    if (accepted) _noteRestartRecovered();
+    return accepted;
   }
+
+  /// Passive: a good model call clears the note a 503 left (no request).
+  void _noteRestartRecovered() =>
+      ServerRestartSignals.noteHealthy(Uri.parse(_baseUrl).host);
+
+  /// Passive: remembers a 503 `Restart required:` the model calls report so
+  /// Diagnostics can say it. Never makes a request of its own.
+  void _noteRestartRequired(DashboardHttpException error) =>
+      ServerRestartSignals.noteHttp(
+        Uri.parse(_baseUrl).host,
+        error.statusCode,
+        error.body,
+      );
 
   /// Prueba un endpoint OpenAI-compatible desde el servidor Hermes.
   ///
