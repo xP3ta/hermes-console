@@ -16205,10 +16205,13 @@ class ActiveChat {
     try {
       return await commands.slashExec(runtimeId, command);
     } on TuiGatewayRpcError catch (slashError) {
-      // Desktop `use-prompt-actions/slash.ts`: skills, bundles and send/alias
-      // directives refuse slash.exec, so any slash.exec error retries through
-      // command.dispatch. When the dispatcher has nothing for the name, the
-      // slash.exec error is the real failure.
+      // Desktop `use-prompt-actions/slash.ts` retries command.dispatch on any
+      // slash.exec error. Here only the gateway's own refusal before running
+      // anything ("use command.dispatch", 4018) reroutes: a worker failure,
+      // timeout or lost connection may come after the command ran, and a
+      // retry could run it twice. When the dispatcher has nothing for the
+      // name, the slash.exec error is the real failure.
+      if (!_slashExecRefusedBeforeRunning(slashError)) rethrow;
       try {
         return await commands.commandDispatch(
           runtimeId,
@@ -16223,6 +16226,14 @@ class ActiveChat {
       }
     }
   }
+
+  static bool _slashExecRefusedBeforeRunning(TuiGatewayRpcError error) =>
+      error.code == 4018 && _useCommandDispatch.hasMatch(error.message);
+
+  static final RegExp _useCommandDispatch = RegExp(
+    r'\buse command\.dispatch\b',
+    caseSensitive: false,
+  );
 
   static final RegExp _notADispatchCommand = RegExp(
     r'not a quick/plugin/(?:bundle/)?skill command',

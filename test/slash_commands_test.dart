@@ -1291,14 +1291,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 350));
     });
 
-    testWidgets('a failed slash.exec keeps its own error over the fallback', (
+    testWidgets('a skill refused for a missing dispatcher keeps its error', (
       tester,
     ) async {
       final gateway = _SlashGateway()
         ..slashError = const TuiGatewayRpcError(
           'slash.exec',
-          'worker timeout',
-          code: 5030,
+          'skill command: use command.dispatch for /goal',
+          code: 4018,
         );
       await _pumpSlashChat(tester, gateway);
       final composer = find.byType(TextField).last;
@@ -1312,6 +1312,94 @@ void main() {
       ]);
       expect(gateway.submissions, isEmpty);
       expect(tester.widget<TextField>(composer).controller?.text, '/goal algo');
+    });
+
+    // slash.exec may have run the command before this error: a worker
+    // failure, a lost reply or a failed bundle. Retrying through
+    // command.dispatch could run it twice, so only the gateway's own
+    // "use command.dispatch" refusal reroutes.
+    for (final error in const [
+      TuiGatewayRpcError('slash.exec', 'worker timeout', code: 5030),
+      // A worker exception's text is not the gateway's refusal.
+      TuiGatewayRpcError(
+        'slash.exec',
+        'worker died: use command.dispatch for /goal',
+        code: 5031,
+      ),
+      TuiGatewayRpcError(
+        'slash.exec',
+        'bundle dispatch failed: boom',
+        code: 4018,
+      ),
+      TuiGatewayRpcError(
+        'slash.exec',
+        'Hermes did not answer in time',
+        failureKind: TuiGatewayRpcFailureKind.timeout,
+      ),
+      TuiGatewayRpcError(
+        'slash.exec',
+        'Connection lost',
+        failureKind: TuiGatewayRpcFailureKind.connectionLost,
+      ),
+    ]) {
+      testWidgets('an ambiguous slash.exec failure is not retried: '
+          '${error.code ?? error.failureKind?.name}', (tester) async {
+        final gateway = _SlashGateway()..slashError = error;
+        await _pumpSlashChat(tester, gateway);
+        final composer = find.byType(TextField).last;
+        await tester.tap(composer);
+        await tester.enterText(composer, '/goal algo');
+        await tester.pump(const Duration(milliseconds: 250));
+        await _submitSlash(tester);
+
+        expect(gateway.slashCalls, ['goal algo']);
+        expect(gateway.dispatchCalls, isEmpty);
+        expect(gateway.submissions, isEmpty);
+        expect(
+          tester.widget<TextField>(composer).controller?.text,
+          '/goal algo',
+        );
+      });
+    }
+
+    testWidgets('a skill named by one runtime is not run on the next', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway()
+        ..slashResponder = ((text) => SlashCompletionBatch.fromJson(const {
+          'replace_from': 1,
+          'items': [
+            {'text': '/review-a', 'meta': 'Runtime A', 'kind': 'skill'},
+          ],
+        }, input: text));
+      final chat = await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/rev');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-review-a')),
+        findsOneWidget,
+      );
+
+      gateway.slashResponder = (text) => SlashCompletionBatch.fromJson(const {
+        'items': <Object>[],
+      }, input: text);
+      chat.adoptDesktopRuntimeForTesting('${chat.desktopRuntimeSessionId}-b');
+      await tester.enterText(composer, '/review-a 12');
+      await tester.pump(const Duration(milliseconds: 300));
+      await _submitSlash(tester);
+
+      // Runtime B never named it: it is not a command there.
+      expect(find.text(s.chaCommandUnknown('review-a')), findsOneWidget);
+      expect(gateway.slashCalls, isEmpty);
+      expect(gateway.dispatchCalls, isEmpty);
+      expect(gateway.submissions, isEmpty);
+      expect(
+        tester.widget<TextField>(composer).controller?.text,
+        '/review-a 12',
+      );
     });
 
     testWidgets('a no-argument slash executes immediately exactly once', (

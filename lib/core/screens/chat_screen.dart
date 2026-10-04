@@ -3812,6 +3812,7 @@ class _ChatScreenState extends State<ChatScreen>
     _slashCompletions
       ..cancel()
       ..clearCache();
+    _forgetRuntimeSlashNames();
     _referenceCompletions
       ..cancel()
       ..clearCache();
@@ -3888,6 +3889,19 @@ class _ChatScreenState extends State<ChatScreen>
           .map((command) => command.name),
     );
     setState(() => _slashSuggestions = merged);
+  }
+
+  /// Names complete.slash offered belong to the scope that answered: another
+  /// runtime or profile may not have that skill, so only the gateway-wide
+  /// catalog survives a scope change.
+  void _forgetRuntimeSlashNames() {
+    final controller = _textController;
+    if (controller is! _SlashAccentTextEditingController) return;
+    controller.remoteCommandNames = Set<String>.unmodifiable({
+      for (final entry
+          in _desktopCommandCatalog?.commands ?? const <CommandCatalogEntry>[])
+        entry.canonicalName,
+    });
   }
 
   /// Lets the composer paint a server command or skill with the same accent as
