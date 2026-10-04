@@ -43,6 +43,7 @@ import '../widgets/session_title_editor_route.dart';
 import '../widgets/session_row_stop_control.dart';
 import 'chat_screen.dart';
 import 'mission_control_screen.dart';
+import 'session_branches_screen.dart';
 import 'session_detail_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/session_status_tone.dart';
@@ -1683,6 +1684,7 @@ class _SessionListScreenState extends State<SessionListScreen>
         builder: (_) => SessionDetailScreen(
           connection: widget.connection,
           session: session,
+          knownSessions: _sessions,
         ),
       ),
     );
@@ -1693,6 +1695,33 @@ class _SessionListScreenState extends State<SessionListScreen>
       // El detalle puede haber ramificado o reanudado: refrescar barato.
       _fetchSessions();
     }
+  }
+
+  Future<void> _openBranches(Session session) {
+    final canLoadMore =
+        _repository != null &&
+        _librarySource == SessionLibrarySource.dashboard &&
+        !_libraryExhaustive;
+    return Navigator.push<void>(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => SessionBranchesScreen(
+          sessions: _sessions,
+          currentId: session.id,
+          titleOf: _titleFor,
+          onOpen: (row) {
+            Navigator.pop(context);
+            _openChat(row);
+          },
+          onLoadMore: canLoadMore
+              ? () async {
+                  await _loadNextPage();
+                  return _sessions;
+                }
+              : null,
+        ),
+      ),
+    );
   }
 
   // ── Context menu ─────────────────────────────────────────────────────────
@@ -1776,6 +1805,16 @@ class _SessionListScreenState extends State<SessionListScreen>
                 onTap: () async {
                   Navigator.pop(ctx);
                   await _toggleUnread(session);
+                },
+              ),
+            if (SessionBranchesScreen.isAvailable(_sessions, session.id))
+              ListTile(
+                key: const ValueKey('session-menu-branches'),
+                leading: const Icon(Icons.account_tree_outlined),
+                title: Text(s.sesBranchesTitle),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openBranches(session);
                 },
               ),
             ListTile(

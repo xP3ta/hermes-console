@@ -31,6 +31,7 @@ import '../widgets/session_deletion_dialogs.dart';
 import '../widgets/session_context_usage.dart';
 import 'chat_screen.dart';
 import 'cron_screen.dart';
+import 'session_branches_screen.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   final SavedConnection connection;
@@ -39,9 +40,13 @@ class SessionDetailScreen extends StatefulWidget {
   final bool skipInitialSessionRefresh;
   final int? observedFirstTokenLatencyMs;
 
+  /// Rows the caller already holds; the branch family is built from them.
+  final List<Session> knownSessions;
+
   const SessionDetailScreen({
     required this.connection,
     required this.session,
+    this.knownSessions = const [],
     @visibleForTesting this.client,
     @visibleForTesting this.observedFirstTokenLatencyMs,
     this.skipInitialSessionRefresh = false,
@@ -163,6 +168,26 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     ).then((_) {
       if (mounted) _refresh();
     });
+  }
+
+  void _openBranches() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => SessionBranchesScreen(
+          sessions: widget.knownSessions,
+          currentId: _session.id,
+          titleOf: (row) => row.title.trim().isNotEmpty ? row.title : row.id,
+          onOpen: (row) {
+            Navigator.of(context).pop();
+            openChatFromHome<void>(
+              context,
+              builder: (_) =>
+                  ChatScreen(connection: widget.connection, session: row),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   void _openLinkedCron() {
@@ -596,6 +621,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 icon: Icons.schedule_rounded,
                 title: s.sesUiOpenRoutine,
                 onTap: _openLinkedCron,
+              ),
+            if (SessionBranchesScreen.isAvailable(
+              widget.knownSessions,
+              _session.id,
+            ))
+              HermesListRow(
+                key: const ValueKey('session-detail-branches'),
+                icon: Icons.account_tree_outlined,
+                title: s.sesBranchesTitle,
+                onTap: _openBranches,
               ),
             if (!readOnly)
               HermesListRow(
