@@ -336,6 +336,7 @@ void main() {
       final field = tester.widget<TextField>(find.byType(TextField));
       expect(field.obscureText, isTrue);
       await tester.enterText(find.byType(TextField), 'synthetic-secret-value');
+      await tester.pump();
       expect(server.puts, isEmpty);
       await tester.tap(find.text(strings(tester).commonSave));
       await tester.pumpAndSettle();
