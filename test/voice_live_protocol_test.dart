@@ -107,7 +107,7 @@ void main() {
     test('splits on sentence boundaries without exceeding 1400', () {
       final sentence = '${'a' * 700}.';
       final chunks = chunkForCommentary('$sentence $sentence $sentence');
-      expect(chunks, ['$sentence', '$sentence', '$sentence']);
+      expect(chunks, [sentence, sentence, sentence]);
       expect(chunks.every((c) => c.length <= 1400), isTrue);
     });
 
