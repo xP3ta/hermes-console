@@ -24287,6 +24287,11 @@ void main() {
           'result': const {'success': true},
         });
       }
+      // Every edit finished but no reply text yet: no summary in this frame.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.textContaining('PUBLIC_CHANGED_PARTIAL'), findsNothing);
+      expect(find.byType(ChangedFilesCard), findsNothing);
       gateway.emit('message.delta', const {'text': 'PUBLIC_CHANGED_PARTIAL'});
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
