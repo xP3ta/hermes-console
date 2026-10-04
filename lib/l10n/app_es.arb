@@ -9315,6 +9315,8 @@
     }
   },
   "sa1215NotReachable": "Este archivo no se puede abrir desde el móvil. Mantén pulsado para copiar su ruta.",
+  "sa1215AgentPreviews": "Vistas previas del agente",
+  "sa1215PreviewServerOnly": "Solo accesible desde el equipo del servidor",
   "sa1215CopyHint": "Mantén pulsado para copiar",
 "pf1215TabChats": "Chats",
   "pf1215TabFiles": "Archivos",

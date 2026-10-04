@@ -7632,6 +7632,8 @@
     }
   },
   "sa1215NotReachable": "This file cannot be opened from the phone. Long-press to copy its path.",
+  "sa1215AgentPreviews": "Agent previews",
+  "sa1215PreviewServerOnly": "Only reachable from the server machine",
   "sa1215CopyHint": "Long-press to copy",
 "pf1215TabChats": "Chats",
   "pf1215TabFiles": "Files",
