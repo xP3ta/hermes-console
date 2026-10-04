@@ -3728,9 +3728,13 @@ class DashboardClient {
             (provider) => provider.cast<String, dynamic>(),
           );
     final result = providers.map(ModelProvider.fromJson).toList();
-    // Only a catalog the server actually sent (a map or a list of providers)
-    // counts as it being well again; an absent member is not a catalog.
-    if (rawProviders is Map || rawProviders is List) _noteRestartRecovered();
+    // Only a catalog the server actually sent counts as it being well again:
+    // a map, or a list in which every entry is a provider. An absent member,
+    // another type or a list with a bad entry is not a validated catalog.
+    final wellFormed =
+        rawProviders is Map ||
+        (rawProviders is List && rawProviders.every((entry) => entry is Map));
+    if (wellFormed) _noteRestartRecovered();
     return result;
   }
 

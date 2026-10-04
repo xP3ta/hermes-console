@@ -382,6 +382,15 @@ void main() {
         client.globalModelOptions(),
         throwsA(isA<TuiGatewayRpcError>().having((e) => e.code, 'code', null)),
       );
+      expect(ServerRestartSignals.textFor([_host]), isNotNull);
+
+      // A providers list with an entry that is not a provider is no catalog.
+      stale.okResult = <String, dynamic>{
+        'providers': [5],
+      };
+      try {
+        await client.globalModelOptions();
+      } catch (_) {}
 
       expect(ServerRestartSignals.textFor([_host]), isNotNull);
     });

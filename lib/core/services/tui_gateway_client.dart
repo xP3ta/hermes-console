@@ -5262,7 +5262,11 @@ class TuiGatewayClient
       );
     }
     final catalog = DesktopModelCatalog.fromJson(result);
-    _noteRestartRecovered();
+    // Every entry has to be a provider for this to count as the server being
+    // well again; a list with a bad entry is not a validated catalog.
+    if ((result['providers'] as List).every((entry) => entry is Map)) {
+      _noteRestartRecovered();
+    }
     return catalog;
   }
 
@@ -5330,7 +5334,11 @@ class TuiGatewayClient
       DesktopGatewayCapabilityState.supported,
     );
     final catalog = DesktopModelCatalog.fromJson(result);
-    _noteRestartRecovered();
+    // Every entry has to be a provider for this to count as the server being
+    // well again; a list with a bad entry is not a validated catalog.
+    if ((result['providers'] as List).every((entry) => entry is Map)) {
+      _noteRestartRecovered();
+    }
     return catalog;
   }
 
