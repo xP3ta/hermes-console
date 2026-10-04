@@ -2907,7 +2907,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           if (_canCreateBot)
             ListTile(
               key: const ValueKey('mission-create-chooser-bot'),
-              leading: const Icon(Icons.smart_toy_outlined),
+              leading: const Icon(Icons.account_circle_outlined),
               title: Text(strings.missionCreateBotLabel),
               onTap: () => Navigator.pop(sheetContext, 'bot'),
             ),
@@ -3036,7 +3036,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       DockCreateOrbit(
         controlKey: const ValueKey('bot-mode-create-bot'),
         label: strings.missionCreateBotLabel,
-        icon: Icons.smart_toy_outlined,
+        icon: Icons.account_circle_outlined,
         onTap:
             widget.connection.readOnly ||
                 snapshot?.profilesCapability != MissionCapabilityState.available
