@@ -65,15 +65,19 @@ class ProfileTransferService {
     _begin();
     String? remotePath;
     File? localArchive;
-    var downloaded = false;
+    // The server contract makes a path outside the managed root undeletable
+    // (download 403/404 reports it to the caller instead), so only that case
+    // keeps the remote archive.
+    var keepRemote = false;
     try {
       final response = await client.apiPost(
         'profiles/${Uri.encodeComponent(profile)}/export',
         body: const {'extra_files': <String, String>{}, 'output': ''},
       );
+      final archivePath = (response['archive'] ?? '').toString().trim();
+      if (archivePath.isNotEmpty) remotePath = archivePath;
       _ensureCurrent();
-      remotePath = (response['archive'] ?? '').toString().trim();
-      if (remotePath.isEmpty) {
+      if (archivePath.isEmpty) {
         throw const ProfileTransferException(
           ProfileTransferErrorCode.server,
           detail: 'The server did not return an archive path.',
@@ -88,12 +92,12 @@ class ProfileTransferService {
       await transferDirectory.create(recursive: true);
       await _clearDirectory(transferDirectory);
       localArchive = File(
-        '${transferDirectory.path}/${_safeArchiveName(remotePath)}',
+        '${transferDirectory.path}/${_safeArchiveName(archivePath)}',
       );
 
       try {
         await client.apiDownloadToFile(
-          'files/download?path=${Uri.encodeQueryComponent(remotePath)}',
+          'files/download?path=${Uri.encodeQueryComponent(archivePath)}',
           localArchive,
           maxBytes: maxArchiveBytes,
           onProgress: onProgress,
@@ -101,15 +105,15 @@ class ProfileTransferService {
         );
       } on DashboardHttpException catch (error) {
         if (error.statusCode == 403 || error.statusCode == 404) {
+          keepRemote = true;
           throw ProfileTransferException(
             ProfileTransferErrorCode.downloadUnavailable,
             detail: _detail(error),
-            serverPath: remotePath,
+            serverPath: archivePath,
           );
         }
         rethrow;
       }
-      downloaded = true;
       _ensureCurrent();
       await share(localArchive);
     } on DashboardDownloadCancelled {
@@ -117,7 +121,7 @@ class ProfileTransferService {
     } on DashboardHttpException catch (error) {
       throw _mapHttp(error);
     } finally {
-      if (downloaded && remotePath != null) {
+      if (!keepRemote && remotePath != null) {
         await _deleteRemote(remotePath);
       }
       if (localArchive != null) await _deleteLocal(localArchive);
