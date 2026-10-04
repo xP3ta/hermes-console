@@ -8826,6 +8826,20 @@
   },
   "cphFilterClear": "Quitar",
   "cphStatusUpdateShort": "Actualizable",
+  "cphMcpStatusConnected": "Conectado",
+  "cphMcpStatusFailed": "Con error",
+  "cphMcpStatusConnecting": "Conectando",
+  "cphMcpStatusLazy": "Bajo demanda",
+  "cphMcpStatusConfigured": "Configurado",
+  "cphMcpToolCount": "{count, plural, =1{1 herramienta} other{{count} herramientas}}",
+  "@cphMcpToolCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cphRowStatus": "Estado",
   "cphRowAuth": "Autenticación",
   "v1215VoiceServerError": "El servidor de Hermes respondió: {detail}",
   "@v1215VoiceServerError": {

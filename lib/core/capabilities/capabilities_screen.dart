@@ -21,6 +21,7 @@ import 'capabilities_repository.dart';
 import 'capability_detail_screen.dart';
 import 'capability_models.dart';
 import 'capability_ui.dart';
+import 'mcp_runtime_status.dart';
 
 enum CapabilitiesSegment { catalog, installed, connectors }
 
@@ -31,6 +32,9 @@ final class CapabilitiesSnapshot {
   final List<CapabilityItem> catalog;
   final List<CapabilityItem> installed;
   final List<CapabilityItem> mcpServers;
+
+  /// Live MCP state by server name; empty when the server lacks it.
+  final Map<String, McpRuntimeRow> mcpRuntime;
   final HostedConnectorsSnapshot? connectors;
   final bool connectorsFailed;
   final bool partial;
@@ -40,6 +44,7 @@ final class CapabilitiesSnapshot {
     this.catalog = const [],
     this.installed = const [],
     this.mcpServers = const [],
+    this.mcpRuntime = const {},
     this.connectors,
     this.connectorsFailed = false,
     this.partial = false,
@@ -69,6 +74,14 @@ final class CapabilitiesSnapshot {
       guard(repo.mcpCatalog),
       guard(repo.mcpServers),
     ]);
+    // Optional enrichment, asked once per load: any failure keeps the
+    // static rows and is not counted as a failed source.
+    var mcpRuntime = const <String, McpRuntimeRow>{};
+    if (lists[5].isNotEmpty) {
+      try {
+        mcpRuntime = await repo.mcpRuntimeStatus();
+      } catch (_) {}
+    }
     HostedConnectorsSnapshot? connectors;
     var connectorsFailed = false;
     try {
@@ -103,6 +116,7 @@ final class CapabilitiesSnapshot {
       catalog: catalog,
       installed: installed,
       mcpServers: lists[5],
+      mcpRuntime: mcpRuntime,
       connectors: connectors,
       connectorsFailed: connectorsFailed,
       partial: real.isNotEmpty,
@@ -663,29 +677,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         HermesListGroup(
           children: [
             for (final server in servers)
-              HermesListRow(
-                key: ValueKey('cph-row-${server.id}'),
-                icon: capabilityKindIcon(server.kind),
-                title: server.name,
-                subtitle: server.url.isNotEmpty
-                    ? server.url
-                    : server.command.isNotEmpty
-                    ? server.command
-                    : null,
-                onTap: () => _openDetail(server),
-                trailing: Padding(
-                  padding: const EdgeInsets.only(left: 10),
-                  child: HermesStatusText(
-                    label: server.enabled == false
-                        ? s.cphStatusDisabled
-                        : s.cphStatusEnabled,
-                    tone: server.enabled == false
-                        ? HermesStatusTone.neutral
-                        : HermesStatusTone.ok,
-                    maxLines: 1,
-                  ),
-                ),
-              ),
+              _mcpRow(server, snapshot.mcpRuntime[server.name]),
           ],
         ),
       HermesSectionHeader(s.cphConnectorsAccounts),
@@ -725,6 +717,48 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         ),
       ),
     ];
+  }
+
+  Widget _mcpRow(CapabilityItem server, McpRuntimeRow? runtime) {
+    final s = Strings.of(context);
+    final target = server.url.isNotEmpty
+        ? server.url
+        : server.command.isNotEmpty
+        ? server.command
+        : null;
+    final live = runtime == null
+        ? null
+        : mcpRuntimeStatusLabel(s, runtime.status);
+    final tools = runtime == null || runtime.tools == 0
+        ? null
+        : s.cphMcpToolCount(runtime.tools);
+    final status =
+        live ??
+        (
+          label: server.enabled == false
+              ? s.cphStatusDisabled
+              : s.cphStatusEnabled,
+          tone: server.enabled == false
+              ? HermesStatusTone.neutral
+              : HermesStatusTone.ok,
+        );
+    return HermesListRow(
+      key: ValueKey('cph-row-${server.id}'),
+      icon: capabilityKindIcon(server.kind),
+      title: server.name,
+      subtitle: [?target, ?tools].isEmpty
+          ? null
+          : [?target, ?tools].join(' · '),
+      onTap: () => _openDetail(server),
+      trailing: Padding(
+        padding: const EdgeInsets.only(left: 10),
+        child: HermesStatusText(
+          label: status.label,
+          tone: status.tone,
+          maxLines: 1,
+        ),
+      ),
+    );
   }
 
   String _errorBody(Strings s, Object error) =>

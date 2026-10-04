@@ -7302,6 +7302,20 @@
   },
   "cphFilterClear": "Clear",
   "cphStatusUpdateShort": "Update",
+  "cphMcpStatusConnected": "Connected",
+  "cphMcpStatusFailed": "Failed",
+  "cphMcpStatusConnecting": "Connecting",
+  "cphMcpStatusLazy": "On demand",
+  "cphMcpStatusConfigured": "Configured",
+  "cphMcpToolCount": "{count, plural, =1{1 tool} other{{count} tools}}",
+  "@cphMcpToolCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cphRowStatus": "Status",
   "cphRowAuth": "Authentication",
   "v1215VoiceServerError": "Hermes server replied: {detail}",
   "@v1215VoiceServerError": {
