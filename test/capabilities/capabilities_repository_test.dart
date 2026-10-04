@@ -450,6 +450,30 @@ void main() {
       },
     );
 
+    test('toggle sends the canonical key, never the bare name', () async {
+      // `image_gen/fal` and `video_gen/fal` share the bare name `fal`.
+      reply = {'ok': true};
+      final repo = repoFor('work', FakeRest());
+      await repo.setPluginEnabled('fal', false, key: 'image_gen/fal');
+      expect(sent.single.$2, {
+        'action': 'toggle',
+        'key': 'image_gen/fal',
+        'enable': false,
+        'profile': 'work',
+      });
+    });
+
+    test('list keeps the canonical key of a row', () async {
+      reply = {
+        'plugins': [
+          {'name': 'fal', 'key': 'image_gen/fal', 'status': 'enabled'},
+          {'name': 'fal', 'key': 'video_gen/fal', 'status': 'disabled'},
+        ],
+      };
+      final rows = await repoFor('work', FakeRest()).installedPluginsRpc();
+      expect(rows.map((r) => r.key), ['image_gen/fal', 'video_gen/fal']);
+    });
+
     test('-32601 falls back to REST only on the default profile', () async {
       reply = const TuiGatewayRpcError('plugins.manage', 'nope', code: -32601);
       final rest = FakeRest()
@@ -597,6 +621,29 @@ void main() {
       await settled;
       // resume read once, the next cadence tick cancelled the loop
       expect(statusReads(rest), 2);
+    });
+
+    test('an already cancelled token makes no REST call at all', () async {
+      final rest = runningServer()..posts['mcp/catalog/install'] = {'ok': true};
+      final token = CapabilityActionToken()..cancel();
+      final repo = CapabilitiesRepository(rest: rest, sleep: (_) async {});
+      await expectLater(
+        repo.installSkill('x/y', token: token),
+        throwsA(isA<CapabilityActionAbandoned>()),
+      );
+      await expectLater(
+        repo.uninstallSkill('x', token: token),
+        throwsA(isA<CapabilityActionAbandoned>()),
+      );
+      await expectLater(
+        repo.updateSkills(token: token),
+        throwsA(isA<CapabilityActionAbandoned>()),
+      );
+      await expectLater(
+        repo.installMcp('docs', token: token),
+        throwsA(isA<CapabilityActionAbandoned>()),
+      );
+      expect(rest.calls, isEmpty);
     });
 
     test('an MCP background install follows the returned action', () async {

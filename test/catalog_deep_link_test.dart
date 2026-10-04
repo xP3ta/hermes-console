@@ -4,6 +4,8 @@ import 'package:hermes_android/core/capabilities/catalog_deep_link.dart';
 import 'package:hermes_android/core/services/connection_manager.dart'
     show DashboardHttpException;
 import 'package:hermes_android/core/services/pairing_link_delivery_gate.dart';
+import 'package:hermes_android/core/services/tui_gateway_client.dart'
+    show TuiGatewayRpcError, TuiGatewayRpcFailureKind;
 
 import 'capabilities/capabilities_fakes.dart';
 
@@ -301,6 +303,27 @@ void main() {
         expect(target, isA<CatalogLinkShow>());
       },
     );
+
+    test('a named profile with no installed state is unavailable', () async {
+      // REST says installed (launch profile); `work` could not be read.
+      final target = await resolve(
+        server(),
+        'installed-one',
+        rpc: (method, params) async => throw const TuiGatewayRpcError(
+          'plugins.manage',
+          'timed out',
+          failureKind: TuiGatewayRpcFailureKind.timeout,
+        ),
+      );
+      expect(
+        target,
+        isA<CatalogLinkLeave>().having(
+          (t) => t.reason,
+          'reason',
+          CatalogLinkLeaveReason.unavailable,
+        ),
+      );
+    });
 
     test('an unreadable catalog is unavailable', () async {
       final rest = ScriptedRest()
