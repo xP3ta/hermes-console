@@ -34,6 +34,8 @@ import 'core/screens/lock_screen.dart';
 import 'core/screens/instance_edit_screen.dart';
 import 'core/screens/onboarding_screen.dart';
 import 'core/screens/splash_screen.dart';
+import 'core/capabilities/catalog_deep_link.dart';
+import 'core/capabilities/catalog_deep_link_screen.dart';
 import 'core/services/pairing_link.dart';
 import 'core/services/pairing_link_delivery_gate.dart';
 import 'core/services/active_chat_service.dart';
@@ -613,6 +615,9 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   final PairingLinkDeliveryGate _pairingLinkDeliveryGate =
       PairingLinkDeliveryGate();
   bool _pairingLinkRetryScheduled = false;
+  // hermes://plugin|skill/install: held until unlocked, onboarded and
+  // connected; opens a confirmation, never an install.
+  final CatalogDeepLinkInbox _catalogLinks = CatalogDeepLinkInbox();
 
   // Share Sheet Android. La bandeja cifra el contenido hasta convertirlo en un
   // borrador local; nunca lo envía automáticamente al agente.
@@ -1297,6 +1302,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     widget.appLock.locked.addListener(_retryPendingNewSessionLaunch);
     widget.appLock.locked.addListener(_onAppLockNoticeGateChanged);
     widget.appLock.locked.addListener(_restoreColdStartTailsAfterUnlock);
+    widget.appLock.locked.addListener(_openCatalogLinks);
+    widget.connManager.activeConnectionId.addListener(_openCatalogLinks);
     unawaited(_initNewSessionLaunchInbox());
     // Cableado del modo conversación. Con el kill-switch de compilación no se
     // instancia ningún orquestador; STT/TTS del chat siguen independientes.
@@ -1955,6 +1962,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (!mounted || !_showSplash) return;
     setState(() => _showSplash = false);
     _retryPendingNewSessionLaunch();
+    _openCatalogLinks();
     unawaited(_openVoiceOwnerChatIfReady());
     unawaited(_startupDestinationRun = _openConfiguredStartupDestination());
   }
@@ -2466,6 +2474,10 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
   /// Si la URI es un enlace de emparejado válido, abre el alta de instancia ya
   /// precargada (reutiliza InstanceEditScreen.initialLink). Si no, la ignora.
   void _handlePairingUri(Uri uri) {
+    if (_catalogLinks.offer(uri)) {
+      _openCatalogLinks();
+      return;
+    }
     final link = PairingLink.tryParse(uri.toString());
     if (link == null) return;
     final nav = _navigatorKey.currentState;
@@ -2487,6 +2499,25 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     if (_pairingLinkDeliveryGate.hasDeferred) {
       _scheduleDeferredPairingLink();
     }
+  }
+
+  void _openCatalogLinks() {
+    final nav = _navigatorKey.currentState;
+    final active = _activeHomeWidgetConnection();
+    final action = _catalogLinks.take(
+      locked: widget.appLock.locked.value,
+      onboarding: _showSplash || _showOnboarding,
+      connected: nav != null && active != null,
+    );
+    if (action == null || nav == null || active == null) return;
+    unawaited(
+      openCatalogDeepLink(
+        navigator: nav,
+        connManager: widget.connManager,
+        connection: active,
+        action: action,
+      ),
+    );
   }
 
   void _scheduleDeferredPairingLink() {
@@ -2634,6 +2665,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     _gatewayIdleTimer?.cancel();
     _externalDataSyncControl.setMethodCallHandler(null);
     _linkSub?.cancel();
+    widget.appLock.locked.removeListener(_openCatalogLinks);
+    widget.connManager.activeConnectionId.removeListener(_openCatalogLinks);
     widget.connManager.activeConnectionId.removeListener(_retryPendingShare);
     widget.connManager.connectionsRevision.removeListener(
       _syncBackgroundCronConnections,

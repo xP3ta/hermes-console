@@ -8780,6 +8780,26 @@
   "cphFailBlockedByScan": "El escaneo de seguridad bloqueó esta instalación.",
   "cphFailUnavailable": "El servidor no respondió a tiempo.",
   "cphFailUncertain": "No hubo respuesta a tiempo. Puede que se haya aplicado: actualiza la lista antes de reintentar.",
+  "cphLinkInvalid": "Este enlace no es válido.",
+  "cphLinkGit": "Este enlace instala código desde un repositorio Git. Ábrelo en Desktop.",
+  "cphLinkUnknown": "{name} no está en el catálogo de este servidor.",
+  "@cphLinkUnknown": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphLinkAlready": "{name} ya está instalado.",
+  "@cphLinkAlready": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphLinkUnavailable": "No se pudo leer el catálogo del servidor.",
+  "cphLinkDestinationChanged": "Cambió el servidor o el perfil. Abre el enlace otra vez.",
   "cphEnvRequired": "Falta este valor.",
   "cphRowRepo": "Repositorio",
   "cphRowPin": "Versión revisada",

@@ -100,6 +100,11 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="hermes" android:host="pair"/>
+                <!-- Catálogo: hermes://plugin/install?catalog=NAME y
+                     hermes://skill/install?identifier=ID abren una
+                     confirmación; nunca instalan solos. -->
+                <data android:scheme="hermes" android:host="plugin"/>
+                <data android:scheme="hermes" android:host="skill"/>
             </intent-filter>
             <!-- Share Sheet Android: el contenido se abre como borrador para
                  revisarlo antes de enviarlo. Los content:// se copian al caché

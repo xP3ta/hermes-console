@@ -67,6 +67,10 @@ class CapabilityDetailScreen extends StatefulWidget {
   /// confirmation.
   final String destinationLabel;
 
+  /// Deep links re-check their destination right before sending: `false`
+  /// aborts the install (the link must never follow a changed destination).
+  final bool Function()? destinationStillValid;
+
   /// Called after every confirmed server change so the hub reloads.
   final VoidCallback? onChanged;
 
@@ -77,6 +81,7 @@ class CapabilityDetailScreen extends StatefulWidget {
     this.readOnly = false,
     this.instanceId = '',
     this.destinationLabel = '',
+    this.destinationStillValid,
     this.onChanged,
   });
 
@@ -189,12 +194,23 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
     if (!mounted) return;
     // Credentials are typed after the confirmation and live only inside this
     // call: the map is cleared as soon as the request has been made.
+    final stillValid = widget.destinationStillValid;
     Map<String, String>? env;
     if (action == CapabilityAction.install &&
         _item.kind == CapabilityKind.mcp &&
         _item.env.isNotEmpty) {
       env = await _askEnv(_item.name, _item.env);
       if (env == null || !mounted) return;
+    }
+    if (action == CapabilityAction.install &&
+        stillValid != null &&
+        !stillValid()) {
+      env?.clear();
+      HermesNotice.of(context).show(
+        message: Strings.of(context).cphLinkDestinationChanged,
+        kind: HermesNoticeKind.warning,
+      );
+      return;
     }
     final s = Strings.of(context);
     final notices = HermesNotice.of(context);

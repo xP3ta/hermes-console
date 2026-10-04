@@ -7256,6 +7256,26 @@
   "cphFailBlockedByScan": "The security scan blocked this install.",
   "cphFailUnavailable": "The server didn't answer in time.",
   "cphFailUncertain": "No answer in time. It may have been applied: refresh the list before retrying.",
+  "cphLinkInvalid": "This link is not valid.",
+  "cphLinkGit": "This link installs code from a Git repository. Open it on Desktop.",
+  "cphLinkUnknown": "{name} is not in this server's catalog.",
+  "@cphLinkUnknown": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphLinkAlready": "{name} is already installed.",
+  "@cphLinkAlready": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphLinkUnavailable": "Could not read the server catalog.",
+  "cphLinkDestinationChanged": "The server or profile changed. Open the link again.",
   "cphEnvRequired": "This value is required.",
   "cphRowRepo": "Repository",
   "cphRowPin": "Reviewed pin",
