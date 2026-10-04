@@ -43,10 +43,7 @@ void main() {
     });
 
     test('an even run of backslashes does not escape the closing dollar', () {
-      expect(
-        protectMarkdownMath(r'Sea $a\\$ fin.'),
-        r'Sea `a\\` fin.',
-      );
+      expect(protectMarkdownMath(r'Sea $a\\$ fin.'), r'Sea `a\\` fin.');
     });
 
     test('an odd run of backslashes escapes the dollar', () {
@@ -55,10 +52,7 @@ void main() {
     });
 
     test('spaced delimiters still protect the formula', () {
-      expect(
-        protectMarkdownMath(r'valor $ 2 * 2 $ fin'),
-        r'valor `2 * 2` fin',
-      );
+      expect(protectMarkdownMath(r'valor $ 2 * 2 $ fin'), r'valor `2 * 2` fin');
     });
 
     test('spaced delimiters protect formulas without emphasis characters', () {
@@ -75,7 +69,7 @@ void main() {
       expect(protectMarkdownMath(spaced), spaced);
     });
 
-    test('any word-prefixed currency is prose, not only R$', () {
+    test('any word-prefixed currency is prose, not only reais', () {
       const text = r'Va de US$ 1,200 a US$ 3,400 * 2 al año.';
       expect(protectMarkdownMath(text), text);
     });
