@@ -11,8 +11,6 @@ import 'package:hermes_android/core/settings/server_config_pages.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-typedef _Handler = FutureOr<http.Response> Function(http.Request request);
-
 Map<String, dynamic> _deepMerge(
   Map<String, dynamic> base,
   Map<String, dynamic> patch,

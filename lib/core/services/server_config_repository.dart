@@ -77,11 +77,10 @@ final class ServerConfigRepository {
   ServerConfigRepository(
     this._dashboard, {
     String? profile,
-    bool writable = true,
+    this._writable = true,
   }) : _profile = (profile == null || profile.trim().isEmpty)
            ? null
-           : profile.trim(),
-       _writable = writable;
+           : profile.trim();
 
   final DashboardClient _dashboard;
   final String? _profile;
