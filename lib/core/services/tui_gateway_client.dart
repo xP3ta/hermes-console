@@ -6430,10 +6430,46 @@ class TuiGatewayClient
 
   /// False once `message.react` answered -32601 on this connection (or for a
   /// read-only one): reactions are then not offered.
+  /// True only once the server has answered `message.react` (a reaction, or
+  /// the probe's invalid-params refusal); unknown stays hidden.
   @override
   bool get messageReactionsAvailable =>
       !_connection.readOnly &&
-      _capabilityCache.canAttempt(DesktopGatewayCapability.messageReactions);
+      _capabilityCache.state(DesktopGatewayCapability.messageReactions) ==
+          DesktopGatewayCapabilityState.supported;
+
+  @override
+  Future<bool> confirmMessageReactions(String runtimeSessionId) async {
+    if (_connection.readOnly) return false;
+    if (_capabilityCache.state(DesktopGatewayCapability.messageReactions) !=
+        DesktopGatewayCapabilityState.unknown) {
+      return messageReactionsAvailable;
+    }
+    try {
+      await _request('message.react', {
+        'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+      });
+      _capabilityCache.mark(
+        DesktopGatewayCapability.messageReactions,
+        DesktopGatewayCapabilityState.supported,
+      );
+    } on TuiGatewayRpcError catch (error) {
+      if (error.code == -32601) {
+        _capabilityCache.mark(
+          DesktopGatewayCapability.messageReactions,
+          DesktopGatewayCapabilityState.unsupported,
+        );
+      } else if (error.code == -32602) {
+        _capabilityCache.mark(
+          DesktopGatewayCapability.messageReactions,
+          DesktopGatewayCapabilityState.supported,
+        );
+      }
+    } catch (_) {
+      // Nothing learned.
+    }
+    return messageReactionsAvailable;
+  }
 
   @override
   Future<({int rowId, List<MessageReaction> reactions})> reactToMessage(

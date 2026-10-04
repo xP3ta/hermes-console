@@ -18,8 +18,20 @@ class _FakeDesktopGateway
   final List<Map<String, Object?>> calls = [];
   bool available = true;
 
+  /// What the probe will find: the server has `message.react` or not. While
+  /// [available] is false and unconfirmed, nothing is offered.
+  bool serverHasReactions = true;
+  int confirmCalls = 0;
+
   @override
   bool get messageReactionsAvailable => available;
+
+  @override
+  Future<bool> confirmMessageReactions(String runtimeSessionId) async {
+    confirmCalls++;
+    available = serverHasReactions;
+    return available;
+  }
 
   Completer<({int rowId, List<MessageReaction> reactions})>? pending;
 
@@ -156,6 +168,36 @@ void main() {
     await failure;
     expect(chat.reactionsFor(5), isEmpty);
   });
+
+  test(
+    'an unconfirmed gateway offers nothing until the probe finds support',
+    () async {
+      final gateway = _FakeDesktopGateway()..available = false;
+      final chat = await _liveChat(gateway);
+      final emitted = <ActiveChatEvent>[];
+      final sub = chat.changes.listen(emitted.add);
+      addTearDown(sub.cancel);
+      expect(chat.canReact, isFalse);
+      await chat.confirmReactions();
+      expect(gateway.confirmCalls, 1);
+      expect(chat.canReact, isTrue);
+      expect(emitted, contains(ActiveChatEvent.reactionsChanged));
+    },
+  );
+
+  test(
+    'the probe runs once per chat and never when the server lacks it',
+    () async {
+      final gateway = _FakeDesktopGateway()
+        ..available = false
+        ..serverHasReactions = false;
+      final chat = await _liveChat(gateway);
+      await chat.confirmReactions();
+      await chat.confirmReactions();
+      expect(gateway.confirmCalls, 1);
+      expect(chat.canReact, isFalse);
+    },
+  );
 
   test(
     'reactions are offered only while the gateway says it can take them',

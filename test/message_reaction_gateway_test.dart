@@ -168,12 +168,61 @@ void main() {
 
   test('-32601 turns reactions off for the connection', () async {
     final h = _client((_) => -32601);
-    expect(h.client.messageReactionsAvailable, isTrue);
+    expect(await h.client.confirmMessageReactions('rt-1'), isFalse);
+    expect(h.client.messageReactionsAvailable, isFalse);
     await expectLater(
       h.client.reactToMessage('rt-1', rowId: 1, emoji: '👍'),
       throwsA(isA<DesktopControlFailure>()),
     );
     expect(h.client.messageReactionsAvailable, isFalse);
+  });
+
+  group('availability is never assumed', () {
+    test('a fresh connection offers nothing before it is confirmed', () {
+      final h = _client((_) => {'row_id': 1, 'reactions': <Object>[]});
+      expect(h.client.messageReactionsAvailable, isFalse);
+    });
+
+    test(
+      'the probe names only the session, so nothing can be written',
+      () async {
+        final h = _client((_) => -32602);
+        expect(await h.client.confirmMessageReactions('rt-1'), isTrue);
+        expect(_last(h.requests, 'message.react'), {'session_id': 'rt-1'});
+        expect(h.client.messageReactionsAvailable, isTrue);
+      },
+    );
+
+    test(
+      '-32601 on the probe keeps it hidden and is not asked again',
+      () async {
+        final h = _client((_) => -32601);
+        expect(await h.client.confirmMessageReactions('rt-1'), isFalse);
+        expect(await h.client.confirmMessageReactions('rt-1'), isFalse);
+        expect(
+          h.requests.where((f) => f['method'] == 'message.react').length,
+          1,
+        );
+      },
+    );
+
+    test('any other failure confirms nothing', () async {
+      final h = _client((_) => -32000);
+      expect(await h.client.confirmMessageReactions('rt-1'), isFalse);
+      expect(h.client.messageReactionsAvailable, isFalse);
+    });
+
+    test('a read-only connection is never probed', () async {
+      final h = _client((_) => -32602, readOnly: true);
+      expect(await h.client.confirmMessageReactions('rt-1'), isFalse);
+      expect(h.requests.where((f) => f['method'] == 'message.react'), isEmpty);
+    });
+
+    test('a successful reaction confirms the capability', () async {
+      final h = _client((_) => {'row_id': 1, 'reactions': <Object>[]});
+      await h.client.reactToMessage('rt-1', rowId: 1, emoji: '👍');
+      expect(h.client.messageReactionsAvailable, isTrue);
+    });
   });
 
   test('an answer without a reaction list is rejected, not trusted', () async {

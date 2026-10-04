@@ -66,6 +66,12 @@ abstract class HermesMessageReactionGateway {
   /// is read-only); reactions are neither offered nor sent then.
   bool get messageReactionsAvailable;
 
+  /// Learns whether the server has `message.react` without writing anything:
+  /// the probe names only the session, which a server that has the method
+  /// refuses with invalid params (-32602). Returns [messageReactionsAvailable]
+  /// afterwards; a timeout or any other failure confirms nothing.
+  Future<bool> confirmMessageReactions(String runtimeSessionId);
+
   Future<({int rowId, List<MessageReaction> reactions})> reactToMessage(
     String runtimeSessionId, {
     int? rowId,

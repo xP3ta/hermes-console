@@ -4553,6 +4553,25 @@ class ActiveChat {
         gateway.messageReactionsAvailable;
   }
 
+  bool _reactionProbeStarted = false;
+
+  /// Asks the gateway once for this chat whether the server takes reactions
+  /// (a probe that writes nothing) and repaints when that settles. Safe to
+  /// call on every build: only the first call sends anything.
+  Future<void> confirmReactions() async {
+    if (_reactionProbeStarted || _disposed || canReact) return;
+    final runtimeId = _desktopRuntimeSessionId;
+    final gateway = _desktopGateway as Object?;
+    if (runtimeId == null || gateway is! HermesMessageReactionGateway) return;
+    _reactionProbeStarted = true;
+    try {
+      await gateway.confirmMessageReactions(runtimeId);
+    } catch (_) {
+      // Nothing learned; the entry stays hidden.
+    }
+    if (!_disposed) _emit(ActiveChatEvent.reactionsChanged);
+  }
+
   /// Sets, replaces or retracts the user's reaction. A persisted row (with
   /// [rowId]) shows it at once and rolls back if the gateway refuses; a live
   /// row that has no id yet names [newestRole] and shows the server's answer.

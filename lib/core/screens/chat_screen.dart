@@ -15552,7 +15552,13 @@ class _ChatScreenState extends State<ChatScreen>
       listenable: MessageReactionPrefs.shared,
       child: child,
       builder: (context, child) {
-        if (!MessageReactionPrefs.shared.enabled || !_chat.canReact) {
+        if (!MessageReactionPrefs.shared.enabled) return child!;
+        if (!_chat.canReact) {
+          // Hidden until the server has confirmed message.react; the first
+          // build asks once and the chat repaints when that settles.
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => unawaited(_chat.confirmReactions()),
+          );
           return child!;
         }
         final reactions = _chat.reactionsFor(rowId);
