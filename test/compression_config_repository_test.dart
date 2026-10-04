@@ -357,6 +357,77 @@ void main() {
     });
   });
 
+  group('CompressionConfigRepository save re-reads the server', () {
+    // Settings › Advanced › Context shows a value as saved only when the
+    // server shows it after the write.
+    const changed = CompressionConfig(
+      enabled: false,
+      threshold: 0.75,
+      targetRatio: 0.3,
+      protectLastN: 40,
+    );
+
+    Future<(CompressionConfigRepository, List<http.Request>)> setup({
+      required bool applyWrite,
+    }) async {
+      final fixture = _fixture();
+      final serverConfig = _cloneMap(fixture['config']!);
+      final requests = <http.Request>[];
+      final dashboard = _dashboard(
+        MockClient((request) async {
+          requests.add(request);
+          final path = request.url.path;
+          if (request.method == 'GET' && path == '/api/config') {
+            return http.Response(jsonEncode(serverConfig), 200);
+          }
+          if (request.method == 'GET' && path == '/api/config/schema') {
+            return http.Response(jsonEncode(fixture['schema']), 200);
+          }
+          if (request.method == 'PUT' && path == '/api/config') {
+            if (applyWrite) {
+              final body = jsonDecode(request.body) as Map<String, dynamic>;
+              final patch = body['config'] as Map<String, dynamic>;
+              (serverConfig['compression'] as Map<String, dynamic>).addAll(
+                patch['compression'] as Map<String, dynamic>,
+              );
+            }
+            return http.Response('{"ok":true}', 200);
+          }
+          return http.Response('not found', 404);
+        }),
+      );
+      final repository = CompressionConfigRepository(dashboard);
+      addTearDown(() {
+        repository.close();
+        dashboard.close();
+      });
+      return (repository, requests);
+    }
+
+    test('a PUT is followed by one read of the config', () async {
+      final (repository, requests) = await setup(applyWrite: true);
+      final base = await repository.load();
+      requests.clear();
+
+      final saved = await repository.save(base, changed);
+
+      expect(requests.map((r) => '${r.method} ${r.url.path}').toList(), [
+        'PUT /api/config',
+        'GET /api/config',
+      ]);
+      expect(saved.configuration, changed);
+    });
+
+    test('a write the server did not apply is rejected, not saved', () async {
+      final (repository, _) = await setup(applyWrite: false);
+      final base = await repository.load();
+
+      final error = await _failure(repository.save(base, changed));
+
+      expect(error.code, CompressionConfigFailureCode.rejected);
+    });
+  });
+
   group('CompressionConfigRepository save', () {
     test(
       'PUT replica Desktop: registro completo y solo cuatro reemplazos',
