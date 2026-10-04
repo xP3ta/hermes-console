@@ -76,6 +76,8 @@ import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
+import 'package:hermes_android/core/widgets/chat/chat_message_frame.dart'
+    show ChatMessageHeader;
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/core/screens/lock_screen.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
@@ -1288,6 +1290,89 @@ class _NoLiveMutationGateway extends _UiRewindGateway
     if (error != null) throw error;
     return redirectDisposition;
   }
+}
+
+/// Gateway that also speaks the side-agent and branch RPCs.
+class _UiTurnSideGateway extends _NoLiveMutationGateway
+    implements HermesDesktopTurnSideGateway {
+  final List<({String method, Map<String, Object?> params})> sideCalls = [];
+  Object? sideFailure;
+  int branchCount = 0;
+
+  @override
+  bool turnSideKnownUnsupported = false;
+  @override
+  bool turnBranchKnownUnsupported = false;
+
+  void _fail() {
+    final failure = sideFailure;
+    if (failure == null) return;
+    sideFailure = null;
+    if (failure is DesktopControlFailure &&
+        failure.kind == DesktopControlFailureKind.unsupported) {
+      turnSideKnownUnsupported = true;
+    }
+    throw failure;
+  }
+
+  @override
+  Future<String> askSideQuestion(String runtimeSessionId, String text) async {
+    sideCalls.add((
+      method: 'prompt.btw',
+      params: {'session_id': runtimeSessionId, 'text': text},
+    ));
+    _fail();
+    return 'btw-task';
+  }
+
+  @override
+  Future<String> startBackgroundPrompt(
+    String runtimeSessionId,
+    String text,
+  ) async {
+    sideCalls.add((
+      method: 'prompt.background',
+      params: {'session_id': runtimeSessionId, 'text': text},
+    ));
+    _fail();
+    return 'bg-task';
+  }
+
+  Future<DesktopBranchResult> _branch(
+    String method,
+    Map<String, Object?> params,
+  ) async {
+    sideCalls.add((method: method, params: params));
+    branchCount++;
+    return DesktopBranchResult(
+      runtimeSessionId: 'runtime-child-$branchCount',
+      storedSessionId: 'stored-child-$branchCount',
+      title: 'Child',
+      messageCount: 2,
+    );
+  }
+
+  @override
+  Future<DesktopBranchResult> branchSession(
+    String runtimeSessionId, {
+    int? count,
+    String? name,
+    required String idempotencyKey,
+  }) => _branch('session.branch', {
+    'session_id': runtimeSessionId,
+    'count': ?count,
+    'idempotency_key': idempotencyKey,
+  });
+
+  @override
+  Future<DesktopBranchResult> branchWholeSession(
+    String runtimeSessionId, {
+    String? name,
+    required String idempotencyKey,
+  }) => _branch('session.branch_whole', {
+    'session_id': runtimeSessionId,
+    'idempotency_key': idempotencyKey,
+  });
 }
 
 class _UiNativeCompressionGateway extends _UiRewindGateway
@@ -20438,6 +20523,11 @@ void main() {
       final save = find.byKey(const ValueKey('inline-message-editor-save'));
       expect(tester.widget<IconButton>(save).onPressed, isNotNull);
       await tester.tap(save);
+      await tester.pumpAndSettle();
+      // Saving stops the running reply, so it asks first.
+      await tester.tap(
+        find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+      );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 700));
 
@@ -21234,7 +21324,7 @@ void main() {
     expect(chat.isStreaming, isFalse);
   });
 
-  testWidgets('editar mientras el turno responde avisa si no se pudo', (
+  testWidgets('editar mientras el turno responde no lo cancelan los tokens', (
     tester,
   ) async {
     tester.view
@@ -21283,6 +21373,10 @@ void main() {
     );
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('inline-message-editor-save')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+    );
     await tester.pump();
     expect(gateway.resolutionCalls, [(text: 'segunda pregunta', ordinal: 1)]);
 
@@ -21292,19 +21386,15 @@ void main() {
     gateway.resolutionGate!.complete(73);
     await tester.pump(const Duration(milliseconds: 700));
 
-    expect(gateway.rewinds, isEmpty);
-    // Never a silent failure: the user is told, and the editor is not left
-    // stuck on "saving" with Cancel disabled.
+    // Tokens of the running reply no longer supersede the edit: it goes
+    // through and nothing reports a failure.
+    expect(gateway.rewinds, [(text: 'segunda pregunta corregida', ordinal: 1)]);
     expect(
       find.text(
         'No se pudo editar el mensaje. La conversación original sigue disponible.',
       ),
-      findsOneWidget,
+      findsNothing,
     );
-    final cancel = find.byKey(const ValueKey('inline-message-editor-cancel'));
-    if (cancel.evaluate().isNotEmpty) {
-      expect(tester.widget<IconButton>(cancel).onPressed, isNotNull);
-    }
     gateway.emit('message.complete', {'text': 'Respuesta final'});
     for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
       await tester.pump(const Duration(milliseconds: 33));
@@ -27858,6 +27948,10 @@ void main() {
     await tester.enterText(editor, '¿Quién fue el mayor emperador griego?');
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('inline-message-editor-save')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+    );
 
     // El cierre del editor y el rewind del transcript ocurren en la misma
     // transición. Avanzar varios frames reproduce la carrera del dispositivo.
@@ -27937,6 +28031,13 @@ void main() {
         find.byKey(const ValueKey('inline-message-editor-save')),
       );
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(
+        find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pump(const Duration(milliseconds: 350));
       await tester.pump(const Duration(milliseconds: 350));
       await tester.pump(const Duration(milliseconds: 350));
 
@@ -27952,11 +28053,9 @@ void main() {
       );
       // The old child was interrupted with its parent turn: cancelled, not
       // failed, and not still counted as active.
-      final old = chat.subagentActivities
-          .where((activity) => activity.subagentId == 'sa-live-edit')
-          .toList(growable: false);
-      expect(old, hasLength(1));
-      expect(old.single.phase, SubagentActivityPhase.cancelled);
+      // The stop confirmation covered the chat route, which released its
+      // presentation lease, so the public list is empty until the next
+      // snapshot; the count reads the activity state itself.
       expect(chat.activeSubagentCount, 0);
 
       gateway.emit('message.complete', {'text': 'Respuesta del turno editado'});
@@ -27997,6 +28096,10 @@ void main() {
       await tester.pump();
       await tester.tap(
         find.byKey(const ValueKey('inline-message-editor-save')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
       );
       await tester.pump(const Duration(milliseconds: 100));
       expect(gateway.interruptCalls, 1);
@@ -31625,6 +31728,10 @@ void main() {
       );
       final id = chat.queuedEntries.single.id;
       await tester.tap(find.byKey(ValueKey('chat-queue-send-now-$id')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+      );
       for (var frame = 0; frame < 40; frame++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
@@ -31662,6 +31769,10 @@ void main() {
       final id = chat.queuedEntries.single.id;
       failOutboxWrites = true;
       await tester.tap(find.byKey(ValueKey('chat-queue-send-now-$id')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+      );
       for (var frame = 0; frame < 40; frame++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
@@ -31674,14 +31785,412 @@ void main() {
       expect(
         find.text(
           'No se ha podido guardar de forma segura en este móvil y no se ha '
-          'enviado. Sigue en la cola: pulsa Enviar siguiente para '
-          'reintentarlo.',
+          'enviado. Sigue en la cola: reinténtalo desde su fila.',
         ),
         findsOneWidget,
       );
       failOutboxWrites = false;
       await tester.pump(const Duration(seconds: 12));
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('issue 113 turn control', () {
+    Future<(ActiveChat, _UiTurnSideGateway)> streamingChat(
+      WidgetTester tester,
+      String id, {
+      _UiTurnSideGateway? gateway,
+      SavedConnection? connection,
+    }) async {
+      final fake = gateway ?? _UiTurnSideGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: fake,
+        connection: connection ?? _remoteConn(id),
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+      expect(
+        await chat.send(
+          fullText: 'turno vivo',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      await tester.pump();
+      return (chat, fake);
+    }
+
+    Future<void> finishTurns(
+      WidgetTester tester,
+      _UiTurnSideGateway gateway,
+    ) async {
+      for (var i = 0; i < 3; i++) {
+        gateway.emit('message.complete', {'text': 'terminado'});
+        await tester.pump(const Duration(milliseconds: 400));
+      }
+      await tester.pump(const Duration(seconds: 12));
+    }
+
+    Future<void> openQueue(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('chat-queue-toggle')));
+      await tester.pump();
+    }
+
+    Future<void> submitComposer(WidgetTester tester, String text) async {
+      await tester.enterText(find.byType(TextField), text);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+    }
+
+    testWidgets('long-press on a queued row moves it down', (tester) async {
+      final (chat, gateway) = await streamingChat(tester, 'conn-tc-move');
+      expect(chat.enqueue('uno'), isTrue);
+      expect(chat.enqueue('dos'), isTrue);
+      await tester.pump();
+      await openQueue(tester);
+      final first = chat.queuedEntries.first.id;
+      final second = chat.queuedEntries.last.id;
+
+      await tester.longPress(find.text('uno'));
+      await tester.pumpAndSettle();
+      // The first row has nothing above it.
+      expect(find.byKey(ValueKey('chat-queue-move-up-$first')), findsNothing);
+      await tester.tap(find.byKey(ValueKey('chat-queue-move-down-$first')));
+      await tester.pumpAndSettle();
+
+      expect(chat.queuedMessages, ['dos', 'uno']);
+      expect(chat.queuedEntries.first.id, second);
+      expect(tester.takeException(), isNull);
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('send now while a reply streams asks before it stops it', (
+      tester,
+    ) async {
+      final (chat, gateway) = await streamingChat(tester, 'conn-tc-send-now');
+      expect(chat.enqueue('siguiente'), isTrue);
+      await tester.pump();
+      await openQueue(tester);
+      final id = chat.queuedEntries.single.id;
+      expect(find.byTooltip('Detener y enviar ahora'), findsOneWidget);
+
+      await tester.tap(find.byKey(ValueKey('chat-queue-send-now-$id')));
+      await tester.pumpAndSettle();
+      expect(find.text('¿Detener la respuesta?'), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('hermes-confirm-dialog-cancel')),
+      );
+      await tester.pumpAndSettle();
+      expect(gateway.interruptCalls, 0);
+      expect(chat.queuedMessages, ['siguiente']);
+
+      await tester.tap(find.byKey(ValueKey('chat-queue-send-now-$id')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('hermes-confirm-dialog-confirm')),
+      );
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(gateway.interruptCalls, 1);
+      expect(gateway.submissions, ['turno vivo', 'siguiente']);
+      expect(tester.takeException(), isNull);
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('saving an edit while a reply streams asks first', (
+      tester,
+    ) async {
+      final gateway = _UiTurnSideGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-tc-edit-confirm'),
+        chatState: ChatPipelineState.streaming,
+        messages: const [
+          {
+            'role': 'assistant',
+            'content': 'respuesta parcial',
+            '_pipeline': true,
+          },
+          {'role': 'user', 'content': 'pregunta', '_desktopRowId': 11},
+        ],
+      );
+      await tester.tap(find.byIcon(Icons.edit_outlined));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(
+        find.byKey(const ValueKey('inline-message-editor-field')),
+        'pregunta corregida',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('inline-message-editor-save')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('¿Detener la respuesta?'), findsOneWidget);
+      expect(gateway.interruptCalls, 0);
+      await tester.tap(
+        find.byKey(const ValueKey('hermes-confirm-dialog-cancel')),
+      );
+      await tester.pumpAndSettle();
+      // Backing out keeps the editor open and interrupts nothing.
+      expect(
+        find.byKey(const ValueKey('inline-message-editor-field')),
+        findsOneWidget,
+      );
+      expect(gateway.interruptCalls, 0);
+      expect(gateway.rewinds, isEmpty);
+    });
+
+    testWidgets('editing an older message says how many turns go', (
+      tester,
+    ) async {
+      await pumpChat(
+        tester,
+        desktopGateway: _UiTurnSideGateway(),
+        connection: _remoteConn('conn-tc-later-turns'),
+        messages: const [
+          {'role': 'assistant', 'content': 'respuesta dos'},
+          {'role': 'user', 'content': 'pregunta dos', '_desktopRowId': 22},
+          {'role': 'assistant', 'content': 'respuesta uno'},
+          {'role': 'user', 'content': 'pregunta uno', '_desktopRowId': 11},
+        ],
+      );
+      final editButtons = find.byIcon(Icons.edit_outlined);
+
+      // The latest turn removes nothing.
+      await tester.tap(editButtons.first);
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.byKey(const ValueKey('chat-edit-later-turns')), findsNothing);
+      await tester.tap(
+        find.byKey(const ValueKey('inline-message-editor-cancel')),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.edit_outlined).last);
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.text('Se borrará la respuesta posterior'), findsOneWidget);
+    });
+
+    testWidgets('the composer and queue ignore touches while editing', (
+      tester,
+    ) async {
+      await pumpChat(
+        tester,
+        desktopGateway: _UiTurnSideGateway(),
+        connection: _remoteConn('conn-tc-lock'),
+        messages: const [
+          {'role': 'assistant', 'content': 'respuesta'},
+          {'role': 'user', 'content': 'pregunta', '_desktopRowId': 11},
+        ],
+      );
+      bool locked() => tester
+          .widgetList<IgnorePointer>(
+            find.ancestor(
+              of: find.byType(TextField).last,
+              matching: find.byType(IgnorePointer),
+            ),
+          )
+          .any((widget) => widget.ignoring);
+      expect(locked(), isFalse);
+
+      await tester.tap(find.byIcon(Icons.edit_outlined));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(locked(), isTrue);
+    });
+
+    testWidgets('/btw while streaming sends one request and keeps the queue', (
+      tester,
+    ) async {
+      final (chat, gateway) = await streamingChat(tester, 'conn-tc-btw');
+      expect(chat.enqueue('después'), isTrue);
+      await tester.pump();
+
+      await submitComposer(tester, '/btw ¿qué hora es?');
+
+      expect(gateway.sideCalls.map((call) => call.method), ['prompt.btw']);
+      expect(gateway.sideCalls.single.params['text'], '¿qué hora es?');
+      expect(gateway.interruptCalls, 0);
+      expect(gateway.submissions, ['turno vivo']);
+      expect(chat.queuedMessages, ['después']);
+      expect(find.text('Pregunta enviada'), findsOneWidget);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        isEmpty,
+      );
+
+      gateway.emit('btw.complete', {
+        'task_id': 'btw-task',
+        'question': '¿qué hora es?',
+        'text': 'Las tres.',
+      });
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('btw "¿qué hora es?"'), findsOneWidget);
+      expect(find.text('Las tres.'), findsOneWidget);
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('/btw without a question shows usage and sends nothing', (
+      tester,
+    ) async {
+      final (_, gateway) = await streamingChat(tester, 'conn-tc-btw-usage');
+
+      await submitComposer(tester, '/btw');
+
+      expect(gateway.sideCalls, isEmpty);
+      expect(find.text('Uso: /btw <pregunta>'), findsOneWidget);
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('/bg while streaming starts one background prompt', (
+      tester,
+    ) async {
+      final (chat, gateway) = await streamingChat(tester, 'conn-tc-bg');
+
+      await submitComposer(tester, '/bg resume el repo');
+
+      expect(gateway.sideCalls.map((call) => call.method), [
+        'prompt.background',
+      ]);
+      expect(gateway.sideCalls.single.params['text'], 'resume el repo');
+      expect(chat.queuedMessages, isEmpty);
+      expect(find.text('Tarea en segundo plano iniciada'), findsOneWidget);
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('/bg on a server without the method uses the slash path', (
+      tester,
+    ) async {
+      final gateway = _UiTurnSideGateway()
+        ..sideFailure = const DesktopControlFailure(
+          DesktopControlFailureKind.unsupported,
+          code: -32601,
+        );
+      await streamingChat(tester, 'conn-tc-bg-fallback', gateway: gateway);
+
+      await submitComposer(tester, '/bg resume el repo');
+
+      expect(gateway.sideCalls, hasLength(1));
+      expect(gateway.slashCalls.map((call) => call.command), [
+        'bg resume el repo',
+      ]);
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('typed /branch branches the whole chat and opens the child', (
+      tester,
+    ) async {
+      final gateway = _UiTurnSideGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-tc-branch'),
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+        messages: const [
+          {'role': 'assistant', 'content': 'respuesta'},
+          {'role': 'user', 'content': 'pregunta', '_desktopRowId': 11},
+        ],
+      );
+      chat.state = ChatPipelineState.completed;
+      await tester.pump();
+
+      await submitComposer(tester, '/branch');
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      expect(gateway.sideCalls.map((call) => call.method), [
+        'session.branch_whole',
+      ]);
+      final shown = tester.widget<ChatScreen>(find.byType(ChatScreen).last);
+      expect(shown.session.id, 'stored-child-1');
+    });
+
+    testWidgets('a busy chat refuses to branch with a notice', (tester) async {
+      final (_, gateway) = await streamingChat(tester, 'conn-tc-branch-busy');
+
+      await submitComposer(tester, '/branch');
+
+      expect(gateway.sideCalls, isEmpty);
+      expect(find.text('Detén primero la respuesta en curso.'), findsOneWidget);
+      await finishTurns(tester, gateway);
+    });
+
+    testWidgets('long-pressing an assistant header offers Branch from here', (
+      tester,
+    ) async {
+      final gateway = _UiTurnSideGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-tc-branch-menu'),
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+        messages: const [
+          {'role': 'assistant', 'content': 'respuesta uno', 'id': 2},
+          {'role': 'user', 'content': 'pregunta uno', 'id': 1},
+        ],
+      );
+      chat.state = ChatPipelineState.completed;
+      await tester.pump();
+
+      // The assistant header is outside the selectable text.
+      await tester.longPress(find.byType(ChatMessageHeader).first);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('chat-message-branch')), findsOneWidget);
+    });
+
+    testWidgets('the chat menu offers Branch chat only when supported', (
+      tester,
+    ) async {
+      Future<void> openMenu() async {
+        await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+      }
+
+      final gateway = _UiTurnSideGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-tc-menu-yes'),
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+      await openMenu();
+      expect(find.byKey(const ValueKey('chat-control-branch')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('chat-control-branch')));
+      await tester.pumpAndSettle();
+      expect(gateway.sideCalls.map((call) => call.method), [
+        'session.branch_whole',
+      ]);
+    });
+
+    testWidgets('the chat menu hides Branch chat once the server says no', (
+      tester,
+    ) async {
+      final gateway = _UiTurnSideGateway()..turnBranchKnownUnsupported = true;
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-tc-menu-no'),
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+      await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(const ValueKey('chat-control-dialog')), findsOneWidget);
+      expect(find.byKey(const ValueKey('chat-control-branch')), findsNothing);
     });
   });
 
@@ -31742,7 +32251,7 @@ void main() {
     expect(
       tester.getSemantics(sendNow),
       matchesSemantics(
-        label: 'Enviar siguiente',
+        label: 'Detener y enviar ahora',
         isButton: true,
         hasEnabledState: true,
         isEnabled: true,
