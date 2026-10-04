@@ -130,11 +130,115 @@ Widget a11yHost(Widget child, {double textScale = 2}) => MaterialApp(
   home: child,
 );
 
+const a11yPhoneSize = Size(360, 690);
+
 void useA11yPhoneView(WidgetTester tester) {
-  tester.view.physicalSize = const Size(360, 690);
+  tester.view.physicalSize = a11yPhoneSize;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
+}
+
+/// Proves that the named [targets] stay usable on the compact phone view at
+/// [textScale]: every match is rendered at least at the requested text scale,
+/// scrolled fully inside the viewport, hit-testable (nothing overlays or clips
+/// it) and does not overlap any other target that is on screen at the same
+/// time.
+///
+/// Matching one control is not enough: a layout that clamps or overlays the
+/// rest of the screen would still leave that control visible. AppBar titles
+/// are exempt from the scale check because Flutter clamps them at 1.34x.
+Future<void> expectA11yLayoutUsable(
+  WidgetTester tester,
+  Map<String, Finder> targets, {
+  double textScale = 2,
+}) async {
+  expect(tester.takeException(), isNull);
+  final viewport =
+      Offset.zero & (tester.view.physicalSize / tester.view.devicePixelRatio);
+
+  final resolved = <String, Finder>{};
+  for (final entry in targets.entries) {
+    final elements = entry.value.evaluate().toList();
+    expect(elements, isNotEmpty, reason: '${entry.key} is not on screen');
+    for (var index = 0; index < elements.length; index++) {
+      final element = elements[index];
+      resolved['${entry.key}[$index]'] = find.byElementPredicate(
+        (candidate) => identical(candidate, element),
+        description: entry.key,
+      );
+    }
+  }
+
+  Rect? rectOf(Finder finder) =>
+      finder.evaluate().isEmpty ? null : tester.getRect(finder);
+
+  // The part of the screen in which [finder] can currently be seen: the
+  // viewport narrowed by its nearest scroll view.
+  Rect clipOf(Finder finder) {
+    final scrollables = find.ancestor(
+      of: finder,
+      matching: find.byType(Scrollable),
+    );
+    if (scrollables.evaluate().isEmpty) return viewport;
+    return viewport.intersect(tester.getRect(scrollables.first));
+  }
+
+  bool within(Rect rect, Rect bounds) =>
+      rect.left >= bounds.left - 0.5 &&
+      rect.top >= bounds.top - 0.5 &&
+      rect.right <= bounds.right + 0.5 &&
+      rect.bottom <= bounds.bottom + 0.5;
+
+  for (final entry in resolved.entries) {
+    final name = entry.key;
+    final target = entry.value;
+    await tester.ensureVisible(target);
+    await tester.pump();
+    expect(tester.takeException(), isNull, reason: name);
+
+    final inAppBar = find
+        .ancestor(of: target, matching: find.byType(AppBar))
+        .evaluate()
+        .isNotEmpty;
+    if (!inAppBar) {
+      expect(
+        MediaQuery.textScalerOf(tester.element(target)).scale(10),
+        greaterThanOrEqualTo(10 * textScale - 0.01),
+        reason: '$name is not laid out at ${textScale}x text',
+      );
+    }
+
+    final rect = rectOf(target)!;
+    expect(rect.width, greaterThan(0), reason: '$name has no width');
+    expect(rect.height, greaterThan(0), reason: '$name has no height');
+    final clip = clipOf(target);
+    expect(
+      within(rect, clip),
+      isTrue,
+      reason: '$name $rect is not fully inside the visible area $clip',
+    );
+    expect(
+      target.hitTestable(),
+      findsOneWidget,
+      reason: '$name is covered or clipped',
+    );
+
+    for (final other in resolved.entries) {
+      if (other.key == name) continue;
+      final otherRect = rectOf(other.value);
+      // A target scrolled partly out of view is checked on its own turn.
+      if (otherRect == null || !within(otherRect, clipOf(other.value))) {
+        continue;
+      }
+      final overlap = rect.intersect(otherRect);
+      expect(
+        overlap.width <= 1 || overlap.height <= 1,
+        isTrue,
+        reason: '$name $rect overlaps ${other.key} $otherRect',
+      );
+    }
+  }
 }
 
 final class A11yApiClient extends ApiClient {
