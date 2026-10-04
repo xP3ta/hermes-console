@@ -28,11 +28,14 @@ import '../services/dock_preferences_store.dart';
 import '../design/content.dart' show HermesLogPage, HermesToggleRow;
 import '../design/modal.dart'
     show
+        HermesAction,
         HermesDialogAction,
         HermesDialogActionStyle,
         HermesModelChoice,
         HermesModelGroup,
+        hermesOriginOf,
         showHermesDialog,
+        showHermesMenu,
         showHermesModelPicker;
 import '../theme/app_theme.dart';
 import '../utils/relative_time.dart';
@@ -1105,8 +1108,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                                     busy.contains(
                                           'description-${profile.name}',
                                         ) ||
-                                        controllers[profile.name]!
-                                                .text
+                                        controllers[profile.name]!.text
                                                 .trim() ==
                                             baselines[profile.name]
                                     ? null
@@ -1122,29 +1124,53 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                                       ),
                                 child: Text(s.kanbanDescriptionSave),
                               ),
-                              PopupMenuButton<String>(
-                                key: ValueKey(
-                                  'kanban-profile-description-menu-${profile.name}',
-                                ),
-                                enabled: !busy.contains(
-                                  'description-${profile.name}',
-                                ),
-                                onSelected: (_) => unawaited(
-                                  _autoDescribeProfile(
-                                    sheetCtx,
-                                    setSheet,
-                                    profile.name,
-                                    controllers[profile.name]!,
-                                    baselines,
-                                    busy,
+                              Builder(
+                                builder: (anchorContext) => IconButton(
+                                  key: ValueKey(
+                                    'kanban-profile-description-menu-${profile.name}',
                                   ),
+                                  tooltip: s.kanbanDescriptionAuto,
+                                  onPressed:
+                                      busy.contains(
+                                        'description-${profile.name}',
+                                      )
+                                      ? null
+                                      : () async {
+                                          final action =
+                                              await showHermesMenu<String>(
+                                                context: sheetCtx,
+                                                originRect: hermesOriginOf(
+                                                  anchorContext,
+                                                ),
+                                                surfaceKey: ValueKey(
+                                                  'kanban-profile-description-menu-surface-${profile.name}',
+                                                ),
+                                                actions: [
+                                                  HermesAction(
+                                                    value: 'auto',
+                                                    icon: Icons.auto_awesome,
+                                                    label:
+                                                        s.kanbanDescriptionAuto,
+                                                  ),
+                                                ],
+                                              );
+                                          if (action != 'auto' ||
+                                              !sheetCtx.mounted) {
+                                            return;
+                                          }
+                                          unawaited(
+                                            _autoDescribeProfile(
+                                              sheetCtx,
+                                              setSheet,
+                                              profile.name,
+                                              controllers[profile.name]!,
+                                              baselines,
+                                              busy,
+                                            ),
+                                          );
+                                        },
+                                  icon: const Icon(Icons.more_vert_rounded),
                                 ),
-                                itemBuilder: (_) => [
-                                  PopupMenuItem(
-                                    value: 'auto',
-                                    child: Text(s.kanbanDescriptionAuto),
-                                  ),
-                                ],
                               ),
                             ],
                           ],
