@@ -111,7 +111,7 @@ final class ServerConfigRepository {
         schema: schema,
       );
     } catch (error) {
-      throw _sanitize(error);
+      throw serverConfigFailureOf(error);
     }
   }
 
@@ -151,7 +151,7 @@ final class ServerConfigRepository {
       try {
         done.complete(await _saveNow(path, value));
       } catch (error, stack) {
-        done.completeError(_sanitize(error), stack);
+        done.completeError(serverConfigFailureOf(error), stack);
       } finally {
         if (identical(_tails[path], mine)) _tails.remove(path);
       }
@@ -229,7 +229,8 @@ String? _normalizeProfile(String? raw) {
   return value;
 }
 
-ServerConfigException _sanitize(Object error) {
+/// Any failure of a Dashboard call as the sanitized exception of the screen.
+ServerConfigException serverConfigFailureOf(Object error) {
   if (error is ServerConfigException) return error;
   if (error is DashboardAuthException) {
     return ServerConfigException(
