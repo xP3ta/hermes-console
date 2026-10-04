@@ -28,11 +28,13 @@ final class _Server {
   _Server({Map<String, dynamic>? config, Map<String, dynamic>? schema})
     : config =
           config ??
-          {
-            'terminal': {'persistent_shell': false, 'cwd': '/srv/a'},
+          <String, dynamic>{
+            'terminal': <String, dynamic>{
+              'persistent_shell': false,
+              'cwd': '/srv/a',
+            },
             'model_context_length': 0,
-            'agent': {'max_turns': 90},
-            'terminal_list': <Object?>['A'],
+            'agent': <String, dynamic>{'max_turns': 90},
           },
       schema = schema ?? {'fields': <String, dynamic>{}};
 
@@ -163,8 +165,8 @@ void main() {
 
     test('a list is compared by content after the re-read', () async {
       final server = _Server(
-        config: {
-          'terminal': {
+        config: <String, dynamic>{
+          'terminal': <String, dynamic>{
             'env_passthrough': <Object?>['A'],
           },
         },
@@ -192,7 +194,8 @@ void main() {
     });
 
     test('a path missing after the re-read is an error', () async {
-      final server = _Server(config: {'other': 1})..ignoreWrites = true;
+      final server = _Server(config: <String, dynamic>{'other': 1})
+        ..ignoreWrites = true;
       final failure = await _failure(
         _repo(server).save('terminal.persistent_shell', true),
       );
