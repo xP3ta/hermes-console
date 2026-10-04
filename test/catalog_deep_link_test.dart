@@ -1,6 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/catalog_deep_link.dart';
+import 'package:hermes_android/core/services/connection_manager.dart'
+    show DashboardHttpException;
 import 'package:hermes_android/core/services/pairing_link_delivery_gate.dart';
+
+import 'capabilities/capabilities_fakes.dart';
 
 CatalogDeepLinkAction? _resolve(String link) =>
     resolveCatalogDeepLink(Uri.parse(link));
@@ -23,7 +28,7 @@ void main() {
     });
 
     test('a bad catalog name is an error, never a git install', () {
-      for (final link in const [
+      for (final link in [
         'hermes://plugin/install?catalog=bad%20name',
         'hermes://plugin/install?catalog=',
         'hermes://plugin/install?catalog=-lead',
@@ -200,6 +205,113 @@ void main() {
           const CatalogDestination(connectionId: 'c1', profile: 'default'),
         ),
         isTrue,
+      );
+    });
+  });
+
+  group('resolveCatalogLinkTarget', () {
+    ScriptedRest server({bool removed = false}) =>
+        ScriptedRest()
+          ..gets['dashboard/plugins/catalog'] = {
+            'entries': [
+              {
+                'name': 'weather',
+                'tier': 'community',
+                'repo': 'https://git.example.test/labs/weather',
+                'installed': false,
+              },
+              {'name': 'installed-one', 'installed': true},
+            ],
+            if (removed)
+              'removed': [
+                {'name': 'weather', 'reason': 'Abandoned'},
+              ],
+          };
+
+    Future<CatalogLinkTarget> resolve(
+      ScriptedRest rest,
+      String name, {
+      CapabilitiesRpc? rpc,
+    }) => resolveCatalogLinkTarget(
+      CapabilitiesRepository(rest: rest, rpc: rpc, profile: 'work'),
+      PluginCatalogInstallLink(name),
+    );
+
+    test('a known entry opens its detail with the server catalog', () async {
+      final rest = server();
+      final target = await resolve(rest, 'weather');
+      expect(target, isA<CatalogLinkShow>());
+      expect((target as CatalogLinkShow).item.installId, 'weather');
+      // Only the connected server's catalog is read: one GET, no mutation.
+      expect(rest.calls, ['GET dashboard/plugins/catalog']);
+    });
+
+    test('unknown names are a hard unknown, never a guess', () async {
+      final target = await resolve(server(), 'weathr');
+      expect(
+        target,
+        isA<CatalogLinkLeave>().having(
+          (t) => t.reason,
+          'reason',
+          CatalogLinkLeaveReason.unknown,
+        ),
+      );
+    });
+
+    test(
+      'a removed entry still opens, with the reason and no install',
+      () async {
+        final target = await resolve(server(removed: true), 'weather');
+        expect(
+          (target as CatalogLinkShow).item.disclosure.removedReason,
+          'Abandoned',
+        );
+      },
+    );
+
+    test('installed without an update is already installed', () async {
+      final target = await resolve(
+        server(),
+        'installed-one',
+        rpc: (method, params) async => {
+          'plugins': [
+            {'name': 'installed-one', 'catalog_name': 'installed-one'},
+          ],
+        },
+      );
+      expect(
+        target,
+        isA<CatalogLinkLeave>().having(
+          (t) => t.reason,
+          'reason',
+          CatalogLinkLeaveReason.alreadyInstalled,
+        ),
+      );
+    });
+
+    test(
+      'installed state follows the hub profile, not the launch one',
+      () async {
+        // The REST catalog says installed (launch profile); `work` has nothing.
+        final target = await resolve(
+          server(),
+          'installed-one',
+          rpc: (method, params) async => {'plugins': <Object>[]},
+        );
+        expect(target, isA<CatalogLinkShow>());
+      },
+    );
+
+    test('an unreadable catalog is unavailable', () async {
+      final rest = ScriptedRest()
+        ..gets['dashboard/plugins/catalog'] = const DashboardHttpException(500);
+      expect(
+        await resolve(rest, 'weather'),
+        isA<CatalogLinkLeave>().having(
+          (t) => t.reason,
+          'reason',
+          CatalogLinkLeaveReason.unavailable,
+        ),
       );
     });
   });
