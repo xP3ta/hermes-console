@@ -36,6 +36,21 @@ abstract interface class SubagentWatchGateway {
   void releaseSessionRuntime(String runtimeSessionId);
 }
 
+/// What a chat lends to a watch of one of its children: its own gateway (the
+/// connection's shared socket), the profile that owns the chat, and a check
+/// that the runtime and session it was lent for are still the bound ones.
+final class SubagentWatchLease {
+  const SubagentWatchLease({
+    required this.gateway,
+    required this.profile,
+    required this.isCurrent,
+  });
+
+  final SubagentWatchGateway gateway;
+  final String profile;
+  final bool Function() isCurrent;
+}
+
 enum SubagentLiveWatchStatus {
   idle,
   opening,

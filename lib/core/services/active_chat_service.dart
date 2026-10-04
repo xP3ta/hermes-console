@@ -91,6 +91,7 @@ import 'session_reconciler.dart';
 import 'shared_gateway_pool.dart';
 import 'transcript_publication_coordinator.dart';
 import 'subagent_activity_reducer.dart';
+import 'subagent_live_watch.dart';
 import 'subagent_transcript_projection.dart';
 import 'terminal_transcript_authority.dart';
 import 'tui_gateway_client.dart';
@@ -7290,6 +7291,12 @@ class ActiveChat {
     }
     return result;
   }
+
+  /// Read-only lease to watch [activity]'s child live. It lends the chat's own
+  /// gateway (never a new socket) and the profile that owns this chat; null
+  /// when the child has no session of its own, is finished, is not the chat's
+  /// current child, or the gateway cannot open a watch.
+  SubagentWatchLease? subagentWatchLease(SubagentActivity activity) => null;
 
   bool canTailSubagent(SubagentActivity activity) =>
       !activity.isTerminal &&
