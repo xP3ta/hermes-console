@@ -23,6 +23,24 @@ String profileDisplayLabel(Strings strings, AgentProfile profile) {
   return ProfileScopeLabel.display(strings, profile.name);
 }
 
+/// Display name of the active profile [name] (empty = default), the same
+/// one the switcher lists: the roster's `display_name` when the profile is
+/// known (Desktop `profileLabel`: `display_name || name`), else its name.
+String activeProfileDisplayLabel(
+  Strings strings,
+  String name,
+  Iterable<AgentProfile> roster,
+) {
+  final owner = name.trim();
+  final isDefault = owner.isEmpty || owner == 'default';
+  for (final profile in roster) {
+    if (isDefault ? profile.isDefault : profile.name == owner) {
+      return profileDisplayLabel(strings, profile);
+    }
+  }
+  return ProfileScopeLabel.display(strings, owner);
+}
+
 /// The one way to change the active profile (Desktop's profile rail). A
 /// switch re-scopes the whole app for [connection]: chats, Home, model,
 /// SOUL, skills and memory. Plain on purpose: the redesign restyles it via
@@ -52,12 +70,19 @@ class ProfileSwitcherButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scope = ActiveProfileScope.of(connManager, connection.id);
+    final roster = (rosterRegistry ?? BotRosterRegistry.shared).store(
+      connection.id,
+    );
     return ListenableBuilder(
-      listenable: scope,
+      listenable: Listenable.merge([scope, roster]),
       builder: (context, _) {
         final strings = Strings.of(context);
         final colors = Theme.of(context).hermes;
-        final label = ProfileScopeLabel.display(strings, scope.name);
+        final label = activeProfileDisplayLabel(
+          strings,
+          scope.name,
+          roster.profiles,
+        );
         void open() => unawaited(
           showProfileSwitcher(
             context,

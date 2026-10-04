@@ -245,4 +245,50 @@ void main() {
     expect(reads, 1);
     expect(ActiveProfileScope.of(manager, connection.id).owner, 'ana');
   });
+
+  testWidgets('the chip names the default profile as the switcher lists it, '
+      'also when the roster lands after the chip', (tester) async {
+    final registry = BotRosterRegistry();
+    await manager.setActiveProfile(connection.id, '');
+    await tester.pumpWidget(
+      app(
+        Scaffold(
+          body: ProfileSwitcherButton(
+            connection: connection,
+            connManager: manager,
+            compact: true,
+            rosterRegistry: registry,
+            readRoster: () async => const [],
+          ),
+        ),
+      ),
+    );
+    await settle(tester);
+    // No roster yet: the localized default name.
+    expect(find.text('Default'), findsOneWidget);
+    registry.publish(connection.id, 'QA', [
+      AgentProfile.fromJson({
+        'name': 'default',
+        'path': '/home/u/.hermes',
+        'is_default': true,
+        'display_name': 'Hermes',
+      }),
+      _profile('ana'),
+    ]);
+    await tester.pump();
+    final chip = find.byKey(const ValueKey('profile-switcher-compact'));
+    expect(
+      find.descendant(of: chip, matching: find.text('Hermes')),
+      findsOneWidget,
+    );
+    await tester.tap(chip);
+    await settle(tester);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('profile-switcher-option-default')),
+        matching: find.text('Hermes'),
+      ),
+      findsOneWidget,
+    );
+  });
 }
