@@ -144,6 +144,7 @@ void main() {
   test('a malformed close survives loading as a malformed close', () {
     for (final bad in <Object>[
       42,
+      1.5,
       true,
       ['x'],
       {'a': 1},
@@ -167,6 +168,7 @@ void main() {
   test('a wrapped malformed close of any type is dropped, not close-all', () {
     for (final bad in <Object>[
       42,
+      1.5,
       true,
       ['x'],
       {'a': 1},
