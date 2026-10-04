@@ -181,9 +181,8 @@ const _session = Session(
   profile: 'parent-profile',
 );
 
-Future<(_WatchableGateway, ActiveChat, ActiveChatService)> _mountChat(
-  WidgetTester tester,
-) async {
+Future<(_WatchableGateway, ActiveChat, ActiveChatService, ConnectionManager)>
+_mountChat(WidgetTester tester) async {
   final prefs = await SharedPreferences.getInstance();
   final manager = await ConnectionManager.create(prefs);
   // The globally active profile is NOT the chat's: the watch must use the
@@ -254,7 +253,7 @@ Future<(_WatchableGateway, ActiveChat, ActiveChatService)> _mountChat(
   );
   await tester.pump();
   await tester.pump();
-  return (gateway, chat, activeChats);
+  return (gateway, chat, activeChats, manager);
 }
 
 void main() {
@@ -301,7 +300,7 @@ void main() {
     'opening a running subagent watches its child on the chat gateway with '
     'the chat profile and never polls the tail',
     (tester) async {
-      final (gateway, chat, activeChats) = await _mountChat(tester);
+      final (gateway, chat, activeChats, _) = await _mountChat(tester);
       expect(
         await chat.send(
           fullText: 'delegar',
@@ -355,6 +354,59 @@ void main() {
 
       expect(gateway.closed, ['watch-runtime']);
       expect(gateway.submitted, hasLength(submittedBefore));
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      activeChats.dispose();
+      await gateway.close();
+    },
+  );
+
+  testWidgets(
+    'switching the active profile with the watch open closes it and falls back '
+    'to the polled tail without any further event',
+    (tester) async {
+      final (gateway, chat, activeChats, manager) = await _mountChat(tester);
+      expect(
+        await chat.send(
+          fullText: 'delegar',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start', const {});
+      gateway.emit('subagent.start', const {
+        'subagent_id': 'sa-chat',
+        'child_session_id': _childSession,
+        'goal': 'Revisar el proyecto',
+        'status': 'running',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      tester
+          .widget<SubagentActivityCard>(
+            find.byKey(
+              const ValueKey('chat-subagent-status'),
+              skipOffstage: false,
+            ),
+          )
+          .controller!
+          .open();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(gateway.resumes, hasLength(1));
+      expect(gateway.tailCalls, 0);
+
+      // The globally active profile changes; no delta, error or complete
+      // follows it.
+      await manager.setActiveProfile(_connection.id, 'third-profile');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(gateway.closed, ['watch-runtime']);
+      expect(gateway.tailCalls, greaterThanOrEqualTo(1));
       expect(tester.takeException(), isNull);
 
       await tester.pumpWidget(const SizedBox.shrink());

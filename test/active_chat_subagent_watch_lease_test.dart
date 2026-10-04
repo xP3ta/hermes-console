@@ -210,6 +210,36 @@ void main() {
     expect(chat.subagentWatchLease(chat.subagentActivities.single), isNull);
   });
 
+  test(
+    'a lease and a row captured before the child finished stop being valid',
+    () async {
+      final gateway = _Gateway();
+      final chat = await _start(gateway);
+      addTearDown(chat.dispose);
+      gateway.emit('subagent.start', const {
+        'subagent_id': 'sa-old',
+        'child_session_id': 'child-old',
+        'status': 'running',
+      });
+      await _settle();
+      final old = chat.subagentActivities.single;
+      final lease = chat.subagentWatchLease(old)!;
+      expect(lease.isCurrent(), isTrue);
+
+      // The child ends in the same runtime and turn, with no message.complete.
+      gateway.emit('subagent.complete', const {
+        'subagent_id': 'sa-old',
+        'child_session_id': 'child-old',
+        'status': 'completed',
+        'summary': 'listo',
+      });
+      await _settle();
+
+      expect(chat.subagentWatchLease(old), isNull);
+      expect(lease.isCurrent(), isFalse);
+    },
+  );
+
   test('no lease for a finished child', () async {
     final gateway = _Gateway();
     final chat = await _start(gateway);

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/subagent_live_watch.dart';
@@ -179,6 +180,122 @@ void main() {
       await watch.close();
       // The first runtime died with its socket: only the live one is closed.
       expect(gateway.closed, ['watch-2']);
+    },
+  );
+
+  test(
+    'a rehydration asked for another runtime leaves this watch alone',
+    () async {
+      final gateway = FakeWatchGateway();
+      final watch = _watch(gateway)..start();
+      await pumpEventQueue();
+      gateway.emit('watch-1', 'message.delta', {'text': 'sigo'});
+
+      gateway.rehydrate('some-other-runtime');
+      await pumpEventQueue();
+
+      expect(watch.value.status, SubagentLiveWatchStatus.live);
+      expect(watch.value.text, 'sigo');
+      expect(gateway.resumes, hasLength(1));
+      expect(gateway.released, isEmpty);
+    },
+  );
+
+  test('a rehydration naming this runtime resumes a fresh one', () async {
+    final gateway = FakeWatchGateway();
+    final watch = _watch(gateway)..start();
+    await pumpEventQueue();
+
+    gateway.rehydrate('watch-1');
+    await pumpEventQueue();
+
+    expect(gateway.resumes, hasLength(2));
+    expect(gateway.released, ['watch-1']);
+    expect(watch.value.status, SubagentLiveWatchStatus.live);
+  });
+
+  test(
+    'the final summary is not appended again after deltas and a tool',
+    () async {
+      final gateway = FakeWatchGateway();
+      final watch = _watch(gateway)..start();
+      await pumpEventQueue();
+
+      gateway.emit('watch-1', 'message.delta', {'text': 'Voy a leer'});
+      gateway.emit('watch-1', 'tool.start', {'name': 'read_file'});
+      gateway.emit('watch-1', 'message.delta', {'text': 'Hecho'});
+      gateway.emit('watch-1', 'message.complete', {
+        'text': 'Voy a leer\nHecho',
+      });
+      await pumpEventQueue();
+
+      expect(watch.value.text, 'Voy a leer\n› read_file\nHecho');
+      expect(watch.value.status, SubagentLiveWatchStatus.finished);
+    },
+  );
+
+  test('a genuinely new summary is still appended', () async {
+    final gateway = FakeWatchGateway();
+    final watch = _watch(gateway)..start();
+    await pumpEventQueue();
+
+    gateway.emit('watch-1', 'message.delta', {'text': 'Trabajando'});
+    gateway.emit('watch-1', 'message.complete', {'text': 'Resumen distinto'});
+    await pumpEventQueue();
+
+    expect(watch.value.text, 'Trabajando\nResumen distinto');
+  });
+
+  test('a stale owner is noticed without any further event', () async {
+    final gateway = FakeWatchGateway();
+    final invalidation = ChangeNotifier();
+    addTearDown(invalidation.dispose);
+    var current = true;
+    final watch = SubagentLiveWatch(
+      gateway: gateway,
+      childSessionId: _child,
+      profile: _parentProfile,
+      isCurrent: () => current,
+      invalidation: invalidation,
+    );
+    addTearDown(watch.dispose);
+    watch.start();
+    await pumpEventQueue();
+    expect(watch.value.status, SubagentLiveWatchStatus.live);
+
+    current = false; // the active profile changed; nothing arrives after it
+    // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+    invalidation.notifyListeners();
+    await pumpEventQueue();
+
+    expect(watch.value.status, SubagentLiveWatchStatus.unavailable);
+    expect(gateway.closed, ['watch-1']);
+    expect(gateway.released, ['watch-1']);
+  });
+
+  test(
+    'a notification while the owner is still current changes nothing',
+    () async {
+      final gateway = FakeWatchGateway();
+      final invalidation = ChangeNotifier();
+      addTearDown(invalidation.dispose);
+      final watch = SubagentLiveWatch(
+        gateway: gateway,
+        childSessionId: _child,
+        profile: _parentProfile,
+        isCurrent: () => true,
+        invalidation: invalidation,
+      );
+      addTearDown(watch.dispose);
+      watch.start();
+      await pumpEventQueue();
+
+      // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+      invalidation.notifyListeners();
+      await pumpEventQueue();
+
+      expect(watch.value.status, SubagentLiveWatchStatus.live);
+      expect(gateway.closed, isEmpty);
     },
   );
 

@@ -113,6 +113,17 @@ void main() {
     });
   });
 
+  test(
+    'a watch runtime is not adopted as the socket legacy runtime or watchdog anchor',
+    () async {
+      final client = clientFor();
+
+      await client.resumeWatchSession('child-1', profile: 'parent-profile');
+
+      expect(client.watchedRuntimesForTesting, isEmpty);
+    },
+  );
+
   test('closing the watch runtime sends one session.close for it', () async {
     final client = clientFor();
     final snapshot = await client.resumeWatchSession('child-1', profile: '');

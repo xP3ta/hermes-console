@@ -174,6 +174,41 @@ void main() {
     },
   );
 
+  testWidgets(
+    'a roster that ends the child closes the watch without message.complete',
+    (tester) async {
+      await pumpPage(tester);
+      gateway.emit('watch-1', 'message.delta', {'text': 'trabajando'});
+      await tester.pump();
+      expect(gateway.closed, isEmpty);
+
+      roster.value = [_running(phase: SubagentActivityPhase.completed)];
+      await tester.pump();
+
+      expect(gateway.closed, ['watch-1']);
+      expect(gateway.released, ['watch-1']);
+      // And nothing late repaints or throws.
+      gateway.emit('watch-1', 'message.delta', {'text': 'tarde'});
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a child that is not terminal keeps its watch across roster updates',
+    (tester) async {
+      await pumpPage(tester);
+
+      roster.value = [_running(phase: SubagentActivityPhase.tool)];
+      await tester.pump();
+      roster.value = [_running(phase: SubagentActivityPhase.thinking)];
+      await tester.pump();
+
+      expect(gateway.closed, isEmpty);
+      expect(gateway.resumes, hasLength(1));
+    },
+  );
+
   testWidgets('a covered page releases the watch and reopens it when visible', (
     tester,
   ) async {
