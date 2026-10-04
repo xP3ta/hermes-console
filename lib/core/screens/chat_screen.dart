@@ -15882,7 +15882,7 @@ class _ChatScreenState extends State<ChatScreen>
       final authFailure = ProviderAuthFailure.fromJson(
         msg[providerAuthFailureKey],
       );
-      final onRetry = _chat.conflictReadOnly
+      final onRetry = _chat.conflictReadOnly || widget.connection.readOnly
           ? null
           : () => unawaited(_retryLastPrompt(prompt));
       final surface = TurnErrorSurface.parse(msg[turnErrorSurfaceKey]);
