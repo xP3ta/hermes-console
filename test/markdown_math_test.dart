@@ -85,7 +85,10 @@ void main() {
 
     test('result is memoised per text', () {
       const text = r'Otra $a_1 * b_2$ fórmula.';
-      expect(identical(protectMarkdownMath(text), protectMarkdownMath(text)), isTrue);
+      expect(
+        identical(protectMarkdownMath(text), protectMarkdownMath(text)),
+        isTrue,
+      );
     });
   });
 }
