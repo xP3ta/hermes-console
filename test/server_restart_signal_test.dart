@@ -212,6 +212,23 @@ void main() {
       expect(ServerRestartSignals.textFor([_host]), isNotNull);
     });
 
+    test('a 200 without a providers member keeps the note', () async {
+      var failing = true;
+      final client = dashboard(
+        (_) => failing
+            ? http.Response(jsonEncode({'detail': _restartDetail}), 503)
+            : http.Response(jsonEncode(<String, dynamic>{}), 200),
+      );
+      await expectLater(
+        client.getModelOptions(),
+        throwsA(isA<DashboardHttpException>()),
+      );
+      failing = false;
+      expect(await client.getModelOptions(), isEmpty);
+
+      expect(ServerRestartSignals.textFor([_host]), isNotNull);
+    });
+
     test('a setActiveModel the server did not accept keeps the note', () async {
       var failing = true;
       final client = dashboard(
