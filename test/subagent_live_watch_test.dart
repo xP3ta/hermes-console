@@ -87,12 +87,14 @@ class _FakeWatchGateway implements SubagentWatchGateway {
 SubagentLiveWatch _watch(
   _FakeWatchGateway gateway, {
   bool Function()? isCurrent,
+  bool Function()? childIsLive,
 }) {
   final watch = SubagentLiveWatch(
     gateway: gateway,
     childSessionId: _child,
     profile: _parentProfile,
     isCurrent: isCurrent ?? () => true,
+    childIsLive: childIsLive ?? () => false,
   );
   addTearDown(watch.dispose);
   return watch;
@@ -357,6 +359,22 @@ void main() {
       expect(gateway.retained, isEmpty);
     },
   );
+
+  test('a resume without a running turn keeps the watch while the parent '
+      'still shows the child working', () async {
+    final gateway = _FakeWatchGateway()
+      ..answer = (runtime) async => _snapshot(runtime, running: false);
+    final watch = _watch(gateway, childIsLive: () => true)..start();
+    await pumpEventQueue();
+
+    expect(watch.value.status, SubagentLiveWatchStatus.live);
+    expect(gateway.retained, ['watch-1']);
+    expect(gateway.closed, isEmpty);
+
+    // The mirror starts after the resume answered: it is still delivered.
+    gateway.emit('watch-1', 'message.delta', {'text': 'ya arranca'});
+    expect(watch.value.text, 'ya arranca');
+  });
 
   test('an old server rejecting the resume degrades silently', () async {
     final gateway = _FakeWatchGateway()
