@@ -782,6 +782,105 @@ void main() {
     );
   });
 
+  group('CompressionConfigRepository overlapping saves', () {
+    // A server whose first PUT waits for [gate]; every PUT is recorded in
+    // order and applied like the real deep-merge of the compression block.
+    ({
+      DashboardClient dashboard,
+      Map<String, dynamic> config,
+      List<double> sentThresholds,
+    })
+    server(Completer<void> gate) {
+      final config = _cloneMap(_fixture()['config']!);
+      final schema = _cloneMap(_fixture()['schema']!);
+      final sent = <double>[];
+      var first = true;
+      final dashboard = _dashboard(
+        MockClient((request) async {
+          if (request.method == 'GET') {
+            return http.Response(
+              jsonEncode(request.url.path == '/api/config' ? config : schema),
+              200,
+            );
+          }
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          final compression =
+              (body['config'] as Map<String, dynamic>)['compression']
+                  as Map<String, dynamic>;
+          sent.add((compression['threshold'] as num).toDouble());
+          if (first) {
+            first = false;
+            await gate.future;
+          }
+          _keepWrite(config, request);
+          return http.Response('{"ok":true}', 200);
+        }),
+      );
+      return (dashboard: dashboard, config: config, sentThresholds: sent);
+    }
+
+    Future<void> settle() async {
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    test(
+      'two saves from one snapshot run in order: the last intent wins',
+      () async {
+        final gate = Completer<void>();
+        final fake = server(gate);
+        final repository = CompressionConfigRepository(fake.dashboard);
+        addTearDown(() {
+          repository.close();
+          fake.dashboard.close();
+        });
+        final base = await repository.load();
+        final older = base.configuration!.copyWith(threshold: 0.6);
+        final newer = base.configuration!.copyWith(threshold: 0.7);
+
+        final first = repository.save(base, older);
+        await settle();
+        final second = repository.save(base, newer);
+        await settle();
+        expect(fake.sentThresholds, [0.6], reason: 'the newer one waits');
+
+        gate.complete();
+        expect((await first).configuration!.threshold, 0.6);
+        expect((await second).configuration!.threshold, 0.7);
+        expect(fake.sentThresholds, [0.6, 0.7]);
+        expect(
+          (fake.config['compression'] as Map<String, dynamic>)['threshold'],
+          0.7,
+        );
+      },
+    );
+
+    test('closing sends only the save already in flight', () async {
+      final gate = Completer<void>();
+      final fake = server(gate);
+      final repository = CompressionConfigRepository(fake.dashboard);
+      addTearDown(fake.dashboard.close);
+      final base = await repository.load();
+
+      final first = repository.save(
+        base,
+        base.configuration!.copyWith(threshold: 0.6),
+      );
+      await settle();
+      final second = _failure(
+        repository.save(base, base.configuration!.copyWith(threshold: 0.7)),
+      );
+      await settle();
+      repository.close();
+      gate.complete();
+
+      expect((await first).configuration!.threshold, 0.6);
+      expect((await second).code, CompressionConfigFailureCode.closed);
+      expect(fake.sentThresholds, [0.6]);
+    });
+  });
+
   group('fallos sanitizados y lifecycle', () {
     test('descarta el body remoto tanto al leer como al guardar', () async {
       final fixture = _fixture();
