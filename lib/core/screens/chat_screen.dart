@@ -5166,6 +5166,14 @@ class _ChatScreenState extends State<ChatScreen>
         connId: chat.connection.id,
         profile: chat.sessionProfile,
         sessionId: sessionId,
+        // Notifications posted before a compression rotation carry an
+        // earlier id of this same chat.
+        aliases: {
+          ...widget.session.identityIds,
+          chat.sessionId,
+          ?chat.storedSessionId,
+          chat.desktopCompactionLineageId,
+        },
         stillWanted: () =>
             mounted &&
             !_disposed &&

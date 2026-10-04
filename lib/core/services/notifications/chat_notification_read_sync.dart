@@ -210,18 +210,23 @@ class ChatNotificationReadSync implements SessionListReadObserver {
   }
 
   /// The user is looking at [sessionId] on this phone: whatever was posted
-  /// for it so far is seen. Under App Lock it waits for unlock and then runs
-  /// only if [stillWanted] (the chat is still the one in front) says so.
+  /// for it so far is seen. [aliases] are the other ids of the same chat (its
+  /// lineage root and earlier compression segments): a notification posted
+  /// before a rotation carries the old id. Under App Lock it waits for unlock
+  /// and then runs only if [stillWanted] (the chat is still the one in front)
+  /// says so.
   Future<int> clearSession({
     required String connId,
     String? profile,
     required String sessionId,
+    Iterable<String> aliases = const [],
     bool Function()? stillWanted,
   }) {
     final fence = _seq;
     final owner = _profile(profile);
     final sid = sessionId.trim();
     if (sid.isEmpty) return Future.value(0);
+    final ids = {sid, for (final a in aliases) a.trim()}..remove('');
     return _whenUnlocked('open|$connId|$owner|$sid', () {
       if (!(stillWanted?.call() ?? true)) return Future.value(0);
       return _cancelWhere(
@@ -229,7 +234,7 @@ class ChatNotificationReadSync implements SessionListReadObserver {
             entry.seq <= fence &&
             entry.connId == connId &&
             entry.profile == owner &&
-            entry.sessionId == sid,
+            ids.contains(entry.sessionId),
       );
     });
   }

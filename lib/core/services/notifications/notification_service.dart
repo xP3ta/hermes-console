@@ -567,12 +567,14 @@ class NotificationService
     required String connId,
     String? profile,
     required String sessionId,
+    Iterable<String> aliases = const [],
     bool Function()? stillWanted,
   }) async {
     await _chatReadSync?.clearSession(
       connId: connId,
       profile: profile,
       sessionId: sessionId,
+      aliases: aliases,
       stillWanted: stillWanted,
     );
   }

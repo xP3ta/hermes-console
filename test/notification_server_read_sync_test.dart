@@ -182,6 +182,19 @@ void main() {
       expect(cancels.ids, [6100]);
     });
 
+    test('opening a chat clears the ids of its lineage too', () async {
+      sync.record(id: 6100, connId: 'c1', profile: 'default', sessionId: 'a');
+      sync.record(id: 6101, connId: 'c1', profile: 'default', sessionId: 'b');
+      sync.record(id: 6102, connId: 'c1', profile: 'default', sessionId: 'x');
+      await sync.clearSession(
+        connId: 'c1',
+        sessionId: 'b',
+        aliases: const ['root', 'a', ''],
+      );
+      await settle();
+      expect(cancels.ids, [6100, 6101]);
+    });
+
     test('App Lock holds a read until unlock, then runs it once', () async {
       final locked = ValueNotifier(true);
       final gated = ChatNotificationReadSync(

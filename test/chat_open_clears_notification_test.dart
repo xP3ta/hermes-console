@@ -48,6 +48,21 @@ const _session = Session(
   startedAt: 0,
 );
 
+/// The same chat after Hermes rotated it by compression: notifications
+/// posted before the rotation carry its earlier ids.
+const _rotated = Session(
+  id: 'stored-notif-open',
+  title: 'Notif open',
+  model: 'hermes-agent',
+  source: 'api_server',
+  messageCount: 2,
+  isActive: false,
+  preview: '',
+  startedAt: 0,
+  lineageRootId: 'root-notif-open',
+  lineageIds: ['root-notif-open', 'segment-notif-open'],
+);
+
 const _rows = <Map<String, dynamic>>[
   {'id': 1, 'role': 'user', 'content': 'cached question'},
   {'id': 2, 'role': 'assistant', 'content': 'cached answer'},
@@ -55,12 +70,13 @@ const _rows = <Map<String, dynamic>>[
 
 ActiveChat _attach(
   ActiveChatService service,
-  StoredSessionMessageLoader loader,
-) => service.attach(
+  StoredSessionMessageLoader loader, {
+  Session session = _session,
+}) => service.attach(
   connection: _connection,
-  sessionId: _session.id,
-  sessionTitle: _session.title,
-  sessionSnapshot: _session,
+  sessionId: session.id,
+  sessionTitle: session.title,
+  sessionSnapshot: session,
   api: ApiClient(
     baseUrl: 'https://example.invalid',
     apiKey: 'test-key',
@@ -126,6 +142,7 @@ void main() {
   Future<(ActiveChatService, NotificationService)> pumpApp(
     WidgetTester tester, {
     AppLockService? lock,
+    Session session = _session,
   }) async {
     // The real target: cancels reach the Android plugin channel.
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
@@ -161,7 +178,11 @@ void main() {
       attachDesktopRuntimeOnLoad: false,
       compressionRestoreStore: testCompressionRestoreStore(),
     );
-    final chat = _attach(activeChats, (_, _) async => List.of(_rows));
+    final chat = _attach(
+      activeChats,
+      (_, _) async => List.of(_rows),
+      session: session,
+    );
     await tester.runAsync(() => chat.loadMessages(expectedMessageCount: 2));
     await tester.pumpWidget(
       HermesApp(
@@ -188,14 +209,14 @@ void main() {
     return (activeChats, notifications);
   }
 
-  void openChat(WidgetTester tester) {
+  void openChat(WidgetTester tester, {Session session = _session}) {
     final context = tester.element(find.byType(Navigator).first);
     Navigator.of(context).push(
       PageRouteBuilder<void>(
         transitionDuration: Duration.zero,
         reverseTransitionDuration: Duration.zero,
         pageBuilder: (_, _, _) =>
-            ChatScreen(connection: _connection, session: _session),
+            ChatScreen(connection: _connection, session: session),
       ),
     );
   }
@@ -216,6 +237,30 @@ void main() {
     await tester.pump();
     expect(find.byType(ChatScreen), findsOneWidget);
     expect(_cancelled(notificationCalls), [6100]);
+    await teardown(tester, chats);
+  });
+
+  testWidgets('opening a rotated chat clears what its earlier ids posted', (
+    tester,
+  ) async {
+    final (chats, notifications) = await pumpApp(tester, session: _rotated);
+    final ledger = notifications.chatReadSync!;
+    for (final (id, sid) in const [
+      (6105, 'segment-notif-open'),
+      (6106, 'root-notif-open'),
+    ]) {
+      ledger.record(
+        id: id,
+        connId: _connection.id,
+        profile: null,
+        sessionId: sid,
+      );
+    }
+    openChat(tester, session: _rotated);
+    await tester.pump();
+    await tester.pump();
+    expect(find.byType(ChatScreen), findsOneWidget);
+    expect(_cancelled(notificationCalls), [6100, 6105, 6106]);
     await teardown(tester, chats);
   });
 
