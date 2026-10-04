@@ -177,6 +177,10 @@ final class CapabilityItem {
 
   /// Name used by toggle / uninstall / remove endpoints once installed.
   final String installedName;
+
+  /// Canonical plugin key (`category/name`): toggles address it, never the
+  /// bare name, which can collide across categories.
+  final String installedKey;
   final bool installed;
   final bool? enabled;
   final bool updateAvailable;
@@ -206,6 +210,7 @@ final class CapabilityItem {
     this.version = '',
     this.installId = '',
     this.installedName = '',
+    this.installedKey = '',
     this.installed = false,
     this.enabled,
     this.updateAvailable = false,
@@ -227,6 +232,7 @@ final class CapabilityItem {
     bool? enabled,
     bool? updateAvailable,
     String? installedName,
+    String? installedKey,
     String? provenance,
     bool? canRemove,
     String? version,
@@ -243,6 +249,7 @@ final class CapabilityItem {
     version: version ?? this.version,
     installId: installId,
     installedName: installedName ?? this.installedName,
+    installedKey: installedKey ?? this.installedKey,
     installed: installed ?? this.installed,
     enabled: enabled ?? this.enabled,
     updateAvailable: updateAvailable ?? this.updateAvailable,
@@ -392,6 +399,7 @@ final class CapabilityItem {
       trust: _trustOf(source),
       version: _text(json['version'], max: 60),
       installedName: name,
+      installedKey: _text(json['key'], max: 160),
       installed: true,
       enabled: status == 'enabled',
       canRemove: json['can_remove'] == true,

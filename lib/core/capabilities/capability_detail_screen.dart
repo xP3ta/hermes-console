@@ -452,7 +452,11 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
           case CapabilityKind.skill:
             await _repo.setSkillEnabled(item.installedName, enabled);
           case CapabilityKind.plugin:
-            await _repo.setPluginEnabled(item.installedName, enabled);
+            await _repo.setPluginEnabled(
+              item.installedName,
+              enabled,
+              key: item.installedKey,
+            );
           case CapabilityKind.mcp:
             await _repo.setMcpEnabled(item.installedName, enabled);
         }
@@ -499,6 +503,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
                   command: item.command,
                   url: item.url,
                   docsUrl: item.docsUrl,
+                  disclosure: item.disclosure,
                 )
               : null,
         );

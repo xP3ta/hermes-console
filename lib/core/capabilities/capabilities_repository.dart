@@ -475,6 +475,10 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
             .toList(growable: false);
       });
 
+  /// `true` when the hub is on the default/unscoped profile, where the
+  /// server's launch-profile REST flags are authoritative.
+  bool get usesDefaultProfile => _defaultProfile;
+
   bool get _defaultProfile {
     final value = profile.trim();
     return value.isEmpty || value == 'default';
@@ -580,12 +584,18 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     ),
   );
 
-  Future<void> setPluginEnabled(String name, bool enabled) async {
+  /// Toggles by canonical [key] (Desktop sends the key only); the bare
+  /// [name] is used only when a server row carries no key, and by the REST
+  /// fallback.
+  Future<void> setPluginEnabled(
+    String name,
+    bool enabled, {
+    String key = '',
+  }) async {
     await _pluginMutation(
       {
         'action': 'toggle',
-        'name': name.trim(),
-        'key': name.trim(),
+        'key': key.trim().isEmpty ? name.trim() : key.trim(),
         'enable': enabled,
       },
       (json) => _checked(PluginMutationResult.fromJson(json)),
@@ -644,6 +654,7 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     void Function(CapabilityActionStatus)? onProgress,
     CapabilityActionToken? token,
   }) async {
+    if (token?.cancelled ?? false) throw const CapabilityActionAbandoned();
     final env = <String, String>{};
     for (final entry in environment.entries) {
       if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]{0,127}$').hasMatch(entry.key)) {

@@ -180,6 +180,10 @@ Future<CatalogLinkTarget> resolveCatalogLinkTarget(
   } catch (_) {
     rows = null;
   }
+  if (rows == null && !repository.usesDefaultProfile) {
+    // Installed state of a named profile is unknown: never use REST flags.
+    return const CatalogLinkLeave(CatalogLinkLeaveReason.unavailable);
+  }
   if (rows != null) {
     final row = rows.match(
       catalogName: item.installId,
@@ -198,6 +202,7 @@ Future<CatalogLinkTarget> resolveCatalogLinkTarget(
         enabled: row.enabled,
         updateAvailable: row.updateAvailable,
         installedName: row.name,
+        installedKey: row.key,
         canRemove: true,
       );
     }

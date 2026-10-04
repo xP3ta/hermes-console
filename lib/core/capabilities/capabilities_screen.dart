@@ -77,6 +77,9 @@ final class CapabilitiesSnapshot {
     } catch (_) {
       pluginRows = null;
     }
+    // On a named profile the REST flags describe the launch profile, so a
+    // missing list means the installed state is unknown, not "as REST says".
+    final pluginStateUnknown = pluginRows == null && !repo.usesDefaultProfile;
     HostedConnectorsSnapshot? connectors;
     var connectorsFailed = false;
     try {
@@ -101,6 +104,7 @@ final class CapabilitiesSnapshot {
       catalog: lists[2],
       installed: lists[3],
       rows: pluginRows,
+      stateUnknown: pluginStateUnknown,
     );
     final catalog = [
       ...skills.where((item) => item.installId.isNotEmpty),
@@ -117,7 +121,7 @@ final class CapabilitiesSnapshot {
       mcpServers: lists[5],
       connectors: connectors,
       connectorsFailed: connectorsFailed,
-      partial: real.isNotEmpty,
+      partial: real.isNotEmpty || pluginStateUnknown,
       skillsUpdatable:
           repo.supports(CapabilityFeature.skillsUpdate) != false &&
           skills.any((s) => s.installed && s.provenance == 'hub'),
@@ -128,11 +132,22 @@ final class CapabilitiesSnapshot {
     required List<CapabilityItem> catalog,
     required List<CapabilityItem> installed,
     List<InstalledPluginRow>? rows,
+    bool stateUnknown = false,
   }) {
     final byName = {for (final p in installed) p.installedName: p};
     final used = <String>{};
     final out = <CapabilityItem>[];
     for (final entry in catalog) {
+      if (stateUnknown) {
+        out.add(
+          entry.copyWith(
+            installed: false,
+            enabled: false,
+            updateAvailable: false,
+          ),
+        );
+        continue;
+      }
       if (rows != null) {
         final row = rows.match(
           catalogName: entry.installId,
@@ -156,6 +171,7 @@ final class CapabilitiesSnapshot {
             enabled: row.enabled,
             updateAvailable: row.updateAvailable,
             installedName: row.name,
+            installedKey: row.key,
             canRemove: local?.canRemove ?? true,
           ),
         );

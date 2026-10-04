@@ -235,7 +235,12 @@ void main() {
       String name, {
       CapabilitiesRpc? rpc,
     }) => resolveCatalogLinkTarget(
-      CapabilitiesRepository(rest: rest, rpc: rpc, profile: 'work'),
+      CapabilitiesRepository(
+        rest: rest,
+        // Installed state of the named profile: nothing installed by default.
+        rpc: rpc ?? (method, params) async => {'plugins': <Object>[]},
+        profile: 'work',
+      ),
       PluginCatalogInstallLink(name),
     );
 

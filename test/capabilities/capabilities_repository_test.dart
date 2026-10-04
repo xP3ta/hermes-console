@@ -433,7 +433,6 @@ void main() {
           },
           {
             'action': 'toggle',
-            'name': 'weather',
             'key': 'weather',
             'enable': false,
             'profile': 'work',
