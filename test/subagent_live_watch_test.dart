@@ -534,6 +534,47 @@ void main() {
     },
   );
 
+  test('a close that never answers still frees every listener', () async {
+    final gateway = FakeWatchGateway()..closeGate = Completer<void>();
+    final invalidation = _CountingListenable();
+    SubagentLiveWatch(
+      gateway: gateway,
+      childSessionId: _child,
+      profile: _parentProfile,
+      isCurrent: () => true,
+      invalidation: invalidation,
+    ).start();
+    await pumpEventQueue();
+    expect(gateway.hasListeners, isTrue);
+    expect(invalidation.listeners, 1);
+
+    gateway.emit('watch-1', 'message.complete', {'text': 'listo'});
+    await pumpEventQueue();
+
+    // `session.close` is still pending, and nothing has disposed the watch.
+    expect(gateway.closed, ['watch-1']);
+    expect(gateway.hasListeners, isFalse);
+    expect(invalidation.listeners, 0);
+  });
+
+  test(
+    'a final equal to text streamed before a tool line is not shown twice',
+    () async {
+      final gateway = FakeWatchGateway();
+      final watch = _watch(gateway)..start();
+      await pumpEventQueue();
+
+      gateway.emit('watch-1', 'message.delta', {'text': 'Resultado: 42'});
+      gateway.emit('watch-1', 'tool.start', {'name': 'read_file'});
+      gateway.emit('watch-1', 'message.complete', {'text': 'Resultado: 42'});
+      await pumpEventQueue();
+
+      // A tool line is not assistant text: the final repeats what is shown.
+      expect(watch.value.text, 'Resultado: 42\n› read_file\n');
+      expect(watch.value.status, SubagentLiveWatchStatus.finished);
+    },
+  );
+
   test('a normal finish cancels the event subscription', () async {
     final gateway = FakeWatchGateway();
     final watch = _watch(gateway)..start();
