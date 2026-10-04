@@ -283,9 +283,17 @@ class _MemoryScreenState extends State<MemoryScreen>
               tooltip: Strings.of(context).memBackupJson,
               onPressed: _backingUp ? null : _backup,
             ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loading ? null : _load,
+          Semantics(
+            label: Strings.of(context).commonRefresh,
+            button: true,
+            enabled: !_loading,
+            onTap: _loading ? null : _load,
+            excludeSemantics: true,
+            child: IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: Strings.of(context).commonRefresh,
+              onPressed: _loading ? null : _load,
+            ),
           ),
         ],
       ),
@@ -365,13 +373,20 @@ class _MemoryScreenState extends State<MemoryScreen>
                   color: colors.textSecondary,
                 ),
                 suffixIcon: _filter.isNotEmpty
-                    ? IconButton(
-                        icon: Icon(
-                          Icons.clear,
-                          size: 16,
-                          color: colors.textSecondary,
+                    ? Semantics(
+                        label: Strings.of(context).slClearSearch,
+                        button: true,
+                        onTap: _filterController.clear,
+                        excludeSemantics: true,
+                        child: IconButton(
+                          tooltip: Strings.of(context).slClearSearch,
+                          icon: Icon(
+                            Icons.clear,
+                            size: 16,
+                            color: colors.textSecondary,
+                          ),
+                          onPressed: _filterController.clear,
                         ),
-                        onPressed: () => _filterController.clear(),
                       )
                     : null,
                 isDense: true,

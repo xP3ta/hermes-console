@@ -47,10 +47,23 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     _glow = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 6),
-    )..repeat(reverse: true);
+    );
     _pager.addListener(() {
       setState(() => _page = _pager.page ?? 0);
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (reduceMotion) {
+      _glow
+        ..stop()
+        ..value = 0.5;
+    } else if (!_glow.isAnimating) {
+      _glow.repeat(reverse: true);
+    }
   }
 
   @override

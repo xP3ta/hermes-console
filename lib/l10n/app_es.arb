@@ -120,6 +120,28 @@
     "description": "Botón guardar genérico"
   },
   "commonOpen": "Abrir",
+  "a11yShowSecret": "Mostrar secreto",
+  "a11yHideSecret": "Ocultar secreto",
+  "a11yShowAnswer": "Mostrar respuesta",
+  "a11yHideAnswer": "Ocultar respuesta",
+  "a11yPlayAudio": "Reproducir audio",
+  "a11yPauseAudio": "Pausar audio",
+  "a11yDecreaseValue": "Reducir {label}",
+  "@a11yDecreaseValue": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "a11yIncreaseValue": "Aumentar {label}",
+  "@a11yIncreaseValue": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
   "@commonOpen": {
     "description": "Botón abrir genérico"
   },

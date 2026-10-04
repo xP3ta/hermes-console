@@ -773,14 +773,28 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
     onSubmitted: (_) => _submit(),
     sensitive: sensitive,
     suffixIcon: sensitive
-        ? IconButton(
-            onPressed: widget.busy
+        ? Semantics(
+            label: _obscure
+                ? Strings.of(context).a11yShowAnswer
+                : Strings.of(context).a11yHideAnswer,
+            button: true,
+            enabled: !widget.busy,
+            onTap: widget.busy
                 ? null
                 : () => setState(() => _obscure = !_obscure),
-            icon: Icon(
-              _obscure
-                  ? Icons.visibility_outlined
-                  : Icons.visibility_off_outlined,
+            excludeSemantics: true,
+            child: IconButton(
+              onPressed: widget.busy
+                  ? null
+                  : () => setState(() => _obscure = !_obscure),
+              tooltip: _obscure
+                  ? Strings.of(context).a11yShowAnswer
+                  : Strings.of(context).a11yHideAnswer,
+              icon: Icon(
+                _obscure
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+              ),
             ),
           )
         : null,

@@ -944,6 +944,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
                 suffixIcon: _query.isEmpty
                     ? null
                     : IconButton(
+                        tooltip: s.slClearSearch,
                         onPressed: () {
                           _searchController.clear();
                           setState(() => _query = '');
