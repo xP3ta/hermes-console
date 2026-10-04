@@ -439,6 +439,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       loadedAt: snapshot.loadedAt,
       activeSessions: snapshot.activeSessions,
       activeSessionsObservedAt: snapshot.activeSessionsObservedAt,
+      activeSessionsAuthoritative: snapshot.activeSessionsAuthoritative,
     );
   }
 
@@ -727,6 +728,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             loadedAt: DateTime.now(),
             activeSessions: roster.activeSessions,
             activeSessionsObservedAt: roster.activeSessionsObservedAt,
+            activeSessionsAuthoritative: roster.activeSessionsAuthoritative,
           ),
         ),
       );
@@ -1040,6 +1042,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final kanbanFailed =
         incoming.failures.containsKey('kanban') &&
         incoming.kanbanCapability == MissionCapabilityState.unavailable;
+    final activeFailed = !incoming.activeSessionsAuthoritative;
     final hostedGroupsFailed =
         incoming.failures.containsKey('hostedGroups') &&
         incoming.hostedGroupsCapability == MissionCapabilityState.unavailable;
@@ -1056,9 +1059,17 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       hostedGroupsCapability: incoming.hostedGroupsCapability,
       failures: incoming.failures,
       loadedAt: incoming.loadedAt,
-      // A read without a row is authoritative about its absence: never kept.
-      activeSessions: incoming.activeSessions,
-      activeSessionsObservedAt: incoming.activeSessionsObservedAt,
+      // An answer without a row is authoritative about its absence and
+      // replaces the rows. A failed read proves nothing: keep the last ones.
+      activeSessions: activeFailed
+          ? previous.activeSessions
+          : incoming.activeSessions,
+      activeSessionsObservedAt: activeFailed
+          ? previous.activeSessionsObservedAt
+          : incoming.activeSessionsObservedAt,
+      activeSessionsAuthoritative: activeFailed
+          ? previous.activeSessionsAuthoritative
+          : incoming.activeSessionsAuthoritative,
     );
   }
 
@@ -2712,6 +2723,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           loadedAt: snapshot.loadedAt,
           activeSessions: snapshot.activeSessions,
           activeSessionsObservedAt: snapshot.activeSessionsObservedAt,
+          activeSessionsAuthoritative: snapshot.activeSessionsAuthoritative,
         );
       });
       return HostedGroupWorkspaceReadback(
