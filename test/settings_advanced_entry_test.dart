@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/screens/advanced_settings_screen.dart';
 import 'package:hermes_android/core/screens/settings_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -10,6 +11,8 @@ import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'capabilities/capabilities_fakes.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -56,7 +59,7 @@ void main() {
     letKnownAssertionThrough(tester);
   }
 
-  Future<void> pumpSettings(WidgetTester tester) async {
+  Future<void> pumpSettings(WidgetTester tester, {ScriptedRest? rest}) async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     final manager = await ConnectionManager.create(prefs);
@@ -74,7 +77,18 @@ void main() {
         theme: AppTheme.fromId('dark'),
         localizationsDelegates: Strings.localizationsDelegates,
         supportedLocales: Strings.supportedLocales,
-        home: SettingsScreen(connection: connection, connManager: manager),
+        home: SettingsScreen(
+          connection: connection,
+          connManager: manager,
+          advancedRepositoryFor: rest == null
+              ? null
+              : (profile) => CapabilitiesRepository(
+                  rest: rest,
+                  profile: profile,
+                  sleep: (_) async {},
+                  actionPollInterval: Duration.zero,
+                ),
+        ),
       ),
     );
     await tester.pump();
@@ -105,5 +119,29 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.byType(AdvancedSettingsScreen), findsOneWidget);
+  });
+
+  testWidgets('Settings makes no diagnostics call, the Advanced screen does', (
+    tester,
+  ) async {
+    final rest = ScriptedRest()
+      ..gets['health'] = {'ok': true, 'version': '1'}
+      ..gets['health/idle'] = {'ok': true, 'idle': true}
+      ..gets['actions/doctor/status'] = {
+        'name': 'doctor',
+        'running': false,
+        'exit_code': 0,
+        'lines': <String>[],
+      };
+    await pumpSettings(tester, rest: rest);
+    await scrollToAdvanced(tester);
+    await tester.pump(const Duration(seconds: 30));
+
+    expect(rest.calls, isEmpty, reason: 'nothing before the row is tapped');
+
+    await tester.tap(advancedRow());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(rest.calls, isNotEmpty, reason: 'the probe belongs to Advanced');
   });
 }

@@ -35,6 +35,8 @@ import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_update_card.dart';
 import '../widgets/read_only.dart';
+import '../capabilities/capabilities_repository.dart'
+    show CapabilitiesRepository;
 import 'about_screen.dart';
 import 'advanced_settings_screen.dart';
 import 'bridge_file_editor_screen.dart';
@@ -139,10 +141,16 @@ class SettingsScreen extends StatelessWidget {
   final ConnectionManager connManager;
   @visibleForTesting
   final Future<bool> Function()? verifyHistoryCleanupForTesting;
+
+  /// Where the Advanced screen gets its diagnostics repository (tests only).
+  @visibleForTesting
+  final CapabilitiesRepository Function(String profile)?
+  advancedRepositoryFor;
   const SettingsScreen({
     required this.connection,
     required this.connManager,
     @visibleForTesting this.verifyHistoryCleanupForTesting,
+    @visibleForTesting this.advancedRepositoryFor,
     super.key,
   });
 
@@ -313,6 +321,7 @@ class SettingsScreen extends StatelessWidget {
                         builder: (_) => AdvancedSettingsScreen(
                           connection: conn,
                           connManager: connManager,
+                          repositoryFor: advancedRepositoryFor,
                         ),
                       ),
                     ),
