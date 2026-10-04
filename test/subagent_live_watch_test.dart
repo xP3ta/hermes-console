@@ -575,6 +575,50 @@ void main() {
     },
   );
 
+  test('dispose frees every listener before a pending close answers', () async {
+    final gateway = FakeWatchGateway()..closeGate = Completer<void>();
+    final invalidation = _CountingListenable();
+    final watch = SubagentLiveWatch(
+      gateway: gateway,
+      childSessionId: _child,
+      profile: _parentProfile,
+      isCurrent: () => true,
+      invalidation: invalidation,
+    )..start();
+    await pumpEventQueue();
+    expect(gateway.hasListeners, isTrue);
+    expect(invalidation.listeners, 1);
+
+    watch.dispose();
+    await pumpEventQueue();
+
+    // `session.close` has not been acknowledged yet.
+    expect(gateway.closed, ['watch-1']);
+    expect(gateway.hasListeners, isFalse);
+    expect(invalidation.listeners, 0);
+
+    gateway.closeGate!.complete();
+    await pumpEventQueue();
+  });
+
+  test('a corrected final after a tool line is still appended', () async {
+    final gateway = FakeWatchGateway();
+    final watch = _watch(gateway)..start();
+    await pumpEventQueue();
+
+    gateway.emit('watch-1', 'message.delta', {'text': 'SELECT * FROMusers'});
+    gateway.emit('watch-1', 'tool.start', {'name': 'read_file'});
+    gateway.emit('watch-1', 'message.complete', {
+      'text': 'SELECT * FROM users',
+    });
+    await pumpEventQueue();
+
+    expect(
+      watch.value.text,
+      'SELECT * FROMusers\n› read_file\nSELECT * FROM users',
+    );
+  });
+
   test('a normal finish cancels the event subscription', () async {
     final gateway = FakeWatchGateway();
     final watch = _watch(gateway)..start();
