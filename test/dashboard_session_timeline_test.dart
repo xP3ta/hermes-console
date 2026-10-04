@@ -76,7 +76,9 @@ void main() {
   group('DashboardClient.getSessionTimelinePage', () {
     test('requests one bounded page scoped to the profile', () async {
       Uri? requested;
+      var calls = 0;
       final client = _client((request) async {
+        calls++;
         requested = request.url;
         return http.Response('{"entries":[]}', 200);
       });
@@ -85,6 +87,7 @@ void main() {
         profile: 'research',
       );
       expect(page, isNotNull);
+      expect(calls, 1);
       expect(requested!.path, '/api/sessions/sess%201/timeline');
       expect(requested!.queryParameters['limit'], '500');
       expect(requested!.queryParameters['profile'], 'research');
@@ -93,11 +96,14 @@ void main() {
 
     test('passes the cursor on later pages and omits an empty profile', () async {
       Uri? requested;
+      var calls = 0;
       final client = _client((request) async {
+        calls++;
         requested = request.url;
         return http.Response('{"entries":[]}', 200);
       });
       await client.getSessionTimelinePage('s', afterRowId: 120);
+      expect(calls, 1);
       expect(requested!.queryParameters['after_row_id'], '120');
       expect(requested!.queryParameters.containsKey('profile'), isFalse);
     });

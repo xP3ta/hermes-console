@@ -80,8 +80,9 @@ void main() {
       final entries = deriveChatPromptEntries([
         _msg('user', nearMiss),
         _msg('user', '[IMPORTANT: Background process notes] para mí'),
+        _msg('user', '[IMPORTANT: Background process design is confusing'),
       ]);
-      expect(entries.length, 2);
+      expect(entries.length, 3);
       expect(stickyPromptIndex([_msg('user', nearMiss)], 0), 0);
     });
 
