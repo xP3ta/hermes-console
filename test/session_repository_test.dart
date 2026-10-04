@@ -758,6 +758,38 @@ void main() {
     },
   );
 
+  test('a search hit keeps its FTS snippet apart from a marker-free '
+      'preview (Desktop stripFtsMarkers)', () async {
+    final dashboardHttp = MockClient((request) async {
+      return http.Response(
+        jsonEncode({
+          'results': [
+            {'session_id': 'hit', 'snippet': 'QA >>>9484<<< ping'},
+            {'session_id': 'id-hit', 'snippet': 'Session ID: id-hit'},
+          ],
+        }),
+        200,
+      );
+    });
+    final gatewayHttp = MockClient((_) async => http.Response('{}', 500));
+    final dashboard = _dashboard(dashboardHttp);
+    final gateway = _gateway(gatewayHttp);
+    final repository = SessionRepository(dashboard, gateway);
+    addTearDown(() {
+      repository.close();
+      dashboard.close();
+      gateway.close();
+    });
+
+    final result = await repository.search('9484');
+    final hit = result.sessions.singleWhere((s) => s.id == 'hit');
+    expect(hit.preview, 'QA 9484 ping');
+    expect(hit.searchSnippet, 'QA >>>9484<<< ping');
+    final idHit = result.sessions.singleWhere((s) => s.id == 'id-hit');
+    expect(idHit.preview, 'Session ID: id-hit');
+    expect(idHit.searchSnippet, isNull);
+  });
+
   test(
     'búsqueda conserva sources/exclude_sources y descarta scope tardío',
     () async {

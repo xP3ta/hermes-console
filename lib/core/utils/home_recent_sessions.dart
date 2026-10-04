@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../models/session.dart';
 import '../services/session_reconciler.dart';
 import 'chat_turn.dart';
+import 'fts_snippet.dart';
 import 'markdown_clipboard.dart';
 
 enum HomeRecentDateGroup { today, yesterday, earlier }
@@ -94,6 +95,21 @@ String? humanReadableSessionPreview(String? value) =>
 /// substituted, so both apps show the same thing for the same chat.
 String? sessionListPreview(Session session) =>
     _compactPreview(session.cleanPreview);
+
+/// [sessionListPreview] of a search hit with its matched terms marked, or
+/// null when the row has no match to highlight. The FTS delimiters ride
+/// through the same cleaning as sentinels, so the text is exactly the plain
+/// preview and a raw `>>>`/`<<<` never shows.
+List<FtsSnippetSpan>? sessionSearchHighlights(Session session) {
+  final snippet = session.searchSnippet;
+  if (snippet == null || !hasFtsMarkers(snippet)) return null;
+  final marked = _compactPreview(
+    session.copyWith(preview: ftsSnippetWithSentinels(snippet)).cleanPreview,
+  );
+  if (marked == null) return null;
+  final spans = ftsSpansFromSentinels(marked);
+  return spans.any((span) => span.highlighted) ? spans : null;
+}
 
 String? latestUserPreview(
   Iterable<Map<String, dynamic>> messages, {
