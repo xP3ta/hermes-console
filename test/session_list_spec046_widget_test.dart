@@ -735,6 +735,69 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // Hermes searches ids and FTS5 message tokens by prefix only ("9485*"
+  // never matches the token "qa9485") and never titles. Desktop merges the
+  // loaded sessions that contain the query (id, title, preview, cwd,
+  // branch, source) after the server hits (`mergeSearchResults`), so a
+  // chat titled "QA 9485" is found by "9485" there.
+  testWidgets('a loaded chat whose title contains the query is found even '
+      'when the server search has no hit (Desktop merge parity)', (
+    tester,
+  ) async {
+    var searches = 0;
+    final dashboardHttp = MockClient((request) async {
+      if (request.url.path == '/api/sessions') {
+        return _pageResponse(
+          [
+            _sessionRow(0, title: 'QA 9485'),
+            _sessionRow(1, title: 'Other conversation'),
+          ],
+          total: 2,
+          limit: 50,
+          offset: 0,
+        );
+      }
+      if (request.url.path == '/api/sessions/search') {
+        searches++;
+        return http.Response(jsonEncode({'results': <Object>[]}), 200);
+      }
+      return http.Response('{}', 404);
+    });
+    final dashboard = _dashboard(dashboardHttp);
+    final gateway = _gateway(_healthyGatewayHttp());
+    final repository = SessionRepository(dashboard, gateway);
+    addTearDown(() {
+      repository.close();
+      dashboard.close();
+    });
+
+    await tester.pumpWidget(
+      _host(
+        SessionListScreen(
+          connection: _connection(),
+          connManager: await _manager(),
+          clientOverride: gateway,
+          repositoryOverride: repository,
+        ),
+      ),
+    );
+    await _pumpUntil(tester, find.text('Other conversation'));
+
+    await tester.enterText(find.byType(TextField), '9485');
+    await tester.pump(const Duration(milliseconds: 221));
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 25));
+      if (searches == 1 && find.text('Other conversation').evaluate().isEmpty) {
+        break;
+      }
+    }
+    expect(find.text('Other conversation'), findsNothing);
+
+    expect(searches, 1);
+    expect(find.text('QA 9485'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('unavailable remote search falls back with a scope notice', (
     tester,
   ) async {

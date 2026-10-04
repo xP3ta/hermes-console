@@ -93,6 +93,79 @@ List<Session> mergeRemoteSessionsWithDrafts(
   return byId.values.toList(growable: false);
 }
 
+/// Desktop `sessionMatchesSearch` (`lib/session-search.ts`): case-insensitive
+/// substring over the fields a loaded row carries. Hermes' search endpoint
+/// only matches ids and FTS5 message tokens by prefix (never titles), so
+/// Desktop finds a chat titled "QA 9485" by "9485" only through this.
+@visibleForTesting
+bool sessionMatchesSearchText(
+  Session session,
+  String needle, {
+  required String title,
+}) {
+  if (needle.isEmpty) return true;
+  return <String>[
+    session.id,
+    session.lineageRootId ?? '',
+    title,
+    session.preview,
+    session.cwd ?? '',
+    session.gitBranch ?? '',
+    session.source,
+  ].any((value) => value.toLowerCase().contains(needle));
+}
+
+/// Desktop `mergeSearchResults`: the ranked server hits keep their order and
+/// loaded rows the server did not return follow, in list order, once per
+/// owner and lineage. When several loaded segments of one lineage match, the
+/// newest one (the lineage tip) takes the slot of the first; on equal
+/// timestamps the segment that continues the other one wins, so the tip is
+/// shown whatever the input order.
+@visibleForTesting
+List<Session> appendLoadedSearchMatches(
+  List<Session> hits,
+  Iterable<Session> loadedMatches,
+) {
+  Iterable<(String, String)> keys(Session row) {
+    final owner = Session.profileOwner(row.profile);
+    return row.identityIds.map((id) => (owner, id));
+  }
+
+  // `row` continues `earlier` when its chain names `earlier` before itself.
+  bool continues(Session row, Session earlier) {
+    if (row.id == earlier.id) return false;
+    if (earlier.id == row.lineageRootId) return true;
+    if (earlier.id == row.parentSessionId) return true;
+    final at = row.lineageIds.indexOf(earlier.id);
+    final self = row.lineageIds.indexOf(row.id);
+    return at >= 0 && (self < 0 || at < self);
+  }
+
+  bool supersedes(Session row, Session current) {
+    final delta = row.lastActivityAt.compareTo(current.lastActivityAt);
+    if (delta != 0) return delta > 0;
+    return continues(row, current) && !continues(current, row);
+  }
+
+  final seen = <(String, String)>{for (final hit in hits) ...keys(hit)};
+  final appended = <Session>[];
+  final slotByKey = <(String, String), int>{};
+  for (final row in loadedMatches) {
+    final rowKeys = keys(row).toList(growable: false);
+    if (rowKeys.any(seen.contains)) continue;
+    final slot = rowKeys.map((key) => slotByKey[key]).nonNulls.firstOrNull;
+    if (slot == null) {
+      appended.add(row);
+    } else if (supersedes(row, appended[slot])) {
+      appended[slot] = row;
+    }
+    for (final key in rowKeys) {
+      slotByKey[key] = slot ?? appended.length - 1;
+    }
+  }
+  return [...hits, ...appended];
+}
+
 /// Identifica filas cuyo estado durable cambió dentro del mismo owner y
 /// lineage. `sessions.changed` no promete un session id en el payload, por lo
 /// que esta comparación se hace después de la lectura REST autoritativa.
@@ -969,7 +1042,8 @@ class _SessionListScreenState extends State<SessionListScreen>
     return resolveSessionLiveStatus(
       chat: chat?.liveStatus,
       chatAuthoritative:
-          chat != null && (chat.hasDesktopRuntime || chat.lastTerminalAt != null),
+          chat != null &&
+          (chat.hasDesktopRuntime || chat.lastTerminalAt != null),
       chatSettledAt: chat?.lastTerminalAt,
       global: globalActive ? _globalForSession(session) : null,
     );
@@ -1051,8 +1125,18 @@ class _SessionListScreenState extends State<SessionListScreen>
       );
       await _migrateLineagePreferences(sessions);
       if (!mounted || requestEpoch != _searchRequestEpoch) return;
+      final withLoaded = appendLoadedSearchMatches(
+        sessions,
+        _sessions.where(
+          (session) => sessionMatchesSearchText(
+            session,
+            needle,
+            title: _titleFor(session),
+          ),
+        ),
+      );
       setState(() {
-        _searchResults = _withoutDeleted(sessions);
+        _searchResults = _withoutDeleted(withLoaded);
         _searchExhaustive = result.exhaustive;
         _searching = false;
       });
@@ -3040,10 +3124,8 @@ class _SessionTile extends StatelessWidget {
   /// Semantic state of the live row: the dot and the status line share its
   /// colour (green working, calm tint compacting, amber waiting, muted
   /// stale/idle), so the status never reads like the title.
-  SessionStatusTone get _statusTone => sessionStatusToneFor(
-    sessionLiveStatusKind(status),
-    stale: status.stale,
-  );
+  SessionStatusTone get _statusTone =>
+      sessionStatusToneFor(sessionLiveStatusKind(status), stale: status.stale);
 
   @override
   Widget build(BuildContext context) {
@@ -3127,7 +3209,8 @@ class _SessionTile extends StatelessWidget {
                         ],
                         if (unread &&
                             !streamActive &&
-                            status.phase != SessionLivePhase.waitingForUser) ...[
+                            status.phase !=
+                                SessionLivePhase.waitingForUser) ...[
                           const SizedBox(width: 7),
                           Semantics(
                             label: strings.slUnreadDot,
