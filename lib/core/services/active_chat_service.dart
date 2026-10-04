@@ -21373,7 +21373,10 @@ class ActiveChat {
         if (_previousTurnRanTool(payload)) {
           // pt1215: the settled turn's tool finishing while the next turn
           // runs. Without a turn id it would close (or add) a step of the
-          // running turn; durable history fills the old card instead.
+          // running turn; durable history fills the old card instead. A
+          // legacy delegate_task still settles its own (epoch-scoped)
+          // subagent activity.
+          _handleLegacyDelegateEvent(event.type, runtimeId, payload);
           return;
         }
         _flushTokenBuffer();
