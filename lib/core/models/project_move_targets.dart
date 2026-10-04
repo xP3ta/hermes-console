@@ -35,22 +35,22 @@ String _projectFolder(ProjectNode project) {
 /// Destinations for a move (Desktop's `MoveToProjectItems`): projects of the
 /// tree that are not archived, not "no project", have a folder, and are not
 /// the one the session already lives in ([sessionCwd] or [sessionGitRepoRoot]
-/// equal to that folder).
+/// is that folder or something under it).
 List<ProjectMoveTarget> projectMoveTargets(
   ProjectTreeSnapshot tree, {
   String? sessionCwd,
   String? sessionGitRepoRoot,
 }) {
-  final current = {
-    if (sessionCwd != null && sessionCwd.trim().isNotEmpty) _clean(sessionCwd),
-    if (sessionGitRepoRoot != null && sessionGitRepoRoot.trim().isNotEmpty)
-      _clean(sessionGitRepoRoot),
-  };
   return [
     for (final project in tree.projects)
       if (!project.archived && !project.noProject)
         if (_projectFolder(project) case final folder
-            when folder.isNotEmpty && !current.contains(folder))
+            when folder.isNotEmpty &&
+                !sessionInProjectFolder(
+                  folder,
+                  cwd: sessionCwd,
+                  gitRepoRoot: sessionGitRepoRoot,
+                ))
           ProjectMoveTarget(id: project.id, label: project.label, cwd: folder),
   ];
 }
