@@ -7735,7 +7735,6 @@
   "sd1215CopyOutput": "Copy",
   "sd1215Copied": "Copied",
   "sd1215Mcp": "MCP servers",
-  "sd1215McpNoSocket": "Connect a chat to see the state",
   "sd1215McpNone": "No MCP servers",
   "sd1215McpConnected": "Connected",
   "sd1215McpDisabled": "Disabled",

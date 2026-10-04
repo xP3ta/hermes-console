@@ -9420,7 +9420,6 @@
   "sd1215CopyOutput": "Copiar",
   "sd1215Copied": "Copiado",
   "sd1215Mcp": "Servidores MCP",
-  "sd1215McpNoSocket": "Conecta un chat para ver el estado",
   "sd1215McpNone": "Sin servidores MCP",
   "sd1215McpConnected": "Conectado",
   "sd1215McpDisabled": "Desactivado",

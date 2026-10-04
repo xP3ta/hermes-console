@@ -402,8 +402,6 @@ class _ServerDiagnosticsScreenState extends State<ServerDiagnosticsScreen>
         children: [
           if (c.mcpPhase == DiagPhase.loading)
             const Padding(padding: EdgeInsets.all(16), child: TuiLoader())
-          else if (c.mcpPhase == DiagPhase.noSocket)
-            _note(context, s.sd1215McpNoSocket)
           else if (c.mcpPhase == DiagPhase.unavailable)
             _note(context, s.sd1215Unavailable)
           else if (c.mcpServers.isEmpty)

@@ -20,9 +20,6 @@ enum DiagPhase {
   loading,
   ready,
 
-  /// MCP only: no chat socket is connected, and none is opened to find out.
-  noSocket,
-
   /// The server answered with an error: shown as "not available now".
   unavailable,
 
@@ -163,9 +160,7 @@ class ServerDiagnosticsController extends ChangeNotifier {
   /// a later failure of an already confirmed one); never while unknown or
   /// loading.
   static bool shows(DiagPhase phase) =>
-      phase == DiagPhase.ready ||
-      phase == DiagPhase.noSocket ||
-      phase == DiagPhase.unavailable;
+      phase == DiagPhase.ready || phase == DiagPhase.unavailable;
 
   Future<void> _loadServer(int generation, CapabilitiesRepository repo) async {
     serverPhase = DiagPhase.loading;
@@ -208,7 +203,9 @@ class ServerDiagnosticsController extends ChangeNotifier {
       final servers = await mcpReader(repo);
       if (_stale(generation)) return;
       mcpServers = servers ?? const [];
-      mcpPhase = servers == null ? DiagPhase.noSocket : DiagPhase.ready;
+      // No connected chat socket (none is opened to find out) is no answer:
+      // the section stays absent until a real MCP response confirms it.
+      mcpPhase = servers == null ? DiagPhase.hidden : DiagPhase.ready;
       if (servers != null) _mcpConfirmed = true;
     } on CapabilityFailure catch (failure) {
       if (_stale(generation)) return;
