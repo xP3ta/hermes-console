@@ -21103,6 +21103,7 @@ class ActiveChat {
             _setProviderWaitText(wait);
             break;
           }
+          _setProviderWaitText(null);
           _appendAssistantReasoningActivity(delta);
           state = ChatPipelineState.executing;
           _emit(ActiveChatEvent.toolProgress);
