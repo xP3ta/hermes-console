@@ -26,14 +26,8 @@ void main() {
   });
 
   test('both banner formats are recognised', () {
-    expect(
-      filterStdioSections([older, 'a', 'b'], 'git'),
-      [older, 'a', 'b'],
-    );
-    expect(
-      filterStdioSections([current, 'x'], 'files'),
-      [current, 'x'],
-    );
+    expect(filterStdioSections([older, 'a', 'b'], 'git'), [older, 'a', 'b']);
+    expect(filterStdioSections([current, 'x'], 'files'), [current, 'x']);
   });
 
   test('a server with no banner yields nothing, names are exact', () {
