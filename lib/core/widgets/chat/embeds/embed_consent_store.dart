@@ -3,6 +3,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'embed_detector.dart';
 
+/// Mermaid needs a bundled JavaScript runtime, which waits for the owner's
+/// approval. Until then its fences stay code blocks and no toggle is shown.
+const bool embedMermaidAvailable = false;
+
 /// How a type of rich embed behaves in the chat. `off` is the default for
 /// every type: the message renders exactly as before and nothing is fetched.
 enum EmbedMode {

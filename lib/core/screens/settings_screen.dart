@@ -46,6 +46,7 @@ import 'permissions_screen.dart';
 import 'security_info_screen.dart';
 import 'themes_screen.dart';
 import 'dock_settings_screen.dart';
+import 'embed_settings_screen.dart';
 import 'notification_settings_screen.dart';
 import 'voice_settings_screen.dart';
 
@@ -242,6 +243,18 @@ class SettingsScreen extends StatelessWidget {
               HermesGroup(
                 children: [
                   _ActiveModelTile(key: ValueKey(conn.id), connection: conn),
+                  HermesNavRow(
+                    key: const ValueKey('settings-rich-embeds'),
+                    icon: Icons.play_circle_outline_rounded,
+                    title: Strings.of(context).embedSettingsTitle,
+                    subtitle: Strings.of(context).embedSettingsSubtitle,
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const EmbedSettingsScreen(),
+                      ),
+                    ),
+                  ),
                 ],
               ),
               _SectionHeader(Strings.of(context).voiceTitle),

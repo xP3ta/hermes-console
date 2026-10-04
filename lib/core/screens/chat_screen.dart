@@ -19223,7 +19223,8 @@ class _AssistantMessage extends StatelessWidget {
 
     // Un bloque de Markdown de la respuesta, con la presentación de siempre.
     // El [data] ya viene normalizado por [buildAssistantAnswerBlocks].
-    Widget markdownWidget(String data) => ChatMarkdownBlock(data: data);
+    Widget markdownWidget(String data) =>
+        ChatMarkdownBlock(data: data, embeds: !isStreaming);
 
     /// Reparte un segmento vivo en prefijo estable cacheable + cola mutable.
     /// Solo la cola se reconstruye en cada frame; el prefijo conserva el mismo
@@ -21167,7 +21168,7 @@ class AssistantMarkdownView extends StatelessWidget {
         : buildAssistantAnswerBlocks(
             split.answer,
             isStreaming: isStreaming,
-            markdown: (d) => ChatMarkdownBlock(data: d),
+            markdown: (d) => ChatMarkdownBlock(data: d, embeds: !isStreaming),
             callout: (b) =>
                 CalloutCard(kind: b.kind, title: b.title, body: b.body),
             onLinkTap: (href) => openChatMarkdownLink(context, href),

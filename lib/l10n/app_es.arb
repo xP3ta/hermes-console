@@ -9440,5 +9440,20 @@
   "fsImportFailed": "No se pudo importar la sesión.",
   "fsImportRoleUser": "Tú",
   "fsImportRoleAssistant": "Asistente",
-  "fsImportUntitled": "Sin título"
+  "fsImportUntitled": "Sin título",
+  "embedLoad": "Cargar {service}",
+  "@embedLoad": {"placeholders": {"service": {"type": "String"}}},
+  "embedLoadNote": "Al cargar se conecta con {service}.",
+  "@embedLoadNote": {"placeholders": {"service": {"type": "String"}}},
+  "embedLoadOnce": "Cargar solo esta vez",
+  "embedAlwaysAllow": "Permitir siempre {service}",
+  "@embedAlwaysAllow": {"placeholders": {"service": {"type": "String"}}},
+  "embedSettingsTitle": "Contenido incrustado",
+  "embedSettingsSubtitle": "Vídeos, mapas y gráficos dentro del chat",
+  "embedSettingsIntro": "Cargar contenido incrustado contacta con terceros (tu IP, el navegador). Cada tipo está desactivado hasta que lo actives aquí. Este ajuste es solo de este dispositivo.",
+  "embedSettingsAskEachTime": "Preguntar cada vez",
+  "embedSettingsAlways": "Siempre",
+  "embedSettingsClear": "Olvidar servicios permitidos",
+  "embedSettingsCleared": "Los servicios permitidos vuelven a preguntar.",
+  "embedSvgLabel": "Imagen SVG"
 }

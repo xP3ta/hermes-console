@@ -7751,5 +7751,17 @@
   "fsImportFailed": "Couldn't import the session.",
   "fsImportRoleUser": "You",
   "fsImportRoleAssistant": "Assistant",
-  "fsImportUntitled": "Untitled"
+  "fsImportUntitled": "Untitled",
+  "embedLoad": "Load {service}",
+  "embedLoadNote": "Loading connects to {service}.",
+  "embedLoadOnce": "Load once",
+  "embedAlwaysAllow": "Always allow {service}",
+  "embedSettingsTitle": "Rich embeds",
+  "embedSettingsSubtitle": "Videos, maps and graphics inside the chat",
+  "embedSettingsIntro": "Loading an embed contacts a third party (your IP address, your browser). Each type stays off until you turn it on here. This setting is for this device only.",
+  "embedSettingsAskEachTime": "Ask each time",
+  "embedSettingsAlways": "Always",
+  "embedSettingsClear": "Clear allowed services",
+  "embedSettingsCleared": "Allowed services will ask again.",
+  "embedSvgLabel": "SVG image"
 }

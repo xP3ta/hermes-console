@@ -73,6 +73,7 @@ import 'core/theme/component_profile.dart';
 import 'core/theme/scroll_behavior.dart';
 import 'core/theme/theme_profile_store.dart';
 import 'core/widgets/attachment_source_sheet.dart';
+import 'core/widgets/chat/embeds/embed_consent_store.dart';
 import 'core/widgets/frosted_backdrop.dart';
 import 'core/widgets/hermes_notice.dart';
 import 'core/widgets/hermes_premium_ui.dart';
@@ -243,6 +244,8 @@ void main() async {
 @visibleForTesting
 Future<Widget> bootstrapHermesApp() async {
   final prefs = await SharedPreferences.getInstance();
+  // Rich-embed consent is per device; until it loads every type reads as off.
+  await EmbedConsentStore.load(prefs);
   final themeProfileStore = ThemeProfileStore(prefs);
   final cancelledTurnStore = CancelledTurnTombstoneStore.secure();
   final compressionRestoreStore = CompressionRestoreStore();
