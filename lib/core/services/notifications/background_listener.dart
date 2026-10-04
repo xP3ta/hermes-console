@@ -9,6 +9,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -22,6 +23,7 @@ import 'package:sqflite/sqflite.dart' as sqflite;
 import '../../models/cron_job.dart';
 import '../../models/kanban.dart';
 import '../connection_manager.dart';
+import '../kanban_watch_board.dart';
 import '../secure_storage.dart';
 import '../shared_gateway_pool.dart';
 import '../tui_gateway_client.dart';
@@ -1228,6 +1230,21 @@ class KanbanDiscoveryEntry {
   final String? assignee;
 }
 
+/// In-memory event cursor of one watched board, like Desktop's per-board
+/// `seenEventIdByBoard`: the last `latest_event_id` plus the failure streak
+/// and status of each task, to tell which tasks moved.
+class KanbanBoardCursor {
+  const KanbanBoardCursor({
+    required this.latestEventId,
+    required this.failures,
+    required this.statuses,
+  });
+
+  final int latestEventId;
+  final Map<String, int> failures;
+  final Map<String, String> statuses;
+}
+
 /// Cursor local para los estados del Kanban oficial de Hermes Agent.
 ///
 /// La primera lectura siembra el tablero y no repite el historial. Después
@@ -1240,6 +1257,19 @@ class BackgroundKanbanWatch {
   // or explicitly triaged needs an owner-facing notification.
   static const Set<String> _notifiableStatuses = {'blocked', 'triage'};
 
+  /// Terminal event kinds Desktop notifies besides the status columns
+  /// (`plugins/kanban/completion-notify.ts` TERMINAL_NOTIFY; `completed` and
+  /// `blocked` arrive here as the `done` / `blocked` status transitions).
+  static const Set<String> failureEventKinds = {
+    'crashed',
+    'timed_out',
+    'gave_up',
+    'block_loop_detected',
+  };
+
+  /// Most task detail reads one tick may spend on moved tasks.
+  static const int maxEventReadsPerTick = 8;
+
   @visibleForTesting
   static List<KanbanDiscoveryEntry> discoveryEntriesForTest({
     required String connId,
@@ -1248,6 +1278,9 @@ class BackgroundKanbanWatch {
     for (final task in tasks)
       if (task.id.trim().isNotEmpty && task.status.trim().isNotEmpty)
         KanbanDiscoveryEntry(
+          // One durable cursor per task whatever board it was read from:
+          // the ledger keys cursors by (connection, profile, kind, task), and
+          // task ids are unique across boards.
           scopeKey: '$connId/default/kanban/${task.id.trim()}',
           taskId: task.id.trim(),
           title: task.title.trim().isEmpty ? task.id.trim() : task.title.trim(),
@@ -1270,14 +1303,94 @@ class BackgroundKanbanWatch {
   static Future<List<KanbanTask>?> loadTasks(
     Future<Map<String, dynamic>> Function(String endpoint) apiGet,
   ) async {
+    final board = await loadBoard(apiGet);
+    return board == null
+        ? null
+        : <KanbanTask>[for (final column in board.columns) ...column.tasks];
+  }
+
+  /// `GET plugins/kanban/board[?board=<slug>]`: the tasks plus the board's
+  /// `latest_event_id`, the event cursor Desktop baselines from.
+  static Future<KanbanBoard?> loadBoard(
+    Future<Map<String, dynamic>> Function(String endpoint) apiGet, {
+    String? board,
+  }) async {
     try {
-      final data = await apiGet('plugins/kanban/board');
-      final board = KanbanBoard.fromJson(data);
-      return <KanbanTask>[for (final column in board.columns) ...column.tasks];
+      final query = board == null
+          ? ''
+          : '?board=${Uri.encodeQueryComponent(board)}';
+      return KanbanBoard.fromJson(await apiGet('plugins/kanban/board$query'));
     } on DashboardHttpException catch (error) {
       if (error.statusCode == 404) return null;
       rethrow;
     }
+  }
+
+  /// The task's events (`GET plugins/kanban/tasks/<id>`), read only for a
+  /// task whose state moved while the board's event cursor advanced.
+  static Future<List<KanbanEvent>> loadTaskEvents(
+    Future<Map<String, dynamic>> Function(String endpoint) apiGet,
+    String taskId, {
+    String? board,
+  }) async {
+    final query = board == null
+        ? ''
+        : '?board=${Uri.encodeQueryComponent(board)}';
+    final data = await apiGet(
+      'plugins/kanban/tasks/${Uri.encodeComponent(taskId)}$query',
+    );
+    final raw = data['events'];
+    return <KanbanEvent>[
+      if (raw is List)
+        for (final item in raw)
+          if (item is Map)
+            KanbanEvent.fromJson(Map<String, dynamic>.from(item)),
+    ];
+  }
+
+  /// Desktop's cursor contract (`completion-notify.ts`): the first look at a
+  /// board only baselines; afterwards an event counts when its id is above
+  /// the previous `latest_event_id` and at most the current one. Candidates
+  /// are the tasks whose failure streak rose or that just moved to
+  /// `blocked`/`triage`; nothing is read when the cursor did not advance.
+  @visibleForTesting
+  static ({KanbanBoardCursor cursor, List<String> candidates}) planEventReads({
+    required KanbanBoardCursor? previous,
+    required KanbanBoard board,
+  }) {
+    final failures = <String, int>{};
+    final statuses = <String, String>{};
+    for (final column in board.columns) {
+      for (final task in column.tasks) {
+        final id = task.id.trim();
+        if (id.isEmpty || statuses.length >= _maxTasksPerConnection) continue;
+        failures[id] = task.consecutiveFailures;
+        statuses[id] = task.status.trim().toLowerCase();
+      }
+    }
+    final next = KanbanBoardCursor(
+      latestEventId: previous == null
+          ? board.latestEventId
+          : math.max(previous.latestEventId, board.latestEventId),
+      failures: failures,
+      statuses: statuses,
+    );
+    if (previous == null || board.latestEventId <= previous.latestEventId) {
+      return (cursor: next, candidates: const <String>[]);
+    }
+    final candidates = <String>[];
+    for (final entry in statuses.entries) {
+      if (candidates.length >= maxEventReadsPerTick) break;
+      final id = entry.key;
+      final before = previous.failures[id];
+      final rose = before != null && (failures[id] ?? 0) > before;
+      final moved =
+          previous.statuses[id] != null &&
+          previous.statuses[id] != entry.value &&
+          (entry.value == 'blocked' || entry.value == 'triage');
+      if (rose || moved) candidates.add(id);
+    }
+    return (cursor: next, candidates: candidates);
   }
 
   @visibleForTesting
@@ -2471,6 +2584,114 @@ class BackgroundAutomationDiscovery {
     return true;
   }
 
+  /// Per (connection, board) event cursor, in memory like Desktop's: after a
+  /// restart the first tick baselines again; the status path stays durable.
+  final Map<String, KanbanBoardCursor> _kanbanCursors = {};
+
+  /// Terminal events of the tasks that moved since the previous tick, keyed
+  /// by task id. Reads task details only when the board's `latest_event_id`
+  /// advanced; a failed read leaves that task to the status path.
+  Future<Map<String, List<KanbanEvent>>> _freshKanbanEvents(
+    DashboardClient dashboard,
+    String connId,
+    String? boardSlug,
+    KanbanBoard board,
+  ) async {
+    final key = '$connId|${boardSlug ?? ''}';
+    final previous = _kanbanCursors[key];
+    final plan = BackgroundKanbanWatch.planEventReads(
+      previous: previous,
+      board: board,
+    );
+    _kanbanCursors[key] = plan.cursor;
+    final fresh = <String, List<KanbanEvent>>{};
+    if (previous == null) return fresh;
+    for (final taskId in plan.candidates) {
+      try {
+        final events = await BackgroundKanbanWatch.loadTaskEvents(
+          dashboard.apiGet,
+          taskId,
+          board: boardSlug,
+        );
+        final picked = <KanbanEvent>[
+          for (final event in events)
+            if (event.id > previous.latestEventId &&
+                event.id <= board.latestEventId &&
+                BackgroundKanbanWatch.failureEventKinds.contains(event.kind))
+              event,
+        ]..sort((a, b) => a.id.compareTo(b.id));
+        if (picked.isNotEmpty) fresh[taskId] = picked;
+      } catch (error) {
+        notifTrace(() => 'kanban events error ${error.runtimeType}');
+      }
+    }
+    return fresh;
+  }
+
+  /// `crashed` / `timed_out` leave the task retrying, so no status column
+  /// tells about them: each event is its own notification, deduplicated by
+  /// its event id in the durable ledger. Runs after the status delivery of
+  /// the same task, so the cursor already exists.
+  Future<void> _deliverKanbanRetryEvents(
+    NotificationService notif,
+    NotifL10n t,
+    NotificationMuteStore mutes,
+    String connId,
+    KanbanDiscoveryEntry entry,
+    List<KanbanEvent> fresh, {
+    required String? boardSlug,
+    required bool suppressByPolicy,
+  }) async {
+    final retries = [
+      for (final event in fresh)
+        if (event.kind == 'crashed' || event.kind == 'timed_out') event,
+    ];
+    if (retries.isEmpty) return;
+    if (mutes.kanbanMuted(connId: connId, taskId: entry.taskId)) return;
+    final events = <DurableDiscoveryNotification>[
+      for (final event in retries)
+        DurableDiscoveryNotification(
+          identity: NotificationEventIdentity(
+            connId: connId,
+            profile: 'default',
+            sourceKind: 'kanban',
+            objectId: entry.taskId,
+            eventKind: event.kind,
+            sourceVersion: 'event:${boardSlug ?? ''}:${event.id}',
+          ),
+          destinationKind: 'kanban_transition',
+          kind: NotificationKind.run,
+          title: event.kind == 'crashed' ? t.kanbanCrashed : t.kanbanTimedOut,
+          body: entry.title,
+          taskId: entry.taskId,
+          subText: 'Kanban · ${entry.taskId}',
+          rich: NotificationService.kanbanRichSpec(
+            t: t,
+            title: entry.title,
+            status: 'blocked',
+            assignee: entry.assignee,
+            taskId: entry.taskId,
+          ),
+        ),
+    ];
+    // Same cursor as the status path (one cursor per task), written back
+    // unchanged: these events carry their own identity and must not be
+    // dropped because the task's column did not change.
+    await notif.deliverDiscoveryBatch(
+      scopeKey: entry.scopeKey,
+      connId: connId,
+      profile: 'default',
+      sourceKind: 'kanban',
+      objectId: entry.taskId,
+      lastState: entry.state,
+      sourceVersion: entry.state,
+      events: events,
+      suppressByPolicy: suppressByPolicy,
+      onForegroundSuppressed: (events) =>
+          _forwardForegroundNotices(connId, events),
+    );
+  }
+
   /// Observa el board nativo de Agent 0.20 con su propio opt-in
   /// ([NotificationService.notifyKanbanResults]), independiente del de Cron.
   /// En servidores legacy sin Kanban, [BackgroundKanbanWatch.loadTasks]
@@ -2492,9 +2713,13 @@ class BackgroundAutomationDiscovery {
         continue;
       }
       final dashboard = _dashboardClients.clientFor(connection);
-      List<KanbanTask>? tasks;
+      final boardSlug = KanbanWatchBoard.read(prefs, connection.id);
+      KanbanBoard? board;
       try {
-        tasks = await BackgroundKanbanWatch.loadTasks(dashboard.apiGet);
+        board = await BackgroundKanbanWatch.loadBoard(
+          dashboard.apiGet,
+          board: boardSlug,
+        );
       } catch (error) {
         notifTrace(() => 'kanban load error ${error.runtimeType}');
         _discoveryBackoff.recordFailure(
@@ -2508,13 +2733,16 @@ class BackgroundAutomationDiscovery {
         }
         continue;
       }
-      if (tasks == null) {
+      if (board == null) {
         _discoveryBackoff.recordFailure(
           connection.id,
           BackgroundDiscoveryCapability.kanban,
         );
         continue;
       }
+      final tasks = <KanbanTask>[
+        for (final column in board.columns) ...column.tasks,
+      ];
       _discoveryBackoff.recordSuccess(
         connection.id,
         BackgroundDiscoveryCapability.kanban,
@@ -2524,6 +2752,12 @@ class BackgroundAutomationDiscovery {
         final entries = BackgroundKanbanWatch.discoveryEntriesForTest(
           connId: connection.id,
           tasks: tasks,
+        );
+        final freshEvents = await _freshKanbanEvents(
+          dashboard,
+          connection.id,
+          boardSlug,
+          board,
         );
         _noteActivity(
           '${connection.id}/kanban',
@@ -2555,12 +2789,16 @@ class BackgroundAutomationDiscovery {
               eventKind: status,
               sourceVersion: '${entry.taskId}:$status',
             );
-            final title = switch (status) {
-              'done' => t.kanbanCompleted,
-              'blocked' => t.kanbanBlocked,
-              'triage' => t.kanbanNeedsAttention,
-              _ => t.kanbanUpdated,
+            final kinds = <String>{
+              for (final event in freshEvents[entry.taskId] ?? const [])
+                event.kind,
             };
+            // Same notification, Desktop's wording when the event says why.
+            final title = NotificationService.kanbanTitle(
+              t,
+              status,
+              eventKinds: kinds,
+            );
             events.add(
               DurableDiscoveryNotification(
                 identity: identity,
@@ -2594,6 +2832,21 @@ class BackgroundAutomationDiscovery {
             onForegroundSuppressed: (events) =>
                 _forwardForegroundNotices(connection.id, events),
           );
+          try {
+            await _deliverKanbanRetryEvents(
+              notif,
+              t,
+              mutes,
+              connection.id,
+              entry,
+              freshEvents[entry.taskId] ?? const <KanbanEvent>[],
+              boardSlug: boardSlug,
+              suppressByPolicy: uiForeground && !notif.evenInForeground,
+            );
+          } catch (error) {
+            // Never let a retry notice stop the status notices of the board.
+            notifTrace(() => 'kanban retry notice error ${error.runtimeType}');
+          }
         }
       } catch (error) {
         if (kDebugMode) {

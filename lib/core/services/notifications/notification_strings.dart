@@ -114,6 +114,20 @@ class NotifL10n {
       _('Kanban necesita tu atención', 'Kanban needs your attention');
   String get kanbanUpdated =>
       _('Tarea de Kanban actualizada', 'Kanban task updated');
+  String get kanbanCrashed => _(
+    'Una tarea de Kanban tuvo un problema; se reintentará',
+    'Kanban task hit a problem — retrying',
+  );
+  String get kanbanTimedOut => _(
+    'Una tarea de Kanban tardó demasiado; se reintentará',
+    'Kanban task took too long — retrying',
+  );
+  String get kanbanGaveUp =>
+      _('Tarea de Kanban detenida', 'Kanban task stopped');
+  String get kanbanBlockLoop => _(
+    'Tarea de Kanban enviada a triage: necesita una decisión',
+    'Kanban task sent to triage — needs a decision',
+  );
 
   // ── Standing goals ────────────────────────────────────────────────────────
   String get goalDone => _('Goal terminado', 'Goal done');
