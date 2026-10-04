@@ -79,36 +79,86 @@ List<AnsiSegment> parseAnsi(String input) {
     push(cleaned.substring(cursor, match.start));
     cursor = match.end;
     if (match[2] != 'm') continue;
-    final params = match[1]!;
-    final codes = params.isEmpty
-        ? const [0]
-        : params.split(';').map((p) => p.isEmpty ? 0 : int.tryParse(p) ?? -1);
-    final list = codes.toList();
-    for (var i = 0; i < list.length; i++) {
-      final code = list[i];
-      if (code == 0) {
-        bold = false;
-        fg = null;
-      } else if (code == 1) {
-        bold = true;
-      } else if (code == 22) {
-        bold = false;
-      } else if (code == 39) {
-        fg = null;
-      } else if (code >= 30 && code <= 37) {
-        fg = code - 30;
-      } else if (code >= 90 && code <= 97) {
-        fg = code - 90 + 8;
-      } else if (code == 38 || code == 48) {
-        // Extended colours (256/truecolour) are not mapped: skip their args.
-        if (i + 1 < list.length && list[i + 1] == 5) {
-          i += 2;
-        } else if (i + 1 < list.length && list[i + 1] == 2) {
-          i += 4;
-        }
-      }
-    }
+    final effect = _sgrEffect(match[1]!);
+    if (effect.bold != null) bold = effect.bold!;
+    if (effect.setsFg) fg = effect.fg;
   }
   push(cleaned.substring(cursor));
   return segments;
 }
+
+/// Net effect of one SGR parameter list on bold and foreground: `bold` is
+/// null and `setsFg` false when the sequence leaves them unchanged.
+({bool? bold, bool setsFg, AnsiColorIndex? fg}) _sgrEffect(String params) {
+  bool? bold;
+  var setsFg = false;
+  AnsiColorIndex? fg;
+  final list = params.isEmpty
+      ? const [0]
+      : [
+          for (final p in params.split(';'))
+            p.isEmpty ? 0 : int.tryParse(p) ?? -1,
+        ];
+  for (var i = 0; i < list.length; i++) {
+    final code = list[i];
+    if (code == 0) {
+      bold = false;
+      setsFg = true;
+      fg = null;
+    } else if (code == 1) {
+      bold = true;
+    } else if (code == 22) {
+      bold = false;
+    } else if (code == 39) {
+      setsFg = true;
+      fg = null;
+    } else if (code >= 30 && code <= 37) {
+      setsFg = true;
+      fg = code - 30;
+    } else if (code >= 90 && code <= 97) {
+      setsFg = true;
+      fg = code - 90 + 8;
+    } else if (code == 38 || code == 48) {
+      // Extended colours (256/truecolour) are not mapped: skip their args.
+      if (i + 1 < list.length && list[i + 1] == 5) {
+        i += 2;
+      } else if (i + 1 < list.length && list[i + 1] == 2) {
+        i += 4;
+      }
+    }
+  }
+  return (bold: bold, setsFg: setsFg, fg: fg);
+}
+
+/// The SGR sequence that restores the bold/colour in effect at [end] of
+/// [s] (empty when that is the default), so a tail cut from a long output
+/// keeps the style opened above it. Walks back from [end] only until both
+/// attributes are known.
+String ansiSgrStateAt(String s, int end) {
+  bool? bold;
+  var fgKnown = false;
+  AnsiColorIndex? fg;
+  var at = end <= 0 ? -1 : s.lastIndexOf('$_esc[', end - 1);
+  while (at >= 0 && (bold == null || !fgKnown)) {
+    var close = at + 2;
+    while (close < end && _isSgrParam(s.codeUnitAt(close))) {
+      close++;
+    }
+    if (close < end && s.codeUnitAt(close) == 0x6D /* m */ ) {
+      final effect = _sgrEffect(s.substring(at + 2, close));
+      bold ??= effect.bold;
+      if (!fgKnown && effect.setsFg) {
+        fgKnown = true;
+        fg = effect.fg;
+      }
+    }
+    at = at == 0 ? -1 : s.lastIndexOf('$_esc[', at - 1);
+  }
+  final codes = [
+    if (bold == true) 1,
+    if (fg != null) fg < 8 ? 30 + fg : 90 + fg - 8,
+  ];
+  return codes.isEmpty ? '' : '$_esc[${codes.join(';')}m';
+}
+
+bool _isSgrParam(int unit) => (unit >= 0x30 && unit <= 0x39) || unit == 0x3B;

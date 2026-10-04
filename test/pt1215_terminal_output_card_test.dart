@@ -146,6 +146,102 @@ void main() {
     expect(find.text('Output'), findsOneWidget);
   });
 
+  group('tail keeps the ANSI state set before its first line', () {
+    Map<String, ({Color? color, bool bold})> styles(TextSpan root) {
+      final out = <String, ({Color? color, bool bold})>{};
+      void visit(InlineSpan span, TextStyle inherited) {
+        if (span is! TextSpan) return;
+        final style = inherited.merge(span.style);
+        final text = span.text;
+        if (text != null) {
+          for (final line in text.split('\n')) {
+            if (line.isEmpty) continue;
+            out[line] = (
+              color: style.color,
+              bold: style.fontWeight == FontWeight.w700,
+            );
+          }
+        }
+        for (final child in span.children ?? const <InlineSpan>[]) {
+          visit(child, style);
+        }
+      }
+
+      visit(root, const TextStyle());
+      return out;
+    }
+
+    Future<Map<String, ({Color? color, bool bold})>> foldedTail(
+      WidgetTester tester,
+      String output,
+    ) async {
+      await tester.pumpWidget(_host(TerminalOutputCard(output: output)));
+      final tail = find.descendant(
+        of: find.byKey(const ValueKey('terminal-output-tail')),
+        matching: find.byType(RichText),
+      );
+      return styles(tester.widget<RichText>(tail.first).text as TextSpan);
+    }
+
+    testWidgets('a colour opened above the tail still paints it', (
+      tester,
+    ) async {
+      final colors = AppTheme.hermesRedDark.hermes;
+      final shown = await foldedTail(
+        tester,
+        '$_e[1;31mFAIL a\nFAIL b\nFAIL c\nFAIL d\nFAIL e\nFAIL f$_e[0m',
+      );
+      expect(shown.keys, ['FAIL c', 'FAIL d', 'FAIL e', 'FAIL f']);
+      for (final style in shown.values) {
+        expect(style.color, colors.error);
+        expect(style.bold, isTrue);
+      }
+    });
+
+    final colors = AppTheme.hermesRedDark.hermes;
+    for (final (name, output, color, bold) in [
+      (
+        'latest of each attribute (both in one sequence)',
+        '$_e[1m$_e[31mx\n$_e[32;22my\nz\na\nb\nc',
+        colors.success,
+        false,
+      ),
+      (
+        'an older bold does not override a newer reset of it',
+        '$_e[31mr\n$_e[1mx\n$_e[22my\nz\na\nb\nc',
+        colors.error,
+        false,
+      ),
+      (
+        'an older colour does not override a newer one',
+        '$_e[1mx\n$_e[31my\n$_e[32mw\nz\na\nb\nc',
+        colors.success,
+        true,
+      ),
+    ]) {
+      testWidgets('only the latest carries over: $name', (tester) async {
+        final shown = await foldedTail(tester, output);
+        expect(shown.keys, ['z', 'a', 'b', 'c']);
+        for (final style in shown.values) {
+          expect(style.color, color);
+          expect(style.bold, bold);
+        }
+      });
+    }
+
+    testWidgets('a reset above the tail leaves it plain', (tester) async {
+      final shown = await foldedTail(
+        tester,
+        '$_e[31mred$_e[0m\nplain 1\nplain 2\nplain 3\nplain 4',
+      );
+      expect(shown.keys, ['plain 1', 'plain 2', 'plain 3', 'plain 4']);
+      for (final style in shown.values) {
+        expect(style.color, AppTheme.hermesRedDark.hermes.textSecondary);
+        expect(style.bold, isFalse);
+      }
+    });
+  });
+
   testWidgets('short output has nothing to unfold', (tester) async {
     await tester.pumpWidget(_host(const TerminalOutputCard(output: 'a\nb')));
     expect(find.text('Output'), findsOneWidget);

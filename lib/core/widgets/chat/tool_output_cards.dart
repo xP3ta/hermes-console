@@ -485,14 +485,16 @@ final class _TerminalLines {
 
   final Map<int, ({String text, int lines})> _tails = {};
 
-  /// The last [lines] lines (or all of them when fewer).
+  /// The last [lines] lines (or all of them when fewer), opened with the
+  /// colour/bold in effect where they start.
   ({String text, int lines}) tail(int lines) => _tails[lines] ??= () {
     if (count <= lines) return (text: output, lines: count);
     var start = output.length;
     for (var i = 0; i < lines; i++) {
       start = output.lastIndexOf('\n', start - 1);
     }
-    return (text: output.substring(start + 1), lines: lines);
+    final state = ansiSgrStateAt(output, start + 1);
+    return (text: state + output.substring(start + 1), lines: lines);
   }();
 }
 
