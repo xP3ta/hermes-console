@@ -1018,7 +1018,7 @@ int _deepJsonHash(Object? value) {
 }
 
 /// The identity/recovery scalars of an `error_surface`; never free text
-/// beyond a short label.
+/// beyond a short label and the gateway's bounded `message`.
 Map<String, Object> _errorSurfaceScalars(Object? value) {
   if (value is! Map) return const {};
   final out = <String, Object>{};
@@ -1037,6 +1037,15 @@ Map<String, Object> _errorSurfaceScalars(Object? value) {
   }
   final retryable = value['retryable'];
   if (retryable is bool) out['retryable'] = retryable;
+  final resetsAt = value['resets_at'];
+  if (resetsAt is num && resetsAt.isFinite && resetsAt > 0) {
+    out['resets_at'] = resetsAt;
+  }
+  final message = value['message'];
+  if (message is String && message.trim().isNotEmpty) {
+    final text = message.trim();
+    out['message'] = text.length <= 500 ? text : text.substring(0, 500);
+  }
   return Map.unmodifiable(out);
 }
 

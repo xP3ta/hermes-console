@@ -25,7 +25,7 @@ import 'dart:math' as math;
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart'
-    show ValueListenable, ValueNotifier, visibleForTesting;
+    show ValueListenable, ValueNotifier, mapEquals, visibleForTesting;
 import 'package:flutter/gestures.dart' show kTouchSlop;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart'
@@ -159,6 +159,8 @@ import 'memory_screen.dart';
 import 'models_screen.dart';
 import '../models/provider_auth_failure.dart';
 import '../widgets/provider_reauth.dart';
+import '../widgets/turn_error_copy.dart';
+import '../models/turn_error_surface.dart';
 import 'recovery_center_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
@@ -8718,6 +8720,84 @@ class _ChatScreenState extends State<ChatScreen>
 
   bool _providerReauthRunning = false;
 
+  /// "Compactar conversación" on the card: the `/compress` the composer
+  /// already runs. That flow takes over the composer text, so a draft the user
+  /// was typing is put back afterwards.
+  Future<void> _compressFromError() async {
+    final draft = _textController.text;
+    await _compressDesktopSession('');
+    if (draft.isNotEmpty && mounted) _restoreSlashInvocation(draft);
+  }
+
+  /// "Editar mensaje" on the card: opens the edit of the message the failed
+  /// turn answered, or null when it cannot be edited.
+  VoidCallback? _editMessageOfError(Map<String, dynamic> error) {
+    var foundError = false;
+    Map<String, dynamic>? target;
+    for (final message in _messages) {
+      if (identical(message, error)) {
+        foundError = true;
+        continue;
+      }
+      if (foundError && isRealUserTurn(message)) {
+        target = message;
+        break;
+      }
+    }
+    // The card may hold a projected copy of its row: the newest user turn is
+    // then the one the failure answered.
+    if (!foundError) {
+      for (final message in _messages) {
+        if (isRealUserTurn(message)) {
+          target = message;
+          break;
+        }
+      }
+    }
+    final user = target;
+    if (user == null || !_canEditUserMessage(user)) return null;
+    return () {
+      if (!mounted) return;
+      _editUserMessage(user, MediaQuery.sizeOf(context).width * 0.85);
+    };
+  }
+
+  /// Billing action: Nous opens the existing Models/account screen; another
+  /// provider opens its `https` billing page in the system browser.
+  VoidCallback? _openBillingAction(TurnBillingBlock? billing) {
+    if (billing == null) return null;
+    if (billing.isNous) {
+      return () => _pushScreen(ModelsScreen(connection: widget.connection));
+    }
+    final url = billing.billingUrl;
+    if (url == null) return null;
+    return () => unawaited(
+      launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+    );
+  }
+
+  /// Free-tier sign-in is only offered when the Accounts catalog of this
+  /// chat's profile lists `nous`, so it never opens a dead flow.
+  Future<bool> _freeTierSignInAvailable() async {
+    final client = (widget.providerReauthClientFactory ?? DashboardClient.lazy)(
+      widget.connection,
+    );
+    final rows = await client.getOAuthProviders(
+      profile: Session.profileOwner(_chat.sessionProfile),
+    );
+    return rows.any((row) => row['id'] == 'nous');
+  }
+
+  void _signInFreeTier() => unawaited(
+    _reauthProvider(
+      const ProviderAuthFailure(
+        provider: 'nous',
+        label: 'Nous',
+        kind: ProviderAuthKind.oauth,
+      ),
+    ),
+  );
+
   /// "Volver a iniciar sesión" / "Revisar la clave" on a provider credential
   /// failure. After a successful sign-in the turn can be retried in place.
   Future<void> _reauthProvider(
@@ -11136,16 +11216,23 @@ class _ChatScreenState extends State<ChatScreen>
     // tool names itself). «Ejecutando herramientas…» with none listed read
     // as a pill out of sync with its own panel; between steps the agent is
     // thinking, as the list and Home say.
-    final activityHeadline = switch (_pipelineState) {
-      // cq1215: a post-cut viewer stays `connecting` for the rest of the
-      // turn; with the socket back it is watching a running turn.
-      ChatPipelineState.connecting
-          when _chat.observesRemoteTurnAfterReconnect =>
-        s.ss1215StatusWorking,
-      ChatPipelineState.connecting => s.chaPipelineConnecting,
-      ChatPipelineState.streaming => s.chaPipelineStreaming,
-      _ => s.chaPipelineThinking,
-    };
+    // A provider wait the core explained ("⏳ waiting on provider…") is the
+    // turn's status line until the provider answers.
+    final providerWait = _pipelineState == ChatPipelineState.connecting
+        ? null
+        : _chat.providerWaitText;
+    final activityHeadline =
+        providerWait ??
+        switch (_pipelineState) {
+          // cq1215: a post-cut viewer stays `connecting` for the rest of the
+          // turn; with the socket back it is watching a running turn.
+          ChatPipelineState.connecting
+              when _chat.observesRemoteTurnAfterReconnect =>
+            s.ss1215StatusWorking,
+          ChatPipelineState.connecting => s.chaPipelineConnecting,
+          ChatPipelineState.streaming => s.chaPipelineStreaming,
+          _ => s.chaPipelineThinking,
+        };
     return chatActivityHeadlineForTransport(
       transportLossVisible: _transportVisibility.visible,
       authRequired: _chat.dashboardAuthRequired,
@@ -15795,10 +15882,15 @@ class _ChatScreenState extends State<ChatScreen>
       final authFailure = ProviderAuthFailure.fromJson(
         msg[providerAuthFailureKey],
       );
-      final onRetry = _chat.conflictReadOnly
+      final onRetry = _chat.conflictReadOnly || widget.connection.readOnly
           ? null
           : () => unawaited(_retryLastPrompt(prompt));
-      return _ErrorBubble(
+      final surface = TurnErrorSurface.parse(msg[turnErrorSurfaceKey]);
+      final billing = TurnBillingBlock.parse(msg[turnBillingBlockKey]);
+      final failedTurn = _chat.currentFailedTurnToken;
+      final retryChat = _chat;
+      final readOnly = _chat.conflictReadOnly || widget.connection.readOnly;
+      return ChatErrorBubble(
         error: activeChatStoredErrorUiMessage(content),
         onRetry: onRetry,
         prompt: prompt,
@@ -15808,6 +15900,42 @@ class _ChatScreenState extends State<ChatScreen>
         onReauth: authFailure == null || _providerReauthRunning
             ? null
             : () => unawaited(_reauthProvider(authFailure, onRetry: onRetry)),
+        surface: surface,
+        billing: billing,
+        onCompress: readOnly ? null : () => unawaited(_compressFromError()),
+        onChooseModel: readOnly ? null : _showModelSheet,
+        onEditMessage: _editMessageOfError(msg),
+        onOpenBilling: _openBillingAction(billing),
+        onSignInFreeTier: readOnly ? null : _signInFreeTier,
+        freeTierSignInAvailable: _freeTierSignInAvailable,
+        // A retry may only be armed on the failed turn that is still the last
+        // one; a different chat, profile or failed turn drops it.
+        canArmRetry:
+            onRetry != null &&
+            failedTurn != null &&
+            _chat.state == ChatPipelineState.failed,
+        retryScope: (
+          retryChat,
+          Session.profileOwner(_chat.sessionProfile),
+          failedTurn,
+        ),
+        onScheduledRetry: onRetry == null || failedTurn == null
+            ? null
+            : () {
+                if (!mounted ||
+                    !identical(_chat, retryChat) ||
+                    _chat.state != ChatPipelineState.failed ||
+                    !_isSameFailedTurn(
+                      retryChat.currentFailedTurnToken,
+                      failedTurn,
+                    )) {
+                  return;
+                }
+                onRetry();
+              },
+        now: _chat.wallNow,
+        composerProvider: _chat.desktopRuntimeInfo.provider,
+        composerModel: _chat.desktopRuntimeInfo.model,
       );
     }
 
@@ -17215,7 +17343,8 @@ final _classifyError = classifyChatError;
 ///
 /// Diferencia el tipo de error (conexión/modelo/herramienta/local/desconocido)
 /// usando únicamente el copy público ya saneado por ActiveChat.
-class _ErrorBubble extends StatefulWidget {
+@visibleForTesting
+class ChatErrorBubble extends StatefulWidget {
   final String error;
   final String prompt;
   final VoidCallback? onRetry;
@@ -17233,7 +17362,40 @@ class _ErrorBubble extends StatefulWidget {
   final ProviderAuthFailure? authFailure;
   final VoidCallback? onReauth;
 
-  const _ErrorBubble({
+  /// What the gateway said failed (`error_surface`) and, for a provider out of
+  /// credit, its `billing` block. With either, the card follows the recovery
+  /// plan; without them it is the text-classified card of older servers.
+  final TurnErrorSurface? surface;
+  final TurnBillingBlock? billing;
+
+  /// Recovery handlers the plan may offer; a null one is never painted.
+  final VoidCallback? onCompress;
+  final VoidCallback? onChooseModel;
+  final VoidCallback? onEditMessage;
+  final VoidCallback? onOpenBilling;
+
+  /// Free-tier sign-in: only painted when [freeTierSignInAvailable] answers
+  /// true (checked once, when the details open).
+  final VoidCallback? onSignInFreeTier;
+  final Future<bool> Function()? freeTierSignInAvailable;
+
+  /// A usage-limit retry may be armed only while the failed turn is the last
+  /// one; [retryScope] changing (another chat or profile) drops an armed retry.
+  final bool canArmRetry;
+  final Object? retryScope;
+
+  /// What an armed retry runs when its time comes; defaults to [onRetry]. The
+  /// screen guards it so it only resends the turn the card belongs to.
+  final VoidCallback? onScheduledRetry;
+
+  /// Clock and app version, replaceable in tests.
+  final DateTime Function()? now;
+  final String? composerProvider;
+  final String? composerModel;
+  final Future<String> Function()? appVersion;
+
+  const ChatErrorBubble({
+    super.key,
     required this.error,
     required this.prompt,
     required this.onRetry,
@@ -17241,13 +17403,28 @@ class _ErrorBubble extends StatefulWidget {
     this.onNewSession,
     this.authFailure,
     this.onReauth,
+    this.surface,
+    this.billing,
+    this.onCompress,
+    this.onChooseModel,
+    this.onEditMessage,
+    this.onOpenBilling,
+    this.onSignInFreeTier,
+    this.freeTierSignInAvailable,
+    this.canArmRetry = false,
+    this.retryScope,
+    this.onScheduledRetry,
+    this.now,
+    this.composerProvider,
+    this.composerModel,
+    this.appVersion,
   });
 
   @override
-  State<_ErrorBubble> createState() => _ErrorBubbleState();
+  State<ChatErrorBubble> createState() => _ErrorBubbleState();
 }
 
-class _ErrorBubbleState extends State<_ErrorBubble> {
+class _ErrorBubbleState extends State<ChatErrorBubble> {
   bool _expanded = false;
 
   String _kindLabel(_ErrorKind kind, Strings s) => switch (kind) {
@@ -17276,6 +17453,11 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
 
   @override
   Widget build(BuildContext context) {
+    // The gateway named what failed: the card follows its recovery plan. Older
+    // servers send no surface and keep the text-classified card below.
+    if (widget.surface != null || widget.billing != null) {
+      return _PlannedErrorCard(bubble: widget);
+    }
     final colors = Theme.of(context).hermes;
     final str = Strings.of(context);
     final kind = _classifyError(widget.error);
@@ -17420,6 +17602,438 @@ class _ErrorBubbleState extends State<_ErrorBubble> {
                       ),
                   ],
                 ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Error card driven by the gateway's `error_surface`: what failed, one
+/// visible recovery action, the rest behind the details, the usage-limit reset
+/// and "Copiar detalles".
+class _PlannedErrorCard extends StatefulWidget {
+  final ChatErrorBubble bubble;
+
+  const _PlannedErrorCard({required this.bubble});
+
+  @override
+  State<_PlannedErrorCard> createState() => _PlannedErrorCardState();
+}
+
+/// Whether [a] and [b] show the same failed turn of the same chat/profile.
+bool _sameFailure(ChatErrorBubble a, ChatErrorBubble b) =>
+    a.retryScope == b.retryScope &&
+    a.error == b.error &&
+    a.prompt == b.prompt &&
+    mapEquals(a.surface?.toJson(), b.surface?.toJson()) &&
+    mapEquals(a.billing?.toJson(), b.billing?.toJson());
+
+class _PlannedErrorCardState extends State<_PlannedErrorCard>
+    with WidgetsBindingObserver {
+  bool _expanded = false;
+
+  /// The single armed retry of a usage limit. Local only: it never outlives
+  /// the card, the failed turn, the chat/profile or the app in the foreground.
+  Timer? _armTimer;
+  Timer? _tickTimer;
+  double? _armedResetsAt;
+
+  /// `null` until the user opens the details of a free-tier failure.
+  bool? _freeTierSignInOffered;
+  bool _freeTierChecked = false;
+
+  /// Bumped when this slot starts showing another failure, so the answer of a
+  /// check started for the previous one is dropped.
+  int _failureGeneration = 0;
+
+  ChatErrorBubble get _bubble => widget.bubble;
+  bool get _armed => _armTimer != null;
+  DateTime _now() => (_bubble.now ?? DateTime.now)();
+
+  TurnErrorSurface get _surface =>
+      _bubble.surface ??
+      const TurnErrorSurface(
+        layer: 'billing',
+        code: 'billing',
+        retryable: false,
+      );
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didUpdateWidget(_PlannedErrorCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final old = oldWidget.bubble;
+    if (!_sameFailure(old, _bubble)) {
+      _failureGeneration++;
+      _expanded = false;
+      _freeTierChecked = false;
+      _freeTierSignInOffered = null;
+    }
+    if (_armed &&
+        (!_bubble.canArmRetry ||
+            _bubble.retryScope != old.retryScope ||
+            _bubble.surface?.resetsAt != old.surface?.resetsAt)) {
+      _disarm();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed && _armed) _disarm();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _armTimer?.cancel();
+    _tickTimer?.cancel();
+    super.dispose();
+  }
+
+  void _arm(double resetsAt, Duration delay) {
+    _armTimer?.cancel();
+    _tickTimer?.cancel();
+    _armedResetsAt = resetsAt;
+    _armTimer = Timer(delay, _fire);
+    _tickTimer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+    setState(() {});
+  }
+
+  void _disarm() {
+    _armTimer?.cancel();
+    _tickTimer?.cancel();
+    _armTimer = null;
+    _tickTimer = null;
+    _armedResetsAt = null;
+    if (mounted) setState(() {});
+  }
+
+  /// Local one-second tick for the visible countdown; no network.
+  void _tick() {
+    if (!mounted) return;
+    // A route over the chat (an opaque page) turns this subtree's tickers off.
+    if (!TickerMode.valuesOf(context).enabled) {
+      _disarm();
+      return;
+    }
+    setState(() {});
+  }
+
+  void _fire() {
+    if (!mounted || !_armed) return;
+    final retry = _bubble.onScheduledRetry ?? _bubble.onRetry;
+    final allowed = _bubble.canArmRetry && TickerMode.valuesOf(context).enabled;
+    _disarm();
+    if (allowed) retry?.call();
+  }
+
+  void _toggleDetails() {
+    setState(() => _expanded = !_expanded);
+    if (!_expanded || _freeTierChecked) return;
+    final check = _bubble.freeTierSignInAvailable;
+    if (!_surface.isFreeTier ||
+        check == null ||
+        _bubble.onSignInFreeTier == null) {
+      return;
+    }
+    _freeTierChecked = true;
+    final generation = _failureGeneration;
+    check().then<void>(
+      (offered) {
+        if (mounted && generation == _failureGeneration) {
+          setState(() => _freeTierSignInOffered = offered);
+        }
+      },
+      onError: (Object _) {
+        if (mounted && generation == _failureGeneration) {
+          setState(() => _freeTierSignInOffered = false);
+        }
+      },
+    );
+  }
+
+  Future<void> _copyDetails() async {
+    final notices = HermesNotice.of(context);
+    final copied = Strings.of(context).te1215DetailsCopied;
+    String version;
+    try {
+      version = await (_bubble.appVersion ?? appVersionLabel)();
+    } catch (_) {
+      version = 'unknown';
+    }
+    final text = formatErrorDiagnostics(
+      now: _now(),
+      surface: _bubble.surface,
+      composerProvider: _bubble.composerProvider,
+      composerModel: _bubble.composerModel,
+      appVersion: version,
+      error: _bubble.error,
+    );
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    notices.showSnackBar(
+      SnackBar(content: Text(copied)),
+      kind: HermesNoticeKind.success,
+    );
+  }
+
+  /// The actions the plan allows and the screen can run, most relevant first.
+  List<({String name, String label, VoidCallback onTap})> _actions(
+    Strings s,
+    ErrorRecoveryPlan plan,
+  ) {
+    final out = <({String name, String label, VoidCallback onTap})>[];
+    final billing = _bubble.billing;
+    final onBilling = _bubble.onOpenBilling;
+    if (billing != null && onBilling != null) {
+      out.add((
+        name: 'billing',
+        label: billing.isNous ? s.te1215BillingNous : s.te1215BillingLink,
+        onTap: onBilling,
+      ));
+    }
+    for (final action in errorRecoveryActions(plan)) {
+      final VoidCallback? handler = switch (action) {
+        ErrorRecoveryAction.signInAgain || ErrorRecoveryAction.updateApiKey =>
+          _bubble.authFailure == null ? null : _bubble.onReauth,
+        ErrorRecoveryAction.compress => _bubble.onCompress,
+        ErrorRecoveryAction.chooseModel ||
+        ErrorRecoveryAction.switchProvider => _bubble.onChooseModel,
+        ErrorRecoveryAction.editMessage => _bubble.onEditMessage,
+        ErrorRecoveryAction.retry => _bubble.onRetry,
+        ErrorRecoveryAction.startNewSession => _bubble.onNewSession,
+        ErrorRecoveryAction.signInFreeTier =>
+          _freeTierSignInOffered == true ? _bubble.onSignInFreeTier : null,
+      };
+      // Choosing a model and switching provider open the same picker.
+      if (handler == null ||
+          out.any((entry) => identical(entry.onTap, handler))) {
+        continue;
+      }
+      out.add((
+        name: action.name,
+        label: errorRecoveryActionLabel(s, action),
+        onTap: handler,
+      ));
+    }
+    return out;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    final surface = _surface;
+    final billing = _bubble.billing;
+    final authFailure = _bubble.authFailure;
+    final plan = errorRecoveryPlan(surface: surface, authFailure: authFailure);
+    final copy = turnErrorCopy(s, surface);
+    final title = billing != null
+        ? s.te1215BillingTitle(billing.providerLabel)
+        : authFailure != null
+        ? providerAuthTitle(s, authFailure)
+        : copy.title;
+    final errorText = _bubble.error;
+    final summary = billing != null
+        ? billing.firstLine
+        : authFailure != null
+        ? providerAuthBody(s, authFailure)
+        : surface.isFreeTier && surface.message != null
+        ? surface.message!
+        : copy.hint ??
+              (errorText.length > 140
+                  ? '${errorText.substring(0, 140)}…'
+                  : errorText);
+
+    final now = _now();
+    final reset = plan.retry ? formatLimitReset(surface.resetsAt, now) : null;
+    final delay = reset == null
+        ? null
+        : scheduledRetryDelay(surface.resetsAt, now);
+    final canSchedule =
+        delay != null && _bubble.canArmRetry && _bubble.onRetry != null;
+    final armedReset = _armed ? formatLimitReset(_armedResetsAt, now) : null;
+
+    final actions = _actions(s, plan);
+    final primary = actions.isEmpty ? null : actions.first;
+    final secondary = actions.skip(1).toList(growable: false);
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 12, right: 56, top: 11, bottom: 3),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const _AssistantHeaderCompanion(
+                  mood: HermesSparkMood.error,
+                  animate: false,
+                ),
+                Text(
+                  '▸ hermes',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: colors.error,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: colors.error.withValues(alpha: 0.07),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: colors.error.withValues(alpha: 0.18)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      authFailure != null
+                          ? Icons.key_off_rounded
+                          : _classifyError(errorText).icon,
+                      size: 14,
+                      color: colors.error,
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: colors.error,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _expanded ? errorText : summary,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: colors.error.withValues(alpha: 0.92),
+                    fontFamily: _expanded ? 'monospace' : null,
+                  ),
+                ),
+                if (reset != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    s.te1215ResetsAt(reset.clock, reset.remaining),
+                    key: const ValueKey('te1215-error-resets'),
+                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
+                  ),
+                ],
+                if (armedReset != null) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    key: const ValueKey('te1215-error-armed'),
+                    children: [
+                      Flexible(
+                        child: Text(
+                          s.te1215RetryArmed(
+                            armedReset.clock,
+                            armedReset.remaining,
+                          ),
+                          style: TextStyle(fontSize: 11, color: colors.error),
+                        ),
+                      ),
+                      _ErrorBubbleAction(
+                        key: const ValueKey('te1215-error-cancel-arm'),
+                        label: s.chaCancel,
+                        color: colors.textSecondary,
+                        outlined: false,
+                        onTap: _disarm,
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  children: [
+                    if (primary != null)
+                      _ErrorBubbleAction(
+                        // The sign-in / key action keeps the key it always had.
+                        key: ValueKey(
+                          primary.name ==
+                                      ErrorRecoveryAction.signInAgain.name ||
+                                  primary.name ==
+                                      ErrorRecoveryAction.updateApiKey.name
+                              ? 'hr1215-error-reauth'
+                              : 'te1215-error-primary',
+                        ),
+                        label: primary.label,
+                        color: colors.error,
+                        onTap: primary.onTap,
+                      ),
+                    _ErrorBubbleAction(
+                      key: const ValueKey('te1215-error-details-toggle'),
+                      label: _expanded
+                          ? s.chaErrHideDetails
+                          : s.chaErrViewDetails,
+                      color: colors.textSecondary,
+                      outlined: false,
+                      onTap: _toggleDetails,
+                    ),
+                  ],
+                ),
+                if (_expanded)
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    children: [
+                      for (final action in secondary)
+                        _ErrorBubbleAction(
+                          key: ValueKey(
+                            action.name ==
+                                        ErrorRecoveryAction.signInAgain.name ||
+                                    action.name ==
+                                        ErrorRecoveryAction.updateApiKey.name
+                                ? 'hr1215-error-reauth'
+                                : 'te1215-error-action-${action.name}',
+                          ),
+                          label: action.label,
+                          color: colors.error,
+                          onTap: action.onTap,
+                        ),
+                      if (canSchedule && !_armed && reset != null)
+                        _ErrorBubbleAction(
+                          key: const ValueKey('te1215-error-arm'),
+                          label: s.te1215RetryAt(reset.clock),
+                          color: colors.error,
+                          onTap: () => _arm(surface.resetsAt!, delay),
+                        ),
+                      _ErrorBubbleAction(
+                        key: const ValueKey('te1215-error-copy'),
+                        label: s.te1215CopyDetails,
+                        color: colors.textSecondary,
+                        outlined: false,
+                        onTap: () => unawaited(_copyDetails()),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),

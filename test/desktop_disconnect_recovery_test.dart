@@ -6324,6 +6324,62 @@ void main() {
     );
   });
 
+  test('snapshot fallido de recovery conserva el error_surface', () async {
+    final gateway = _LifecycleRecoverableGateway()
+      ..initialSnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-surface-failure-1',
+        storedSessionId: 'session-surface-failure',
+        created: false,
+        messagesProvided: true,
+        messages: [
+          DesktopSessionMessage.tryParse(const {
+            'message_id': 'surface-failure-user',
+            'role': 'user',
+            'content': 'turno con límite',
+          })!,
+        ],
+        inflight: DesktopInflightTurn(user: 'turno con límite', streaming: true),
+        running: true,
+      )
+      ..recoverySnapshot = DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-surface-failure-2',
+        storedSessionId: 'session-surface-failure',
+        created: false,
+        messagesProvided: false,
+        inflight: DesktopInflightTurn(
+          user: 'turno con límite',
+          error: 'Rate limited by the provider',
+          status: 'error',
+          recoverable: true,
+          errorSurface: const {
+            'layer': 'provider',
+            'code': 'rate_limit',
+            'retryable': true,
+            'resets_at': 1790000000.5,
+          },
+        ),
+        running: false,
+        status: 'error',
+      );
+    final chat = _recoverableChat('surface-recovery-failure', gateway);
+    addTearDown(chat.dispose);
+
+    await chat.loadMessages();
+    chat.markCurrentTurnClientSubmittedForTesting();
+    gateway.drop();
+    await _waitUntil(() => chat.state == ChatPipelineState.failed);
+
+    final error = chat.messages.firstWhere(
+      (message) => message['role'] == 'assistant_error',
+    );
+    expect(error['_errorSurface'], {
+      'layer': 'provider',
+      'code': 'rate_limit',
+      'retryable': true,
+      'resets_at': 1790000000.5,
+    });
+  });
+
   test(
     'recovery sin mensajes no trata una cola parcial como transcript completo',
     () async {

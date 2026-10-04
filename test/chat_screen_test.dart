@@ -30809,6 +30809,344 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  group('te1215 failed turn cards follow the recovery plan', () {
+    // A failed `message.complete` carries the gateway's `error_surface`: the
+    // card names the layer, offers one recovery action and, for a usage
+    // limit, one local retry armed for the time the provider lifts it.
+    final start = DateTime(2026, 10, 4, 12, 0);
+    late int nowMs;
+
+    Future<void> settle(WidgetTester tester) async {
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    Future<(ActiveChat, _UiRewindGateway)> failTurn(
+      WidgetTester tester, {
+      required Map<String, dynamic> payload,
+      DashboardClient Function(SavedConnection)? dashboard,
+      bool readOnly = false,
+    }) async {
+      nowMs = start.millisecondsSinceEpoch;
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-te1215').copyWith(readOnly: readOnly),
+        messagesLoaded: true,
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+        providerReauthClientFactory: dashboard,
+        wallClockMs: () => nowMs,
+      );
+      expect(
+        await chat.send(
+          fullText: 'Resume el informe',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      gateway.emit('message.complete', payload);
+      await settle(tester);
+      return (chat, gateway);
+    }
+
+    Map<String, dynamic> rateLimited({int minutes = 65}) => {
+      'text': '',
+      'status': 'error',
+      'error': 'Rate limited by the provider',
+      'message': 'Rate limited by the provider',
+      'recoverable': true,
+      'error_surface': {
+        'layer': 'provider',
+        'code': 'rate_limit',
+        'retryable': true,
+        'resets_at':
+            start.add(Duration(minutes: minutes)).millisecondsSinceEpoch / 1000,
+      },
+    };
+
+    Future<void> openDetails(WidgetTester tester) async {
+      await tester.tap(
+        find.byKey(const ValueKey('te1215-error-details-toggle')),
+      );
+      await tester.pump();
+    }
+
+    testWidgets('a usage limit names the reset time and arms one retry', (
+      tester,
+    ) async {
+      final (_, gateway) = await failTurn(tester, payload: rateLimited());
+
+      expect(
+        find.text('Se restablece a las 13:05 (en 1 h 05 min)'),
+        findsOneWidget,
+      );
+      expect(gateway.submissions, ['Resume el informe']);
+      await openDetails(tester);
+      await tester.tap(find.text('Reintentar a las 13:05'));
+      await tester.pump();
+      expect(gateway.submissions, ['Resume el informe']);
+
+      nowMs = start.add(const Duration(minutes: 65)).millisecondsSinceEpoch;
+      await tester.pump(const Duration(minutes: 65));
+      await settle(tester);
+
+      expect(gateway.submissions, ['Resume el informe', 'Resume el informe']);
+      await tester.pump(const Duration(hours: 3));
+      expect(gateway.submissions, ['Resume el informe', 'Resume el informe']);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a read-only connection offers no retry, armed or not', (
+      tester,
+    ) async {
+      final (_, gateway) = await failTurn(
+        tester,
+        payload: rateLimited(),
+        readOnly: true,
+      );
+
+      expect(
+        find.text('Se restablece a las 13:05 (en 1 h 05 min)'),
+        findsOneWidget,
+      );
+      expect(find.text('↺ reintentar'), findsNothing);
+      await openDetails(tester);
+      expect(find.text('Reintentar a las 13:05'), findsNothing);
+      expect(find.textContaining('Reintentar'), findsNothing);
+
+      nowMs = start.add(const Duration(minutes: 65)).millisecondsSinceEpoch;
+      await tester.pump(const Duration(minutes: 65));
+      expect(gateway.submissions, ['Resume el informe']);
+    });
+
+    testWidgets('cancelling the armed retry sends nothing', (tester) async {
+      final (_, gateway) = await failTurn(tester, payload: rateLimited());
+      await openDetails(tester);
+      await tester.tap(find.text('Reintentar a las 13:05'));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('te1215-error-cancel-arm')));
+      await tester.pump();
+
+      nowMs = start.add(const Duration(hours: 2)).millisecondsSinceEpoch;
+      await tester.pump(const Duration(hours: 2));
+
+      expect(gateway.submissions, ['Resume el informe']);
+    });
+
+    testWidgets('leaving the chat with an armed retry sends nothing', (
+      tester,
+    ) async {
+      final (_, gateway) = await failTurn(tester, payload: rateLimited());
+      await openDetails(tester);
+      await tester.tap(find.text('Reintentar a las 13:05'));
+      await tester.pump();
+
+      tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+      await settle(tester);
+      nowMs = start.add(const Duration(hours: 2)).millisecondsSinceEpoch;
+      await tester.pump(const Duration(hours: 2));
+
+      expect(gateway.submissions, ['Resume el informe']);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a newer turn disarms the retry of the failed one', (
+      tester,
+    ) async {
+      final (chat, gateway) = await failTurn(tester, payload: rateLimited());
+      await openDetails(tester);
+      await tester.tap(find.text('Reintentar a las 13:05'));
+      await tester.pump();
+
+      expect(
+        await chat.send(
+          fullText: 'Otra cosa',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      await settle(tester);
+      expect(gateway.submissions, ['Resume el informe', 'Otra cosa']);
+
+      nowMs = start.add(const Duration(hours: 2)).millisecondsSinceEpoch;
+      await tester.pump(const Duration(hours: 2));
+      expect(gateway.submissions, ['Resume el informe', 'Otra cosa']);
+    });
+
+    testWidgets('a socket drop with the retry armed never sends it twice', (
+      tester,
+    ) async {
+      final (_, gateway) = await failTurn(tester, payload: rateLimited());
+      await openDetails(tester);
+      await tester.tap(find.text('Reintentar a las 13:05'));
+      await tester.pump();
+
+      gateway.connected = false;
+      await tester.pump(const Duration(minutes: 10));
+      gateway.connected = true;
+      nowMs = start.add(const Duration(minutes: 65)).millisecondsSinceEpoch;
+      await tester.pump(const Duration(minutes: 60));
+      await settle(tester);
+      await tester.pump(const Duration(hours: 2));
+
+      final resubmissions = gateway.submissions
+          .where((text) => text == 'Resume el informe')
+          .length;
+      expect(
+        resubmissions,
+        2,
+        reason: 'the initial send plus the one armed retry, never a third',
+      );
+    });
+
+    testWidgets('context_overflow compacts through the existing command', (
+      tester,
+    ) async {
+      final (_, gateway) = await failTurn(
+        tester,
+        payload: const {
+          'text': '',
+          'status': 'error',
+          'error': 'context too long',
+          'recoverable': false,
+          'error_surface': {
+            'layer': 'provider',
+            'code': 'context_overflow',
+            'retryable': false,
+          },
+        },
+      );
+
+      expect(find.text('Conversación demasiado larga'), findsOneWidget);
+      expect(find.text('↺ reintentar'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('te1215-error-primary')));
+      await settle(tester);
+
+      final compressed =
+          gateway.slashCalls.any(
+            (call) => call.command.startsWith('compress'),
+          ) ||
+          gateway.dispatchCalls.any((call) => call.name == 'compress');
+      expect(compressed, isTrue);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a draft in the composer survives compacting from the card', (
+      tester,
+    ) async {
+      final (_, gateway) = await failTurn(
+        tester,
+        payload: const {
+          'text': '',
+          'status': 'error',
+          'error': 'context too long',
+          'error_surface': {
+            'layer': 'provider',
+            'code': 'context_overflow',
+            'retryable': false,
+          },
+        },
+      );
+      await tester.enterText(find.byType(TextField).last, 'borrador a medias');
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('te1215-error-primary')));
+      await settle(tester);
+
+      expect(
+        gateway.slashCalls.any((call) => call.command.startsWith('compress')) ||
+            gateway.dispatchCalls.any((call) => call.name == 'compress'),
+        isTrue,
+      );
+      expect(find.text('borrador a medias'), findsOneWidget);
+    });
+
+    testWidgets('a server without error_surface keeps the legacy card', (
+      tester,
+    ) async {
+      await failTurn(
+        tester,
+        payload: const {
+          'text': '',
+          'status': 'error',
+          'error': 'Rate limited by the provider',
+          'recoverable': true,
+        },
+      );
+
+      expect(find.text('↺ reintentar'), findsOneWidget);
+      expect(find.byKey(const ValueKey('te1215-error-primary')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('te1215-error-details-toggle')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('without an error the chat shows none of it', (tester) async {
+      final gateway = _UiRewindGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-te1215'),
+        messagesLoaded: true,
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+
+      expect(
+        find.byKey(const ValueKey('te1215-error-details-toggle')),
+        findsNothing,
+      );
+      expect(find.textContaining('Se restablece'), findsNothing);
+    });
+
+    testWidgets('a provider wait shows on the turn status until the answer', (
+      tester,
+    ) async {
+      nowMs = start.millisecondsSinceEpoch;
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-te1215'),
+        messagesLoaded: true,
+        initialStoredSessionId: 'sess-test',
+        acquireDesktopRuntimeBeforeMount: true,
+        wallClockMs: () => nowMs,
+      );
+      expect(
+        await chat.send(
+          fullText: 'Resume el informe',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start', const {});
+      gateway.emit('thinking.delta', const {'text': '⏳ waiting on provider…'});
+      await settle(tester);
+      nowMs = start.add(const Duration(seconds: 5)).millisecondsSinceEpoch;
+      await tester.pump(const Duration(seconds: 3));
+
+      expect(find.text('⏳ waiting on provider…'), findsWidgets);
+
+      gateway.emit('message.delta', const {'text': 'Hola'});
+      await settle(tester);
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('⏳ waiting on provider…'), findsNothing);
+
+      gateway.emit('message.complete', const {'text': 'Hola'});
+      await settle(tester);
+      await tester.pump(const Duration(seconds: 2));
+    });
+  });
+
   group('hr1215 provider sign-in expired', () {
     // The owner's server lost its Anthropic OAuth grant: every turn and every
     // compaction failed with a provider 401 and the chat only said "No se
@@ -30935,6 +31273,12 @@ void main() {
         ),
         findsOneWidget,
       );
+      // The sign-in is the one visible action; Retry waits in the details.
+      expect(find.text('↺ reintentar'), findsNothing);
+      await tester.tap(
+        find.byKey(const ValueKey('te1215-error-details-toggle')),
+      );
+      await tester.pump();
       expect(find.text('↺ reintentar'), findsOneWidget);
 
       await tester.tap(action);
@@ -31042,6 +31386,10 @@ void main() {
           tester,
         ) async {
           final (_, gateway) = await signInAgain(tester);
+          await tester.tap(
+            find.byKey(const ValueKey('te1215-error-details-toggle')),
+          );
+          await tester.pump();
           final bubbleRetry = find
               .text('↺ reintentar')
               .evaluate()

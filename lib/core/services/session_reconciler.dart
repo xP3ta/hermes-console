@@ -5,6 +5,7 @@ import '../models/activity_snapshot.dart'
 import '../models/deferred_tool_call.dart';
 import '../models/desktop_session_snapshot.dart';
 import '../models/provider_auth_failure.dart';
+import '../models/turn_error_surface.dart';
 import '../models/transcript_privacy_state.dart';
 import '../utils/assistant_content.dart';
 import '../utils/chat_turn.dart';
@@ -1297,6 +1298,7 @@ class DesktopSessionReconciler {
           'partial': partial.isNotEmpty,
           'recoverable': ?inflight?.recoverable,
           providerAuthFailureKey: ?authFailure?.toJson(),
+          ...turnFailureMetadata(errorSurface: inflight?.errorSurface),
           '_desktopSnapshotKey': 'assistant-error-${snapshot.runtimeSessionId}',
           '_desktopSnapshotKind': 'inflight',
         }),
