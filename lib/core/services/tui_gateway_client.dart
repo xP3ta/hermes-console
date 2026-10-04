@@ -38,6 +38,7 @@ import '../models/project_files.dart';
 import 'capability_payload_sanitizer.dart';
 import 'connection_manager.dart';
 import 'desktop_control_gateway.dart';
+import '../models/foreign_session.dart';
 import 'session_pull_requests.dart';
 import 'desktop_gateway_capabilities.dart';
 import 'json_rpc_wire.dart';
@@ -1391,6 +1392,7 @@ class TuiGatewayClient
         HermesDesktopSessionControlGateway,
         HermesProjectManagementGateway,
         HermesPullRequestGateway,
+        HermesForeignSessionGateway,
         HermesProjectFilesGateway,
         HermesProjectFileWritesGateway,
         HermesExtensionManagementGateway,
@@ -6379,6 +6381,79 @@ class TuiGatewayClient
       }
       rethrow;
     }
+  }
+
+  /// False once `session.foreign.*` answered -32601 on this connection (or
+  /// for a read-only one): the import entry is then not offered.
+  bool get foreignSessionsAvailable =>
+      !_connection.readOnly &&
+      _capabilityCache.canAttempt(DesktopGatewayCapability.foreignSessions);
+
+  static const Duration _foreignTimeout = Duration(seconds: 60);
+
+  Map<String, dynamic> _foreignParams(
+    String? profile,
+    Map<String, Object?> rest,
+  ) {
+    final owner = profile?.trim() ?? '';
+    return {
+      if (owner.isNotEmpty) 'profile': owner,
+      for (final entry in rest.entries)
+        if (entry.value != null) entry.key: entry.value,
+    };
+  }
+
+  /// Foreign ids are opaque handles: sent exactly as received.
+  String _foreignHandle(String id) {
+    if (id.isEmpty || id.length > 1024) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    return id;
+  }
+
+  @override
+  Future<ForeignSessionPage> foreignList({
+    String? profile,
+    ForeignSource? source,
+    int? offset,
+  }) async {
+    final result = await _controlRequest(
+      'session.foreign.list',
+      _foreignParams(profile, {'source': source?.wire, 'offset': offset}),
+      timeout: _foreignTimeout,
+      capability: DesktopGatewayCapability.foreignSessions,
+    );
+    return ForeignSessionPage.fromJson(result);
+  }
+
+  @override
+  Future<ForeignPreview> foreignPreview(String id, {String? profile}) async {
+    final result = await _controlRequest(
+      'session.foreign.preview',
+      _foreignParams(profile, {'id': _foreignHandle(id)}),
+      timeout: _foreignTimeout,
+      capability: DesktopGatewayCapability.foreignSessions,
+    );
+    return ForeignPreview.fromJson(result);
+  }
+
+  @override
+  Future<ForeignImportResult> foreignImport(
+    String id, {
+    String? profile,
+  }) async {
+    _requireWritableControlConnection();
+    final result = await _controlRequest(
+      'session.foreign.import',
+      _foreignParams(profile, {'id': _foreignHandle(id)}),
+      timeout: _foreignTimeout,
+      capability: DesktopGatewayCapability.foreignSessions,
+    );
+    final parsed = ForeignImportResult.tryParse(result);
+    if (parsed == null) {
+      _invalidControlResponse(DesktopGatewayCapability.foreignSessions);
+    }
+    return parsed;
   }
 
   @override

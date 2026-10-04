@@ -45,6 +45,7 @@ import 'chat_screen.dart';
 import 'mission_control_screen.dart';
 import '../services/session_pull_requests.dart';
 import '../widgets/session_pull_request_row.dart';
+import 'foreign_session_import_screen.dart';
 import 'session_branches_screen.dart';
 import 'session_detail_screen.dart';
 import '../widgets/hermes_app_bar.dart';
@@ -1720,6 +1721,44 @@ class _SessionListScreenState extends State<SessionListScreen>
     };
   }
 
+  void _openForeignImport() {
+    final client = _ownedActivityClient;
+    if (client == null) return;
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => ForeignSessionImportScreen(
+          gateway: client,
+          profile: Session.profileOwner(_libraryQuery.profile),
+          onOpenSession: _openImportedSession,
+        ),
+      ),
+    );
+  }
+
+  /// One list refresh, then the imported (or already imported) session.
+  Future<void> _openImportedSession(String sessionId) async {
+    await _fetchSessions(showLoader: false);
+    if (!mounted) return;
+    final known = _sessions.where(
+      (row) => row.id == sessionId || row.lineageIds.contains(sessionId),
+    );
+    final session = known.isNotEmpty
+        ? known.first
+        : Session(
+            id: sessionId,
+            title: '',
+            model: '',
+            source: 'mobile',
+            messageCount: 0,
+            isActive: false,
+            preview: '',
+            startedAt: 0,
+            profile: _libraryQuery.profile,
+          );
+    await _openChat(session);
+  }
+
   Future<void> _openBranches(Session session) {
     final canLoadMore =
         _repository != null &&
@@ -2132,6 +2171,8 @@ class _SessionListScreenState extends State<SessionListScreen>
               switch (value) {
                 case 'refresh':
                   if (!_loading) _fetchSessions();
+                case 'import':
+                  _openForeignImport();
               }
             },
             itemBuilder: (ctx) => [
@@ -2144,6 +2185,16 @@ class _SessionListScreenState extends State<SessionListScreen>
                   title: Text(s.slMenuRefresh),
                 ),
               ),
+              if (_ownedActivityClient?.foreignSessionsAvailable == true)
+                PopupMenuItem(
+                  value: 'import',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.download_for_offline_outlined),
+                    title: Text(s.fsImportMenu),
+                  ),
+                ),
             ],
           ),
         ],
