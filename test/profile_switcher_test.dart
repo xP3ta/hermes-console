@@ -291,4 +291,49 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('cold start: the chip paints the cached display name first, '
+      'never the generic default name while the roster read is slow', (
+    tester,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await manager.setActiveProfile(connection.id, '');
+    // Last session: a live read named the default profile 'Hermes'.
+    final previous = BotRosterRegistry()
+      ..attachPersistence(prefs, [connection]);
+    previous.publish(connection.id, 'QA', [
+      AgentProfile.fromJson({
+        'name': 'default',
+        'path': '/home/u/.hermes',
+        'is_default': true,
+        'display_name': 'Hermes',
+      }),
+      _profile('ana'),
+    ]);
+    await tester.pump();
+    // Cold start: a fresh registry restored from the cache only, while the
+    // live roster read never answers.
+    final registry = BotRosterRegistry()
+      ..attachPersistence(prefs, [connection]);
+    final slowRead = Completer<List<AgentProfile>>();
+    await tester.pumpWidget(
+      app(
+        Scaffold(
+          body: ProfileSwitcherButton(
+            connection: connection,
+            connManager: manager,
+            compact: true,
+            rosterRegistry: registry,
+            readRoster: () => slowRead.future,
+          ),
+        ),
+      ),
+    );
+    final chip = find.byKey(const ValueKey('profile-switcher-compact'));
+    expect(
+      find.descendant(of: chip, matching: find.text('Hermes')),
+      findsOneWidget,
+    );
+    expect(find.text('Default'), findsNothing);
+  });
 }

@@ -68,6 +68,10 @@ final class BotRosterCache {
         for (final p in profiles.take(512))
           {
             'name': p.name,
+            // The profile's name as every surface shows it, so a cold
+            // start never paints the generic default label first.
+            if (p.isDefault) 'is_default': true,
+            if (p.displayName.trim().isNotEmpty) 'display_name': p.displayName,
             'ui_meta': {
               'hermes-bots': {
                 if (p.botTitle != null) 'title': p.botTitle,
