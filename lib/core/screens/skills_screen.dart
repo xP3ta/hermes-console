@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../main.dart';
+import '../services/active_profile_scope.dart';
 import '../services/bridge_client.dart';
 import '../services/bridge_manager.dart';
 import '../services/command_risk.dart';
@@ -39,31 +40,10 @@ import '../widgets/read_only.dart';
 import 'bridge_config_screen.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/profile_scope.dart';
 import '../widgets/feature_dependency_notice.dart';
 import 'instance_edit_screen.dart';
 import '../../l10n/app_localizations.dart';
-
-@visibleForTesting
-String resolveSkillsRouteProfile({
-  required String? profileOverride,
-  required String activeProfile,
-}) {
-  final override = profileOverride?.trim() ?? '';
-  return override.isNotEmpty ? override : activeProfile.trim();
-}
-
-@visibleForTesting
-String? skillsInitialLoadProfile({
-  required bool dependenciesResolved,
-  required String? profileOverride,
-  required String activeProfile,
-}) {
-  if (!dependenciesResolved) return null;
-  return resolveSkillsRouteProfile(
-    profileOverride: profileOverride,
-    activeProfile: activeProfile,
-  );
-}
 
 @visibleForTesting
 bool skillsProfileMutationsBlocked(String profile) {
@@ -73,10 +53,20 @@ bool skillsProfileMutationsBlocked(String profile) {
 
 class SkillsScreen extends StatefulWidget {
   final SavedConnection connection;
+
+  /// Fixed profile (a bot card). Null follows the active profile.
   final String? profileOverride;
+
+  /// Active profile source; defaults to the app's for [connection].
+  final ActiveProfileScope? profileScope;
+  final DashboardClient? dashboardClientForTesting;
+  final BridgeManagerContract? bridgeManagerForTesting;
   const SkillsScreen({
     required this.connection,
     this.profileOverride,
+    this.profileScope,
+    @visibleForTesting this.dashboardClientForTesting,
+    @visibleForTesting this.bridgeManagerForTesting,
     super.key,
   });
 
@@ -85,7 +75,7 @@ class SkillsScreen extends StatefulWidget {
 }
 
 class _SkillsScreenState extends State<SkillsScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, ActiveProfileFollower<SkillsScreen> {
   late final TabController _tabs;
   late final DashboardClient _dashClient;
   late final SkillStoreClient _storeClient;
@@ -97,9 +87,9 @@ class _SkillsScreenState extends State<SkillsScreen>
   DashboardDependencyFailure _installedDependencyFailure =
       DashboardDependencyFailure.other;
 
-  /// Perfil de agente activo (vacío = por defecto). Escala GET /api/skills.
-  String _profile = '';
-  bool _profileResolved = false;
+  /// Profile whose skills are listed (empty = default): the bot card's
+  /// fixed profile or the active one. Scopes GET /api/skills.
+  String get _profile => scopedProfileName;
 
   /// Fuente que alimentó la lista: Dashboard (con flag enabled) o Gateway
   /// (/v1/skills, fallback sin estado enabled).
@@ -136,28 +126,32 @@ class _SkillsScreenState extends State<SkillsScreen>
   void initState() {
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
-    _dashClient = DashboardClient.lazy(widget.connection);
+    _dashClient =
+        widget.dashboardClientForTesting ??
+        DashboardClient.lazy(widget.connection);
     _storeClient = SkillStoreClient();
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text);
     });
+    final override = widget.profileOverride?.trim() ?? '';
+    followActiveProfile(
+      widget.profileScope ??
+          appActiveProfileScope(context, widget.connection.id),
+      fixedProfile: override.isEmpty ? null : override,
+    );
+    _loadInstalled();
+  }
+
+  @override
+  void onActiveProfileChanged() {
+    // The restart notice was about the previous profile's config.
+    setState(() => _pendingReload = false);
+    _loadInstalled();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final conn = context.findAncestorStateOfType<HermesAppState>()?.connManager;
-    final activeProfile = conn?.activeProfileFor(widget.connection.id) ?? '';
-    final p = skillsInitialLoadProfile(
-      dependenciesResolved: true,
-      profileOverride: widget.profileOverride,
-      activeProfile: activeProfile,
-    )!;
-    if (!_profileResolved || p != _profile) {
-      _profileResolved = true;
-      _profile = p;
-      _loadInstalled();
-    }
     if (!_bridgeProbed) {
       _bridgeProbed = true;
       _probeBridge();
@@ -165,10 +159,12 @@ class _SkillsScreenState extends State<SkillsScreen>
   }
 
   Future<void> _probeBridge() async {
-    var st = await _bridgeMgr.probe(widget.connection.id);
+    final BridgeManagerContract bridge =
+        widget.bridgeManagerForTesting ?? _bridgeMgr;
+    var st = await bridge.probe(widget.connection.id);
     if (st.status == BridgeStatus.needsToken) {
-      if (await _bridgeMgr.tryProvision(widget.connection.id)) {
-        st = await _bridgeMgr.probe(widget.connection.id);
+      if (await bridge.tryProvision(widget.connection.id)) {
+        st = await bridge.probe(widget.connection.id);
       }
     }
     if (!mounted) return;
@@ -533,9 +529,11 @@ class _SkillsScreenState extends State<SkillsScreen>
       _installedError = null;
       _installedDependencyFailure = DashboardDependencyFailure.other;
     });
+    final ticket = profileReadTicket();
     try {
-      final raw = await _dashClient.getSkills(profile: _profile);
-      if (!mounted) return;
+      final raw = await _dashClient.getSkills(profile: ticket.name);
+      // A list for the previous profile never lands on the new one.
+      if (!mounted || !ticket.isCurrent) return;
       setState(() {
         _installed = raw;
         _skillsSource = '/api/skills';
@@ -552,7 +550,7 @@ class _SkillsScreenState extends State<SkillsScreen>
         );
         final raw = await client.getGatewaySkills();
         client.close();
-        if (!mounted) return;
+        if (!mounted || !ticket.isCurrent) return;
         setState(() {
           _installed = raw;
           _skillsSource = '/v1/skills (gateway)';
@@ -562,7 +560,7 @@ class _SkillsScreenState extends State<SkillsScreen>
         debugPrint(
           '[skills] excepción silenciada (se avisa al usuario y se sigue): $e',
         );
-        if (!mounted) return;
+        if (!mounted || !ticket.isCurrent) return;
         setState(() {
           _installedError = localizedApiError(
             Strings.of(context),
@@ -710,11 +708,11 @@ class _SkillsScreenState extends State<SkillsScreen>
         title: Column(
           children: [
             const Text('skills'),
-            if (_profile.isNotEmpty)
-              Text(
-                str.sklActiveProfile(_profile),
-                style: TextStyle(fontSize: 10.5, color: colors.accent),
-              ),
+            // States which profile these skills belong to.
+            ProfileScopeLabel(
+              profile: _profile,
+              connectionId: widget.connection.id,
+            ),
             if (_installed.isNotEmpty)
               Text(
                 // Fuente de datos explícita. El conteo de activas solo es

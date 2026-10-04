@@ -14,6 +14,7 @@ import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/models/profile_pet.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
+import 'package:hermes_android/core/screens/profiles_screen.dart';
 import 'package:hermes_android/core/screens/tasks_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -276,6 +277,7 @@ Widget _host({
   HermesDesktopProfileAssetsGateway? profileAssetsGateway,
   BotChatTitleLookup? botChatTitleLookup,
   BotProfileGateway? botProfileGateway,
+  Future<void> Function(String name)? profileDeleteOverride,
 }) => MaterialApp(
   locale: const Locale('es'),
   localizationsDelegates: Strings.localizationsDelegates,
@@ -308,6 +310,7 @@ Widget _host({
     botChatTitleLookup: botChatTitleLookup ?? FakeBotChatTitleLookup(),
     botProfileGateway: botProfileGateway,
     modelOptionsLoader: botCreateGateway == null ? null : (_) async => const [],
+    profileDeleteOverride: profileDeleteOverride,
   ),
 );
 
@@ -874,9 +877,22 @@ void main() {
     );
     await tester.tap(newButton);
     await tester.pumpAndSettle();
+    final chooserBot = find.byKey(const ValueKey('mission-create-chooser-bot'));
+    expect(chooserBot, findsOneWidget);
+    // "New profile" wears the profile icon, as Profiles and the switcher do.
     expect(
-      find.byKey(const ValueKey('mission-create-chooser-bot')),
+      find.descendant(
+        of: chooserBot,
+        matching: find.byIcon(Icons.account_circle_outlined),
+      ),
       findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: chooserBot,
+        matching: find.byIcon(Icons.smart_toy_outlined),
+      ),
+      findsNothing,
     );
   });
 
@@ -1135,7 +1151,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('mission-workspace-sheet')),
-        matching: find.text('1 agente'),
+        matching: find.text('1 perfil'),
       ),
       findsOneWidget,
     );
@@ -1838,7 +1854,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Esta instalación de Hermes no publica profiles.'),
+      find.text('Esta instalación de Hermes no publica perfiles.'),
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('mission-create-agent')), findsOneWidget);
@@ -1981,7 +1997,7 @@ void main() {
 
     expect(find.text('infra'), findsWidgets);
     expect(
-      find.text('Algunos datos del equipo pueden estar desactualizados.'),
+      find.text('Algunos datos de los perfiles pueden estar desactualizados.'),
       findsOneWidget,
     );
   });
@@ -2035,12 +2051,12 @@ void main() {
 
     expect(
       find.text(
-        'Hermes no está disponible. Los datos existentes del equipo siguen visibles.',
+        'Hermes no está disponible. Los datos de los perfiles que ya tienes siguen visibles.',
       ),
       findsNothing,
     );
     expect(
-      find.text('Esta instalación de Hermes no publica profiles.'),
+      find.text('Esta instalación de Hermes no publica perfiles.'),
       findsOneWidget,
     );
     expect(find.text('Old cached task'), findsNothing);
@@ -2496,8 +2512,8 @@ void main() {
       // Empty state con CTA siempre visible, además del botón de cabecera.
       expect(
         find.text(
-          'Un bot es un compañero con nombre propio, memoria, skills y chat '
-          'propios. Crea el primero para empezar.',
+          'Un perfil tiene nombre, memoria, skills y chat propios. Crea el '
+          'primero para empezar.',
         ),
         findsOneWidget,
       );
@@ -2561,7 +2577,7 @@ void main() {
     await _openCreateBot(tester);
     await _enterCreateName(tester, 'Infra');
 
-    expect(find.text('Ya existe un agente con este nombre.'), findsOneWidget);
+    expect(find.text('Ya existe un perfil con este nombre.'), findsOneWidget);
     await _scrollCreateFormTo(tester, 'bot-create-submit');
     final submit = tester.widget<HermesPrimaryButton>(
       find.byKey(const ValueKey('bot-create-submit')),
@@ -2704,7 +2720,22 @@ void main() {
       find.byKey(const ValueKey('bot-mode-create-actions')),
       findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('bot-mode-create-bot')), findsOneWidget);
+    final orbitBot = find.byKey(const ValueKey('bot-mode-create-bot'));
+    expect(orbitBot, findsOneWidget);
+    expect(
+      find.descendant(
+        of: orbitBot,
+        matching: find.byIcon(Icons.account_circle_outlined),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: orbitBot,
+        matching: find.byIcon(Icons.smart_toy_outlined),
+      ),
+      findsNothing,
+    );
     expect(find.byKey(const ValueKey('bot-mode-create-room')), findsOneWidget);
     expect(find.byType(BottomSheet), findsNothing);
 
@@ -2931,4 +2962,65 @@ void main() {
       );
     },
   );
+
+  testWidgets('a7: SOUL on a bot card opens that bot\'s SOUL, not the active '
+      'profile\'s', (tester) async {
+    tester.view.physicalSize = const Size(800, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final manager = await _manager();
+    // The user is working in another profile. A read-only connection has no
+    // advanced editor, so the card opens the SOUL screen directly.
+    await manager.setActiveProfile(_connection.id, 'ana');
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        connection: _connection.copyWith(readOnly: true),
+        snapshot: _snapshot(profiles: const [AgentProfile(name: 'infra')]),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openAgentDetail(tester, 'infra');
+    final soul = find.byKey(const ValueKey('bot-profile-soul'));
+    await tester.ensureVisible(soul);
+    await tester.tap(soul);
+    await tester.pumpAndSettle();
+    expect(find.text('Perfil: infra'), findsOneWidget);
+    expect(find.text('Perfil: ana'), findsNothing);
+  });
+
+  testWidgets('deleting a bot deletes its profile in place, with the same '
+      'confirmation as Profiles', (tester) async {
+    tester.view.physicalSize = const Size(800, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final manager = await _manager();
+    await manager.setActiveProfile(_connection.id, 'infra');
+    final deleted = <String>[];
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        snapshot: _snapshot(profiles: const [AgentProfile(name: 'infra')]),
+        profileDeleteOverride: (name) async => deleted.add(name),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openAgentDetail(tester, 'infra');
+    await tester.tap(find.byKey(const ValueKey('bot-profile-more')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('bot-profile-delete')));
+    await tester.pumpAndSettle();
+    // No jump to another screen: the confirmation opens over the card.
+    expect(find.byType(ProfilesScreen), findsNothing);
+    expect(
+      find.byKey(const ValueKey('profile-delete-confirm')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('profile-delete-confirm-yes')));
+    await tester.pumpAndSettle();
+    expect(deleted, ['infra']);
+    expect(find.byKey(const ValueKey('bot-profile')), findsNothing);
+    // It was the active profile: the app is back on the default one.
+    expect(manager.activeProfileFor(_connection.id), '');
+  });
 }

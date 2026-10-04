@@ -666,7 +666,7 @@ And whether `fix/tap-targets` is still open.''';
     await tester.pumpAndSettle();
     final appBar = find.byType(AppBar);
     expect(
-      find.descendant(of: appBar, matching: find.text('Bot profile')),
+      find.descendant(of: appBar, matching: find.text('Profile')),
       findsOneWidget,
     );
     expect(
@@ -688,7 +688,7 @@ And whether `fix/tap-targets` is still open.''';
     );
     await tester.pumpAndSettle();
     expect(
-      find.descendant(of: appBar, matching: find.text('Bot profile')),
+      find.descendant(of: appBar, matching: find.text('Profile')),
       findsOneWidget,
     );
   });

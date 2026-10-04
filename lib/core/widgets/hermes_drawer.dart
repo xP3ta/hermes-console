@@ -23,6 +23,7 @@ import '../screens/skills_screen.dart';
 import '../screens/task_center_screen.dart';
 import '../screens/tasks_screen.dart';
 import '../screens/tools_hub_screen.dart';
+import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
 import '../services/session_archive.dart';
 import '../services/tui_gateway_client.dart';
@@ -35,6 +36,7 @@ import '../utils/session_title.dart';
 import '../../l10n/app_localizations.dart';
 import 'hermes_notice.dart';
 import 'owned_resource_host.dart';
+import 'profile_switcher.dart';
 
 /// Top-level app sections reachable from [HermesDrawer].
 enum DrawerSection {
@@ -446,6 +448,23 @@ class HermesDrawer extends StatelessWidget {
                         connManager.activeConnectionId.value ?? conn?.id,
                     onSelected: (id) => _selectInstance(context, id),
                   ),
+                  // Active profile, one tap from the drawer (Desktop rail).
+                  if (conn != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: ProfileSwitcherButton(
+                        connection: conn,
+                        connManager: connManager,
+                        onManage: () => _go(
+                          context,
+                          DrawerSection.profiles,
+                          () => ProfilesScreen(
+                            connection: conn,
+                            connManager: connManager,
+                          ),
+                        ),
+                      ),
+                    ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
                     child: Divider(
@@ -588,23 +607,31 @@ class HermesDrawer extends StatelessWidget {
                     onTap: () => _openTools(context, capabilities),
                   ),
                   if (conn != null && supports(capabilities.sessionsRead))
-                    _DrawerRecentSessions(
-                      connection: conn,
-                      prefs: connManager.prefs,
-                      profile: connManager.activeProfileFor(conn.id),
-                      clientFactory: recentSessionsClientFactory,
-                      onOpen: (session) {
-                        Navigator.pop(context);
-                        openChatWithParent<void>(
-                          context,
-                          parentBuilder: (_) => SessionListScreen(
-                            connection: conn,
-                            connManager: connManager,
-                          ),
-                          builder: (_) =>
-                              ChatScreen(connection: conn, session: session),
-                        );
-                      },
+                    // Recents follow the active profile, even when it is
+                    // switched while the drawer is open.
+                    ListenableBuilder(
+                      listenable: ActiveProfileScope.of(connManager, conn.id),
+                      builder: (context, _) => _DrawerRecentSessions(
+                        connection: conn,
+                        prefs: connManager.prefs,
+                        profile: ActiveProfileScope.of(
+                          connManager,
+                          conn.id,
+                        ).name,
+                        clientFactory: recentSessionsClientFactory,
+                        onOpen: (session) {
+                          Navigator.pop(context);
+                          openChatWithParent<void>(
+                            context,
+                            parentBuilder: (_) => SessionListScreen(
+                              connection: conn,
+                              connManager: connManager,
+                            ),
+                            builder: (_) =>
+                                ChatScreen(connection: conn, session: session),
+                          );
+                        },
+                      ),
                     ),
                 ],
               ),
@@ -708,11 +735,14 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
 
   Future<void> _load() async {
     final requestedConnectionId = widget.connection.id;
+    final requestedProfile = widget.profile;
     final client =
         widget.clientFactory?.call(widget.connection) ??
         ApiClient(
           baseUrl: widget.connection.baseUrl,
           apiKey: widget.connection.apiKey,
+          // A named profile's list comes from the Dashboard, as on Desktop.
+          profileDashboard: DashboardClient.lazy(widget.connection),
         );
     try {
       // Local-only archives (servers without a writable archived flag) must
@@ -735,7 +765,13 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
       );
       sessions.sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
       final visible = sessions.where(shown).take(4).toList(growable: false);
-      if (!mounted || widget.connection.id != requestedConnectionId) return;
+      // Only a read for the current connection and profile paints: a list
+      // of the previous profile must never land after a switch.
+      if (!mounted ||
+          widget.connection.id != requestedConnectionId ||
+          widget.profile != requestedProfile) {
+        return;
+      }
       setState(() => _sessions = visible);
     } catch (_) {
       // El drawer sigue siendo navegación local si el servidor está offline o

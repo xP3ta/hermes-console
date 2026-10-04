@@ -9,11 +9,13 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../l10n/app_localizations.dart';
 import '../../main.dart';
+import '../services/active_profile_scope.dart';
 import '../services/bridge_manager.dart';
 import '../services/connection_manager.dart';
 import '../design/modal.dart' show HermesModelGroup, showHermesModelPicker;
 import '../theme/app_theme.dart';
 import '../utils/api_error.dart';
+import '../widgets/profile_scope.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/read_only.dart';
 import '../widgets/hermes_app_bar.dart';
@@ -41,11 +43,15 @@ class ModelsScreen extends StatefulWidget {
   @visibleForTesting
   final DesktopModelCatalog? Function()? gatewayCatalogForTesting;
 
+  /// Active profile source; defaults to the app's for [connection].
+  final ActiveProfileScope? profileScope;
+
   const ModelsScreen({
     required this.connection,
     this.dashboardClientForTesting,
     this.bridgeManagerForTesting,
     this.gatewayCatalogForTesting,
+    this.profileScope,
     super.key,
   });
 
@@ -68,7 +74,8 @@ String _auxLabel(String key, Strings s) => switch (key) {
   _ => key,
 };
 
-class _ModelsScreenState extends State<ModelsScreen> {
+class _ModelsScreenState extends State<ModelsScreen>
+    with ActiveProfileFollower<ModelsScreen> {
   late final DashboardClient _client;
   ModelActiveInfo? _activeInfo;
   List<ModelProvider> _providers = [];
@@ -125,9 +132,9 @@ class _ModelsScreenState extends State<ModelsScreen> {
   /// (cada instancia tiene su propio catálogo de proveedores).
   String get _kCatalogCache => 'models_catalog_cache_${widget.connection.id}';
 
-  /// Perfil de agente activo (vacío = por defecto). Escala las llamadas de
-  /// modelos a ese perfil con ?profile=.
-  String _profile = '';
+  /// Active profile (empty = default). Scopes the model calls with
+  /// ?profile=.
+  String get _profile => scopedProfileName;
 
   // Bridge (para fallback: no hay API nativa de model/set para fallback).
   BridgeManagerContract? _mgr;
@@ -159,6 +166,10 @@ class _ModelsScreenState extends State<ModelsScreen> {
         widget.dashboardClientForTesting ??
         DashboardClient.lazy(widget.connection);
     _loadHidden();
+    followActiveProfile(
+      widget.profileScope ??
+          appActiveProfileScope(context, widget.connection.id),
+    );
     // La carga la dispara didChangeDependencies tras sondear el bridge, para ir
     // bridge-first y evitar el muro de login del Dashboard si el bridge existe.
   }
@@ -247,6 +258,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
       LocalModelsClient(_client, profile: _profile);
 
   Future<void> _probeLocalModels() async {
+    final ticket = profileReadTicket();
     _LocalModelsProbe probe;
     try {
       final status = await _localModels.status();
@@ -256,7 +268,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
     } catch (_) {
       probe = const _LocalModelsProbe.failed();
     }
-    if (mounted) setState(() => _localProbe = probe);
+    if (mounted && ticket.isCurrent) setState(() => _localProbe = probe);
   }
 
   Future<void> _openLocalModels() async {
@@ -309,14 +321,16 @@ class _ModelsScreenState extends State<ModelsScreen> {
   }
 
   @override
+  void onActiveProfileChanged() {
+    // A switch re-scopes the whole screen (behind the loader): model,
+    // catalog, assignments and the local models entry.
+    unawaited(_probeLocalModels());
+    if (_bridgeProbed) unawaited(_load());
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final conn = context.findAncestorStateOfType<HermesAppState>()?.connManager;
-    final p = conn?.activeProfileFor(widget.connection.id) ?? '';
-    if (p != _profile) {
-      _profile = p;
-      if (_bridgeProbed) _load(); // reescala si cambió el perfil activo
-    }
     if (!_bridgeProbed) {
       _bridgeProbed = true;
       _bootstrap();
@@ -440,9 +454,17 @@ class _ModelsScreenState extends State<ModelsScreen> {
       _supplementDetail = null;
       _catalogFromCache = false;
     });
+    final ticket = profileReadTicket();
     // Bridge-first: trae el catálogo completo y editable con el MISMO token,
     // sin login del Dashboard. Solo si el bridge no responde caemos al Dashboard.
-    if (_bridge.connected && await _bridgeLoadOptions()) return;
+    // The bridge only knows the default profile's home: any other profile
+    // reads (and sets) its model through the profile-scoped Dashboard.
+    if (_bridge.connected &&
+        ticket.owner == 'default' &&
+        await _bridgeLoadOptions(ticket)) {
+      return;
+    }
+    if (!ticket.isCurrent) return;
     _viaBridge = false;
     try {
       ModelActiveInfo? active;
@@ -450,12 +472,14 @@ class _ModelsScreenState extends State<ModelsScreen> {
       Map<String, dynamic> aux = {};
       Map<String, String> oauthFlows = {};
       await Future.wait([
-        _client.getModelInfo(profile: _profile).then((v) => active = v),
-        _client.getModelOptions(profile: _profile).then((v) => providers = v),
+        _client.getModelInfo(profile: ticket.name).then((v) => active = v),
+        _client
+            .getModelOptions(profile: ticket.name)
+            .then((v) => providers = v),
         // Las asignaciones por función son opcionales (puede no existir el
         // endpoint en versiones viejas): no debe tumbar la pantalla.
         _client
-            .getAuxiliaryModels(profile: _profile)
+            .getAuxiliaryModels(profile: ticket.name)
             .then((v) => aux = v)
             .catchError((_) => aux = <String, dynamic>{}),
         // Flows OAuth (device_code/loopback/external): deciden si el login es
@@ -465,7 +489,8 @@ class _ModelsScreenState extends State<ModelsScreen> {
             .then((v) => oauthFlows = v)
             .catchError((_) => oauthFlows = <String, String>{}),
       ]);
-      if (!mounted) return;
+      // The previous profile's model never lands on the new one.
+      if (!mounted || !ticket.isCurrent) return;
       setState(() {
         _activeInfo = active;
         _providers = providers;
@@ -516,7 +541,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
       } catch (_) {
         // No crítico: la lista simplemente arranca sin ninguno marcado.
       }
-      if (!mounted) return;
+      if (!mounted || !ticket.isCurrent) return;
       final message = localizedApiError(Strings.of(context), e);
       setState(() {
         _error = message;
@@ -551,7 +576,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
 
   /// Carga el catálogo de modelos POR EL BRIDGE (sin login del Dashboard).
   /// Devuelve true si lo consiguió (estado ya actualizado), false si no.
-  Future<bool> _bridgeLoadOptions() async {
+  Future<bool> _bridgeLoadOptions(ProfileReadTicket ticket) async {
     final client = await _bridgeMgr.clientFor(widget.connection.id);
     if (client == null) return false;
     try {
@@ -581,6 +606,8 @@ class _ModelsScreenState extends State<ModelsScreen> {
           .toList();
       if (providers.isEmpty) return false;
       if (!mounted) return false;
+      // Stale for a switched profile: handled (dropped), nothing to fall to.
+      if (!ticket.isCurrent) return true;
       setState(() {
         _activeInfo = ModelActiveInfo(
           model: (data['model'] ?? '').toString(),
@@ -597,7 +624,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
       });
       // El bridge no expone OAuth ni aux tasks; los pedimos al Dashboard en
       // paralelo sin bloquear (si el Dashboard no está disponible, no pasa nada).
-      _loadBridgeSupplement();
+      _loadBridgeSupplement(ticket);
       return true;
     } catch (e) {
       debugPrint('[models] excepción silenciada (se asume false): $e');
@@ -607,7 +634,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
     }
   }
 
-  Future<void> _loadBridgeSupplement() async {
+  Future<void> _loadBridgeSupplement(ProfileReadTicket ticket) async {
     // (spec 028 U-02) Antes los fallos de estas llamadas se tragaban con
     // catchError((_) {}) y, si el Dashboard no respondía (cookie caducada,
     // :9119 inaccesible, solo-gateway), la sección de proveedores por
@@ -631,7 +658,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
           _viaBridge && _providers.any((p) => !p.authenticated);
       await Future.wait([
         _client
-            .getAuxiliaryModels(profile: _profile)
+            .getAuxiliaryModels(profile: ticket.name)
             .then((v) {
               aux = v;
             })
@@ -650,7 +677,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
         // catálogo con los no configurados (OAuth / API key desde la app).
         if (!bridgeHasFullCatalog)
           _client
-              .getModelOptions(profile: _profile)
+              .getModelOptions(profile: ticket.name)
               .then((v) {
                 dashProviders = v;
               })
@@ -659,7 +686,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
                 supplementError = e;
               }),
       ]);
-      if (!mounted) return;
+      if (!mounted || !ticket.isCurrent) return;
 
       var fromCache = false;
       if (catalogOk && flowsOk) {
@@ -676,7 +703,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
         // Llamada viva fallida: se cubre con el último catálogo bueno cacheado
         // (si existe), marcándolo como "sin conexión al Dashboard".
         final cached = await _readCatalogCache();
-        if (!mounted) return;
+        if (!mounted || !ticket.isCurrent) return;
         if (cached != null) {
           if (!catalogOk && cached.providers.isNotEmpty) {
             dashProviders = cached.providers;
@@ -1341,18 +1368,12 @@ class _ModelsScreenState extends State<ModelsScreen> {
     final s = Strings.of(context);
     return Scaffold(
       appBar: HermesAppBar(
-        title: _profile.isEmpty
-            ? Text(s.mdlTitle)
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(s.mdlTitle),
-                  Text(
-                    s.mdlProfile(_profile),
-                    style: TextStyle(fontSize: 11, color: colors.accent),
-                  ),
-                ],
-              ),
+        // States which profile this model belongs to.
+        title: ProfileScopedTitle(
+          title: s.mdlTitle,
+          profile: _profile,
+          connectionId: widget.connection.id,
+        ),
         actions: [
           // Contador "N ocultos" (proveedores + modelos): siempre visible
           // mientras haya algo oculto, para que lo escondido no parezca

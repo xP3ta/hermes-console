@@ -55,7 +55,6 @@ import '../widgets/chat_surface_coordinator.dart';
 import '../widgets/dock_shortcuts.dart';
 import '../widgets/mission_profile_avatar.dart';
 import '../widgets/remote_bot_roster.dart';
-import 'bot_create_screen.dart';
 import 'bot_profile_settings_screen.dart';
 import 'bot_sections_editor.dart';
 import '../services/bot_profile_client.dart';
@@ -67,7 +66,7 @@ import 'cron_screen.dart';
 import 'memory_screen.dart';
 import 'mission_control_copy.dart';
 import 'profile_editor_screen.dart';
-import 'profiles_screen.dart';
+import 'profile_flows.dart';
 import 'skills_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
@@ -214,6 +213,9 @@ class MissionControlScreen extends StatefulWidget {
   final RemoteBotLoader? remoteBotLoader;
   @visibleForTesting
   final HermesDesktopBotCreationGateway? botCreateGateway;
+
+  /// Stands in for the Dashboard profile delete in tests.
+  final Future<void> Function(String name)? profileDeleteOverride;
   @visibleForTesting
   final HermesDesktopProfileAssetsGateway? profileAssetsGateway;
   final BotProfileGateway? botProfileGateway;
@@ -247,6 +249,7 @@ class MissionControlScreen extends StatefulWidget {
     this.botChatOpenObserver,
     this.remoteBotLoader,
     this.botCreateGateway,
+    @visibleForTesting this.profileDeleteOverride,
     this.profileAssetsGateway,
     this.botProfileGateway,
     this.botModelGateway,
@@ -1801,8 +1804,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           onChat: () => unawaited(_openChat(_currentAgent(agent))),
           onRooms: () => unawaited(_manageBotRooms(_currentAgent(agent))),
           onRoutines: () => _openRoutines(profile: name),
+          // a7: without the advanced editor, still this bot's SOUL.
           onSoul: gateway == null || readOnly
-              ? _openSoul
+              ? () => _openSoul(profile: name)
               : () => _openAdvancedSettings(name),
           onSkills: () => _openSkills(profile: name),
           onMemory: () => _openMemory(profile: name),
@@ -1863,18 +1867,23 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     );
   }
 
+  /// Deleting a bot deletes its profile (Desktop: "Delete bot and
+  /// profile?"), with the same confirmation as Profiles and in place.
   Future<void> _deleteBot(String profile) async {
     if (widget.connection.readOnly || profile == 'default') return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ProfilesScreen(
-          connection: widget.connection,
-          connManager: widget.connManager,
-          initialDeleteProfile: profile,
-        ),
-      ),
+    final missionRoute = ModalRoute.of(context);
+    final deleted = await deleteProfileFlow(
+      context,
+      connection: widget.connection,
+      connManager: widget.connManager,
+      profile: profile,
+      rosterRegistry: _roster,
+      deleteRemote: widget.profileDeleteOverride,
     );
-    if (mounted) await _load(refresh: true);
+    if (!deleted || !mounted) return;
+    // Leave the deleted bot's card.
+    Navigator.of(context).popUntil((route) => route == missionRoute);
+    await _load(refresh: true);
   }
 
   /// Long-press actions on a roster row (spec 070 T402): pin, section,
@@ -2068,9 +2077,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     ),
   );
 
-  void _openSoul() => Navigator.of(context).push(
+  void _openSoul({required String profile}) => Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) => SoulScreen(connection: widget.connection),
+      builder: (_) =>
+          SoulScreen(connection: widget.connection, profileOverride: profile),
     ),
   );
 
@@ -2122,13 +2132,18 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         profiles = await remote.listProfiles();
       }
       if (!mounted) return;
-      final created = await Navigator.of(context).push<String>(MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => BotCreateScreen(connection: target,
-          existing: profiles.map((profile) => profile.name).toSet(),
-          gateway: target.id == widget.connection.id ? widget.botCreateGateway : null,
-          modelOptionsLoader: target.id == widget.connection.id ? widget.modelOptionsLoader : null),
-      ));
+      // Same create flow as Profiles: a bot is a profile.
+      final created = await openCreateProfile(
+        context,
+        connection: target,
+        existing: profiles.map((profile) => profile.name).toSet(),
+        gateway: target.id == widget.connection.id
+            ? widget.botCreateGateway
+            : null,
+        modelOptionsLoader: target.id == widget.connection.id
+            ? widget.modelOptionsLoader
+            : null,
+      );
       if (!mounted || created == null) return;
       if (remote != null) {
         final profile = (await remote.listProfiles()).where((p) => p.name == created).single;
@@ -2892,7 +2907,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           if (_canCreateBot)
             ListTile(
               key: const ValueKey('mission-create-chooser-bot'),
-              leading: const Icon(Icons.smart_toy_outlined),
+              leading: const Icon(Icons.account_circle_outlined),
               title: Text(strings.missionCreateBotLabel),
               onTap: () => Navigator.pop(sheetContext, 'bot'),
             ),
@@ -3021,7 +3036,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       DockCreateOrbit(
         controlKey: const ValueKey('bot-mode-create-bot'),
         label: strings.missionCreateBotLabel,
-        icon: Icons.smart_toy_outlined,
+        icon: Icons.account_circle_outlined,
         onTap:
             widget.connection.readOnly ||
                 snapshot?.profilesCapability != MissionCapabilityState.available
@@ -4245,8 +4260,8 @@ final class _RoomsAreaCopy {
 
   String get removeMember => _english ? 'Remove' : 'Quitar';
   String get noMembersChosen => _english
-      ? 'Tap a bot to add it to the room.'
-      : 'Toca un bot para añadirlo a la sala.';
+      ? 'Tap a profile to add it to the room.'
+      : 'Toca un perfil para añadirlo a la sala.';
 }
 
 class _LoungeEmptyState extends StatelessWidget {
