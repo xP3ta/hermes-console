@@ -581,6 +581,35 @@ void main() {
       expect(rest.calls.single, 'GET analytics/usage?days=30&profile=work');
     });
 
+    test(
+      'an unreachable dashboard is unavailable, never a raw error',
+      () async {
+        final rest = ScriptedRest()
+          ..gets['analytics/usage?days=30'] = Exception(
+            'Dashboard not accessible',
+          )
+          ..gets['health'] = const SocketException('unreachable');
+        final repo = _repo(rest);
+        for (final read in [() => repo.usage(30), repo.serverHealth]) {
+          await expectLater(
+            read(),
+            throwsA(
+              isA<CapabilityFailure>().having(
+                (f) => f.kind,
+                'kind',
+                CapabilityFailureKind.unavailable,
+              ),
+            ),
+          );
+        }
+        expect(
+          repo.supports(CapabilityFeature.usageAnalytics),
+          isNot(false),
+          reason: 'being unreachable says nothing about support',
+        );
+      },
+    );
+
     test('503 is unavailable, 404 unsupported', () async {
       final unavailable = ScriptedRest()
         ..gets['analytics/usage?days=30'] = const DashboardHttpException(503);
