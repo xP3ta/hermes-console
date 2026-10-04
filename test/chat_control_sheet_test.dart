@@ -30,11 +30,32 @@ Widget _app({
   bool releaseEnabled = false,
   bool releaseInFlight = false,
   VoidCallback? onRelease,
+  VoidCallback? onPrompts,
+  String? promptsLabel,
 }) => MaterialApp(
   theme: AppTheme.hermesRedDark,
   home: Scaffold(
     body: ChatControlSheet(
-      labels: _labels,
+      labels: promptsLabel == null
+          ? _labels
+          : ChatControlLabels(
+              title: _labels.title,
+              scope: _labels.scope,
+              sessionSection: _labels.sessionSection,
+              toolsSection: _labels.toolsSection,
+              dangerSection: _labels.dangerSection,
+              permissions: _labels.permissions,
+              refresh: _labels.refresh,
+              artifacts: _labels.artifacts,
+              details: _labels.details,
+              cron: _labels.cron,
+              delete: _labels.delete,
+              readOnly: _labels.readOnly,
+              releaseDesktop: _labels.releaseDesktop,
+              releaseUnavailable: _labels.releaseUnavailable,
+              prompts: promptsLabel,
+            ),
+      onPrompts: onPrompts,
       conversationTitle: 'Synthetic conversation',
       readOnly: readOnly,
       showDetails: true,
@@ -54,6 +75,22 @@ Widget _app({
 );
 
 void main() {
+  testWidgets('Prompts is an on-demand tool row, absent without a callback', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_app());
+    expect(find.byKey(const ValueKey('chat-control-prompts')), findsNothing);
+
+    var opened = false;
+    await tester.pumpWidget(
+      _app(promptsLabel: 'Prompts', onPrompts: () => opened = true),
+    );
+    await tester.ensureVisible(find.text('Prompts'));
+    await tester.tap(find.text('Prompts'));
+    await tester.pump();
+    expect(opened, isTrue);
+  });
+
   testWidgets('keeps only unique session actions and direct tools', (
     tester,
   ) async {

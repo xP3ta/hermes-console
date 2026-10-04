@@ -106,4 +106,19 @@ print("hola")
     await tester.pumpWidget(_host(const ChatMarkdownBody(data: '   ')));
     expect(find.byType(ChatMarkdownBlock), findsNothing);
   });
+
+  testWidgets('ChatMarkdownBody keeps TeX source out of emphasis parsing', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        const ChatMarkdownBody(
+          data: r'Sea $a_1 * b_2$ y cuesta $5 and $10.',
+          selectable: false,
+        ),
+      ),
+    );
+    expect(_leafStyle(tester, 'a_1 * b_2')?.fontFamily, 'monospace');
+    expect(find.textContaining(r'$5 and $10'), findsOneWidget);
+  });
 }

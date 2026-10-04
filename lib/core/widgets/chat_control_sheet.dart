@@ -13,6 +13,7 @@ class ChatControlLabels {
   final String refresh;
   final String artifacts;
   final String? content;
+  final String? prompts;
   final String details;
   final String cron;
   final String? recovery;
@@ -40,6 +41,7 @@ class ChatControlLabels {
     this.recovery,
     this.extensions,
     this.content,
+    this.prompts,
   });
 }
 
@@ -55,6 +57,7 @@ class ChatControlSheet extends StatelessWidget {
   final VoidCallback onRefresh;
   final VoidCallback onArtifacts;
   final VoidCallback? onContent;
+  final VoidCallback? onPrompts;
   final VoidCallback? onDetails;
   final VoidCallback? onCron;
   final VoidCallback? onRecovery;
@@ -73,6 +76,7 @@ class ChatControlSheet extends StatelessWidget {
     required this.onArtifacts,
     this.onDelete,
     this.onContent,
+    this.onPrompts,
     this.readOnly = false,
     this.showDetails = false,
     this.showCron = false,
@@ -163,6 +167,13 @@ class ChatControlSheet extends StatelessWidget {
                 title: labels.refresh,
                 onTap: onRefresh,
               ),
+              if (labels.prompts != null && onPrompts != null)
+                _ActionRow(
+                  key: const ValueKey('chat-control-prompts'),
+                  icon: Icons.chat_bubble_outline_rounded,
+                  title: labels.prompts!,
+                  onTap: onPrompts,
+                ),
               if (showReleaseDesktop)
                 _ActionRow(
                   key: const ValueKey('chat-control-release-desktop'),
