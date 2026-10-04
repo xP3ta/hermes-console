@@ -170,6 +170,22 @@ final class TurnBillingBlock {
   };
 }
 
+/// The row metadata of a failed turn: the sanitized [errorSurface] and
+/// [billing] under their private keys, each only when it parses. Also used to
+/// keep them through transcript normalization, where the inputs are already
+/// the sanitized form.
+Map<String, Object> turnFailureMetadata({
+  Object? errorSurface,
+  Object? billing,
+}) {
+  final surface = TurnErrorSurface.parse(errorSurface);
+  final block = TurnBillingBlock.parse(billing);
+  return {
+    turnErrorSurfaceKey: ?surface?.toJson(),
+    turnBillingBlockKey: ?block?.toJson(),
+  };
+}
+
 /// What the card may offer for a failed turn (`errorRecoveryPlan`).
 final class ErrorRecoveryPlan {
   final bool retry;

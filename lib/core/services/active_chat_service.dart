@@ -52,6 +52,7 @@ import '../models/home_widget_snapshot.dart';
 import '../models/interactive_prompt.dart';
 import '../models/prepared_turn.dart';
 import '../models/provider_auth_failure.dart';
+import '../models/turn_error_surface.dart';
 import '../models/session_activity.dart';
 import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
@@ -741,6 +742,12 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
       if (authFailure != null) {
         normalized[providerAuthFailureKey] = authFailure.toJson();
       }
+      normalized.addAll(
+        turnFailureMetadata(
+          errorSurface: message[turnErrorSurfaceKey],
+          billing: message[turnBillingBlockKey],
+        ),
+      );
       final legacyPartial = message[_legacyRecoveryPartialProjectionKey];
       if (legacyPartial is Map<String, dynamic>) {
         final normalizedPartial = normalizeTranscriptMessageForDisplay(
@@ -21157,6 +21164,10 @@ class ActiveChat {
                 'recoverable': payload['recoverable'],
               if (authFailure != null)
                 providerAuthFailureKey: authFailure.toJson(),
+              ...turnFailureMetadata(
+                errorSurface: payload['error_surface'],
+                billing: payload['billing'],
+              ),
             },
           );
           break;
