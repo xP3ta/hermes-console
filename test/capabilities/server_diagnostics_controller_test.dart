@@ -11,7 +11,6 @@ import 'package:hermes_android/core/capabilities/server_diagnostics_models.dart'
 import 'package:hermes_android/core/services/active_profile_scope.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/server_restart_signal.dart';
-import 'package:hermes_android/core/capabilities/capability_models.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'capabilities_fakes.dart';
