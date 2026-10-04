@@ -48,14 +48,16 @@ mixin _ToolsetsAccess<T extends StatefulWidget> on State<T> {
       connManager.loadCapabilities(connection.id).configWrite == CapState.no;
 
   void openRepo() {
-    ticket = scope.capture();
+    final mine = scope.capture();
+    ticket = mine;
     final writable = !readOnly;
     repo =
         toolsetsFor?.call(ticket.name, writable: writable) ??
         ServerToolsetsRepository(
           _client ??= DashboardClient.lazy(connection),
-          profile: ticket.name,
+          profile: mine.name,
           writable: writable,
+          isCurrent: () => mounted && mine.isCurrent,
         );
   }
 
