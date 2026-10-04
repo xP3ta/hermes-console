@@ -193,6 +193,14 @@ class ColdStartStore {
   /// Rows kept per Home recents snapshot.
   static const int maxRecentRows = 24;
 
+  /// Encoded bytes of one recents row; a longer row (a huge preview or
+  /// lineage) is left out of the snapshot.
+  static const int maxRecentRowBytes = 4 * 1024;
+
+  /// Encoded bytes of one recents snapshot; the newest rows that fit are
+  /// kept. Secure Storage loads every snapshot at launch.
+  static const int maxRecentsBytes = 64 * 1024;
+
   final ColdStartStorage _storage;
   final int Function() _nowMs;
 
@@ -307,21 +315,13 @@ class ColdStartStore {
   }) => _serial(() async {
     final owner = Session.profileOwner(profile);
     final key = recentsKey(connectionId, owner);
-    final rows = [
-      for (final session in sessions.take(maxRecentRows))
-        if (session.id.isNotEmpty) _recentRow(session),
-    ];
+    final rows = _boundedRecentRows(sessions, connectionId, owner);
     if (rows.isEmpty) {
       _written.remove(key);
       await _storage.delete(key);
       return;
     }
-    final payload = jsonEncode({
-      'v': 1,
-      'c': connectionId,
-      'p': owner,
-      'rows': rows,
-    });
+    final payload = _recentsPayload(connectionId, owner, rows);
     if (_written[key] == payload) return;
     _written.remove(key);
     await _storage.write(key, payload);
@@ -337,7 +337,9 @@ class ColdStartStore {
     final key = recentsKey(connectionId, owner);
     final raw = await _storage.read(key);
     if (raw == null) return null;
-    final rows = _decodeRecents(raw, connectionId, owner);
+    final rows = _oversized(raw)
+        ? null
+        : _decodeRecents(raw, connectionId, owner);
     if (rows == null) {
       _written.remove(key);
       await _storage.delete(key);
@@ -346,6 +348,48 @@ class ColdStartStore {
     _written[key] = raw;
     return rows;
   });
+
+  /// The encoded rows of [sessions] a snapshot keeps: at most
+  /// [maxRecentRows], each within [maxRecentRowBytes], all together within
+  /// [maxRecentsBytes] (newest first; the first row past it ends the list).
+  static List<String> _boundedRecentRows(
+    Iterable<Session> sessions,
+    String connectionId,
+    String owner,
+  ) {
+    final rows = <String>[];
+    // The envelope, then each row and the comma before it (none first).
+    var bytes = utf8.encode(_recentsPayload(connectionId, owner, [])).length;
+    for (final session in sessions) {
+      if (rows.length >= maxRecentRows) break;
+      if (session.id.isEmpty) continue;
+      final String encoded;
+      try {
+        encoded = jsonEncode(_recentRow(session));
+      } catch (_) {
+        continue;
+      }
+      final rowBytes = utf8.encode(encoded).length;
+      if (rowBytes > maxRecentRowBytes) continue;
+      final cost = rowBytes + (rows.isEmpty ? 0 : 1);
+      if (bytes + cost > maxRecentsBytes) break;
+      bytes += cost;
+      rows.add(encoded);
+    }
+    return rows;
+  }
+
+  /// A stored snapshot no [saveRecents] could have written.
+  static bool _oversized(String raw) =>
+      raw.length > maxRecentsBytes || utf8.encode(raw).length > maxRecentsBytes;
+
+  static String _recentsPayload(
+    String connectionId,
+    String owner,
+    List<String> rows,
+  ) =>
+      '{"v":1,"c":${jsonEncode(connectionId)},"p":${jsonEncode(owner)},'
+      '"rows":[${rows.join(',')}]}';
 
   static Map<String, Object?> _recentRow(Session s) => {
     'id': s.id,
@@ -401,14 +445,16 @@ class ColdStartStore {
       final raw = await _storage.read(key);
       if (raw == null) continue;
       Object? keyOwner;
-      try {
-        final data = jsonDecode(raw);
-        keyOwner = data is Map ? data['p'] : null;
-      } catch (_) {}
+      if (!_oversized(raw)) {
+        try {
+          final data = jsonDecode(raw);
+          keyOwner = data is Map ? data['p'] : null;
+        } catch (_) {}
+      }
       final rows = keyOwner is String
           ? _decodeRecents(raw, connectionId, keyOwner)
           : null;
-      if (rows == null) {
+      if (keyOwner is! String || rows == null) {
         _written.remove(key);
         await _storage.delete(key);
         continue;
@@ -419,15 +465,11 @@ class ColdStartStore {
       ];
       if (kept.length == rows.length) continue;
       _written.remove(key);
-      if (kept.isEmpty) {
+      final keptRows = _boundedRecentRows(kept, connectionId, keyOwner);
+      if (keptRows.isEmpty) {
         await _storage.delete(key);
       } else {
-        final payload = jsonEncode({
-          'v': 1,
-          'c': connectionId,
-          'p': keyOwner,
-          'rows': [for (final row in kept) _recentRow(row)],
-        });
+        final payload = _recentsPayload(connectionId, keyOwner, keptRows);
         await _storage.write(key, payload);
         _written[key] = payload;
       }

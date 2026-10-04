@@ -155,6 +155,130 @@ void main() {
     expect(storage.values.keys.where((k) => k.contains('recents')), isEmpty);
   });
 
+  // Secure Storage holds every snapshot in one encrypted file read at
+  // launch: a few rows must never cost megabytes.
+  const rowBudget = 4 * 1024;
+  const snapshotBudget = 64 * 1024;
+
+  test('a row with a huge preview or lineage is left out of the '
+      'snapshot; the rows around it stay', () async {
+    await store.saveRecents(
+      connectionId: 'c',
+      profile: '',
+      sessions: [
+        _row('a'),
+        Session(
+          id: 'big-preview',
+          title: 'Chat',
+          model: 'm',
+          source: 'cli',
+          messageCount: 1,
+          isActive: false,
+          preview: 'x' * (512 * 1024),
+          startedAt: 1790000000,
+        ),
+        _row(
+          'big-lineage',
+          lineage: [for (var i = 0; i < 4000; i++) 'ancestor-$i'],
+        ),
+        _row('d'),
+      ],
+    );
+    final raw = storage.values[ColdStartStore.recentsKey('c', '')]!;
+    expect(utf8.encode(raw).length, lessThanOrEqualTo(rowBudget * 2));
+    expect(await ids('c', ''), ['a', 'd']);
+  });
+
+  test('the whole snapshot stays within its byte budget, keeping the '
+      'newest rows', () async {
+    // Row sizes swept byte by byte so the cut lands on every offset of the
+    // envelope: the bound must hold exactly, not on average.
+    for (var pad = 0; pad < 64; pad++) {
+      await store.saveRecents(
+        connectionId: 'c',
+        profile: '',
+        sessions: [
+          for (var i = 0; i < 23; i++)
+            _row('s$i', title: 'T' * (rowBudget - 700 + pad)),
+          // Small enough to fit after the cut: it must not fill the gap.
+          _row('small'),
+        ],
+      );
+      final raw = storage.values[ColdStartStore.recentsKey('c', '')]!;
+      final size = utf8.encode(raw).length;
+      expect(size, lessThanOrEqualTo(snapshotBudget), reason: 'pad $pad');
+      final kept = (await ids('c', ''))!;
+      expect(kept.length, inInclusiveRange(12, 22), reason: 'pad $pad');
+      expect(kept, [for (var i = 0; i < kept.length; i++) 's$i']);
+      // Nothing left on the table: one more row would not have fitted.
+      expect(snapshotBudget - size, lessThan(size ~/ kept.length));
+    }
+  });
+
+  test('a snapshot of exactly the byte budget fits; one byte more drops '
+      'the last row', () async {
+    final key = ColdStartStore.recentsKey('c', '');
+    Future<int> savedSize(List<Session> rows) async {
+      await store.saveRecents(connectionId: 'c', profile: '', sessions: rows);
+      return utf8.encode(storage.values[key]!).length;
+    }
+
+    // Same-length ids, so every row costs the same but for its title.
+    String id(int i) => 'r${i.toString().padLeft(2, '0')}';
+    const base = 2000;
+    final one = await savedSize([_row(id(0), title: 'T' * base)]);
+    final two = await savedSize([
+      for (var i = 0; i < 2; i++) _row(id(i), title: 'T' * base),
+    ]);
+    final rowBytes = two - one - 1; // one comma between rows
+    final envelope = one - rowBytes;
+    const count = 20;
+    // count rows + (count - 1) commas + envelope == budget exactly.
+    final room = snapshotBudget - envelope - (count - 1);
+    final each = room ~/ count;
+    final spare = room - each * count;
+    expect(each, lessThanOrEqualTo(rowBudget));
+    List<Session> rows(int extra) => [
+      for (var i = 0; i < count; i++)
+        _row(
+          id(i),
+          title:
+              'T' *
+              (base + each - rowBytes + (i == count - 1 ? spare + extra : 0)),
+        ),
+    ];
+
+    expect(await savedSize(rows(0)), snapshotBudget);
+    expect((await ids('c', ''))!.length, count);
+    expect(await savedSize(rows(1)), lessThan(snapshotBudget));
+    expect((await ids('c', ''))!.length, count - 1);
+  });
+
+  test('an oversized stored snapshot is dropped, never decoded', () async {
+    final rows = [
+      for (var i = 0; i < 3; i++)
+        {
+          'id': 's$i',
+          'title': 'T' * (snapshotBudget ~/ 2),
+          'source': 'cli',
+          'started_at': 1790000000,
+        },
+    ];
+    final oversized = jsonEncode({
+      'v': 1,
+      'c': 'c',
+      'p': 'default',
+      'rows': rows,
+    });
+    storage.values[ColdStartStore.recentsKey('c', '')] = oversized;
+    expect(await ids('c', ''), isNull);
+    expect(storage.values, isEmpty);
+    // A deletion sweep drops it too instead of rewriting it.
+    storage.values[ColdStartStore.recentsKey('c', '')] = oversized;
+    await store.forgetSession(connectionId: 'c', profile: '', sessionId: 's0');
+    expect(storage.values.keys.where((k) => k.contains('recents')), isEmpty);
+  });
+
   test('a corrupt or foreign snapshot is dropped, never painted', () async {
     storage.values[ColdStartStore.recentsKey('c', '')] =
         '{"v":1,"c":"x",'
