@@ -156,7 +156,7 @@ void main() {
       );
       expect(
         [for (final f in byPage[ServerConfigPage.shell]!) f.path],
-        ['terminal.env_passthrough'],
+        ['terminal.persistent_shell', 'terminal.env_passthrough'],
       );
       final allPaths = [for (final f in snapshot.fields) f.path];
       expect(allPaths, isNot(contains('model')));
