@@ -92,4 +92,39 @@ void main() {
       expect(chatPromptRowId({'role': 'user', 'id': 'abc'}), isNull);
     });
   });
+
+  group('stickyPromptIndex', () {
+    final transcript = [
+      _msg('assistant', 'respuesta 2'),
+      _msg('assistant', 'tool-free continuation'),
+      _msg('user', 'pregunta 2'),
+      _msg('assistant', 'respuesta 1'),
+      _msg('user', 'pregunta 1'),
+    ];
+
+    test('a reply row resolves to the prompt that opened its turn', () {
+      expect(stickyPromptIndex(transcript, 0), 2);
+      expect(stickyPromptIndex(transcript, 1), 2);
+      expect(stickyPromptIndex(transcript, 3), 4);
+    });
+
+    test('a prompt row resolves to itself', () {
+      expect(stickyPromptIndex(transcript, 2), 2);
+    });
+
+    test('a turn without a loaded prompt has none', () {
+      expect(stickyPromptIndex([_msg('assistant', 'huérfana')], 0), isNull);
+    });
+
+    test('out of range rows have none', () {
+      expect(stickyPromptIndex(transcript, -1), isNull);
+      expect(stickyPromptIndex(transcript, 5), isNull);
+      expect(stickyPromptIndex(const [], 0), isNull);
+    });
+
+    test('blank user rows do not open a turn', () {
+      final rows = [_msg('assistant', 'r'), _msg('user', '  '), _msg('user', 'p')];
+      expect(stickyPromptIndex(rows, 0), 2);
+    });
+  });
 }
