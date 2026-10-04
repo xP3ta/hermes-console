@@ -152,10 +152,12 @@ final class ToolOutputLedger {
 
   ToolOutputRecord? operator [](String id) => _records[id];
 
-  void recordComplete(Map<String, dynamic> payload) {
+  /// Records a `tool.complete`; false when it carries nothing to show.
+  bool recordComplete(Map<String, dynamic> payload) {
     final record = ToolOutputRecord.fromCompletePayload(payload);
-    if (record == null) return;
+    if (record == null) return false;
     put(record);
+    return true;
   }
 
   void put(ToolOutputRecord record) {

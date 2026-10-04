@@ -21015,6 +21015,15 @@ class ActiveChat {
       // the completed turn.
       return;
     }
+    if (_usingDesktopGateway && _runTerminal && event.type == 'tool.complete') {
+      // pt1215: a tool's diff/output may land after its turn settled. It is
+      // display data keyed by the tool id, so it fills that step's card in
+      // place without amending the completed turn.
+      if (toolOutputs.recordComplete(payload)) {
+        _emit(ActiveChatEvent.toolProgress);
+      }
+      return;
+    }
     if (!_usingDesktopGateway || _runTerminal) return;
 
     if (isTerminal) _recordDesktopTerminalFence(event);

@@ -23840,6 +23840,81 @@ void main() {
   );
 
   testWidgets(
+    'pt1215: un tool.complete tardío tras cerrar el turno rellena la misma tarjeta',
+    (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-pt1215-late'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_LATE_PARENT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-pt-late',
+        'name': 'patch',
+        'args': {'path': 'lib/late.dart'},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      gateway.emit('message.complete', const {'text': 'PUBLIC_LATE_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(FileDiffCard), findsNothing);
+      expect(find.byType(ChangedFilesCard), findsNothing);
+      final rowsBefore = tester
+          .widgetList(find.byType(ThinkingTraceCard))
+          .length;
+      final transcriptBefore = chat.messages.toString();
+
+      // The settled turn learns the edit's diff afterwards (same tool id).
+      // Idle chat: only the event itself may ask for the repaint.
+      await tester.pump(const Duration(seconds: 2));
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      gateway.emit('tool.complete', const {
+        'tool_id': 'call-pt-late',
+        'name': 'patch',
+        'args': {'path': 'lib/late.dart'},
+        'inline_diff': '@@ -1 +1,2 @@\n-old\n+new\n+more',
+        'result': {'success': true},
+      });
+      await tester.idle();
+      expect(tester.binding.hasScheduledFrame, isTrue);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(FileDiffCard), findsOneWidget);
+      expect(find.text('+02 −01 · late.dart'), findsOneWidget);
+      expect(find.text('1 archivo cambiado'), findsOneWidget);
+      expect(
+        tester.widgetList(find.byType(ThinkingTraceCard)).length,
+        rowsBefore,
+      );
+      // Display data only: the settled turn itself is not amended.
+      expect(chat.messages.toString(), transcriptBefore);
+      expect(find.text('PUBLIC_LATE_DONE'), findsOneWidget);
+      expect(find.text('PUBLIC_LATE_PARENT'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('activity-done-call-pt-late')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'pt1215: la salida de terminal en color aparece plegada en la traza',
     (tester) async {
       final gateway = _UiRewindGateway();
