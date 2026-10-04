@@ -164,6 +164,36 @@ void main() {
     }
   });
 
+  test('a wrapped malformed close of any type is dropped, not close-all', () {
+    for (final bad in <Object>[
+      42,
+      true,
+      ['x'],
+      {'a': 1},
+    ]) {
+      final transcript = _loaded([
+        _assistant('c1', 'desktop_preview', {
+          'action': 'open',
+          'url': 'https://example.com/a',
+        }),
+        _result('c1', 'desktop_preview'),
+        _assistant('c2', 'tool_call', {
+          'calls': [
+            {
+              'name': 'desktop_preview',
+              'arguments': {'action': 'close', 'url': bad},
+            },
+          ],
+        }),
+        _result('c2', 'tool_call'),
+      ]);
+
+      expect(collectAgentPreviews(transcript).map((p) => p.target.url), [
+        'https://example.com/a',
+      ], reason: 'wrapped close with url: $bad');
+    }
+  });
+
   test('a wrapped malformed close is dropped too, keeping the others', () {
     final transcript = _loaded([
       _assistant('c1', 'desktop_preview', {

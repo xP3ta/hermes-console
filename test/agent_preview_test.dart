@@ -155,6 +155,21 @@ void main() {
       );
     });
 
+    test('the empty path and the root stay one identity with a fragment', () {
+      for (final raw in [
+        'https://example.com#x',
+        'https://example.com/#x',
+        'example.com#x',
+        'HTTPS://Example.com:443#x',
+      ]) {
+        expect(classifyAgentPreviewTarget(raw)!.url, 'https://example.com/#x');
+      }
+      expect(
+        classifyAgentPreviewTarget('https://example.com?a=1#x')!.url,
+        'https://example.com/?a=1#x',
+      );
+    });
+
     test('normalizes like the tool', () {
       expect(
         classifyAgentPreviewTarget('www.example.com')!.url,
@@ -240,6 +255,30 @@ void main() {
         );
       },
     );
+
+    test('open and close with a fragment find each other either way', () {
+      expect(
+        _urls([
+          _open('https://example.com#x'),
+          _close('https://example.com/#x'),
+        ]),
+        isEmpty,
+      );
+      expect(
+        _urls([
+          _open('https://example.com/#x'),
+          _close('https://example.com#x'),
+        ]),
+        isEmpty,
+      );
+      expect(
+        _urls([
+          _open('https://example.com#x'),
+          _open('https://example.com/#x'),
+        ]),
+        ['https://example.com/#x'],
+      );
+    });
 
     test('close matches an open written with another scheme or port form', () {
       expect(
