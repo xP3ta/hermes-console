@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+// Transitive via flutter_test; not added to pubspec to keep the lockfile.
+// ignore: depend_on_referenced_packages
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/compression_config.dart';
 import 'package:hermes_android/core/services/compression_config_repository.dart';
@@ -58,6 +61,17 @@ Future<CompressionConfigException> _failure(Future<Object?> future) async {
     return error;
   }
   throw TestFailure('Expected CompressionConfigException');
+}
+
+/// Applies the `compression` block of a PUT to [config], so the re-read after
+/// saving sees what the server kept.
+void _keepWrite(Map<String, dynamic> config, http.Request request) {
+  final sent =
+      (jsonDecode(request.body) as Map<String, dynamic>)['config']
+          as Map<String, dynamic>;
+  (config['compression'] as Map<String, dynamic>).addAll(
+    sent['compression'] as Map<String, dynamic>,
+  );
 }
 
 final class _TrackingClient extends http.BaseClient {
@@ -423,10 +437,9 @@ void main() {
         expect(serverCompression['future_native_sibling'], {'preserve': true});
         expect(saved.configuration, changed);
         expect(saved.profile, 'synthetic-profile');
-        expect(requests.last.method, 'PUT');
-        expect(requests.last.url.queryParameters, {
-          'profile': 'synthetic-profile',
-        });
+        final put = requests.lastWhere((r) => r.method == 'PUT');
+        expect(put.url.queryParameters, {'profile': 'synthetic-profile'});
+        expect(requests.last.method, 'GET', reason: 'the re-read is last');
       },
     );
 
@@ -449,6 +462,7 @@ void main() {
               );
             }
             sent = jsonDecode(request.body) as Map<String, dynamic>;
+            _keepWrite(config, request);
             return http.Response('{"ok":true}', 200);
           }),
         );
@@ -477,6 +491,94 @@ void main() {
         expect(saved.optionalFields, base.optionalFields);
       },
     );
+
+    group('re-lectura tras guardar', () {
+      const changed = CompressionConfig(
+        enabled: false,
+        threshold: 0.75,
+        targetRatio: 0.3,
+        protectLastN: 40,
+      );
+
+      Future<(CompressionConfigRepository, CompressionConfigSnapshot)> open(
+        MockClient client,
+      ) async {
+        final dashboard = _dashboard(client);
+        final repository = CompressionConfigRepository(dashboard);
+        addTearDown(() {
+          repository.close();
+          dashboard.close();
+        });
+        return (repository, await repository.load());
+      }
+
+      MockClient server({
+        required List<http.Request> requests,
+        bool keepWrites = true,
+        int? getStatusAfterPut,
+      }) {
+        final fixture = _fixture();
+        final config = _cloneMap(fixture['config']!);
+        final compression = config['compression'] as Map<String, dynamic>;
+        var put = false;
+        return MockClient((request) async {
+          requests.add(request);
+          if (request.method == 'PUT') {
+            put = true;
+            if (keepWrites) {
+              final sent =
+                  (jsonDecode(request.body) as Map<String, dynamic>)['config']
+                      as Map<String, dynamic>;
+              compression.addAll(sent['compression'] as Map<String, dynamic>);
+            }
+            return http.Response('{"ok":true}', 200);
+          }
+          if (request.url.path == '/api/config/schema') {
+            return http.Response(jsonEncode(fixture['schema']), 200);
+          }
+          if (put && getStatusAfterPut != null) {
+            return http.Response('{}', getStatusAfterPut);
+          }
+          return http.Response(jsonEncode(config), 200);
+        });
+      }
+
+      test('un PUT bueno va seguido de una lectura de /api/config', () async {
+        final requests = <http.Request>[];
+        final (repository, base) = await open(server(requests: requests));
+        requests.clear();
+
+        final saved = await repository.save(base, changed);
+
+        expect(requests.map((r) => '${r.method} ${r.url.path}'), [
+          'PUT /api/config',
+          'GET /api/config',
+        ]);
+        expect(saved.configuration, changed);
+      });
+
+      test('un valor que el servidor no guardo es notSaved', () async {
+        final requests = <http.Request>[];
+        final (repository, base) = await open(
+          server(requests: requests, keepWrites: false),
+        );
+
+        final failure = await _failure(repository.save(base, changed));
+
+        expect(failure.code, CompressionConfigFailureCode.notSaved);
+      });
+
+      test('una re-lectura que falla no marca exito', () async {
+        final requests = <http.Request>[];
+        final (repository, base) = await open(
+          server(requests: requests, getStatusAfterPut: 500),
+        );
+
+        final failure = await _failure(repository.save(base, changed));
+
+        expect(failure.code, CompressionConfigFailureCode.unconfirmed);
+      });
+    });
 
     test('rechaza cada valor fuera de rango antes de cualquier PUT', () async {
       final fixture = _fixture();
@@ -527,18 +629,18 @@ void main() {
 
     test('acepta exactamente los limites inferior y superior', () async {
       final fixture = _fixture();
+      final config = _cloneMap(fixture['config']!);
       var putCount = 0;
       final dashboard = _dashboard(
         MockClient((request) async {
           if (request.method == 'PUT') {
             putCount += 1;
+            _keepWrite(config, request);
             return http.Response('{"ok":true}', 200);
           }
           return http.Response(
             jsonEncode(
-              request.url.path == '/api/config'
-                  ? fixture['config']
-                  : fixture['schema'],
+              request.url.path == '/api/config' ? config : fixture['schema'],
             ),
             200,
           );
@@ -681,6 +783,170 @@ void main() {
         expect(putCount, 0);
       },
     );
+  });
+
+  group('CompressionConfigRepository overlapping saves', () {
+    // A server whose first PUT waits for [gate]; every PUT is recorded in
+    // order and applied like the real deep-merge of the compression block.
+    ({
+      DashboardClient dashboard,
+      Map<String, dynamic> config,
+      List<double> sentThresholds,
+      List<String> events,
+    })
+    server(Completer<void> gate, {Completer<void>? rereadGate}) {
+      final config = _cloneMap(_fixture()['config']!);
+      final schema = _cloneMap(_fixture()['schema']!);
+      final sent = <double>[];
+      final events = <String>[];
+      var first = true;
+      var rereadGated = rereadGate != null;
+      final dashboard = _dashboard(
+        MockClient((request) async {
+          if (request.method == 'GET') {
+            // The confirmation read of the first save is the first GET of
+            // /api/config after its PUT has been applied.
+            if (!first && rereadGated && request.url.path == '/api/config') {
+              rereadGated = false;
+              events.add('reread started');
+              await rereadGate!.future;
+            }
+            return http.Response(
+              jsonEncode(request.url.path == '/api/config' ? config : schema),
+              200,
+            );
+          }
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          final compression =
+              (body['config'] as Map<String, dynamic>)['compression']
+                  as Map<String, dynamic>;
+          sent.add((compression['threshold'] as num).toDouble());
+          events.add('PUT ${compression['threshold']}');
+          if (first) {
+            first = false;
+            await gate.future;
+          }
+          _keepWrite(config, request);
+          return http.Response('{"ok":true}', 200);
+        }),
+      );
+      return (
+        dashboard: dashboard,
+        config: config,
+        sentThresholds: sent,
+        events: events,
+      );
+    }
+
+    Future<void> settle() async {
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    test(
+      'two saves from one snapshot run in order: the last intent wins',
+      () async {
+        final gate = Completer<void>();
+        final fake = server(gate);
+        final repository = CompressionConfigRepository(fake.dashboard);
+        addTearDown(() {
+          repository.close();
+          fake.dashboard.close();
+        });
+        final base = await repository.load();
+        final older = base.configuration!.copyWith(threshold: 0.6);
+        final newer = base.configuration!.copyWith(threshold: 0.7);
+
+        final first = repository.save(base, older);
+        await settle();
+        final second = repository.save(base, newer);
+        await settle();
+        expect(fake.sentThresholds, [0.6], reason: 'the newer one waits');
+
+        gate.complete();
+        expect((await first).configuration!.threshold, 0.6);
+        expect((await second).configuration!.threshold, 0.7);
+        expect(fake.sentThresholds, [0.6, 0.7]);
+        expect(
+          (fake.config['compression'] as Map<String, dynamic>)['threshold'],
+          0.7,
+        );
+      },
+    );
+
+    test(
+      'the next save waits for the confirmation read of the previous one',
+      () {
+        // Virtual time: while the read is held, 9 s (just under the client's
+        // request timeout) must not let the second PUT out, so only the read
+        // settling can release it, whatever short delay a mutant adds.
+        fakeAsync((async) {
+          final gate = Completer<void>();
+          final rereadGate = Completer<void>();
+          final fake = server(gate, rereadGate: rereadGate);
+          final repository = CompressionConfigRepository(fake.dashboard);
+
+          CompressionConfigSnapshot? base;
+          repository.load().then((value) => base = value);
+          async.flushMicrotasks();
+          expect(base, isNotNull);
+
+          final results = <double>[];
+          for (final threshold in [0.6, 0.7]) {
+            repository
+                .save(
+                  base!,
+                  base!.configuration!.copyWith(threshold: threshold),
+                )
+                .then((saved) => results.add(saved.configuration!.threshold));
+          }
+          async.flushMicrotasks();
+          gate.complete();
+          async.flushMicrotasks();
+          expect(fake.events, [
+            'PUT 0.6',
+            'reread started',
+          ], reason: 'the first confirmation read is in flight');
+
+          async.elapse(const Duration(seconds: 9));
+          expect(fake.sentThresholds, [
+            0.6,
+          ], reason: 'the second PUT does not start before that read settles');
+
+          rereadGate.complete();
+          async.flushMicrotasks();
+          expect(fake.sentThresholds, [0.6, 0.7]);
+          expect(results, [0.6, 0.7]);
+          repository.close();
+          fake.dashboard.close();
+        });
+      },
+    );
+
+    test('closing sends only the save already in flight', () async {
+      final gate = Completer<void>();
+      final fake = server(gate);
+      final repository = CompressionConfigRepository(fake.dashboard);
+      addTearDown(fake.dashboard.close);
+      final base = await repository.load();
+
+      final first = repository.save(
+        base,
+        base.configuration!.copyWith(threshold: 0.6),
+      );
+      await settle();
+      final second = _failure(
+        repository.save(base, base.configuration!.copyWith(threshold: 0.7)),
+      );
+      await settle();
+      repository.close();
+      gate.complete();
+
+      expect((await first).configuration!.threshold, 0.6);
+      expect((await second).code, CompressionConfigFailureCode.closed);
+      expect(fake.sentThresholds, [0.6]);
+    });
   });
 
   group('fallos sanitizados y lifecycle', () {
@@ -879,18 +1145,18 @@ void main() {
       'close espera un PUT ya iniciado antes de cerrar su cliente',
       () async {
         final fixture = _fixture();
+        final config = _cloneMap(fixture['config']!);
         final putStarted = Completer<void>();
         final putResult = Completer<http.Response>();
         final tracking = _TrackingClient((request) async {
           if (request.method == 'PUT') {
             if (!putStarted.isCompleted) putStarted.complete();
+            _keepWrite(config, request);
             return putResult.future;
           }
           return http.Response(
             jsonEncode(
-              request.url.path == '/api/config'
-                  ? fixture['config']
-                  : fixture['schema'],
+              request.url.path == '/api/config' ? config : fixture['schema'],
             ),
             200,
           );
@@ -966,7 +1232,10 @@ void main() {
         expect(repository.isClosed, isTrue);
         expect(tracking.closed, isTrue);
         putResult.complete(http.Response('{"ok":true}', 200));
-        expect((await saving).configuration, changed);
+        // The client is fenced: the write that was already out cannot be
+        // confirmed by a re-read, so it is not reported as saved.
+        final failure = await _failure(saving);
+        expect(failure.code, CompressionConfigFailureCode.unconfirmed);
       },
     );
 

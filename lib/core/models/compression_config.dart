@@ -14,7 +14,13 @@ enum CompressionConfigFailureCode {
   readOnly('compression_config_read_only'),
   rejected('compression_config_rejected'),
   transport('compression_config_transport'),
-  remote('compression_config_remote');
+  remote('compression_config_remote'),
+
+  /// El servidor respondio `ok` pero la re-lectura muestra otro valor.
+  notSaved('compression_config_not_saved'),
+
+  /// El servidor respondio `ok` pero no se pudo re-leer para confirmarlo.
+  unconfirmed('compression_config_unconfirmed');
 
   final String stableCode;
 
