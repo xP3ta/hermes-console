@@ -20,6 +20,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/command_descriptor.dart';
+import '../models/composer_reference.dart';
 import '../models/agent_profile.dart';
 import '../models/admin_integrations.dart';
 import '../models/bot_visual_identity.dart';
@@ -810,6 +811,26 @@ abstract class HermesDesktopCommandGateway {
   });
 }
 
+/// Composer completions bound to the chat's runtime, as Desktop sends them
+/// (`use-slash-completions.ts`): `session_id` scopes skill lookups to that
+/// session's profile and workspace (project-local skills); a new-chat draft
+/// with no session names its `profile` instead (`CompleteSlashParams`).
+/// Optional so older doubles of [HermesDesktopCommandGateway] stay valid.
+abstract class HermesDesktopComposerCompletionGateway {
+  Future<SlashCompletionBatch> completeSlashInSession(
+    String text, {
+    String? runtimeSessionId,
+    String? profile,
+  });
+
+  /// `complete.path {word, session_id}`: `@` references listed against the
+  /// session's own cwd (Desktop `use-at-completions.ts`).
+  Future<PathCompletionBatch> completePath(
+    String word, {
+    required String runtimeSessionId,
+  });
+}
+
 /// Read-only replay ring of one runtime (`session.events.since`,
 /// `last_seen: 0`). Lets a relaunched client learn whether a compression that
 /// runtime ran is still pinned, without resuming or stealing it.
@@ -1382,6 +1403,7 @@ class TuiGatewayClient
         HermesDesktopBotCreationGateway,
         HermesDesktopPetGateway,
         HermesDesktopCommandGateway,
+        HermesDesktopComposerCompletionGateway,
         HermesDesktopCompressionGateway,
         HermesDesktopApprovalResultGateway,
         HermesDesktopSubagentGateway,
@@ -5349,17 +5371,53 @@ class TuiGatewayClient
   }
 
   @override
-  Future<SlashCompletionBatch> completeSlash(String text) async {
+  Future<SlashCompletionBatch> completeSlash(String text) =>
+      completeSlashInSession(text);
+
+  @override
+  Future<SlashCompletionBatch> completeSlashInSession(
+    String text, {
+    String? runtimeSessionId,
+    String? profile,
+  }) async {
     const method = 'complete.slash';
     final input = text;
     if (input.length > 4096 ||
         input.contains(RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'))) {
       throw const TuiGatewayRpcError(method, 'Invalid slash completion input');
     }
+    final hasRuntime = runtimeSessionId != null && runtimeSessionId.isNotEmpty;
     final result = await _request(method, {
       'text': input,
+      if (hasRuntime)
+        'session_id': _validatedRuntimeId(method, runtimeSessionId)
+      else
+        ..._petParams(profile ?? '', method: method),
     }, timeout: const Duration(seconds: 20));
     return SlashCompletionBatch.fromJson(result, input: input);
+  }
+
+  @override
+  Future<PathCompletionBatch> completePath(
+    String word, {
+    required String runtimeSessionId,
+  }) async {
+    const method = 'complete.path';
+    if (word.isEmpty ||
+        word.length > 1024 ||
+        word.contains(RegExp(r'[\x00-\x1F\x7F]'))) {
+      throw const TuiGatewayRpcError(method, 'Invalid path completion input');
+    }
+    final result = await _requestOptionalCapability(
+      DesktopGatewayCapability.composerPathCompletion,
+      method,
+      {
+        'word': word,
+        'session_id': _validatedRuntimeId(method, runtimeSessionId),
+      },
+      connectedOnly: true,
+    );
+    return PathCompletionBatch.fromJson(result);
   }
 
   @override

@@ -37,6 +37,7 @@ import '../models/agent_task_list.dart';
 import '../models/attachment_draft.dart';
 import '../models/compaction_progress.dart' show parseCompactionChunks;
 import '../models/command_descriptor.dart';
+import '../models/composer_reference.dart';
 import '../models/core_read.dart';
 import '../models/desktop_compression_authority.dart';
 import '../models/desktop_active_session.dart';
@@ -16072,14 +16073,71 @@ class ActiveChat {
 
   /// Completion efímera. El llamador debe resolver de nuevo contra catálogo o
   /// comando nativo antes de ejecutar; una suggestion nunca concede capability.
-  Future<SlashCompletionBatch?> completeDesktopSlash(String text) async {
+  ///
+  /// [runtimeSessionId] is the runtime the caller keyed its query to (null for
+  /// a new-chat draft, which names its [profile] instead, like Desktop). The
+  /// answer is null when this chat's runtime is not that one, before or after
+  /// the round trip, so another scope's skills are never offered or cached.
+  Future<SlashCompletionBatch?> completeDesktopSlash(
+    String text, {
+    required String? runtimeSessionId,
+    String profile = '',
+  }) async {
     final gateway = _desktopGateway;
     if (gateway is! HermesDesktopCommandGateway) return null;
+    final expected = runtimeSessionId?.isEmpty ?? true
+        ? null
+        : runtimeSessionId;
+    bool current() => (_desktopRuntimeSessionId ?? '') == (expected ?? '');
+    if (!current()) return null;
     try {
-      return await (gateway as HermesDesktopCommandGateway).completeSlash(text);
+      final SlashCompletionBatch batch;
+      // Desktop parity: the runtime scopes project-local skills.
+      if (gateway is HermesDesktopComposerCompletionGateway) {
+        batch = await (gateway as HermesDesktopComposerCompletionGateway)
+            .completeSlashInSession(
+              text,
+              runtimeSessionId: expected,
+              profile: expected == null ? profile : null,
+            );
+      } else {
+        batch = await (gateway as HermesDesktopCommandGateway).completeSlash(
+          text,
+        );
+      }
+      return current() ? batch : null;
     } on TuiGatewayRpcError catch (error) {
       if (error.code == -32601) return null;
       rethrow;
+    }
+  }
+
+  /// The gateway can list `@` references (`complete.path`) and resolves the
+  /// context references a prompt carries. False on REST-only chats.
+  bool get supportsDesktopPathCompletion =>
+      _desktopGateway is HermesDesktopComposerCompletionGateway;
+
+  /// `@` completion against [runtimeSessionId], the runtime the caller keyed
+  /// its query to. Null when the gateway lacks it, the socket is down
+  /// (completion never dials), or this chat's runtime is not that one before
+  /// or after the round trip, so another runtime's tree is never listed.
+  Future<PathCompletionBatch?> completeDesktopPath(
+    String word, {
+    required String runtimeSessionId,
+  }) async {
+    final gateway = _desktopGateway;
+    bool current() =>
+        runtimeSessionId.isNotEmpty &&
+        _desktopRuntimeSessionId == runtimeSessionId;
+    if (gateway is! HermesDesktopComposerCompletionGateway || !current()) {
+      return null;
+    }
+    try {
+      final batch = await (gateway as HermesDesktopComposerCompletionGateway)
+          .completePath(word, runtimeSessionId: runtimeSessionId);
+      return current() ? batch : null;
+    } on TuiGatewayRpcError {
+      return null;
     }
   }
 
@@ -16143,11 +16201,44 @@ class ActiveChat {
       );
     }
     final command = argument.isEmpty ? canonical : '$canonical $argument';
-    return (gateway as HermesDesktopCommandGateway).slashExec(
-      runtimeId,
-      command,
-    );
+    final commands = gateway as HermesDesktopCommandGateway;
+    try {
+      return await commands.slashExec(runtimeId, command);
+    } on TuiGatewayRpcError catch (slashError) {
+      // Desktop `use-prompt-actions/slash.ts` retries command.dispatch on any
+      // slash.exec error. Here only the gateway's own refusal before running
+      // anything ("use command.dispatch", 4018) reroutes: a worker failure,
+      // timeout or lost connection may come after the command ran, and a
+      // retry could run it twice. When the dispatcher has nothing for the
+      // name, the slash.exec error is the real failure.
+      if (!_slashExecRefusedBeforeRunning(slashError)) rethrow;
+      try {
+        return await commands.commandDispatch(
+          runtimeId,
+          name: canonical,
+          arg: argument,
+        );
+      } on TuiGatewayRpcError catch (dispatchError) {
+        if (_notADispatchCommand.hasMatch(dispatchError.message)) {
+          throw slashError;
+        }
+        rethrow;
+      }
+    }
   }
+
+  static bool _slashExecRefusedBeforeRunning(TuiGatewayRpcError error) =>
+      error.code == 4018 && _useCommandDispatch.hasMatch(error.message);
+
+  static final RegExp _useCommandDispatch = RegExp(
+    r'\buse command\.dispatch\b',
+    caseSensitive: false,
+  );
+
+  static final RegExp _notADispatchCommand = RegExp(
+    r'not a quick/plugin/(?:bundle/)?skill command',
+    caseSensitive: false,
+  );
 
   String get _compressionRestoreProfile => Session.profileOwner(
     _sessionProfileOwner,

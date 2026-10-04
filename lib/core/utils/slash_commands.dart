@@ -5,6 +5,7 @@
 library;
 
 import '../../l10n/app_localizations.dart';
+import '../models/command_descriptor.dart';
 
 /// Qué hace un comando al ejecutarse (la lógica vive en el chat).
 enum SlashAction {
@@ -40,23 +41,97 @@ class SlashCommand {
   /// la app suele abrir un selector en su lugar.
   final bool takesArg;
 
+  /// A server skill command (`complete.slash` kind `skill` or a catalog
+  /// `skills` key); the palette groups these under their own header.
+  final bool isSkill;
+
   const SlashCommand({
     required this.name,
     required this.description,
     required this.action,
     this.argHint = '',
     this.takesArg = false,
+    this.isSkill = false,
   });
 
   factory SlashCommand.remote({
     required String name,
     required String description,
+    bool isSkill = false,
   }) => SlashCommand(
     name: name,
     description: description,
     action: SlashAction.remote,
     takesArg: true,
+    isSkill: isSkill,
   );
+}
+
+/// Most rows the palette shows for one query: the bare `/` lists the server's
+/// ranked catalog, skills included, so it needs room beyond the local list.
+const int maxSlashPaletteRows = 40;
+
+/// Merges the local palette with the server's live answer for [input]
+/// (`complete.slash`, falling back to the `commands.catalog` prefix match when
+/// the gateway lacks completion). Local commands lead, then server commands,
+/// then skills (Desktop groups Commands before Skills, each keeping the
+/// backend's relevance order). A suggestion never grants availability: the
+/// send path re-resolves every remote name against the catalog.
+List<SlashCommand> mergeSlashSuggestions({
+  required String input,
+  required List<SlashCommand> local,
+  DesktopCommandCatalog? catalog,
+  SlashCompletionBatch? completion,
+  int limit = maxSlashPaletteRows,
+}) {
+  final byName = <String, SlashCommand>{
+    for (final item in local) item.name: item,
+  };
+  final prefix = input.startsWith('/')
+      ? input.substring(1).toLowerCase()
+      : input.toLowerCase();
+  final catalogByName = <String, CommandCatalogEntry>{
+    for (final item in catalog?.commands ?? const <CommandCatalogEntry>[])
+      item.canonicalName: item,
+  };
+  final skillNames = catalog?.skillNames ?? const <String>{};
+  final commands = <SlashCommand>[];
+  final skills = <SlashCommand>[];
+
+  void offer(String name, String meta, bool skillKind) {
+    if (isUnavailableSlashName(name) || byName.containsKey(name)) return;
+    final entry = catalogByName[name];
+    final skill = skillKind || skillNames.contains(name);
+    final command = SlashCommand.remote(
+      name: name,
+      description: entry?.description.isNotEmpty == true
+          ? entry!.description
+          : meta,
+      isSkill: skill,
+    );
+    byName[name] = command;
+    (skill ? skills : commands).add(command);
+  }
+
+  if (completion != null) {
+    for (final item in completion.suggestions) {
+      final name = CommandDescriptor.tryNormalizeName(
+        item.replacement.trim().split(RegExp(r'\s+')).first,
+      );
+      if (name == null) continue;
+      offer(name, item.meta, item.isSkill);
+    }
+  } else {
+    for (final name in catalogByName.keys) {
+      if (name.startsWith(prefix)) offer(name, '', false);
+    }
+  }
+  final merged = <SlashCommand>[
+    ...local.where((item) => byName[item.name] == item),
+    ...commands,
+    ...skills,
+  ];
+  return merged.length <= limit ? merged : merged.sublist(0, limit);
 }
 
 /// Catálogo de comandos conocidos (cliente). El orden es el de la paleta.
