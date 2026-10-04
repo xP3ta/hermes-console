@@ -32,7 +32,8 @@ Map<String, dynamic> _payload({
   'deadline_at': deadline,
   'timeout_seconds': 120,
   'tool_call_id': toolCallId,
-  'targets': targets ?? [_target('gmail', url: 'https://connect.example.test/a')],
+  'targets':
+      targets ?? [_target('gmail', url: 'https://connect.example.test/a')],
 };
 
 ConnectionRequest _request({String opId = 'op-1', int seq = 1}) =>
@@ -170,31 +171,37 @@ void main() {
       expect(next.targets.single.state, ConnectionTargetState.connected);
     });
 
-    test('older or equal seq, other op and settled requests change nothing', () {
-      final held = _request(seq: 3);
-      expect(
-        identical(applyConnectionUpdate(held, _update(seq: 3)), held),
-        isTrue,
-      );
-      expect(
-        identical(applyConnectionUpdate(held, _update(seq: 2)), held),
-        isTrue,
-      );
-      expect(
-        identical(applyConnectionUpdate(held, _update(opId: 'op-2', seq: 9)), held),
-        isTrue,
-      );
-      final settled = applyConnectionUpdate(
-        held,
-        _update(seq: 4, settled: true, settledBy: 'continue'),
-      );
-      expect(settled.settled, isTrue);
-      expect(settled.settledBy, 'continue');
-      expect(
-        identical(applyConnectionUpdate(settled, _update(seq: 5)), settled),
-        isTrue,
-      );
-    });
+    test(
+      'older or equal seq, other op and settled requests change nothing',
+      () {
+        final held = _request(seq: 3);
+        expect(
+          identical(applyConnectionUpdate(held, _update(seq: 3)), held),
+          isTrue,
+        );
+        expect(
+          identical(applyConnectionUpdate(held, _update(seq: 2)), held),
+          isTrue,
+        );
+        expect(
+          identical(
+            applyConnectionUpdate(held, _update(opId: 'op-2', seq: 9)),
+            held,
+          ),
+          isTrue,
+        );
+        final settled = applyConnectionUpdate(
+          held,
+          _update(seq: 4, settled: true, settledBy: 'continue'),
+        );
+        expect(settled.settled, isTrue);
+        expect(settled.settledBy, 'continue');
+        expect(
+          identical(applyConnectionUpdate(settled, _update(seq: 5)), settled),
+          isTrue,
+        );
+      },
+    );
 
     test('operation status follows the same ordering', () {
       final held = _request();
@@ -220,7 +227,9 @@ void main() {
   group('ConnectionCardState', () {
     test('a request for an operation already settled is not shown again', () {
       var state = const ConnectionCardState().onRequest(_request());
-      state = state.onUpdate(_update(seq: 2, settled: true, settledBy: 'continue'));
+      state = state.onUpdate(
+        _update(seq: 2, settled: true, settledBy: 'continue'),
+      );
       state = state.onRequest(_request(seq: 9));
       expect(state.request!.settled, isTrue);
       expect(state.request!.seq, 2);
@@ -249,7 +258,9 @@ void main() {
       expect(restored.request!.opId, 'op-1');
 
       var settled = const ConnectionCardState().onRequest(_request());
-      settled = settled.onUpdate(_update(seq: 2, settled: true, settledBy: 'deadline'));
+      settled = settled.onUpdate(
+        _update(seq: 2, settled: true, settledBy: 'deadline'),
+      );
       settled = settled.onRequest(_request(opId: 'op-2'));
       final again = settled.onResume(pending: _request(), heldAtStart: null);
       expect(again.request!.opId, 'op-2');
@@ -258,36 +269,47 @@ void main() {
     test('resume never regresses a newer seq and advances an older one', () {
       final held = const ConnectionCardState().onRequest(_request(seq: 5));
       expect(
-        held.onResume(pending: _request(seq: 3), heldAtStart: held.request)
+        held
+            .onResume(pending: _request(seq: 3), heldAtStart: held.request)
             .request!
             .seq,
         5,
       );
       expect(
-        held.onResume(pending: _request(seq: 8), heldAtStart: held.request)
+        held
+            .onResume(pending: _request(seq: 8), heldAtStart: held.request)
             .request!
             .seq,
         8,
       );
     });
 
-    test('an absent snapshot clears only a card that existed before resume', () {
-      final before = const ConnectionCardState().onRequest(_request());
-      expect(
-        before.onResume(pending: null, heldAtStart: before.request).request,
-        isNull,
-      );
+    test(
+      'an absent snapshot clears only a card that existed before resume',
+      () {
+        final before = const ConnectionCardState().onRequest(_request());
+        expect(
+          before.onResume(pending: null, heldAtStart: before.request).request,
+          isNull,
+        );
 
-      // A card that arrived by event while the resume was in flight stays.
-      final during = before.onRequest(_request(opId: 'op-2'));
-      expect(
-        during.onResume(pending: null, heldAtStart: before.request).request!.opId,
-        'op-2',
-      );
+        // A card that arrived by event while the resume was in flight stays.
+        final during = before.onRequest(_request(opId: 'op-2'));
+        expect(
+          during
+              .onResume(pending: null, heldAtStart: before.request)
+              .request!
+              .opId,
+          'op-2',
+        );
 
-      // Nothing held at the start, nothing to clear.
-      final late = const ConnectionCardState().onRequest(_request());
-      expect(late.onResume(pending: null, heldAtStart: null).request, isNotNull);
-    });
+        // Nothing held at the start, nothing to clear.
+        final late = const ConnectionCardState().onRequest(_request());
+        expect(
+          late.onResume(pending: null, heldAtStart: null).request,
+          isNotNull,
+        );
+      },
+    );
   });
 }
