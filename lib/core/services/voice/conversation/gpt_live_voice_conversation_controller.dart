@@ -245,7 +245,15 @@ class GptLiveVoiceConversationController extends ChangeNotifier
     _seenDelegations.clear();
     _notify();
 
-    final api = _apiFactory(chat);
+    final VoiceLiveApi api;
+    try {
+      api = _apiFactory(chat);
+    } catch (_) {
+      _starting = false;
+      note = _strings.voiceGptLiveCouldNotStart;
+      _notify();
+      return;
+    }
     final session = VoiceLiveSession(
       transport: _transportFactory(),
       api: api,

@@ -123,13 +123,14 @@ class VoiceConversationCoordinator extends ChangeNotifier
   }
 
   Future<VoiceLiveStatus?> _readStatus(ActiveChat chat, String profile) async {
-    final api = _apiFactory(chat);
+    VoiceLiveApi? api;
     try {
+      api = _apiFactory(chat);
       return await api.fetchStatus(profile: profile).timeout(_statusTimeout);
     } catch (_) {
       return null;
     } finally {
-      api.close();
+      api?.close();
     }
   }
 

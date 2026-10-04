@@ -43,7 +43,10 @@ class _Rig {
         return live;
       },
       gptLiveEnabled: () => optIn,
-      apiFactory: (_) => api,
+      apiFactory: (_) {
+        if (apiFails) throw StateError('no transport');
+        return api;
+      },
       languageCode: () => 'en',
       visibleSession: visible,
       profileWatch: (_) => (changes: profileChanges, current: () => profile),
@@ -58,6 +61,7 @@ class _Rig {
   late final VoiceConversationCoordinator coordinator;
   final chat = _chat('chat-1');
   bool optIn = false;
+  bool apiFails = false;
   String profile = 'ops';
   int liveCreated = 0;
 
@@ -146,6 +150,14 @@ void main() {
       await rig.enter();
       expect(rig.chained.calls, ['enter']);
       expect(rig.api.closeCalls, 1);
+    });
+
+    test('an api client that cannot be built falls back too', () async {
+      rig.optIn = true;
+      rig.apiFails = true;
+      await rig.enter();
+      expect(rig.chained.calls, ['enter']);
+      expect(rig.liveCreated, 0);
     });
 
     test('the chained engine own note wins over the fallback notice', () async {

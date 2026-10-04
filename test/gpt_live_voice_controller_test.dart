@@ -40,7 +40,10 @@ class _Rig {
       storedMessageLoader: (_, _) async => const [],
     )..state = ChatPipelineState.idle;
     controller = GptLiveVoiceConversationController(
-      apiFactory: (_) => api,
+      apiFactory: (_) {
+        if (apiFails) throw StateError('no transport');
+        return api;
+      },
       transportFactory: () {
         transportsCreated++;
         return transport;
@@ -58,6 +61,7 @@ class _Rig {
   late final ActiveChat chat;
   late final GptLiveVoiceConversationController controller;
   int transportsCreated = 0;
+  bool apiFails = false;
   int notifications = 0;
 
   Future<void> enter(FakeAsync async, {String profile = 'ops'}) async {
@@ -576,6 +580,20 @@ void main() {
         expect(rig.transportsCreated, 1);
       });
     });
+
+    test(
+      'an api client that cannot be built shows the could-not-start note',
+      () {
+        fakeAsync((async) {
+          final rig = _Rig();
+          rig.apiFails = true;
+          rig.enter(async);
+          expect(rig.controller.note, 'Could not start GPT-Live');
+          expect(rig.controller.phase, VoicePhase.idle);
+          expect(rig.transportsCreated, 0);
+        });
+      },
+    );
 
     test('a denied microphone reports the existing STT permission check', () {
       fakeAsync((async) {
