@@ -189,10 +189,7 @@ final class ServerToolsetsRepository {
         if (rows is! List) {
           throw const ServerConfigException(ServerConfigFailure.invalid);
         }
-        return [
-          for (final row in rows)
-            if (ServerToolset.tryParse(row) case final toolset?) toolset,
-        ];
+        return [for (final row in rows) ?ServerToolset.tryParse(row)];
       });
 
   Future<ToolsetEnableResult> setEnabled(
