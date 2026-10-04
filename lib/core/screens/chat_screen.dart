@@ -10664,15 +10664,15 @@ class _ChatScreenState extends State<ChatScreen>
     if (lease == null || childSessionId == null || childSessionId.isEmpty) {
       return null;
     }
-    final ticket = appActiveProfileScope(
-      context,
-      widget.connection.id,
-    )?.capture();
+    final scope = appActiveProfileScope(context, widget.connection.id);
+    final ticket = scope?.capture();
     return SubagentLiveWatch(
       gateway: lease.gateway,
       childSessionId: childSessionId,
       profile: lease.profile,
       isCurrent: () => lease.isCurrent() && (ticket?.isCurrent ?? true),
+      // A profile switch with no event after it must still end the watch.
+      invalidation: scope,
       childIsLive: () {
         final current = _currentSubagentActivity(activity.key);
         return current != null && subagentIsLive(current);
