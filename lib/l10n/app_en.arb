@@ -7256,6 +7256,111 @@
   "cphFailBlockedByScan": "The security scan blocked this install.",
   "cphFailUnavailable": "The server didn't answer in time.",
   "cphFailUncertain": "No answer in time. It may have been applied: refresh the list before retrying.",
+  "cphEnvRequired": "This value is required.",
+  "cphRowRepo": "Repository",
+  "cphRowPin": "Reviewed pin",
+  "cphRowPlatforms": "Platforms",
+  "cphRowRequiresHermes": "Requires Hermes",
+  "cphRowHooks": "Hooks",
+  "cphRowMiddleware": "Middleware",
+  "cphRowKnownIssues": "Known issues",
+  "cphRowCloneFrom": "Cloned from",
+  "cphRowCloneRef": "Ref",
+  "cphRowBootstrap": "Runs on the server",
+  "cphRowAuthType": "Authentication",
+  "cphRemovedFromCatalog": "Removed from the catalog: {reason}",
+  "@cphRemovedFromCatalog": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "cphRowPreview": "Preview",
+  "cphRowScan": "Security scan",
+  "cphScanClean": "No findings.",
+  "cphPreviewFiles": "Files",
+  "cphConfirmSource": "Source: {source}",
+  "@cphConfirmSource": {
+    "placeholders": {
+      "source": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConfirmPublisher": "Publisher: {publisher}",
+  "@cphConfirmPublisher": {
+    "placeholders": {
+      "publisher": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConfirmTier": "Tier: {tier}",
+  "@cphConfirmTier": {
+    "placeholders": {
+      "tier": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConfirmDestination": "Installs to: {destination}",
+  "@cphConfirmDestination": {
+    "placeholders": {
+      "destination": {
+        "type": "String"
+      }
+    }
+  },
+  "cphThirdPartyWarning": "This is third-party code that will run on your server.",
+  "cphEnvSheetTitle": "Credentials for {name}",
+  "@cphEnvSheetTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "cphEnvSheetBody": "They go to the server and are not kept on this phone.",
+  "cphEnvOptional": "Optional",
+  "cphEnvSubmit": "Install",
+  "cphBlockedByScanCount": "Blocked by the security scan ({count} findings).",
+  "@cphBlockedByScanCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cphBlockedByScanPlain": "Blocked by the security scan.",
+  "cphViewScan": "View scan",
+  "cphNewSessionsNote": "Applies to new sessions.",
+  "cphMissingEnvNotice": "Missing credentials: {names}",
+  "@cphMissingEnvNotice": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "cphAddCredentials": "Add credentials",
+  "cphMcpNotConnected": "MCP server not connected: {detail}",
+  "@cphMcpNotConnected": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "cphKnownIssuesNotice": "Known issues: {issues}",
+  "@cphKnownIssuesNotice": {
+    "placeholders": {
+      "issues": {
+        "type": "String"
+      }
+    }
+  },
+  "cphUncertainRefreshed": "No answer in time. The list was refreshed: check whether it applied.",
   "cphFailForbidden": "Not allowed with these credentials.",
   "cphFailUnsupported": "This server doesn't support this action.",
   "cphFailInvalid": "The server sent an unexpected answer.",

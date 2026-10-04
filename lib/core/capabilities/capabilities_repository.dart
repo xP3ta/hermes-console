@@ -54,6 +54,8 @@ enum CapabilityFeature {
   officialSkills,
   hubSearch,
   skillInstall,
+  skillPreview,
+  skillScan,
   skillsUpdate,
   pluginCatalog,
   pluginInstalled,
@@ -289,6 +291,29 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
           .toList(growable: false);
     });
   }
+
+  Future<SkillPreview> skillPreview(
+    String identifier,
+  ) => _call(CapabilityFeature.skillPreview, () async {
+    final result = await rest.get(
+      _withProfile(
+        'skills/hub/preview?identifier=${Uri.encodeQueryComponent(identifier.trim())}',
+      ),
+    );
+    return SkillPreview.fromJson(result);
+  });
+
+  /// Install-time security scan, without installing.
+  Future<SkillScan> skillScan(
+    String identifier,
+  ) => _call(CapabilityFeature.skillScan, () async {
+    final result = await rest.get(
+      _withProfile(
+        'skills/hub/scan?identifier=${Uri.encodeQueryComponent(identifier.trim())}',
+      ),
+    );
+    return SkillScan.fromJson(result);
+  });
 
   Future<void> setSkillEnabled(String name, bool enabled) =>
       _call(CapabilityFeature.skillToggle, () async {

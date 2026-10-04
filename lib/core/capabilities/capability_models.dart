@@ -661,6 +661,38 @@ final class CapabilityActionStatus {
   }
 }
 
+/// `GET /api/skills/hub/preview`: the SKILL.md text and its file list.
+final class SkillPreview {
+  final String skillMd;
+  final List<String> files;
+
+  const SkillPreview({this.skillMd = '', this.files = const []});
+
+  factory SkillPreview.fromJson(Map<String, dynamic> json) => SkillPreview(
+    skillMd: _text(json['skill_md'], max: 20000),
+    files: _strings(json['files'], maxRows: 200, max: 200),
+  );
+}
+
+/// `GET /api/skills/hub/scan`: install-time scan without installing.
+final class SkillScan {
+  final String summary;
+  final List<String> findings;
+
+  const SkillScan({this.summary = '', this.findings = const []});
+
+  factory SkillScan.fromJson(Map<String, dynamic> json) => SkillScan(
+    summary: _text(json['summary'], max: 400),
+    findings: [
+      for (final row in _rows(json['findings'], max: 100))
+        [
+          _text(row['severity'], max: 20),
+          _text(row['description'], max: 300),
+        ].where((part) => part.isNotEmpty).join(': '),
+    ].where((line) => line.isNotEmpty).toList(growable: false),
+  );
+}
+
 /// Plugin mutation answer (`/api/dashboard/agent-plugins/...`).
 final class PluginMutationResult {
   final bool ok;

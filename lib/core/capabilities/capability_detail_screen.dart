@@ -13,6 +13,7 @@ import '../theme/app_theme.dart';
 import '../widgets/action_approval.dart';
 import '../widgets/hermes_notice.dart';
 import 'capabilities_repository.dart';
+import 'capability_env_sheet.dart';
 import 'capability_models.dart';
 import 'capability_ui.dart';
 
@@ -32,8 +33,8 @@ List<CapabilityAction> capabilityActions(
   final out = <CapabilityAction>[];
   if (!readOnly) {
     if (!item.installed) {
-      final needsEnv = item.env.any((field) => field.required);
-      if (item.installId.isNotEmpty && !needsEnv) {
+      // Entries on the catalog blocklist are never installable.
+      if (item.installId.isNotEmpty && !item.disclosure.isRemoved) {
         out.add(CapabilityAction.install);
       }
     } else {
@@ -62,6 +63,10 @@ class CapabilityDetailScreen extends StatefulWidget {
   final bool readOnly;
   final String instanceId;
 
+  /// `<server label> · <profile>`: where an install lands, shown in its
+  /// confirmation.
+  final String destinationLabel;
+
   /// Called after every confirmed server change so the hub reloads.
   final VoidCallback? onChanged;
 
@@ -71,6 +76,7 @@ class CapabilityDetailScreen extends StatefulWidget {
     required this.repository,
     this.readOnly = false,
     this.instanceId = '',
+    this.destinationLabel = '',
     this.onChanged,
   });
 
@@ -78,12 +84,43 @@ class CapabilityDetailScreen extends StatefulWidget {
   State<CapabilityDetailScreen> createState() => _CapabilityDetailScreenState();
 }
 
-class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
+class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
+    with WidgetsBindingObserver {
   late CapabilityItem _item = widget.item;
   final GlobalKey _moreKey = GlobalKey(debugLabel: 'cph-detail-more');
+  final CapabilityActionToken _token = CapabilityActionToken();
   bool _busy = false;
 
   CapabilitiesRepository get _repo => widget.repository;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _token.cancel();
+    super.dispose();
+  }
+
+  /// The action loop reads only while the app is in the foreground; coming
+  /// back does one status read and carries on only if it still runs.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        _token.resume();
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        _token.pause();
+      case AppLifecycleState.inactive:
+        break;
+    }
+  }
 
   String _label(Strings s, CapabilityAction action) => switch (action) {
     CapabilityAction.install => s.cphActionInstall,
@@ -108,10 +145,15 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
   Future<bool> _confirm(CapabilityAction action) {
     final s = Strings.of(context);
     final name = _item.name;
+    final install = capabilityInstallConfirmation(
+      s,
+      _item,
+      destination: widget.destinationLabel,
+    );
     final (title, detail, risk) = switch (action) {
       CapabilityAction.install => (
-        s.cphConfirmInstall(name),
-        s.cphConfirmInstallBody,
+        install.title,
+        install.detail,
         CommandRisk.high,
       ),
       CapabilityAction.remove => (
@@ -145,6 +187,15 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
     }
     if (action != CapabilityAction.test && !await _confirm(action)) return;
     if (!mounted) return;
+    // Credentials are typed after the confirmation and live only inside this
+    // call: the map is cleared as soon as the request has been made.
+    Map<String, String>? env;
+    if (action == CapabilityAction.install &&
+        _item.kind == CapabilityKind.mcp &&
+        _item.env.isNotEmpty) {
+      env = await _askEnv(_item.name, _item.env);
+      if (env == null || !mounted) return;
+    }
     final s = Strings.of(context);
     final notices = HermesNotice.of(context);
     final name = _item.name;
@@ -160,7 +211,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
       final outcome = await runCapabilityProgress<_Outcome>(
         context,
         label: progressLabel,
-        task: (line) => _perform(action, line),
+        task: (line) => _perform(action, line, env: env),
       );
       if (!mounted) return;
       if (outcome.consent != null) {
@@ -181,47 +232,162 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
       } else if (outcome.changed && action == CapabilityAction.remove) {
         Navigator.of(context).pop(true);
       }
+    } on CapabilityActionAbandoned {
+      // The screen closed or the loop was stopped: nothing to report.
     } catch (error) {
       if (!mounted) return;
-      notices.show(
-        message: capabilityFailureMessage(s, error),
-        kind: HermesNoticeKind.error,
-      );
+      _reportFailure(notices, s, error);
     } finally {
+      env?.clear();
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _reportFailure(HermesNoticeController notices, Strings s, Object error) {
+    final kind = capabilityFailureKindOf(error);
+    if (kind == CapabilityFailureKind.blockedByScan &&
+        _item.kind == CapabilityKind.skill) {
+      final findings = error is CapabilityFailure ? error.findings : null;
+      notices.show(
+        message: findings == null
+            ? s.cphBlockedByScanPlain
+            : s.cphBlockedByScanCount(findings),
+        kind: HermesNoticeKind.error,
+        action: HermesNoticeAction(label: s.cphViewScan, onPressed: _showScan),
+      );
+      return;
+    }
+    if (kind == CapabilityFailureKind.uncertain) {
+      // The request may have landed: refresh once, never retry.
+      notices.show(
+        message: s.cphUncertainRefreshed,
+        kind: HermesNoticeKind.warning,
+      );
+      widget.onChanged?.call();
+      return;
+    }
+    notices.show(
+      message: capabilityFailureMessage(s, error),
+      kind: HermesNoticeKind.error,
+    );
+  }
+
+  Future<Map<String, String>?> _askEnv(
+    String name,
+    List<CapabilityEnvField> fields,
+  ) => showHermesSurface<Map<String, String>>(
+    context: context,
+    surfaceKey: const ValueKey('cph-env-sheet'),
+    maxWidth: 440,
+    maxHeightFactor: 0.9,
+    builder: (_) => CapabilityEnvSheet(name: name, fields: fields),
+  );
+
+  Future<void> _showScan() async {
+    final s = Strings.of(context);
+    final scan = await _guard(() => _repo.skillScan(_item.installId));
+    if (scan == null || !mounted) return;
+    await showHermesDialog<void>(
+      context: context,
+      title: s.cphRowScan,
+      message: [
+        if (scan.summary.isNotEmpty) scan.summary,
+        ...scan.findings,
+        if (scan.summary.isEmpty && scan.findings.isEmpty) s.cphScanClean,
+      ].join('\n'),
+      actions: [HermesDialogAction(label: s.commonClose, value: null)],
+    );
+  }
+
+  Future<void> _showPreview() async {
+    final s = Strings.of(context);
+    final preview = await _guard(() => _repo.skillPreview(_item.installId));
+    if (preview == null || !mounted) return;
+    await showHermesDialog<void>(
+      context: context,
+      title: s.cphRowPreview,
+      message: [
+        preview.skillMd,
+        if (preview.files.isNotEmpty)
+          '${s.cphPreviewFiles}: ${preview.files.join(', ')}',
+      ].where((part) => part.isNotEmpty).join('\n\n'),
+      actions: [HermesDialogAction(label: s.commonClose, value: null)],
+    );
+  }
+
+  /// One on-demand read: a missing route hides the row, other failures notify.
+  Future<T?> _guard<T>(Future<T> Function() run) async {
+    final notices = HermesNotice.of(context);
+    final s = Strings.of(context);
+    try {
+      return await run();
+    } catch (error) {
+      if (!mounted) return null;
+      if (capabilityFailureKindOf(error) != CapabilityFailureKind.unsupported) {
+        notices.show(
+          message: capabilityFailureMessage(s, error),
+          kind: HermesNoticeKind.error,
+        );
+      }
+      setState(() {});
+      return null;
     }
   }
 
   Future<_Outcome> _perform(
     CapabilityAction action,
-    ValueNotifier<String> line,
-  ) async {
+    ValueNotifier<String> line, {
+    Map<String, String>? env,
+  }) async {
     final s = Strings.of(context);
     final item = _item;
     final name = item.name;
     void progress(CapabilityActionStatus status) => line.value = status.tail;
-    String restartNote(PluginMutationResult result) =>
-        result.restartRequired ? '\n${s.cphRestartRequired}' : '';
+    // One result notice: restart, missing credentials, known issues,
+    // warnings and live MCP servers that did not connect.
+    String pluginNotes(PluginMutationResult result) => [
+      '',
+      if (result.restartRequired) s.cphRestartRequired,
+      if (result.missingEnv.isNotEmpty)
+        s.cphMissingEnvNotice(result.missingEnv.join(', ')),
+      if (result.knownIssues.isNotEmpty)
+        s.cphKnownIssuesNotice(result.knownIssues.join('; ')),
+      ...result.warnings,
+      for (final notice in result.mcpNotices) s.cphMcpNotConnected(notice),
+    ].join('\n');
+    String restartNote(PluginMutationResult result) => pluginNotes(result);
 
     switch (action) {
       case CapabilityAction.install:
         switch (item.kind) {
           case CapabilityKind.skill:
-            await _repo.installSkill(item.installId, onProgress: progress);
+            await _repo.installSkill(
+              item.installId,
+              onProgress: progress,
+              token: _token,
+            );
           case CapabilityKind.plugin:
             final result = await _repo.installPlugin(item.installId);
             if (result.consentRequired) {
               return _Outcome.message(s.cphConsentNeeded, ok: false);
             }
             return _Outcome(
-              message: '${s.cphDoneInstalled(name)}${restartNote(result)}',
+              message: '${s.cphDoneInstalled(name)}${pluginNotes(result)}',
               next: item.copyWith(installed: true, enabled: true),
             );
           case CapabilityKind.mcp:
-            await _repo.installMcp(item.installId);
+            await _repo.installMcp(
+              item.installId,
+              environment: env ?? const {},
+              declaredEnv: [for (final field in item.env) field.name],
+              onProgress: progress,
+              token: _token,
+            );
         }
         return _Outcome(
-          message: s.cphDoneInstalled(name),
+          message: item.kind == CapabilityKind.skill
+              ? '${s.cphDoneInstalled(name)}\n${s.cphNewSessionsNote}'
+              : s.cphDoneInstalled(name),
           next: item.copyWith(
             installed: true,
             enabled: true,
@@ -256,6 +422,7 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
             await _repo.uninstallSkill(
               item.installedName,
               onProgress: progress,
+              token: _token,
             );
           case CapabilityKind.plugin:
             await _repo.removePlugin(item.installedName);
@@ -390,15 +557,18 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
         if (!hasPrimary || action != primary) action,
     ];
     final status = capabilityDetailStatus(s, item);
-    final needsEnv = !item.installed && item.env.any((field) => field.required);
+    final d = item.disclosure;
+    // Catalog rows that are not installed show the whole disclosure text.
+    final reading = !item.installed && item.installId.isNotEmpty;
+    // Preview and scan are read-only on-demand lookups for hub skills that
+    // are not installed yet.
+    final skillRows = reading && item.kind == CapabilityKind.skill;
 
     String? reason;
     if (widget.readOnly) {
       reason = s.cphReadOnly;
-    } else if (needsEnv) {
-      reason = s.cphNeedsCredentials(
-        item.env.where((f) => f.required).map((f) => f.name).join(', '),
-      );
+    } else if (d.isRemoved) {
+      reason = s.cphRemovedFromCatalog(d.removedReason);
     } else if (!item.installed && item.installId.isEmpty) {
       reason = s.cphNotInstallable;
     } else if (item.installed &&
@@ -468,7 +638,10 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
       sections: [
         if (item.description.isNotEmpty && item.description != 'oauth') ...[
           const SizedBox(height: HermesSpace.x4),
-          HermesTextBlock(text: item.description, collapsedLines: 6),
+          HermesTextBlock(
+            text: item.description,
+            collapsedLines: reading ? 60 : 6,
+          ),
         ],
         HermesSectionHeader(s.cphSecTrust),
         HermesListGroup(
@@ -495,11 +668,36 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
                 title: s.cphRowSource,
                 value: capabilityLabel(item.source),
               ),
-            if (item.version.isNotEmpty)
+            if (d.repo.isNotEmpty)
+              HermesListRow(
+                icon: Icons.code_rounded,
+                title: s.cphRowRepo,
+                subtitle: d.subdir.isEmpty ? d.repo : '${d.repo} · ${d.subdir}',
+                subtitleMaxLines: 3,
+              ),
+            if (d.pin(item.version).isNotEmpty)
+              HermesListRow(
+                icon: Icons.push_pin_outlined,
+                title: s.cphRowPin,
+                value: d.pin(item.version),
+              )
+            else if (item.version.isNotEmpty)
               HermesListRow(
                 icon: Icons.sell_outlined,
                 title: s.cphRowVersion,
                 value: item.version,
+              ),
+            if (d.platforms.isNotEmpty)
+              HermesListRow(
+                icon: Icons.devices_outlined,
+                title: s.cphRowPlatforms,
+                value: d.platforms.join(', '),
+              ),
+            if (d.requiresHermes.isNotEmpty)
+              HermesListRow(
+                icon: Icons.tag_rounded,
+                title: s.cphRowRequiresHermes,
+                value: d.requiresHermes,
               ),
             if (item.category.isNotEmpty && item.category != 'mcp')
               HermesListRow(
@@ -519,12 +717,33 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
                 subtitle: item.tools.join(', '),
                 subtitleMaxLines: 4,
               ),
+            if (d.hooks.isNotEmpty)
+              HermesListRow(
+                icon: Icons.webhook_outlined,
+                title: s.cphRowHooks,
+                subtitle: d.hooks.join(', '),
+                subtitleMaxLines: 4,
+              ),
+            if (d.middleware.isNotEmpty)
+              HermesListRow(
+                icon: Icons.layers_outlined,
+                title: s.cphRowMiddleware,
+                subtitle: d.middleware.join(', '),
+                subtitleMaxLines: 4,
+              ),
             if (item.requirements.isNotEmpty)
               HermesListRow(
                 icon: Icons.key_outlined,
                 title: s.cphRowRequires,
                 subtitle: item.requirements.join(', '),
                 subtitleMaxLines: 4,
+              ),
+            if (d.knownIssues.isNotEmpty)
+              HermesListRow(
+                icon: Icons.warning_amber_rounded,
+                title: s.cphRowKnownIssues,
+                subtitle: d.knownIssues.join('\n'),
+                subtitleMaxLines: 8,
               ),
             if (item.description == 'oauth')
               HermesListRow(
@@ -534,6 +753,9 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
               ),
             if (item.tools.isEmpty &&
                 item.requirements.isEmpty &&
+                d.hooks.isEmpty &&
+                d.middleware.isEmpty &&
+                d.knownIssues.isEmpty &&
                 item.description != 'oauth')
               HermesListRow(
                 icon: Icons.check_circle_outline_rounded,
@@ -544,7 +766,11 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
         ),
         if (item.transport.isNotEmpty ||
             item.command.isNotEmpty ||
-            item.url.isNotEmpty) ...[
+            item.url.isNotEmpty ||
+            d.installUrl.isNotEmpty ||
+            d.bootstrap.isNotEmpty ||
+            d.authType.isNotEmpty ||
+            skillRows) ...[
           HermesSectionHeader(s.cphSecTechnical),
           HermesListGroup(
             children: [
@@ -567,6 +793,48 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen> {
                   title: s.cphRowUrl,
                   subtitle: item.url,
                   subtitleMaxLines: 3,
+                ),
+              if (d.authType.isNotEmpty)
+                HermesListRow(
+                  icon: Icons.lock_person_outlined,
+                  title: s.cphRowAuthType,
+                  value: d.authType,
+                ),
+              if (d.installUrl.isNotEmpty)
+                HermesListRow(
+                  icon: Icons.cloud_download_outlined,
+                  title: s.cphRowCloneFrom,
+                  subtitle: d.installUrl,
+                  subtitleMaxLines: 3,
+                ),
+              if (d.installRef.isNotEmpty)
+                HermesListRow(
+                  icon: Icons.call_split_rounded,
+                  title: s.cphRowCloneRef,
+                  value: d.installRef,
+                ),
+              if (d.bootstrap.isNotEmpty)
+                HermesListRow(
+                  icon: Icons.terminal_rounded,
+                  title: s.cphRowBootstrap,
+                  subtitle: d.bootstrap.join('\n'),
+                  subtitleMaxLines: 12,
+                ),
+              if (skillRows &&
+                  _repo.supports(CapabilityFeature.skillPreview) != false)
+                HermesListRow(
+                  key: const ValueKey('cph-row-preview'),
+                  icon: Icons.description_outlined,
+                  title: s.cphRowPreview,
+                  onTap: _busy ? null : _showPreview,
+                ),
+              if (skillRows &&
+                  _repo.supports(CapabilityFeature.skillScan) != false)
+                HermesListRow(
+                  key: const ValueKey('cph-row-scan'),
+                  icon: Icons.security_outlined,
+                  title: s.cphRowScan,
+                  onTap: _busy ? null : _showScan,
                 ),
             ],
           ),

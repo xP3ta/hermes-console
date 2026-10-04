@@ -230,6 +230,8 @@ class _CapabilitiesHubState extends State<CapabilitiesHub> {
     repository: _repository,
     readOnly: widget.connection.readOnly,
     instanceId: widget.connection.id,
+    destinationLabel:
+        '${widget.connection.label} · ${widget.profile.trim().isEmpty ? 'default' : widget.profile.trim()}',
     advancedBuilder: widget.advancedBuilder,
     classicSkillsBuilder: widget.classicSkillsBuilder,
   );
@@ -239,6 +241,9 @@ class CapabilitiesScreen extends StatefulWidget {
   final CapabilitiesRepository repository;
   final bool readOnly;
   final String instanceId;
+
+  /// `<server label> · <profile>` shown in install confirmations.
+  final String destinationLabel;
   final WidgetBuilder? advancedBuilder;
   final WidgetBuilder? classicSkillsBuilder;
   final CapabilitiesSegment initialSegment;
@@ -249,6 +254,7 @@ class CapabilitiesScreen extends StatefulWidget {
     required this.repository,
     this.readOnly = false,
     this.instanceId = '',
+    this.destinationLabel = '',
     this.advancedBuilder,
     this.classicSkillsBuilder,
     this.initialSegment = CapabilitiesSegment.catalog,
@@ -535,6 +541,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
           repository: _repo,
           readOnly: widget.readOnly,
           instanceId: widget.instanceId,
+          destinationLabel: widget.destinationLabel,
           onChanged: () => changed = true,
         ),
       ),

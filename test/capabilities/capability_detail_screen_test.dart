@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/capabilities/capability_detail_screen.dart';
 import 'package:hermes_android/core/capabilities/capability_models.dart';
+import 'package:hermes_android/core/capabilities/capability_ui.dart';
 import 'package:hermes_android/core/design/hermes_design.dart';
 import 'package:hermes_android/core/services/connection_manager.dart'
     show DashboardHttpException;
@@ -182,7 +183,8 @@ void main() {
     expect(rest.mutations, ['POST skills/hub/install']);
     expect(changed, 1);
     expect(find.text('Activa'), findsOneWidget);
-    expect(find.text('docker instalada'), findsOneWidget);
+    expect(find.textContaining('docker instalada'), findsOneWidget);
+    expect(find.textContaining('sesiones nuevas'), findsOneWidget);
     // Installed hub skill: primary becomes Disable, remove in "More".
     expect(find.text('Desactivar'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -233,9 +235,7 @@ void main() {
         'name': 'install-docker',
         'running': false,
         'exit_code': 1,
-        'lines': [
-          'Not installed: the security scan found 2 high-risk pattern(s)',
-        ],
+        'lines': ['fatal: network unreachable'],
       });
     await _pump(tester, _docker, rest);
     await tester.tap(find.byKey(const ValueKey('cph-primary')));
@@ -243,7 +243,7 @@ void main() {
 
     expect(find.text('No instalada'), findsOneWidget);
     expect(
-      find.textContaining('El escaneo de seguridad bloqueó esta instalación.'),
+      find.textContaining('fatal: network unreachable'),
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('cph-progress')), findsNothing);
@@ -445,7 +445,10 @@ void main() {
     expect(find.byKey(const ValueKey('cph-env-sheet')), findsOneWidget);
     for (final name in const ['DOCS_KEY', 'DOCS_REGION']) {
       final field = tester.widget<TextField>(
-        find.byKey(ValueKey('cph-env-field-$name')),
+        find.descendant(
+          of: find.byKey(ValueKey('cph-env-field-$name')),
+          matching: find.byType(TextField),
+        ),
       );
       expect(field.obscureText, isTrue, reason: name);
       expect(field.autocorrect, isFalse, reason: name);
@@ -467,7 +470,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('cph-primary')));
     await tester.pumpAndSettle();
     final again = tester.widget<TextField>(
-      find.byKey(const ValueKey('cph-env-field-DOCS_KEY')),
+      find.descendant(
+        of: find.byKey(const ValueKey('cph-env-field-DOCS_KEY')),
+        matching: find.byType(TextField),
+      ),
     );
     expect(again.controller!.text, isEmpty);
   });
