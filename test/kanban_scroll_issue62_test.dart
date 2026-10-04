@@ -337,4 +337,72 @@ void main() {
     expect(positionOf(tester, page).pixels, afterComment);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('los textos seleccionables del detalle nunca se quedan el '
+      'arrastre, aunque el comportamiento de scroll acepte todo', (
+    tester,
+  ) async {
+    // Up to 1.2.13 the app behaviour let every scrollable accept a drag,
+    // including the one inside each SelectableText: the drag moved the
+    // text and the page stayed pinned (the recording in #62). The detail
+    // must not depend on the app-wide behaviour to stay scrollable.
+    await pumpScreen(
+      tester,
+      onBoardRead: () {},
+      scrollBehavior: const _EveryScrollableDraggable(),
+    );
+    await tester.tap(find.text('Task blocked 0'));
+    await tester.pumpAndSettle();
+    final page = find.byKey(const ValueKey('kanban-task-detail-rich'));
+    final toggle = find.byKey(const ValueKey('hermes-text-block-toggle'));
+    await tester.ensureVisible(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    for (final section in const [
+      'kanban-detail-events',
+      'kanban-detail-diagnostics',
+      'kanban-detail-comments',
+    ]) {
+      final row = find.byKey(ValueKey(section));
+      await tester.ensureVisible(row);
+      await tester.pumpAndSettle();
+      await tester.tap(row);
+      await tester.pumpAndSettle();
+    }
+
+    Finder selectable(String contains) => find.byWidgetPredicate(
+      (w) => w is SelectableText && (w.data ?? '').contains(contains),
+    );
+    final position = positionOf(tester, page);
+    for (final target in [
+      selectable('note=event 1'),
+      selectable('Diagnostic detail'),
+      selectable('Comment 0 paragraph'),
+    ]) {
+      expect(target, findsOneWidget);
+      await tester.ensureVisible(target);
+      await tester.pumpAndSettle();
+      final before = position.pixels;
+      expect(before, greaterThan(300), reason: 'room to scroll back');
+      // Scroll back up (finger moves down), as the user tried to.
+      await drag(tester, tester.getCenter(target), const Offset(0, 30));
+      expect(
+        position.pixels,
+        lessThan(before - 150),
+        reason: 'dragging $target must scroll the page',
+      );
+    }
+    expect(tester.takeException(), isNull);
+  });
+}
+
+/// The scroll behaviour shipped up to 1.2.13: every Scrollable, nested or
+/// not, always accepts a drag.
+class _EveryScrollableDraggable extends MaterialScrollBehavior {
+  const _EveryScrollableDraggable();
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) =>
+      const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics());
 }
