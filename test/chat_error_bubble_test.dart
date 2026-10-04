@@ -161,7 +161,7 @@ void main() {
 
         expect(find.text('Volver a iniciar sesión'), findsOneWidget);
         expect(find.text(_retry), findsNothing);
-        await tester.tap(find.byKey(const ValueKey('te1215-error-primary')));
+        await tester.tap(find.byKey(const ValueKey('hr1215-error-reauth')));
         expect(signedIn, 1);
 
         await _openDetails(tester);
@@ -436,6 +436,8 @@ void main() {
       await tester.pumpWidget(
         bubble(now: () => start, onRetry: () => retried++, canArm: false),
       );
+      await tester.pump();
+      expect(find.byKey(const ValueKey('te1215-error-armed')), findsNothing);
       await tester.pump(const Duration(hours: 2));
 
       expect(retried, 0);
@@ -454,6 +456,8 @@ void main() {
       await tester.pumpWidget(
         bubble(now: () => start, onRetry: () => retried++, scope: 'chat-2'),
       );
+      await tester.pump();
+      expect(find.byKey(const ValueKey('te1215-error-armed')), findsNothing);
       await tester.pump(const Duration(hours: 2));
 
       expect(retried, 0);
