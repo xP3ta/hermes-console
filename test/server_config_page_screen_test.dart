@@ -319,9 +319,8 @@ void main() {
       await tester.tap(find.text(strings(tester).commonSave));
       await tester.pumpAndSettle();
 
-      expect(store.saves, [
-        ('terminal.env_passthrough', ['A', 'C']),
-      ]);
+      expect(store.saves.single.$1, 'terminal.env_passthrough');
+      expect(store.saves.single.$2, ['A', 'C']);
     });
 
     testWidgets('a value the server did not keep goes back and says so', (
@@ -444,6 +443,7 @@ void main() {
         profiles: profiles,
       );
       final first = store;
+      final hold = store.holdSave!;
       await tester.tap(
         find.descendant(
           of: field('terminal.persistent_shell'),
@@ -460,7 +460,7 @@ void main() {
       expect(store, isNot(same(first)));
       expect(store.reads, 1);
 
-      first.holdSave!.complete();
+      hold.complete();
       await tester.pump();
       await tester.pump();
 
