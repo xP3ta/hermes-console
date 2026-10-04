@@ -438,6 +438,29 @@ void main() {
       });
     });
 
+    test(
+      'close during ICE gathering: a late ICE completion creates nothing',
+      () {
+        fakeAsync((async) {
+          final h = _Harness();
+          h.transport.iceGathering = Completer<void>();
+          h.start(async);
+          h.transport.channelOpen = false;
+          async.elapse(const Duration(seconds: 1));
+          unawaited(h.session.close());
+          async.flushMicrotasks();
+          expect(h.transport.disposeCalls, 1);
+          h.transport.iceGathering.complete();
+          async.flushMicrotasks();
+          expect(h.api.createCalls, isEmpty);
+          expect(h.log, isNot(contains('setRemoteAnswer')));
+          async.elapse(const Duration(seconds: 30));
+          expect(h.api.createCalls, isEmpty);
+          expect(h.transport.disposeCalls, 1);
+        });
+      },
+    );
+
     test('close during the POST: late answer is not applied', () {
       fakeAsync((async) {
         final h = _Harness();
