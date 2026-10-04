@@ -367,7 +367,15 @@ abstract class HermesDesktopSessionHistoryGateway {
 final class DesktopApprovalResult {
   final int resolved;
 
-  const DesktopApprovalResult({required this.resolved});
+  /// False when the choice went out as a bare response frame to an approval
+  /// server request: nothing acknowledges it, so a transport loss right after
+  /// the write leaves its delivery unknown.
+  final bool deliveryAcknowledged;
+
+  const DesktopApprovalResult({
+    required this.resolved,
+    this.deliveryAcknowledged = true,
+  });
 
   factory DesktopApprovalResult.fromJson(Map<String, dynamic> json) {
     final resolved = json['resolved'];
@@ -7451,7 +7459,10 @@ class TuiGatewayClient
       // The response frame is the first-wins answer by construction: it can
       // only settle the request it was minted for.
       _approvalServerRequestIds.remove(request);
-      return const DesktopApprovalResult(resolved: 1);
+      return const DesktopApprovalResult(
+        resolved: 1,
+        deliveryAcknowledged: false,
+      );
     }
     final result = await _request(method, {
       'session_id': _validatedRuntimeId(method, runtimeSessionId),

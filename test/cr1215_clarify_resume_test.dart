@@ -68,6 +68,7 @@ class _Gateway {
           'session.events.since' => eventsSinceResult(frame),
           'session.active_list' => activeListResult(frame),
           'clarify.lock' => {'status': 'ok', 'remaining': <String>[]},
+          'approval.respond' => {'resolved': 1},
           _ => <String, dynamic>{'status': 'ok'},
         };
         socket.add(
@@ -694,7 +695,7 @@ void main() {
     expect(gateway.sockets.length, greaterThan(flips));
   });
 
-  group('unacknowledged sudo and secret answers', () {
+  group('unacknowledged sudo, secret and approval answers', () {
     Map<String, dynamic> openSudo(String id) => {
       'id': id,
       'method': 'sudo',
@@ -709,12 +710,27 @@ void main() {
         'prompt': 'Token?',
       },
     };
+    const approvalParams = <String, dynamic>{
+      'request_id': 'appr-lost000001',
+      'command': 'rm -rf build',
+      'description': 'delete build',
+      'choices': ['once', 'deny'],
+    };
+    Map<String, dynamic> openApproval(String id) => {
+      'id': id,
+      'method': 'approval',
+      'params': {'session_id': 'runtime-1', ...approvalParams},
+    };
     Map<String, dynamic> waiting(List<Map<String, dynamic>> open) => {
       'session_id': 'runtime-1',
       'stored_session_id': 'stored-1',
       'running': true,
       'status': 'waiting',
       'open_requests': open,
+      for (final entry in open)
+        if (entry['method'] == 'approval')
+          'pending_approval': {...(entry['params'] as Map<String, dynamic>)}
+            ..remove('session_id'),
     };
 
     Future<(ActiveChat, _FlakyProxy)> attachedThroughProxy() async {
@@ -857,6 +873,131 @@ void main() {
         expect(answersTo(id), isEmpty);
       });
     }
+
+    test(
+      'an approval written into a socket that just died is pending again '
+      'when the resume re-offers it, and the new choice is sent once',
+      () async {
+        const srq = 'srq-lostappr0001';
+        gateway.resumeResult = (_) => waiting([openApproval(srq)]);
+        final (chat, proxy) = await attachedThroughProxy();
+        await _waitUntil(() => chat.pendingApproval != null);
+        expect(chat.pendingApproval!['request_id'], 'appr-lost000001');
+        final resumesBefore = gateway.rpcCalls('session.resume').length;
+
+        proxy.severAll();
+        await chat.resolveApproval('once');
+        expect(chat.pendingApproval, isNull);
+
+        await awaitReattach(chat, resumesBefore);
+        await _waitUntil(() => chat.pendingApproval != null);
+        expect(chat.pendingApproval!['request_id'], 'appr-lost000001');
+        expect(answersTo(srq), isEmpty);
+        expect(gateway.rpcCalls('approval.respond'), isEmpty);
+
+        await chat.resolveApproval('deny');
+        final frame = await gateway
+            .nextFrame((frame) => frame['id'] == srq)
+            .timeout(const Duration(seconds: 2));
+        expect(frame['result'], {'choice': 'deny'});
+        expect(answersTo(srq), hasLength(1));
+        expect(gateway.rpcCalls('approval.respond'), isEmpty);
+        expect(chat.pendingApproval, isNull);
+      },
+    );
+
+    test('an approval lost with the socket stays closed when the resume no '
+        'longer lists it', () async {
+      const srq = 'srq-goneappr0001';
+      gateway.resumeResult = (_) => waiting([openApproval(srq)]);
+      final (chat, proxy) = await attachedThroughProxy();
+      await _waitUntil(() => chat.pendingApproval != null);
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+
+      proxy.severAll();
+      await chat.resolveApproval('once');
+      await awaitResume(resumesBefore);
+      expect(chat.pendingApproval, isNull);
+      expect(answersTo(srq), isEmpty);
+      expect(gateway.rpcCalls('approval.respond'), isEmpty);
+    });
+
+    test('an answered approval never reopens from a stale replay on the same '
+        'socket, nor after a drop once Hermes acknowledged it', () async {
+      const srq = 'srq-ackedappr001';
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _clientFor(gateway);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushServerRequest(srq, 'approval', approvalParams);
+      await _waitUntil(() => chat.pendingApproval != null);
+      await chat.resolveApproval('once');
+      await gateway.nextFrame((frame) => frame['id'] == srq);
+      expect(chat.pendingApproval, isNull);
+
+      // A replay computed before Hermes read the answer, on the same socket.
+      gateway.pushServerRequest(srq, 'approval', approvalParams);
+      gateway.pushServerRequest('srq-barrier00001', 'clarify', {
+        'question': 'Otra?',
+        'choices': ['si', 'no'],
+      });
+      await _waitUntil(() => chat.pendingInteractivePrompt != null);
+      expect(chat.pendingApproval, isNull);
+
+      // Hermes consumed both answers and asked something new: the resume
+      // lists only the new request, so the approval stays closed.
+      await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'si');
+      gateway.resumeResult = (_) => waiting([_openClarify('srq-nextquest001')]);
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+      await gateway.sockets.single.close(1001);
+      await awaitReattach(chat, resumesBefore);
+      await _waitUntil(
+        () =>
+            chat.pendingInteractivePrompt?.key.requestId == 'srq-nextquest001',
+      );
+      expect(chat.pendingApproval, isNull);
+      expect(answersTo(srq), hasLength(1));
+    });
+
+    test('an approval acknowledged over approval.respond never reopens from a '
+        'stale snapshot after a drop', () async {
+      gateway.resumeResult = (_) => {
+        'session_id': 'runtime-1',
+        'stored_session_id': 'stored-1',
+        'running': true,
+        'status': 'working',
+      };
+      final client = _clientFor(gateway);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      await _waitUntil(() => chat.desktopRuntimeSessionId == 'runtime-1');
+      gateway.pushSessionEvent('approval.request', approvalParams);
+      await _waitUntil(() => chat.pendingApproval != null);
+      await chat.resolveApproval('once');
+      expect(gateway.rpcCalls('approval.respond'), hasLength(1));
+      expect(chat.pendingApproval, isNull);
+
+      gateway.resumeResult = (_) => waiting([openApproval('srq-stale0000001')]);
+      final resumesBefore = gateway.rpcCalls('session.resume').length;
+      await gateway.sockets.single.close(1001);
+      await awaitReattach(chat, resumesBefore);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(chat.pendingApproval, isNull);
+      expect(gateway.rpcCalls('approval.respond'), hasLength(1));
+      expect(answersTo('srq-stale0000001'), isEmpty);
+    });
   });
 }
 

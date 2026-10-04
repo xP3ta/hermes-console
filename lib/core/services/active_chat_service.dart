@@ -4778,6 +4778,16 @@ class ActiveChat {
   /// [InteractivePromptUnacknowledgedAnswerLost]). Only keys: a sensitive
   /// value is never kept for a resend; the user enters it again.
   final Set<InteractivePromptKey> _unacknowledgedPromptAnswers = {};
+
+  /// Approval request ids already answered with `resolved: 1`. A replay of
+  /// one of them (stale snapshot, `open_requests` racing the answer) must not
+  /// bring the card back and invite a second answer.
+  final Set<String> _answeredApprovalRequestIds = <String>{};
+
+  /// The subset of [_answeredApprovalRequestIds] answered by a bare response
+  /// frame. A transport loss forgets them: the resume decides whether Hermes
+  /// read the choice (no longer listed) or still waits on it (re-offered).
+  final Set<String> _unacknowledgedApprovalRequestIds = <String>{};
   final Map<InteractivePromptKey, Future<DesktopPromptResponse>> _batchLocks =
       {};
   SubagentActivityState? _subagentActivities;
@@ -18728,6 +18738,10 @@ class ActiveChat {
           );
         }
         _unacknowledgedPromptAnswers.clear();
+        _answeredApprovalRequestIds.removeAll(
+          _unacknowledgedApprovalRequestIds,
+        );
+        _unacknowledgedApprovalRequestIds.clear();
         _usingDesktopGateway = false;
         _retireDesktopRuntime(reason: _RuntimeRetirement.transportLoss);
         // The retirement moved the bind/session epochs, so an automatic
@@ -24774,6 +24788,12 @@ class ActiveChat {
   ///   blocked     → deniega solo (instancia/sesión solo-lectura).
   ///   ask / sin política → muestra la tarjeta y notifica si está en 2º plano.
   void _handleApprovalRequest(Map<String, dynamic> event) {
+    final answeredId = _approvalRequestId(event);
+    if (answeredId != null &&
+        _answeredApprovalRequestIds.contains(answeredId)) {
+      // Already answered: a replay must not reopen the card.
+      return;
+    }
     // User input may legitimately take longer than the transport watchdog.
     // Resume the inactivity budget only after the approval is answered.
     _activityWatchdogTimer?.cancel();
@@ -24915,10 +24935,12 @@ class ActiveChat {
       final requestBindEpoch = _desktopBindEpoch;
       final requestSessionEpoch = _desktopSessionEpoch;
       var resolved = 1;
+      var acknowledged = true;
       if (desktop is HermesDesktopApprovalResultGateway) {
         final result = await (desktop as HermesDesktopApprovalResultGateway)
             .resolveApprovalChecked(runtimeId, choice, requestId: approvalId);
         resolved = result.resolved;
+        acknowledged = result.deliveryAcknowledged;
       } else {
         await desktop.resolveApproval(runtimeId, choice, requestId: approvalId);
       }
@@ -24927,6 +24949,17 @@ class ActiveChat {
           _desktopRuntimeSessionId == runtimeId &&
           _desktopBindEpoch == requestBindEpoch &&
           _desktopSessionEpoch == requestSessionEpoch;
+      if (resolved > 0) {
+        if (acknowledged) {
+          _answeredApprovalRequestIds.add(approvalId);
+          _unacknowledgedApprovalRequestIds.remove(approvalId);
+        } else if (authorityStillCurrent) {
+          // The socket that carried it is still current; a later loss of it
+          // forgets this tombstone.
+          _answeredApprovalRequestIds.add(approvalId);
+          _unacknowledgedApprovalRequestIds.add(approvalId);
+        }
+      }
       if (!authorityStillCurrent || !requestStillCurrent()) return;
       if (resolved <= 0) {
         // Hermes ya no tiene esta petición (resuelta en otra superficie o
