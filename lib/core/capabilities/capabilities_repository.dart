@@ -83,10 +83,55 @@ final class CapabilityFailure implements Exception {
   /// secret: only emitted for action logs and connector reasons.
   final String detail;
 
-  const CapabilityFailure(this.kind, {this.detail = ''});
+  /// High-risk finding count of a blocked skill install, when stated.
+  final int? findings;
+
+  const CapabilityFailure(this.kind, {this.detail = '', this.findings});
 
   @override
   String toString() => 'CapabilityFailure(${kind.name})';
+}
+
+/// Cooperative cancel / pause handle for the action loop. A cancelled loop
+/// ends with [CapabilityActionAbandoned]; a paused one (app in background,
+/// route covered) makes no reads until [resume], which reads exactly once.
+final class CapabilityActionToken {
+  bool _cancelled = false;
+  Completer<void>? _gate;
+
+  bool get cancelled => _cancelled;
+  bool get paused => _gate != null;
+
+  void cancel() {
+    _cancelled = true;
+    _release();
+  }
+
+  void pause() {
+    if (!_cancelled) _gate ??= Completer<void>();
+  }
+
+  void resume() => _release();
+
+  void _release() {
+    final gate = _gate;
+    _gate = null;
+    if (gate != null && !gate.isCompleted) gate.complete();
+  }
+
+  Future<void> _untilResumed() async {
+    while (_gate != null) {
+      await _gate!.future;
+    }
+  }
+}
+
+/// The action loop was cancelled: not a success and not a failure to report.
+final class CapabilityActionAbandoned implements Exception {
+  const CapabilityActionAbandoned();
+
+  @override
+  String toString() => 'CapabilityActionAbandoned';
 }
 
 class CapabilitiesRepository implements HermesMcpProvisioningGateway {
@@ -260,30 +305,36 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
   Future<CapabilityActionStatus> installSkill(
     String identifier, {
     void Function(CapabilityActionStatus)? onProgress,
+    CapabilityActionToken? token,
   }) => _runAction(
     CapabilityFeature.skillInstall,
     'skills/hub/install',
     _profileBody({'identifier': identifier.trim()}),
     onProgress,
+    token,
   );
 
   Future<CapabilityActionStatus> uninstallSkill(
     String name, {
     void Function(CapabilityActionStatus)? onProgress,
+    CapabilityActionToken? token,
   }) => _runAction(
     CapabilityFeature.skillInstall,
     'skills/hub/uninstall',
     _profileBody({'name': name.trim()}),
     onProgress,
+    token,
   );
 
   Future<CapabilityActionStatus> updateSkills({
     void Function(CapabilityActionStatus)? onProgress,
+    CapabilityActionToken? token,
   }) => _runAction(
     CapabilityFeature.skillsUpdate,
     'skills/hub/update',
     _profileBody(),
     onProgress,
+    token,
   );
 
   Future<CapabilityActionStatus> _runAction(
@@ -291,7 +342,9 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     String endpoint,
     Map<String, dynamic> body,
     void Function(CapabilityActionStatus)? onProgress,
+    CapabilityActionToken? token,
   ) async {
+    if (token?.cancelled ?? false) throw const CapabilityActionAbandoned();
     final started = await _call(
       feature,
       () => rest.post(_withProfile(endpoint), body: body),
@@ -300,14 +353,28 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
     if (started['ok'] != true || name.isEmpty) {
       throw const CapabilityFailure(CapabilityFailureKind.invalidResponse);
     }
-    final deadline = DateTime.now().add(actionTimeout);
+    return _followAction(feature, name, onProgress, token);
+  }
+
+  /// Polls `/api/actions/{name}/status` on the one shared cadence. The loop
+  /// never outlives its [token]: cancelled → abandoned, paused → no reads
+  /// until resumed (then one read, and on only while still running).
+  Future<CapabilityActionStatus> _followAction(
+    CapabilityFeature feature,
+    String name,
+    void Function(CapabilityActionStatus)? onProgress,
+    CapabilityActionToken? token,
+  ) async {
+    var elapsed = Duration.zero;
     while (true) {
+      if (token?.cancelled ?? false) throw const CapabilityActionAbandoned();
       final status = await _call(
         feature,
         () async => CapabilityActionStatus.fromJson(
           await rest.get('actions/${_seg(name)}/status?lines=200'),
         ),
       );
+      if (token?.cancelled ?? false) throw const CapabilityActionAbandoned();
       onProgress?.call(status);
       if (!status.running) {
         if (status.succeeded) return status;
@@ -316,12 +383,17 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
               ? CapabilityFailureKind.blockedByScan
               : CapabilityFailureKind.rejected,
           detail: status.tail,
+          findings: status.scanFindings,
         );
       }
-      if (DateTime.now().isAfter(deadline)) {
+      if (elapsed >= actionTimeout) {
         throw const CapabilityFailure(CapabilityFailureKind.unavailable);
       }
       await _sleep(actionPollInterval);
+      elapsed += actionPollInterval;
+      if (token != null) {
+        await token._untilResumed();
+      }
     }
   }
 
@@ -503,28 +575,69 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
             .toList(growable: false);
       });
 
+  /// Installs a catalog MCP entry through the server's secret path.
+  ///
+  /// [environment] values are secrets: only keys in [declaredEnv] are sent
+  /// (when given), values never reach an error, log or notice, and a git
+  /// bootstrap (`background: true`) is followed to its exit.
   Future<void> installMcp(
     String name, {
     Map<String, String> environment = const {},
-  }) => _call(CapabilityFeature.mcpCatalog, () async {
-    for (final key in environment.keys) {
-      if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]{0,127}$').hasMatch(key)) {
+    List<String>? declaredEnv,
+    void Function(CapabilityActionStatus)? onProgress,
+    CapabilityActionToken? token,
+  }) async {
+    final env = <String, String>{};
+    for (final entry in environment.entries) {
+      if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]{0,127}$').hasMatch(entry.key)) {
         throw const CapabilityFailure(CapabilityFailureKind.rejected);
       }
+      if (declaredEnv != null && !declaredEnv.contains(entry.key)) continue;
+      env[entry.key] = entry.value;
     }
-    final result = await rest.post(
-      _withProfile('mcp/catalog/install'),
-      body: _profileBody({
-        'name': name.trim(),
-        'env': environment,
-        'enable': true,
-      }),
-      timeout: const Duration(minutes: 2),
-    );
+    final Map<String, dynamic> result;
+    try {
+      result = await _call(
+        CapabilityFeature.mcpCatalog,
+        () => rest.post(
+          _withProfile('mcp/catalog/install'),
+          body: _profileBody({
+            'name': name.trim(),
+            'env': Map<String, String>.of(env),
+            'enable': true,
+          }),
+          timeout: const Duration(minutes: 2),
+        ),
+      );
+    } on CapabilityFailure catch (error) {
+      throw CapabilityFailure(
+        error.kind,
+        detail: _redact(error.detail, env.values),
+      );
+    } finally {
+      env.clear();
+    }
     if (result['ok'] != true) {
       throw const CapabilityFailure(CapabilityFailureKind.rejected);
     }
-  });
+    final action = '${result['action'] ?? ''}'.trim();
+    if (result['background'] == true && action.isNotEmpty) {
+      await _followAction(
+        CapabilityFeature.mcpCatalog,
+        action,
+        onProgress,
+        token,
+      );
+    }
+  }
+
+  static String _redact(String text, Iterable<String> secrets) {
+    var out = text;
+    for (final secret in secrets) {
+      if (secret.isNotEmpty) out = out.replaceAll(secret, '…');
+    }
+    return out;
+  }
 
   Future<void> setMcpEnabled(String name, bool enabled) =>
       _call(CapabilityFeature.mcpServers, () async {

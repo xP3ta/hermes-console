@@ -512,11 +512,38 @@ final class CapabilityActionStatus {
     return '';
   }
 
+  // Ported 1:1 from Desktop (`hermes_cli/skills_hub.py::_scan_block_message`).
+  static final RegExp _blockedCurrent = RegExp(
+    r'Not installed:\s+the security scan found\s+(?:(\d+)\s+)?high-risk\s+pattern',
+    caseSensitive: false,
+  );
+  static final RegExp _blockedUnverified = RegExp(
+    r'never installs\s+unverified',
+    caseSensitive: false,
+  );
+  static final RegExp _blockedLegacy = RegExp(
+    r'Installation blocked:.*?\(([a-z_-]+) source \+ ([a-z_]+) verdict, (\d+) findings?\)',
+    caseSensitive: false,
+  );
+
   /// `hermes skills install` refusing through the security scan gate.
-  bool get blockedByScan {
-    final text = lines.join(' ').toLowerCase();
-    return text.contains('security scan') &&
-        (text.contains('not installed') || text.contains('blocked'));
+  bool get blockedByScan => lines.any(
+    (line) =>
+        _blockedCurrent.hasMatch(line) ||
+        _blockedUnverified.hasMatch(line) ||
+        _blockedLegacy.hasMatch(line),
+  );
+
+  /// High-risk finding count when the log states one.
+  int? get scanFindings {
+    for (final line in lines.reversed) {
+      final raw =
+          _blockedCurrent.firstMatch(line)?.group(1) ??
+          _blockedLegacy.firstMatch(line)?.group(3);
+      final count = raw == null ? null : int.tryParse(raw);
+      if (count != null) return count;
+    }
+    return null;
   }
 }
 
