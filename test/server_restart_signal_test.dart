@@ -139,6 +139,65 @@ void main() {
       expect(ServerRestartSignals.textFor([_host]), isNull);
     });
 
+    test('a good model call after the 503 clears the note', () async {
+      var failing = true;
+      var calls = 0;
+      final client = dashboard((_) {
+        calls++;
+        return failing
+            ? http.Response(jsonEncode({'detail': _restartDetail}), 503)
+            : http.Response(jsonEncode({'providers': <Object>[]}), 200);
+      });
+      await expectLater(
+        client.getModelOptions(),
+        throwsA(isA<DashboardHttpException>()),
+      );
+      expect(ServerRestartSignals.textFor([_host]), isNotNull);
+
+      failing = false; // the server was restarted
+      await client.getModelOptions();
+
+      expect(ServerRestartSignals.textFor([_host]), isNull);
+      expect(calls, 2, reason: 'no probe: only the calls Console makes');
+    });
+
+    test('a good setActiveModel after the 503 clears the note', () async {
+      var failing = true;
+      final client = dashboard(
+        (_) => failing
+            ? http.Response(jsonEncode({'detail': _restartDetail}), 503)
+            : http.Response(jsonEncode({'ok': true}), 200),
+      );
+      await expectLater(
+        client.setActiveModel(providerSlug: 'p', modelId: 'm'),
+        throwsA(isA<DashboardHttpException>()),
+      );
+      expect(ServerRestartSignals.textFor([_host]), isNotNull);
+
+      failing = false;
+      expect(
+        await client.setActiveModel(providerSlug: 'p', modelId: 'm'),
+        true,
+      );
+
+      expect(ServerRestartSignals.textFor([_host]), isNull);
+    });
+
+    test('another host answering well does not clear this host', () async {
+      ServerRestartSignals.noteRpc(_host, 5098, 'old code');
+      final client = DashboardClient(
+        host: 'other.example.test',
+        port: 9119,
+        manualToken: 'dashboard-token',
+        httpClientOverride: MockClient(
+          (_) async =>
+              http.Response(jsonEncode({'providers': <Object>[]}), 200),
+        ),
+      );
+      await client.getModelOptions();
+      expect(ServerRestartSignals.textFor([_host]), 'old code');
+    });
+
     test('a healthy answer leaves no signal and makes no extra call', () async {
       var calls = 0;
       final client = dashboard((_) {
@@ -174,7 +233,41 @@ void main() {
       expect(ServerRestartSignals.textFor([_host]), isNotNull);
       expect(requests.where((r) => r == 'model.options'), hasLength(1));
     });
+
+    test('a good model.options after the 5098 clears the note', () async {
+      final requests = <String>[];
+      final stale = _Stale(true);
+      final client = TuiGatewayClient(
+        SavedConnection(
+          id: 'rs-2',
+          label: 'rs',
+          host: _host,
+          port: 8642,
+          apiKey: 'k',
+        ),
+        dashboard: _Dashboard(),
+        channelFactory: (_, _) => _Channel(requests, stale),
+      );
+      addTearDown(client.close);
+
+      await expectLater(
+        client.globalModelOptions(),
+        throwsA(isA<TuiGatewayRpcError>().having((e) => e.code, 'code', 5098)),
+      );
+      expect(ServerRestartSignals.textFor([_host]), isNotNull);
+
+      stale.value = false; // the server was restarted
+      await client.globalModelOptions();
+
+      expect(ServerRestartSignals.textFor([_host]), isNull);
+      expect(requests.where((r) => r == 'model.options'), hasLength(2));
+    });
   });
+}
+
+final class _Stale {
+  _Stale(this.value);
+  bool value;
 }
 
 final class _Dashboard extends DashboardClient {
@@ -186,7 +279,7 @@ final class _Dashboard extends DashboardClient {
 }
 
 final class _Channel implements WebSocketChannel {
-  _Channel(this.requests) {
+  _Channel(this.requests, [_Stale? stale]) : _stale = stale ?? _Stale(true) {
     _incoming.add(
       jsonEncode({
         'jsonrpc': '2.0',
@@ -197,6 +290,7 @@ final class _Channel implements WebSocketChannel {
   }
 
   final List<String> requests;
+  final _Stale _stale;
   final StreamController<dynamic> _incoming = StreamController<dynamic>();
 
   @override
@@ -220,8 +314,10 @@ final class _Channel implements WebSocketChannel {
       jsonEncode({
         'jsonrpc': '2.0',
         'id': frame['id'],
-        if (method == 'model.options')
+        if (method == 'model.options' && _stale.value)
           'error': {'code': 5098, 'message': 'Restart required: old code'}
+        else if (method == 'model.options')
+          'result': {'providers': <Object>[]}
         else
           'result': method == 'gateway.capabilities'
               ? {'per_session_exclusive_submit': true}
