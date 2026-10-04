@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../utils/fts_snippet.dart';
 import '../utils/session_timestamp.dart';
 import 'connection_manager.dart';
 import 'session_archive.dart';
@@ -636,6 +637,7 @@ final class SessionRepository {
     if (value is! Map) return null;
     final id = _boundedString(value['session_id'], 1024)?.trim();
     if (id == null || id.isEmpty) return null;
+    final snippet = _boundedString(value['snippet'], 1024);
     return Session(
       id: id,
       lineageRootId: _boundedString(value['lineage_root'], 1024)?.trim(),
@@ -644,10 +646,12 @@ final class SessionRepository {
       source: _boundedString(value['source'], 128) ?? '',
       messageCount: _nonNegativeInt(value['message_count']) ?? 1,
       isActive: value['is_active'] == true,
-      preview:
-          _boundedString(value['snippet'], 1024) ??
-          _boundedString(value['preview'], 1024) ??
-          '',
+      // Desktop strips the FTS delimiters from the preview; the raw snippet
+      // rides along so the row can paint the matches highlighted.
+      preview: snippet != null
+          ? stripFtsMarkers(snippet)
+          : _boundedString(value['preview'], 1024) ?? '',
+      searchSnippet: snippet != null && hasFtsMarkers(snippet) ? snippet : null,
       startedAt:
           normalizeEpochTimestamp(value['started_at']) ??
           normalizeEpochTimestamp(value['session_started']) ??

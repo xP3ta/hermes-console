@@ -91,6 +91,10 @@ class Session implements SessionSortKey {
   /// The server's derived read state (`last_read_at` watermark against the
   /// latest activity). Null when the server does not publish it.
   final bool? unread;
+
+  /// A search hit's FTS snippet as the server sent it, with the `>>>`/`<<<`
+  /// match delimiters ([preview] has them stripped). Null for list rows.
+  final String? searchSnippet;
   final String? profile;
   final bool? isDefaultProfile;
   final String? handoffPlatform;
@@ -142,6 +146,7 @@ class Session implements SessionSortKey {
     this.pinned,
     this.hidden,
     this.unread,
+    this.searchSnippet,
     this.profile,
     this.isDefaultProfile,
     this.handoffPlatform,
@@ -545,6 +550,7 @@ class Session implements SessionSortKey {
     bool? pinned,
     bool? hidden,
     bool? unread,
+    String? searchSnippet,
     String? profile,
     bool? isDefaultProfile,
     String? handoffPlatform,
@@ -578,6 +584,7 @@ class Session implements SessionSortKey {
     pinned: pinned ?? this.pinned,
     hidden: hidden ?? this.hidden,
     unread: unread ?? this.unread,
+    searchSnippet: searchSnippet ?? this.searchSnippet,
     profile: profile ?? this.profile,
     isDefaultProfile: isDefaultProfile ?? this.isDefaultProfile,
     handoffPlatform: handoffPlatform ?? this.handoffPlatform,

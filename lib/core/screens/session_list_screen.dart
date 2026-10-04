@@ -2939,6 +2939,11 @@ class _SessionTile extends StatelessWidget {
     final previewText = session.hasLocalDraft
         ? <String>[draftLabel, if (preview.isNotEmpty) preview].join(' · ')
         : preview;
+    // A search hit paints its matched terms (Hermes' FTS delimiters), never
+    // the raw markers.
+    final highlights = session.hasLocalDraft
+        ? null
+        : sessionSearchHighlights(session);
     final liveTone = sessionStatusColor(colors, _statusTone);
 
     return InkWell(
@@ -3063,6 +3068,34 @@ class _SessionTile extends StatelessWidget {
                               fontWeight: FontWeight.w500,
                               color: liveTone,
                             ),
+                          ),
+                        ),
+                      )
+                    else if (highlights != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              for (final span in highlights)
+                                TextSpan(
+                                  text: span.text,
+                                  style: span.highlighted
+                                      ? TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          color: colors.textPrimary,
+                                        )
+                                      : null,
+                                ),
+                            ],
+                          ),
+                          key: ValueKey('session-snippet-${session.id}'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.25,
+                            color: colors.textSecondary,
                           ),
                         ),
                       )
