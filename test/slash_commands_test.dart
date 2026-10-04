@@ -38,7 +38,6 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-
 class _SlashGateway
     implements
         HermesDesktopGateway,
@@ -64,6 +63,12 @@ class _SlashGateway
   final List<String> slashCalls = [];
   Completer<SlashCompletionBatch>? slashCompletion;
   SlashCompletionBatch Function(String text)? slashResponder;
+  // Per-query gates: answers can be released in any order (stale replies).
+  final Map<String, Completer<SlashCompletionBatch>> slashGates = {};
+  final List<Map<String, String>> dispatchCalls = [];
+  // Like Hermes: command.dispatch refuses anything that is not a quick,
+  // plugin, bundle or skill command.
+  DesktopCommandRpcResult? dispatchResult;
   Completer<DesktopCommandRpcResult>? slashGate;
   int slashCompletionCalls = 0;
   Object? slashError;
@@ -168,6 +173,7 @@ class _SlashGateway
   @override
   Future<SlashCompletionBatch> completeSlash(String text) async {
     slashCompletionCalls++;
+    if (slashGates[text] case final gate?) return gate.future;
     if (slashResponder case final respond?) return respond(text);
     return slashCompletion?.future ??
         SlashCompletionBatch.fromJson(const {'items': <Object>[]}, input: text);
@@ -189,8 +195,14 @@ class _SlashGateway
     required String name,
     String arg = '',
   }) async {
+    dispatchCalls.add({'name': name, 'arg': arg});
     if (dispatchError case final error?) throw error;
-    return _acceptedResult;
+    if (dispatchResult case final result?) return result;
+    throw TuiGatewayRpcError(
+      'command.dispatch',
+      'not a quick/plugin/bundle/skill command: $name',
+      code: 4018,
+    );
   }
 
   @override
@@ -246,6 +258,7 @@ class _SlashGateway
 class _ReferenceGateway extends _SlashGateway
     implements HermesDesktopComposerCompletionGateway {
   final List<Map<String, String>> pathCalls = [];
+  final Map<String, Completer<PathCompletionBatch>> pathGates = {};
 
   @override
   Future<SlashCompletionBatch> completeSlashInSession(
@@ -259,6 +272,7 @@ class _ReferenceGateway extends _SlashGateway
     required String runtimeSessionId,
   }) async {
     pathCalls.add({'word': word, 'session_id': runtimeSessionId});
+    if (pathGates[word] case final gate?) return gate.future;
     if (word == '@') {
       return PathCompletionBatch.fromJson({
         'items': [
@@ -718,6 +732,57 @@ void main() {
       );
     });
 
+    testWidgets('a late @ answer never overwrites a newer query', (
+      tester,
+    ) async {
+      final gateway = _ReferenceGateway();
+      final older = gateway.pathGates['@lib/a'] =
+          Completer<PathCompletionBatch>();
+      final newer = gateway.pathGates['@lib/ab'] =
+          Completer<PathCompletionBatch>();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.enterText(composer, '@lib/a');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(composer, '@lib/ab');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.pathCalls.map((call) => call['word']), [
+        '@lib/a',
+        '@lib/ab',
+      ]);
+
+      newer.complete(
+        PathCompletionBatch.fromJson(const {
+          'items': [
+            {'text': '@file:lib/ab.dart', 'display': 'ab.dart'},
+          ],
+        }),
+      );
+      await tester.pump();
+      older.complete(
+        PathCompletionBatch.fromJson(const {
+          'items': [
+            {'text': '@file:lib/a_stale.dart', 'display': 'a_stale.dart'},
+          ],
+        }),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.byKey(const ValueKey('chat-reference-@file:lib/ab.dart')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-reference-@file:lib/a_stale.dart')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('a gateway without complete.path shows no @ palette', (
       tester,
     ) async {
@@ -854,6 +919,121 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(gateway.slashCompletionCalls, afterBurst);
       expect(find.byKey(const ValueKey('chat-slash-palette')), findsNothing);
+    });
+
+    testWidgets('a late slash answer never overwrites a newer query', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      final older = gateway.slashGates['/re'] =
+          Completer<SlashCompletionBatch>();
+      final newer = gateway.slashGates['/rev'] =
+          Completer<SlashCompletionBatch>();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.enterText(composer, '/re');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(composer, '/rev');
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(gateway.slashCompletionCalls, 2);
+
+      newer.complete(
+        SlashCompletionBatch.fromJson(const {
+          'replace_from': 1,
+          'items': [
+            {'text': '/review-pr', 'meta': 'Review a PR', 'kind': 'skill'},
+          ],
+        }, input: '/rev'),
+      );
+      await tester.pump();
+      older.complete(
+        SlashCompletionBatch.fromJson(const {
+          'replace_from': 1,
+          'items': [
+            {'text': '/reset-stale', 'meta': 'stale', 'kind': 'command'},
+          ],
+        }, input: '/re'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-review-pr')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chat-slash-command-reset-stale')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a skill falls back to command.dispatch and sends its body', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway()
+        ..slashResponder = ((text) => SlashCompletionBatch.fromJson(const {
+          'replace_from': 1,
+          'items': [
+            {'text': '/review-pr', 'meta': 'Review a PR', 'kind': 'skill'},
+          ],
+        }, input: text))
+        ..slashError = const TuiGatewayRpcError(
+          'slash.exec',
+          'skill command: use command.dispatch for /review-pr',
+          code: 4018,
+        )
+        ..dispatchResult = DesktopCommandRpcResult.fromJson(const {
+          'type': 'skill',
+          'name': 'review-pr',
+          'message': 'Skill body for PR 12',
+        });
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.enterText(composer, '/rev');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(composer, '/review-pr 12');
+      await tester.pump(const Duration(milliseconds: 300));
+      await _submitSlash(tester);
+
+      // Desktop slash.ts: slash.exec first, command.dispatch {name, arg}
+      // on its error, then the skill body goes out as the next turn.
+      expect(gateway.slashCalls, ['review-pr 12']);
+      expect(gateway.dispatchCalls, [
+        {'name': 'review-pr', 'arg': '12'},
+      ]);
+      expect(gateway.submissions, ['Skill body for PR 12']);
+      expect(tester.widget<TextField>(composer).controller?.text, isEmpty);
+      gateway.emit('message.complete', {'text': 'ok'});
+      await tester.pump(const Duration(milliseconds: 350));
+    });
+
+    testWidgets('a failed slash.exec keeps its own error over the fallback', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway()
+        ..slashError = const TuiGatewayRpcError(
+          'slash.exec',
+          'worker timeout',
+          code: 5030,
+        );
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.tap(composer);
+      await tester.enterText(composer, '/goal algo');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+
+      expect(gateway.dispatchCalls, [
+        {'name': 'goal', 'arg': 'algo'},
+      ]);
+      expect(gateway.submissions, isEmpty);
+      expect(tester.widget<TextField>(composer).controller?.text, '/goal algo');
     });
 
     testWidgets('a no-argument slash executes immediately exactly once', (

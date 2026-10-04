@@ -16176,11 +16176,33 @@ class ActiveChat {
       );
     }
     final command = argument.isEmpty ? canonical : '$canonical $argument';
-    return (gateway as HermesDesktopCommandGateway).slashExec(
-      runtimeId,
-      command,
-    );
+    final commands = gateway as HermesDesktopCommandGateway;
+    try {
+      return await commands.slashExec(runtimeId, command);
+    } on TuiGatewayRpcError catch (slashError) {
+      // Desktop `use-prompt-actions/slash.ts`: skills, bundles and send/alias
+      // directives refuse slash.exec, so any slash.exec error retries through
+      // command.dispatch. When the dispatcher has nothing for the name, the
+      // slash.exec error is the real failure.
+      try {
+        return await commands.commandDispatch(
+          runtimeId,
+          name: canonical,
+          arg: argument,
+        );
+      } on TuiGatewayRpcError catch (dispatchError) {
+        if (_notADispatchCommand.hasMatch(dispatchError.message)) {
+          throw slashError;
+        }
+        rethrow;
+      }
+    }
   }
+
+  static final RegExp _notADispatchCommand = RegExp(
+    r'not a quick/plugin/(?:bundle/)?skill command',
+    caseSensitive: false,
+  );
 
   String get _compressionRestoreProfile => Session.profileOwner(
     _sessionProfileOwner,

@@ -8190,6 +8190,17 @@ class _ChatScreenState extends State<ChatScreen>
           );
           return true;
         }
+        // A skill installed after the catalog was cached is still named by
+        // complete.slash; the server owns it, as on Desktop.
+        final controller = _textController;
+        if (controller is _SlashAccentTextEditingController &&
+            controller.remoteCommandNames.contains(invocation.name)) {
+          await _executeSlash(
+            SlashCommand.remote(name: invocation.name, description: ''),
+            invocation.arg,
+          );
+          return true;
+        }
       }
       final unknownName = invocation.name;
       HermesNotice.of(context).showSnackBar(
