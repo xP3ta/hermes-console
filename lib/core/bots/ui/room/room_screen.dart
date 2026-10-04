@@ -12,7 +12,8 @@ import '../../../../l10n/app_localizations.dart';
 import '../../../models/attachment_draft.dart';
 import '../../../models/hosted_groups.dart';
 import '../../../services/attachment_uploader.dart';
-import '../../../services/tui_gateway_client.dart' show TuiGatewayRpcError;
+import '../../../services/tui_gateway_client.dart'
+    show TuiGatewayRpcError, rosterSessionNotActiveReason;
 import '../../../theme/app_theme.dart';
 import '../../../widgets/attachment_source_sheet.dart';
 import '../../../widgets/chat/console_composer.dart';
@@ -87,7 +88,8 @@ String _joinDraft(String a, String b) => a.trim().isEmpty
 String roomRefreshFailureKind(Object error) {
   if (error is TuiGatewayRpcError) {
     return 'TuiGatewayRpcError method=${error.method} code=${error.code} '
-        'kind=${error.failureKind?.name} reason=${error.reason}';
+        'kind=${error.failureKind?.name} '
+        'reason=${_loggableRpcReason(error.reason)}';
   }
   final message = switch (error) {
     StateError(:final message) => message,
@@ -99,6 +101,27 @@ String roomRefreshFailureKind(Object error) {
   }
   return error.runtimeType.toString();
 }
+
+/// The RPC `data.reason` as logged: a remote error copies it from the
+/// JSON-RPC reply, so only codes this client knows pass through and any
+/// other text becomes `other`.
+String? _loggableRpcReason(String? reason) => reason == null
+    ? null
+    : _roomRefreshKnownReasons.contains(reason)
+    ? reason
+    : 'other';
+
+/// Reason codes a hosted room or session RPC can carry in `data.reason`
+/// (hosted room store errors, session ownership and roster checks).
+const _roomRefreshKnownReasons = {
+  'room_history_expired',
+  'authority_conflict',
+  'SESSION_NOT_OWNED',
+  'MAX_CONCURRENT_SESSIONS',
+  'SESSION_COORDINATION_UNAVAILABLE',
+  'EXCLUSIVE_SUBMIT_CAPABILITY_DENIED',
+  rosterSessionNotActiveReason,
+};
 
 /// Constant failure texts of the room read path (this screen, Mission
 /// Control's repository and the gateway client), safe to log.

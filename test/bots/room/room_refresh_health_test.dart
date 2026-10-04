@@ -384,6 +384,34 @@ void main() {
     );
   });
 
+  test('a remote RPC reason is logged only when it is a known code', () {
+    String kind(Object reason) => roomRefreshFailureKind(
+      TuiGatewayRpcError(
+        'groups.state',
+        'private remote failure',
+        code: 4118,
+        data: {'reason': reason},
+      ),
+    );
+    expect(
+      kind('private remote failure'),
+      'TuiGatewayRpcError method=groups.state code=4118 '
+      'kind=null reason=other',
+    );
+    expect(kind('room_history_expired\nleak'), endsWith('reason=other'));
+    expect(kind('ROOM_HISTORY_EXPIRED'), endsWith('reason=other'));
+    expect(
+      kind('room_history_expired'),
+      endsWith('reason=room_history_expired'),
+    );
+    expect(kind('authority_conflict'), endsWith('reason=authority_conflict'));
+    expect(
+      kind('  authority_conflict '),
+      endsWith('reason=authority_conflict'),
+    );
+    expect(kind(''), endsWith('reason=null'));
+  });
+
   testWidgets('a failing member probe never shows a room refresh error', (
     tester,
   ) async {
