@@ -212,6 +212,33 @@ void main() {
       expect(ServerRestartSignals.textFor([_host]), isNotNull);
     });
 
+    for (final (name, providers) in [
+      ('a list entry that is not a provider', [5]),
+      ('a list with one bad entry among good ones', [<String, dynamic>{}, 'x']),
+      ('a list of nulls', [null]),
+    ]) {
+      test('a 200 with $name keeps the note', () async {
+        var failing = true;
+        final client = dashboard(
+          (_) => failing
+              ? http.Response(jsonEncode({'detail': _restartDetail}), 503)
+              : http.Response(jsonEncode({'providers': providers}), 200),
+        );
+        await expectLater(
+          client.getModelOptions(),
+          throwsA(isA<DashboardHttpException>()),
+        );
+        failing = false;
+        try {
+          await client.getModelOptions();
+        } catch (_) {
+          // Whether it returns what it can read or throws, the note stays.
+        }
+
+        expect(ServerRestartSignals.textFor([_host]), isNotNull);
+      });
+    }
+
     test('a 200 without a providers member keeps the note', () async {
       var failing = true;
       final client = dashboard(
