@@ -69,6 +69,28 @@ void main() {
       'http://intranet/': AgentPreviewReach.serverOnly,
       'http://printer.local/': AgentPreviewReach.serverOnly,
       'http://box.tail1234.ts.net/': AgentPreviewReach.serverOnly,
+      // The same private addresses written the way a browser still reads
+      // them: octal, hex and zero-padded octets, expanded or hex IPv6.
+      'http://0177.0.0.1': AgentPreviewReach.serverOnly,
+      'http://012.0.0.1': AgentPreviewReach.serverOnly,
+      'http://0x7f.0.0.1': AgentPreviewReach.serverOnly,
+      'http://0xc0.0xa8.1.1': AgentPreviewReach.serverOnly,
+      'http://[0:0:0:0:0:0:0:1]/': AgentPreviewReach.serverOnly,
+      'http://[0000:0000:0000:0000:0000:0000:0000:0001]/':
+          AgentPreviewReach.serverOnly,
+      'http://[0:0:0:0:0:0:0:0]/': AgentPreviewReach.serverOnly,
+      'http://[::ffff:7f00:1]/': AgentPreviewReach.serverOnly,
+      'http://[::ffff:c0a8:101]/': AgentPreviewReach.serverOnly,
+      'http://[0:0:0:0:0:ffff:7f00:1]/': AgentPreviewReach.serverOnly,
+      'http://[::127.0.0.1]/': AgentPreviewReach.serverOnly,
+      'http://[64:ff9b::7f00:1]/': AgentPreviewReach.serverOnly,
+      'http://[2002:7f00:1::]/': AgentPreviewReach.serverOnly,
+      'http://[fc00::1]/': AgentPreviewReach.serverOnly,
+      'http://[ff02::1]/': AgentPreviewReach.serverOnly,
+      // Public addresses in the same notations stay public.
+      'http://[::ffff:808:808]/': AgentPreviewReach.web,
+      'http://[2606:4700:4700::1111]/': AgentPreviewReach.web,
+      'http://8.8.8.8/': AgentPreviewReach.web,
       // Just outside the private ranges.
       'http://172.32.0.1': AgentPreviewReach.web,
       'http://100.128.0.1': AgentPreviewReach.web,
@@ -77,12 +99,18 @@ void main() {
       '/home/user/site/index.html': AgentPreviewReach.serverFile,
       'file:///home/user/site/index.html': AgentPreviewReach.serverFile,
       '~/site/index.html': AgentPreviewReach.serverFile,
+      // A decoded NUL or newline hides a different path.
+      'file:///srv/a%00b.html': null,
+      'file:///srv/a%0Ab.html': null,
       // Not previews at all.
       '': null,
       '   ': null,
       'javascript:alert(1)': null,
       'data:text/html,<b>x</b>': null,
       'ftp://example.com/a': null,
+      // Credentials in the URL are never carried into a tile or a launch.
+      'https://user:pw@example.com/': null,
+      'http://good.example@127.0.0.1/': null,
       'mailto:a@example.com': null,
     };
     for (final entry in cases.entries) {
@@ -90,6 +118,25 @@ void main() {
         expect(_reach(entry.key), entry.value);
       });
     }
+
+    test('one identity for scheme, host and port spelled differently', () {
+      expect(
+        classifyAgentPreviewTarget('HTTP://Example.COM:80/a')!.url,
+        'http://example.com/a',
+      );
+      expect(
+        classifyAgentPreviewTarget('https://EXAMPLE.com:443')!.url,
+        'https://example.com',
+      );
+      expect(
+        classifyAgentPreviewTarget('https://example.com:8443/a?x=1')!.url,
+        'https://example.com:8443/a?x=1',
+      );
+      expect(
+        classifyAgentPreviewTarget('http://[::1]:3000/')!.url,
+        'http://[::1]:3000/',
+      );
+    });
 
     test('normalizes like the tool', () {
       expect(
@@ -156,6 +203,17 @@ void main() {
           ]),
         ]),
         isEmpty,
+      );
+    });
+
+    test('close matches an open written with another scheme or port form', () {
+      expect(
+        _urls([
+          _open('https://example.com/a'),
+          _open('http://example.com:8080/b'),
+          _close('HTTPS://EXAMPLE.com:443/a'),
+        ]),
+        ['http://example.com:8080/b'],
       );
     });
 
