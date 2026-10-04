@@ -1027,4 +1027,154 @@ void main() {
       await tearDownChat(tester, gateway);
     });
   });
+
+  group('#114 prompts and sticky prompt', () {
+    Finder jumpButton() => find.byKey(const ValueKey('chat-scroll-to-bottom'));
+    Finder sticky() => find.byKey(const ValueKey('chat-sticky-prompt'));
+
+    List<Map<String, dynamic>> longReplyHistory() => [
+      {
+        'id': 'long-a',
+        'role': 'assistant',
+        'content': List.filled(
+          90,
+          'Texto de una respuesta muy larga que ocupa varias pantallas.',
+        ).join('\n\n'),
+      },
+      {'id': 'long-u', 'role': 'user', 'content': 'Pregunta larga del turno'},
+      ..._history(turns: 6, prefix: 'older'),
+    ];
+
+    Future<void> openPrompts(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('chat-control-prompts')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+    }
+
+    testWidgets('the sticky prompt shows while its reply spans the top', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: longReplyHistory());
+      await settle(tester);
+      expect(sticky(), findsOneWidget);
+      expect(
+        find.descendant(
+          of: sticky(),
+          matching: find.textContaining('Pregunta larga del turno'),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('the sticky prompt stays hidden when its bubble is on screen', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: [
+          {'id': 'short-a', 'role': 'assistant', 'content': 'Respuesta corta'},
+          {'id': 'short-u', 'role': 'user', 'content': 'Pregunta corta'},
+        ],
+      );
+      await settle(tester);
+      expect(sticky(), findsNothing);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('tapping the sticky prompt reveals the prompt', (tester) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: longReplyHistory());
+      await settle(tester);
+      await tester.tap(sticky());
+      for (var frame = 0; frame < 60; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await settle(tester);
+      expect(
+        find.descendant(
+          of: transcript(),
+          matching: find.text('Pregunta larga del turno'),
+        ),
+        findsOneWidget,
+      );
+      expect(sticky(), findsNothing);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('Prompts lists the loaded prompts and reveals the chosen one', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: _history());
+      await settle(tester);
+      await openPrompts(tester);
+      final sheet = find.byKey(const ValueKey('chat-prompt-sheet'));
+      expect(sheet, findsOneWidget);
+      expect(
+        find.descendant(
+          of: sheet,
+          matching: find.text('Pregunta histórica 29 con contexto adicional.'),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.descendant(
+          of: sheet,
+          matching: find.text('Pregunta histórica 20 con contexto adicional.'),
+        ),
+      );
+      for (var frame = 0; frame < 80; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(sheet, findsNothing);
+      expect(
+        find.descendant(
+          of: transcript(),
+          matching: find.text('Pregunta histórica 20 con contexto adicional.'),
+        ),
+        findsOneWidget,
+      );
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('a jump starts an away period with no new messages', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      final chat = await pumpChat(tester, gateway, history: _history());
+      await settle(tester);
+      await openPrompts(tester);
+      await tester.tap(
+        find.text('Pregunta histórica 20 con contexto adicional.').last,
+      );
+      for (var frame = 0; frame < 80; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(
+        find.byKey(const ValueKey('scroll-to-bottom-visible')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('nuevo'), findsNothing);
+
+      chat.internalMessagesForTesting = [
+        {'id': 'after-jump', 'role': 'assistant', 'content': 'Llega ahora.'},
+        ...chat.internalMessagesForTesting,
+      ];
+      chat.debugEmitMessagesHydrated();
+      await settle(tester);
+      expect(
+        find.descendant(of: jumpButton(), matching: find.text('1 nuevo')),
+        findsOneWidget,
+      );
+      await tearDownChat(tester, gateway);
+    });
+  });
 }
