@@ -249,20 +249,96 @@ void main() {
     expect(watch.value.text, 'SELECT * FROMusers\nSELECT * FROM users');
   });
 
-  test('the auxiliary delta buffer is bounded like the live text', () async {
+  test(
+    'both text buffers never exceed their budget, even for one huge frame',
+    () async {
+      final gateway = FakeWatchGateway();
+      final watch = _watch(gateway)..start();
+      await pumpEventQueue();
+
+      gateway.emit('watch-1', 'message.delta', {'text': 'x' * 1000000});
+      expect(
+        watch.deltaCharsForTesting,
+        lessThanOrEqualTo(SubagentLiveWatch.maxLiveChars),
+      );
+      expect(
+        watch.liveRawCharsForTesting,
+        lessThanOrEqualTo(SubagentLiveWatch.maxLiveChars),
+      );
+      expect(
+        watch.value.text.length,
+        lessThanOrEqualTo(SubagentLiveWatch.maxLiveChars),
+      );
+
+      final chunk = 'y' * 2000;
+      for (var i = 0; i < 300; i++) {
+        gateway.emit('watch-1', 'message.delta', {'text': chunk});
+      }
+      expect(
+        watch.deltaCharsForTesting,
+        lessThanOrEqualTo(SubagentLiveWatch.maxLiveChars),
+      );
+      expect(
+        watch.liveRawCharsForTesting,
+        lessThanOrEqualTo(SubagentLiveWatch.maxLiveChars),
+      );
+    },
+  );
+
+  test(
+    'a summary that only restructures the text is kept, not swallowed',
+    () async {
+      for (final (streamed, summary) in <(String, String)>[
+        ('uno dos', 'uno\n\ndos'),
+        ('x\n a', 'x\n    a'),
+        ('a | b', 'a\n---|---\nb'),
+        ('print(1)', '```\nprint(1)\n```'),
+      ]) {
+        final gateway = FakeWatchGateway();
+        final watch = _watch(gateway)..start();
+        await pumpEventQueue();
+
+        gateway.emit('watch-1', 'message.delta', {'text': streamed});
+        gateway.emit('watch-1', 'message.complete', {'text': summary});
+        await pumpEventQueue();
+
+        expect(watch.value.text, '$streamed\n$summary', reason: summary);
+      }
+    },
+  );
+
+  test('line endings alone do not make a summary new', () async {
     final gateway = FakeWatchGateway();
     final watch = _watch(gateway)..start();
     await pumpEventQueue();
 
-    final chunk = 'x' * 2000;
-    for (var i = 0; i < 300; i++) {
-      gateway.emit('watch-1', 'message.delta', {'text': chunk});
-    }
+    gateway.emit('watch-1', 'message.delta', {'text': 'uno\ndos'});
+    gateway.emit('watch-1', 'message.complete', {'text': 'uno\r\ndos'});
+    await pumpEventQueue();
 
-    expect(
-      watch.deltaCharsForTesting,
-      lessThanOrEqualTo(SubagentLiveWatch.maxLiveChars + chunk.length),
-    );
+    expect(watch.value.text, 'uno\ndos');
+  });
+
+  test('a normal finish releases the invalidation listener too', () async {
+    final gateway = FakeWatchGateway();
+    final invalidation = _CountingListenable();
+    final watch = SubagentLiveWatch(
+      gateway: gateway,
+      childSessionId: _child,
+      profile: _parentProfile,
+      isCurrent: () => true,
+      invalidation: invalidation,
+    )..start();
+    await pumpEventQueue();
+    expect(invalidation.listeners, 1);
+
+    gateway.emit('watch-1', 'message.delta', {'text': 'listo'});
+    gateway.emit('watch-1', 'message.complete', {'text': 'listo'});
+    await pumpEventQueue();
+
+    expect(watch.value.status, SubagentLiveWatchStatus.finished);
+    expect(invalidation.listeners, 0);
+    watch.dispose();
   });
 
   test('a genuinely new summary is still appended', () async {
