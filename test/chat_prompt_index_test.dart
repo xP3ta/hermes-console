@@ -218,6 +218,15 @@ void main() {
       expect(remote.length, 120);
     });
 
+    test('an explicit oldest loaded row id anchors remote rows', () {
+      final items = mergeChatPromptItems(
+        const [],
+        [(rowId: 1, preview: 'uno'), (rowId: 50, preview: 'cincuenta')],
+        oldestLoadedRowId: 40,
+      );
+      expect(items.map((i) => i.preview), ['uno']);
+    });
+
     test('an empty loaded list has no anchor for remote rows', () {
       final items = mergeChatPromptItems(const [], [
         (rowId: 1, preview: 'uno'),
