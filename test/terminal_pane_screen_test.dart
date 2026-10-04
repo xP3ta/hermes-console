@@ -227,6 +227,45 @@ void main() {
     expect(field.controller!.text, 'echo one');
   });
 
+  testWidgets('nothing is verified or shown before FLAG_SECURE is applied', (
+    tester,
+  ) async {
+    final applied = Completer<void>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('hermes/security'), (
+          call,
+        ) async {
+          if (call.method == 'setSecureScreen') {
+            await applied.future;
+            secure.add(call.arguments as bool);
+          }
+          return null;
+        });
+    var verified = 0;
+    final gateway = FakeTerminalGateway();
+    await tester.pumpWidget(
+      app(
+        gateway,
+        await lock(enabled: true),
+        verify: (_, _, _) async {
+          verified++;
+          return true;
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(secure, isEmpty);
+    expect(verified, 0, reason: 'verification waits for the secure flag');
+    expect(gateway.commands, isEmpty);
+    expect(find.byKey(const ValueKey('terminal-input')), findsNothing);
+    applied.complete();
+    await tester.pumpAndSettle();
+    expect(secure.first, isTrue);
+    expect(verified, 1);
+    expect(find.byKey(const ValueKey('terminal-input')), findsOneWidget);
+  });
+
   testWidgets('without a chat there is no agent segment', (tester) async {
     await tester.pumpWidget(
       app(FakeTerminalGateway(), await lock(enabled: true)),

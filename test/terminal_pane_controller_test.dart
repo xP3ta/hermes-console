@@ -207,6 +207,46 @@ void main() {
       expect(gateway.ran, isEmpty);
     });
 
+    test(
+      'a probe that fails for any other reason is not proof of support',
+      () async {
+        for (final error in <Object>[
+          const ShellExecFailure(),
+          TimeoutException('slow'),
+          StateError('connection dropped'),
+        ]) {
+          final gateway = _FailingProbe(error);
+          final c = TerminalPaneController(
+            gateway: gateway,
+            profile: 'p',
+            appLockEnabled: () => true,
+            verify: () async => true,
+          );
+          addTearDown(c.dispose);
+          await c.open();
+          expect(c.access, TerminalPaneAccess.unreachable, reason: '$error');
+          await c.run('ls');
+          expect(gateway.ran, isEmpty, reason: 'nothing runs before support');
+        }
+      },
+    );
+
+    test('unlock again after an unreachable probe can become ready', () async {
+      final gateway = _FailingProbe(const ShellExecFailure());
+      final c = TerminalPaneController(
+        gateway: gateway,
+        profile: 'p',
+        appLockEnabled: () => true,
+        verify: () async => true,
+      );
+      addTearDown(c.dispose);
+      await c.open();
+      expect(c.access, TerminalPaneAccess.unreachable);
+      gateway.error = null;
+      await c.unlock();
+      expect(c.access, TerminalPaneAccess.ready);
+    });
+
     test('a read-only connection is unsupported without any request', () async {
       final gateway = FakeTerminalGateway(available: false);
       final c = await _open(gateway);
@@ -228,6 +268,17 @@ void main() {
       expect(n, greaterThanOrEqualTo(2));
     });
   });
+}
+
+class _FailingProbe extends FakeTerminalGateway {
+  _FailingProbe(this.error);
+  Object? error;
+
+  @override
+  Future<ShellExecResult> shellExec(String command, {required String profile}) {
+    if (command.isEmpty && error != null) return Future.error(error!);
+    return super.shellExec(command, profile: profile);
+  }
 }
 
 class _UnsupportedProbe extends FakeTerminalGateway {

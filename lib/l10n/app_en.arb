@@ -7788,5 +7788,7 @@
   "backupFailCancelled": "Stopped when the page was hidden. The server may still be working.",
   "backupFailTimedOut": "The server is taking too long. Check it later.",
   "backupRefreshFailed": "Restored. Reopen the app to reload profiles and conversations.",
-  "backupCancel": "Cancel"
+  "backupCancel": "Cancel",
+  "termUnreachable": "Couldn't check this server's terminal",
+  "termRetry": "Retry"
 }

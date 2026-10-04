@@ -9477,5 +9477,7 @@
   "backupFailCancelled": "Se detuvo al ocultar la pantalla. El servidor puede seguir trabajando.",
   "backupFailTimedOut": "El servidor tarda demasiado. Revísalo más tarde.",
   "backupRefreshFailed": "Restaurado. Reabre la app para recargar perfiles y conversaciones.",
-  "backupCancel": "Cancelar"
+  "backupCancel": "Cancelar",
+  "termUnreachable": "No se pudo comprobar el terminal de este servidor",
+  "termRetry": "Reintentar"
 }

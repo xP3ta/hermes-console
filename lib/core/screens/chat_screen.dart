@@ -10246,6 +10246,17 @@ class _ChatScreenState extends State<ChatScreen>
         widget.connection.readOnly ||
         policy?.effectiveMode(widget.session.id) == ApprovalMode.readOnly;
 
+    final terminalGateway = _chat.terminalGateway;
+    if (terminalGateway != null && _chat.desktopRuntimeSessionId != null) {
+      unawaited(
+        TerminalAvailability.confirm(
+          widget.connection,
+          terminalGateway,
+          profile: Session.profileOwner(widget.session.profile),
+        ),
+      );
+    }
+
     final action = await showHermesFloatingSurface<_ChatControlAction>(
       context: context,
       surfaceKey: const ValueKey('chat-control-dialog'),
@@ -10254,7 +10265,10 @@ class _ChatScreenState extends State<ChatScreen>
         void select(_ChatControlAction action) =>
             Navigator.of(dialogContext).pop(action);
 
-        return ChatControlSheet(
+        // The Terminal row appears once the server has confirmed shell.exec.
+        return ValueListenableBuilder<int>(
+          valueListenable: TerminalAvailability.changes,
+          builder: (context, _, _) => ChatControlSheet(
           labels: ChatControlLabels(
             title: strings.chaControlTitle,
             scope: strings.chaControlScope,
@@ -10308,6 +10322,7 @@ class _ChatScreenState extends State<ChatScreen>
               : () => select(_ChatControlAction.terminal),
           onReleaseDesktop: () => select(_ChatControlAction.releaseDesktop),
           onDelete: () => select(_ChatControlAction.delete),
+          ),
         );
       },
     );

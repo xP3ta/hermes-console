@@ -104,8 +104,14 @@ class _TerminalPaneScreenState extends State<TerminalPaneScreen> {
       verify: _verify,
       appLocked: _appLock?.locked,
     )..addListener(_onController);
-    unawaited(_enterSecureScope());
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    // Nothing is verified, probed or shown until FLAG_SECURE is applied.
+    final secured = _enterSecureScope();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        await secured;
+      } catch (_) {
+        return;
+      }
       if (!_disposed) unawaited(_controller.open());
     });
   }
@@ -143,6 +149,8 @@ class _TerminalPaneScreenState extends State<TerminalPaneScreen> {
     }
     if (_controller.access == TerminalPaneAccess.unsupported) {
       TerminalAvailability.markUnsupported(widget.connection.id);
+    } else if (_controller.access == TerminalPaneAccess.ready) {
+      TerminalAvailability.markConfirmed(widget.connection.id);
     }
     setState(() {});
   }
@@ -227,6 +235,7 @@ class _TerminalPaneScreenState extends State<TerminalPaneScreen> {
           ),
           TerminalPaneAccess.locked => _locked(s),
           TerminalPaneAccess.unsupported => _notice(s.termUnsupported),
+          TerminalPaneAccess.unreachable => _unreachable(s),
           TerminalPaneAccess.ready => _ready(s),
         },
       ),
@@ -254,6 +263,22 @@ class _TerminalPaneScreenState extends State<TerminalPaneScreen> {
         HermesActionButton(
           key: const ValueKey('terminal-unlock'),
           label: s.termUnlock,
+          primary: true,
+          onPressed: () => unawaited(_controller.unlock()),
+        ),
+      ],
+    ),
+  );
+
+  Widget _unreachable(Strings s) => Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(s.termUnreachable),
+        const SizedBox(height: 16),
+        HermesActionButton(
+          key: const ValueKey('terminal-retry'),
+          label: s.termRetry,
           primary: true,
           onPressed: () => unawaited(_controller.unlock()),
         ),

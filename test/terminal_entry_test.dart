@@ -4,9 +4,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/connection.dart';
+import 'package:hermes_android/core/models/terminal_exec.dart';
 import 'package:hermes_android/core/services/terminal_availability.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat_control_sheet.dart';
+
+import 'support/fake_terminal_gateway.dart';
 
 SavedConnection _conn({String id = 'c1', bool readOnly = false}) =>
     SavedConnection(
@@ -67,17 +70,67 @@ void main() {
     expect(find.text('Terminal'), findsNothing);
   });
 
-  test('offered by default for a writable connection', () {
+  test('hidden by default: nothing declared or confirmed yet', () {
+    expect(TerminalAvailability.offered(_conn()), isFalse);
+  });
+
+  test('a 4004 answer to the empty probe confirms and offers it', () async {
+    final gateway = FakeTerminalGateway();
+    await TerminalAvailability.confirm(_conn(), gateway, profile: 'default');
+    expect(gateway.commands.map((c) => c.command), ['']);
     expect(TerminalAvailability.offered(_conn()), isTrue);
   });
 
-  test('never offered on a read-only connection', () {
+  test('a failed probe confirms nothing and a later one may retry', () async {
+    final failing = _Probe(const ShellExecFailure());
+    await TerminalAvailability.confirm(_conn(), failing, profile: 'default');
+    expect(TerminalAvailability.offered(_conn()), isFalse);
+    await TerminalAvailability.confirm(
+      _conn(),
+      FakeTerminalGateway(),
+      profile: 'default',
+    );
+    expect(TerminalAvailability.offered(_conn()), isTrue);
+  });
+
+  test('-32601 hides it for good and is not probed again', () async {
+    final gateway = _Probe(const ShellExecUnsupported());
+    await TerminalAvailability.confirm(_conn(), gateway, profile: 'default');
+    await TerminalAvailability.confirm(_conn(), gateway, profile: 'default');
+    expect(TerminalAvailability.offered(_conn()), isFalse);
+    expect(gateway.commands.length, 1);
+  });
+
+  test('a read-only connection is never probed or offered', () async {
+    final gateway = FakeTerminalGateway();
+    await TerminalAvailability.confirm(
+      _conn(readOnly: true),
+      gateway,
+      profile: 'default',
+    );
+    expect(gateway.commands, isEmpty);
     expect(TerminalAvailability.offered(_conn(readOnly: true)), isFalse);
   });
 
-  test('a server that answered -32601 stops being offered', () {
+  test('a confirmed connection stops being offered after -32601', () async {
+    await TerminalAvailability.confirm(
+      _conn(),
+      FakeTerminalGateway(),
+      profile: 'default',
+    );
     TerminalAvailability.markUnsupported('c1');
     expect(TerminalAvailability.offered(_conn()), isFalse);
-    expect(TerminalAvailability.offered(_conn(id: 'c2')), isTrue);
+    expect(TerminalAvailability.offered(_conn(id: 'c2')), isFalse);
   });
+}
+
+class _Probe extends FakeTerminalGateway {
+  _Probe(this.error);
+  final Object error;
+
+  @override
+  Future<ShellExecResult> shellExec(String command, {required String profile}) {
+    commands.add((command: command, profile: profile));
+    return Future.error(error);
+  }
 }

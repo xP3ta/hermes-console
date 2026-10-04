@@ -16,6 +16,11 @@ enum TerminalPaneAccess {
   /// The server has no `shell.exec`, or the connection is read-only.
   unsupported,
 
+  /// The probe failed for another reason (timeout, authentication, a dropped
+  /// connection): support is unconfirmed, so nothing can be run until a
+  /// retry succeeds.
+  unreachable,
+
   ready,
 }
 
@@ -112,9 +117,12 @@ class TerminalPaneController extends ChangeNotifier {
       if (_disposed || epoch != _epoch) return;
       _setAccess(TerminalPaneAccess.unsupported);
       return;
+    } on ShellExecRefusal {
+      // 4004 (empty command) proves the method exists.
     } catch (_) {
-      // 4004 (empty command) proves the method exists; any other failure
-      // surfaces on the first real run.
+      if (_disposed || epoch != _epoch) return;
+      _setAccess(TerminalPaneAccess.unreachable);
+      return;
     }
     if (_disposed || epoch != _epoch) return;
     _setAccess(TerminalPaneAccess.ready);
