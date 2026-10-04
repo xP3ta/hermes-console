@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/screens/subagent_detail_screen.dart';
 import 'package:hermes_android/core/services/subagent_live_watch.dart';
@@ -170,6 +171,26 @@ void main() {
       await tester.pump();
 
       expect(gateway.closed, ['watch-1']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a roster that ends the child while the resume is in flight leaks nothing',
+    (tester) async {
+      final pending = Completer<DesktopSessionSnapshot>();
+      gateway.answer = (_) => pending.future;
+      await pumpPage(tester);
+      expect(gateway.resumes, hasLength(1));
+
+      roster.value = [_running(phase: SubagentActivityPhase.completed)];
+      await tester.pump();
+      pending.complete(watchTestSnapshot('watch-1'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(gateway.closed, ['watch-1']);
+      expect(gateway.retained, isEmpty);
       expect(tester.takeException(), isNull);
     },
   );

@@ -234,6 +234,37 @@ void main() {
     },
   );
 
+  test('a corrected summary is kept when only a space differs', () async {
+    final gateway = FakeWatchGateway();
+    final watch = _watch(gateway)..start();
+    await pumpEventQueue();
+
+    gateway.emit('watch-1', 'message.delta', {'text': 'SELECT * FROMusers'});
+    gateway.emit('watch-1', 'message.complete', {
+      'text': 'SELECT * FROM users',
+    });
+    await pumpEventQueue();
+
+    expect(watch.value.text, contains('SELECT * FROM users'));
+    expect(watch.value.text, 'SELECT * FROMusers\nSELECT * FROM users');
+  });
+
+  test('the auxiliary delta buffer is bounded like the live text', () async {
+    final gateway = FakeWatchGateway();
+    final watch = _watch(gateway)..start();
+    await pumpEventQueue();
+
+    final chunk = 'x' * 2000;
+    for (var i = 0; i < 300; i++) {
+      gateway.emit('watch-1', 'message.delta', {'text': chunk});
+    }
+
+    expect(
+      watch.deltaCharsForTesting,
+      lessThanOrEqualTo(SubagentLiveWatch.maxLiveChars + chunk.length),
+    );
+  });
+
   test('a genuinely new summary is still appended', () async {
     final gateway = FakeWatchGateway();
     final watch = _watch(gateway)..start();
