@@ -3,25 +3,45 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'hermes_premium_ui.dart';
 
+/// Estado que pinta [ChatPromptSheet]; lo posee quien abre la hoja.
+@immutable
+class ChatPromptSheetModel {
+  const ChatPromptSheetModel({
+    required this.previews,
+    this.activeIndex,
+    this.hasMore = false,
+    this.loading = false,
+  });
+
+  /// Vistas previas, de la más reciente a la más antigua.
+  final List<String> previews;
+  final int? activeIndex;
+
+  /// El índice del servidor tiene más prompts por leer (acción del usuario).
+  final bool hasMore;
+  final bool loading;
+}
+
 /// Lista de prompts del chat para saltar a uno. Solo proyecta las vistas
-/// previas ya derivadas: no lee la transcripción ni conoce el scroll.
+/// previas ya derivadas: no lee la transcripción ni conoce el scroll, ni hace
+/// ninguna petición; el dueño del modelo decide cuándo se lee algo.
 class ChatPromptSheet extends StatelessWidget {
   const ChatPromptSheet({
     required this.title,
     required this.emptyLabel,
-    required this.previews,
+    required this.moreLabel,
+    required this.model,
     required this.onSelect,
-    this.activeIndex,
+    required this.onMore,
     super.key,
   });
 
   final String title;
   final String emptyLabel;
-
-  /// Vistas previas, de la más reciente a la más antigua.
-  final List<String> previews;
-  final int? activeIndex;
+  final String moreLabel;
+  final ValueListenable<ChatPromptSheetModel> model;
   final ValueChanged<int> onSelect;
+  final VoidCallback onMore;
 
   @override
   Widget build(BuildContext context) {
@@ -48,28 +68,57 @@ class ChatPromptSheet extends StatelessWidget {
                 ),
               ),
             ),
-            if (previews.isEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
-                child: Text(
-                  emptyLabel,
-                  key: const ValueKey('chat-prompt-sheet-empty'),
-                  style: TextStyle(color: colors.textSecondary, fontSize: 14),
-                ),
-              )
-            else
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: previews.length,
-                  itemBuilder: (context, index) => HermesListRow(
-                    key: ValueKey('chat-prompt-row-$index'),
-                    title: previews[index],
-                    selected: index == activeIndex,
-                    onTap: () => onSelect(index),
-                  ),
-                ),
+            Flexible(
+              child: ValueListenableBuilder<ChatPromptSheetModel>(
+                valueListenable: model,
+                builder: (context, state, _) {
+                  final previews = state.previews;
+                  final footer = state.loading || state.hasMore ? 1 : 0;
+                  if (previews.isEmpty && footer == 0) {
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
+                      child: Text(
+                        emptyLabel,
+                        key: const ValueKey('chat-prompt-sheet-empty'),
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 14,
+                        ),
+                      ),
+                    );
+                  }
+                  return ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: previews.length + footer,
+                    itemBuilder: (context, index) {
+                      if (index < previews.length) {
+                        return HermesListRow(
+                          key: ValueKey('chat-prompt-row-$index'),
+                          title: previews[index],
+                          selected: index == state.activeIndex,
+                          onTap: () => onSelect(index),
+                        );
+                      }
+                      if (state.loading) {
+                        return const Padding(
+                          key: ValueKey('chat-prompt-loading'),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          child: LinearProgressIndicator(),
+                        );
+                      }
+                      return HermesListRow(
+                        key: const ValueKey('chat-prompt-more'),
+                        title: moreLabel,
+                        onTap: onMore,
+                      );
+                    },
+                  );
+                },
               ),
+            ),
           ],
         ),
       ),
