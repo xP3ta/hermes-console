@@ -114,7 +114,6 @@ final class _Clock {
 
 const _caps = RoomCapabilities(canSend: true, canAnswerPrompts: true);
 const _stale = ValueKey('room-refresh-stale');
-const _retry = ValueKey('room-refresh-retry');
 
 final class _Harness {
   final _FlakyGateway gateway;
@@ -188,6 +187,28 @@ void _expectCalm() {
   expect(find.byKey(_stale), findsNothing);
 }
 
+/// The stale line is text plus a spinner only: no retry or other action.
+void _expectNoStaleAction() {
+  expect(find.byKey(const ValueKey('room-refresh-retry')), findsNothing);
+  expect(
+    find.descendant(
+      of: find.byKey(_stale),
+      matching: find.byWidgetPredicate(
+        (w) =>
+            w is ButtonStyleButton ||
+            w is IconButton ||
+            w is InkWell ||
+            w is GestureDetector,
+      ),
+    ),
+    findsNothing,
+  );
+  expect(
+    find.descendant(of: find.byKey(_stale), matching: find.text('Reintentar')),
+    findsNothing,
+  );
+}
+
 /// Every element in the screen's composer that takes text stays enabled.
 void _expectComposerUsable(WidgetTester tester) {
   final fields = tester.widgetList<TextField>(find.byType(TextField));
@@ -236,7 +257,7 @@ void main() {
   });
 
   testWidgets('stale past the tolerance with every poll failing: calm '
-      'reconnecting status with retry, composer still usable', (tester) async {
+      'reconnecting status, composer still usable', (tester) async {
     final h = await _pump(tester);
     await h.okTick(tester, Duration.zero);
     await h.failTick(tester, const Duration(seconds: 30));
@@ -248,7 +269,7 @@ void main() {
       find.text('Reconectando… la sala puede no estar al día.'),
       findsOneWidget,
     );
-    expect(find.byKey(_retry), findsOneWidget);
+    _expectNoStaleAction();
     expect(find.byKey(const ValueKey('room-error')), findsNothing);
     expect(find.textContaining('Timeout waiting'), findsNothing);
     expect(find.text('No se pudo actualizar la sala.'), findsNothing);
@@ -281,19 +302,24 @@ void main() {
     expect(find.byKey(_stale), findsNothing);
   });
 
-  testWidgets('retry reads the room now and clears the status on success', (
-    tester,
-  ) async {
+  testWidgets('the stale line offers no retry: polls keep failing, then the '
+      'next successful poll clears it', (tester) async {
     final h = await _pump(tester);
     await h.okTick(tester, Duration.zero);
     await h.failTick(tester, const Duration(seconds: 50));
+    expect(find.byKey(_stale), findsOneWidget);
+    _expectNoStaleAction();
+    // Still failing: the line stays, still without any button.
+    await h.failTick(tester, const Duration(seconds: 3));
+    await h.failTick(tester, const Duration(seconds: 3));
+    expect(find.byKey(_stale), findsOneWidget);
+    _expectNoStaleAction();
+    // Recovery is automatic: the poller's next good read clears it.
     final before = h.gateway.reads;
-    h.gateway.failing = false;
-    await tester.tap(find.byKey(_retry));
-    await tester.pump();
-    await tester.pump();
+    await h.okTick(tester, const Duration(seconds: 3));
     expect(h.gateway.reads, before + 1);
     expect(find.byKey(_stale), findsNothing);
+    _expectCalm();
   });
 
   testWidgets('a single failed manual refresh shows nothing', (tester) async {

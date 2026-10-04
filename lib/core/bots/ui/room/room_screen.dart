@@ -1778,9 +1778,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     );
   }
 
-  /// The calm "reconnecting" line under the transcript: neutral color, a
-  /// small spinner while polls keep retrying and a retry that reads now.
-  /// It never touches the composer.
+  /// The calm "reconnecting" line under the transcript: neutral color and a
+  /// small spinner while polls keep retrying. No button: recovery is
+  /// automatic and the line clears on the next successful read. It never
+  /// touches the composer.
   Widget _staleStatus(Strings s, HermesThemeColors colors) {
     return Padding(
       key: const ValueKey('room-refresh-stale'),
@@ -1801,15 +1802,6 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
               maxLines: 2,
               style: TextStyle(color: colors.textSecondary, fontSize: 12),
             ),
-          ),
-          TextButton(
-            key: const ValueKey('room-refresh-retry'),
-            onPressed: () => unawaited(refresh()),
-            style: TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              textStyle: const TextStyle(fontSize: 12),
-            ),
-            child: Text(s.commonRetry),
           ),
         ],
       ),
