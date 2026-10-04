@@ -336,4 +336,57 @@ void main() {
     );
     expect(find.text('Default'), findsNothing);
   });
+
+  testWidgets('Home status line names the active profile like the chip, '
+      'and follows a switch', (tester) async {
+    BotRosterRegistry.shared.publish(connection.id, 'QA', [
+      AgentProfile.fromJson({
+        'name': 'default',
+        'path': '/home/u/.hermes',
+        'is_default': true,
+        'display_name': 'Hermes',
+      }),
+      _profile('ana'),
+      _profile('bob'),
+    ]);
+    await tester.pumpWidget(
+      app(
+        HomeDashboardScreen(
+          connManager: manager,
+          clientFactory: (conn) => ApiClient(
+            baseUrl: conn.baseUrl,
+            apiKey: conn.apiKey,
+            httpClient: _sessions([]),
+          ),
+          dashboardAuthProbe: (_) async => DashboardAuthCheck.ok,
+        ),
+      ),
+    );
+    await settle(tester);
+    // The connection is 'QA'; the active profile is 'ana'.
+    expect(find.text('online · ana'), findsOneWidget);
+    expect(find.text('online · QA'), findsNothing);
+    await manager.setActiveProfile(connection.id, 'bob');
+    await settle(tester);
+    expect(find.text('online · bob'), findsOneWidget);
+    await manager.setActiveProfile(connection.id, '');
+    await settle(tester);
+    expect(find.text('online · Hermes'), findsOneWidget);
+    // A roster landing after the paint renames the profile at once.
+    BotRosterRegistry.shared.publish(connection.id, 'QA', [
+      AgentProfile.fromJson({
+        'name': 'default',
+        'path': '/home/u/.hermes',
+        'is_default': true,
+        'display_name': 'Atlas',
+      }),
+      _profile('ana'),
+      _profile('bob'),
+    ]);
+    await tester.pump();
+    expect(find.text('online · Atlas'), findsOneWidget);
+    await manager.setActiveProfile(connection.id, 'bob');
+    await settle(tester);
+    expect(find.text('online · bob'), findsOneWidget);
+  });
 }

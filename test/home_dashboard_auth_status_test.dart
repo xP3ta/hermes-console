@@ -116,7 +116,7 @@ void main() {
   testWidgets('Home does not claim the agent is online with a rejected '
       'Dashboard password', (tester) async {
     await pumpHome(tester, DashboardAuthCheck.invalidCredentials);
-    expect(find.text('online · QA'), findsNothing);
+    expect(find.text('online · Default'), findsNothing);
     expect(find.text('wrong Dashboard password · QA'), findsOneWidget);
     await unmount(tester);
   });
@@ -129,7 +129,7 @@ void main() {
       DashboardAuthCheck.loginRequired,
       locale: const Locale('es'),
     );
-    expect(find.text('online · QA'), findsNothing);
+    expect(find.text('online · Default'), findsNothing);
     expect(find.text('falta iniciar sesión en Dashboard · QA'), findsOneWidget);
     await unmount(tester);
   });
@@ -138,13 +138,13 @@ void main() {
     tester,
   ) async {
     await pumpHome(tester, DashboardAuthCheck.ok);
-    expect(find.text('online · QA'), findsOneWidget);
+    expect(find.text('online · Default'), findsOneWidget);
     await unmount(tester);
   });
 
   testWidgets('Home says the connection is online in Spanish', (tester) async {
     await pumpHome(tester, DashboardAuthCheck.ok, locale: const Locale('es'));
-    expect(find.text('en línea · QA'), findsOneWidget);
+    expect(find.text('en línea · Predeterminado'), findsOneWidget);
     expect(find.textContaining('online'), findsNothing);
     await unmount(tester);
   });

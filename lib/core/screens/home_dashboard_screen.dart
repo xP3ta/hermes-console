@@ -20,6 +20,7 @@ import '../navigation/chat_route.dart';
 import '../services/active_profile_scope.dart';
 import '../services/agent_runtime/agent_runtime.dart';
 import '../services/agent_runtime/local_termux_agent_provider.dart';
+import '../services/bot_roster_store.dart';
 import '../services/bridge_update_service.dart';
 import '../services/active_chat_service.dart';
 import '../services/app_lock.dart';
@@ -2027,6 +2028,31 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     );
   }
 
+  /// Active profile as the chip names it (Desktop `profileLabel`), for the
+  /// status line: the connection label would name the wrong profile.
+  String _activeProfileLabel(BuildContext context) {
+    final conn = _active;
+    if (conn == null) return '';
+    return activeProfileDisplayLabel(
+      Strings.of(context),
+      ActiveProfileScope.of(widget.connManager, conn.id).name,
+      BotRosterRegistry.shared.store(conn.id).profiles,
+    );
+  }
+
+  /// Rebuilds [builder] when the active profile or its roster changes.
+  Widget _followsActiveProfile(WidgetBuilder builder) {
+    final conn = _active;
+    if (conn == null) return Builder(builder: builder);
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        ActiveProfileScope.of(widget.connManager, conn.id),
+        BotRosterRegistry.shared.store(conn.id),
+      ]),
+      builder: (context, _) => builder(context),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
@@ -2135,46 +2161,48 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                       // Flexible: con el selector de perfil en la barra, la línea
                       // de estado debe recortarse en vez de desbordar.
                       Flexible(
-                        child: Text(
-                          _checking
-                              ? Strings.of(context).homeStatusChecking(
-                                  _active?.label ??
-                                      Strings.of(
-                                        context,
-                                      ).homeStatusAgentConsole,
-                                )
-                              : _healthOk &&
-                                    _dashboardAuth ==
-                                        DashboardAuthCheck.invalidCredentials
-                              ? Strings.of(
-                                  context,
-                                ).m1215HomeDashboardWrongPassword(
-                                  _active?.label ?? '',
-                                )
-                              : _healthOk &&
-                                    _dashboardAuth ==
-                                        DashboardAuthCheck.loginRequired
-                              ? Strings.of(
-                                  context,
-                                ).m1215HomeDashboardLoginRequired(
-                                  _active?.label ?? '',
-                                )
-                              : _healthOk
-                              ? Strings.of(
-                                  context,
-                                ).homeStatusOnline(_active?.label ?? '')
-                              : _active == null
-                              ? Strings.of(context).homeStatusAgentConsole
-                              : Strings.of(
-                                  context,
-                                ).homeStatusOffline(_active!.label),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            // ≥11px: a 9.5px el estado era casi ilegible (A-110).
-                            fontSize: 11,
-                            letterSpacing: 0.6,
-                            color: colors.textSecondary,
+                        child: _followsActiveProfile(
+                          (context) => Text(
+                            _checking
+                                ? Strings.of(context).homeStatusChecking(
+                                    _active?.label ??
+                                        Strings.of(
+                                          context,
+                                        ).homeStatusAgentConsole,
+                                  )
+                                : _healthOk &&
+                                      _dashboardAuth ==
+                                          DashboardAuthCheck.invalidCredentials
+                                ? Strings.of(
+                                    context,
+                                  ).m1215HomeDashboardWrongPassword(
+                                    _active?.label ?? '',
+                                  )
+                                : _healthOk &&
+                                      _dashboardAuth ==
+                                          DashboardAuthCheck.loginRequired
+                                ? Strings.of(
+                                    context,
+                                  ).m1215HomeDashboardLoginRequired(
+                                    _active?.label ?? '',
+                                  )
+                                : _healthOk
+                                ? Strings.of(context).homeStatusOnline(
+                                    _activeProfileLabel(context),
+                                  )
+                                : _active == null
+                                ? Strings.of(context).homeStatusAgentConsole
+                                : Strings.of(
+                                    context,
+                                  ).homeStatusOffline(_active!.label),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              // ≥11px: a 9.5px el estado era casi ilegible (A-110).
+                              fontSize: 11,
+                              letterSpacing: 0.6,
+                              color: colors.textSecondary,
+                            ),
                           ),
                         ),
                       ),
