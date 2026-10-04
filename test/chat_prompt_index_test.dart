@@ -166,26 +166,24 @@ void main() {
       expect(items.every((i) => i.message != null), isTrue);
     });
 
-    test('remote prompts older than the loaded tail follow it, newest first', () {
-      final items = mergeChatPromptItems(loaded, [
-        (rowId: 5, preview: 'cinco'),
-        (rowId: 12, preview: 'doce'),
-        (rowId: 20, preview: 'carga 2'),
-      ]);
-      expect(items.map((i) => i.preview), [
-        'carga 3',
-        'carga 2',
-        'doce',
-        'cinco',
-      ]);
-      expect(items.map((i) => i.message == null), [
-        false,
-        false,
-        true,
-        true,
-      ]);
-      expect(items.map((i) => i.rowId), [30, 20, 12, 5]);
-    });
+    test(
+      'remote prompts older than the loaded tail follow it, newest first',
+      () {
+        final items = mergeChatPromptItems(loaded, [
+          (rowId: 5, preview: 'cinco'),
+          (rowId: 12, preview: 'doce'),
+          (rowId: 20, preview: 'carga 2'),
+        ]);
+        expect(items.map((i) => i.preview), [
+          'carga 3',
+          'carga 2',
+          'doce',
+          'cinco',
+        ]);
+        expect(items.map((i) => i.message == null), [false, false, true, true]);
+        expect(items.map((i) => i.rowId), [30, 20, 12, 5]);
+      },
+    );
 
     test('a remote row that is already loaded is not listed twice', () {
       final items = mergeChatPromptItems(loaded, [
@@ -219,11 +217,10 @@ void main() {
     });
 
     test('an explicit oldest loaded row id anchors remote rows', () {
-      final items = mergeChatPromptItems(
-        const [],
-        [(rowId: 1, preview: 'uno'), (rowId: 50, preview: 'cincuenta')],
-        oldestLoadedRowId: 40,
-      );
+      final items = mergeChatPromptItems(const [], [
+        (rowId: 1, preview: 'uno'),
+        (rowId: 50, preview: 'cincuenta'),
+      ], oldestLoadedRowId: 40);
       expect(items.map((i) => i.preview), ['uno']);
     });
 

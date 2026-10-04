@@ -118,3 +118,58 @@ int? chatPromptRowId(Map<String, dynamic> message) {
   }
   return null;
 }
+
+/// Un renglón de la lista de prompts: cargado en la transcripción
+/// ([message] no nulo) o solo conocido por el índice del servidor.
+class ChatPromptItem {
+  const ChatPromptItem({required this.preview, this.message, this.rowId});
+
+  final String preview;
+
+  /// Mensaje ya cargado; null si hay que traer páginas anteriores para llegar.
+  final Map<String, dynamic>? message;
+
+  /// Id de fila durable (`null` si el mensaje cargado no lo lleva).
+  final int? rowId;
+}
+
+/// Une los prompts cargados (más reciente primero) con los del índice del
+/// servidor. Del índice solo entran las filas más antiguas que el prompt
+/// cargado más antiguo —o que [oldestLoadedRowId] si se conoce—: las demás ya
+/// están cargadas. Sin ancla durable no se puede deduplicar y el índice se
+/// ignora. El resultado va de más reciente a más antiguo.
+List<ChatPromptItem> mergeChatPromptItems(
+  List<ChatPromptEntry> loaded,
+  Iterable<({int rowId, String preview})> remote, {
+  int? oldestLoadedRowId,
+}) {
+  final items = <ChatPromptItem>[
+    for (final entry in loaded)
+      ChatPromptItem(
+        preview: entry.preview,
+        message: entry.message,
+        rowId: chatPromptRowId(entry.message),
+      ),
+  ];
+  var anchor = oldestLoadedRowId;
+  for (final item in items) {
+    final id = item.rowId;
+    if (id != null && (anchor == null || id < anchor)) anchor = id;
+  }
+  if (anchor == null) return items;
+  final older = [
+    for (final entry in remote)
+      if (entry.rowId < anchor) entry,
+  ]..sort((a, b) => b.rowId.compareTo(a.rowId));
+  final seen = <int>{};
+  for (final entry in older) {
+    if (!seen.add(entry.rowId)) continue;
+    items.add(
+      ChatPromptItem(
+        preview: chatPromptPreview(entry.preview),
+        rowId: entry.rowId,
+      ),
+    );
+  }
+  return items;
+}
