@@ -308,6 +308,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       final lease = SharedGatewayPool.instance.acquire(widget.connection);
       _activityLease = lease;
       _ownedActivityClient = lease.client;
+      unawaited(_confirmForeignImport(lease.client));
     }
     _startEventUpdates();
     unawaited(_refreshRemoteActivity());
@@ -1757,6 +1758,13 @@ class _SessionListScreenState extends State<SessionListScreen>
             profile: _libraryQuery.profile,
           );
     await _openChat(session);
+  }
+
+  Future<void> _confirmForeignImport(TuiGatewayClient client) async {
+    final offered = await client.confirmForeignSessions();
+    if (offered && mounted && identical(client, _ownedActivityClient)) {
+      setState(() {});
+    }
   }
 
   bool get _branchesMayHaveMore =>

@@ -163,9 +163,31 @@ void main() {
     });
   });
 
+  test('the entry stays hidden until the server has answered', () async {
+    final h = _client((_) => {'sessions': <Object>[], 'host': 'h'});
+    expect(h.client.foreignSessionsAvailable, isFalse);
+    expect(await h.client.confirmForeignSessions(), isTrue);
+    expect(h.client.foreignSessionsAvailable, isTrue);
+  });
+
+  test('a server without the methods is never confirmed', () async {
+    final h = _client((_) => -32601);
+    expect(await h.client.confirmForeignSessions(), isFalse);
+    expect(h.client.foreignSessionsAvailable, isFalse);
+  });
+
+  test('a read-only connection is never probed', () async {
+    final h = _client(
+      (_) => {'sessions': <Object>[], 'host': 'h'},
+      readOnly: true,
+    );
+    expect(await h.client.confirmForeignSessions(), isFalse);
+    expect(h.requests.where((r) => r.toString().contains('foreign')), isEmpty);
+  });
+
   test('-32601 turns the entry off and is not retried', () async {
     final h = _client((_) => -32601);
-    expect(h.client.foreignSessionsAvailable, isTrue);
+    expect(h.client.foreignSessionsAvailable, isFalse, reason: 'unconfirmed');
     await expectLater(
       h.client.foreignList(profile: 'work'),
       throwsA(

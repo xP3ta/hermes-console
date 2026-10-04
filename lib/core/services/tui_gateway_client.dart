@@ -6385,11 +6385,26 @@ class TuiGatewayClient
     }
   }
 
-  /// False once `session.foreign.*` answered -32601 on this connection (or
-  /// for a read-only one): the import entry is then not offered.
+  /// True only once the server has answered a `session.foreign.*` call on
+  /// this connection (see [confirmForeignSessions]); an unconfirmed server, a
+  /// -32601 one and a read-only connection all keep the import entry hidden.
   bool get foreignSessionsAvailable =>
       !_connection.readOnly &&
-      _capabilityCache.canAttempt(DesktopGatewayCapability.foreignSessions);
+      _capabilityCache.state(DesktopGatewayCapability.foreignSessions) ==
+          DesktopGatewayCapabilityState.supported;
+
+  /// Asks for the first page of foreign sessions once, to learn whether the
+  /// server has the methods. Nothing is imported and errors are swallowed.
+  Future<bool> confirmForeignSessions() async {
+    if (_connection.readOnly) return false;
+    if (_capabilityCache.state(DesktopGatewayCapability.foreignSessions) ==
+        DesktopGatewayCapabilityState.unknown) {
+      try {
+        await foreignList();
+      } catch (_) {}
+    }
+    return foreignSessionsAvailable;
+  }
 
   static const Duration _foreignTimeout = Duration(seconds: 60);
 
