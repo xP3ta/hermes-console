@@ -36,6 +36,7 @@ import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_update_card.dart';
 import '../widgets/read_only.dart';
 import 'about_screen.dart';
+import 'advanced_settings_screen.dart';
 import 'bridge_file_editor_screen.dart';
 import 'lock_screen.dart';
 import 'gateway_manager_screen.dart';
@@ -298,6 +299,28 @@ class SettingsScreen extends StatelessWidget {
                 connection: conn,
                 connManager: connManager,
               ),
+              // One row; everything behind it is read only when it opens.
+              if (!connManager.loadCapabilities(conn.id).configRead.isNo) ...[
+                const SizedBox(height: 12),
+                HermesGroup(
+                  children: [
+                    HermesNavRow(
+                      icon: Icons.tune_rounded,
+                      title: Strings.of(context).ad1215Title,
+                      subtitle: Strings.of(context).ad1215Sub,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AdvancedSettingsScreen(
+                            connection: conn,
+                            connManager: connManager,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               _SectionHeader(Strings.of(context).setSecBridge),
               HermesGroup(children: [_BridgeAutoUpdateTile(connection: conn)]),
               _SectionHeader(Strings.of(context).setSecData),
