@@ -307,6 +307,38 @@ void main() {
       expect(find.text(s.sd1215Server), findsOneWidget);
     });
 
+    for (final status in [401, 500]) {
+      testWidgets('HTTP $status on the server reads shows no Server section', (
+        tester,
+      ) async {
+        final rest = _server()
+          ..gets['health'] = DashboardHttpException(status)
+          ..gets['health/idle'] = DashboardHttpException(status);
+        await pumpApp(
+          tester,
+          ServerDiagnosticsScreen(
+            connection: _connection(),
+            connManager: manager,
+            repositoryFor: repos(rest),
+            mcpReader: (_) async => const [],
+          ),
+        );
+        expect(find.text(strings(tester).sd1215Server), findsNothing);
+      });
+    }
+
+    testWidgets('an MCP error answer before any good one shows no MCP', (
+      tester,
+    ) async {
+      await pumpDiagnostics(
+        tester,
+        _server(),
+        mcp: (_) async =>
+            throw const CapabilityFailure(CapabilityFailureKind.rejected),
+      );
+      expect(find.text(strings(tester).sd1215Mcp), findsNothing);
+    });
+
     testWidgets('a section appears when the server answers it', (tester) async {
       await pumpDiagnostics(tester, _server());
       expect(find.text(strings(tester).sd1215Usage), findsOneWidget);
@@ -683,14 +715,34 @@ void main() {
       expect(find.text('77'), findsWidgets);
     });
 
-    testWidgets('503 says the history is not available now', (tester) async {
+    for (final status in [401, 403, 500, 503]) {
+      testWidgets('HTTP $status before any good answer shows no usage', (
+        tester,
+      ) async {
+        final rest = _server()
+          ..gets['analytics/usage?days=30'] = DashboardHttpException(status);
+        await pumpDiagnostics(tester, rest);
+        final s = strings(tester);
+
+        expect(find.text(s.sd1215Usage), findsNothing);
+        expect(find.text(s.sd1215HistoryUnavailable), findsNothing);
+      });
+    }
+
+    testWidgets('503 after a good answer says the history is not available', (
+      tester,
+    ) async {
       final rest = _server()
-        ..gets['analytics/usage?days=30'] = const DashboardHttpException(503);
+        ..gets['analytics/usage?days=7'] = const DashboardHttpException(503);
       await pumpDiagnostics(tester, rest);
-      expect(
-        find.text(strings(tester).sd1215HistoryUnavailable),
-        findsOneWidget,
-      );
+      final s = strings(tester);
+      expect(find.text(s.sd1215Usage), findsOneWidget, reason: 'confirmed');
+
+      await tester.tap(find.text(s.sd1215Days7));
+      await tester.pumpAndSettle();
+
+      expect(find.text(s.sd1215Usage), findsOneWidget);
+      expect(find.text(s.sd1215HistoryUnavailable), findsOneWidget);
     });
   });
 }
