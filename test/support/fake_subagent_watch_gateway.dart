@@ -37,6 +37,9 @@ class FakeWatchGateway implements SubagentWatchGateway {
   /// While set, `session.close` stays pending until it completes.
   Completer<void>? closeGate;
 
+  /// What `session.close` answers when it does not reject.
+  bool closeResult = true;
+
   /// When set, `session.close` rejects with it once it answers.
   Object? closeError;
 
@@ -65,7 +68,7 @@ class FakeWatchGateway implements SubagentWatchGateway {
     await closeGate?.future;
     final error = closeError;
     if (error != null) throw error;
-    return true;
+    return closeResult;
   }
 
   @override
