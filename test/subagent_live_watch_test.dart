@@ -735,6 +735,18 @@ void main() {
     'non-exception object': 'refused',
   };
 
+  // The contract is per class and per every code or cause the dashboard can
+  // emit, so a value added later is covered without touching this test.
+  for (final code in DashboardAuthFailureCode.values) {
+    refusals['dashboard auth ${code.name}'] = DashboardAuthException(code);
+  }
+  for (final code in DashboardWebSocketAuthFailureCode.values) {
+    for (final cause in DashboardWebSocketAuthFailureCause.values) {
+      refusals['dashboard ticket ${code.name}/${cause.name}'] =
+          DashboardWebSocketAuthException(code, cause: cause);
+    }
+  }
+
   for (final MapEntry(key: name, value: error) in refusals.entries) {
     test('a refused close ($name) after dispose is swallowed', () async {
       final gateway = FakeWatchGateway()
