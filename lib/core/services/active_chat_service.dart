@@ -4779,6 +4779,10 @@ class ActiveChat {
   /// value is never kept for a resend; the user enters it again.
   final Set<InteractivePromptKey> _unacknowledgedPromptAnswers = {};
 
+  /// Transport losses seen by this chat. An unacknowledged answer whose
+  /// outcome lands after a loss cannot tell whether Hermes read it.
+  int _desktopTransportLosses = 0;
+
   /// Approval request ids already answered with `resolved: 1`. A replay of
   /// one of them (stale snapshot, `open_requests` racing the answer) must not
   /// bring the card back and invite a second answer.
@@ -18706,6 +18710,7 @@ class ActiveChat {
       _onDesktopEvent,
       onError: (Object error, StackTrace stackTrace) {
         if (_isOtherRuntimesSubscriptionError(gateway, error)) return;
+        _desktopTransportLosses += 1;
         final interruptedActiveTurn =
             _usingDesktopGateway && isStreaming && !_runTerminal;
         final clientSubmittedTurn = _clientSubmittedCurrentTurn;
@@ -25426,8 +25431,18 @@ class ActiveChat {
       }
       throw StateError('Interactive prompt is no longer responding');
     }
+    final transportLossesAtAnswer = _desktopTransportLosses;
     try {
       final result = await invoke(interactiveGateway);
+      if (!result.isExpired &&
+          !result.deliveryAcknowledged &&
+          transportLossesAtAnswer != _desktopTransportLosses) {
+        // The socket that carried this unacknowledged answer dropped before
+        // its outcome landed: the loss already forgot the card, and the
+        // resume decides. Writing a tombstone here would hide a request
+        // Hermes still waits on, or close the card the resume re-offered.
+        return result;
+      }
       if (_disposed || _desktopRuntimeSessionId != key.runtimeSessionId) {
         _reduceInteractivePrompt(InteractivePromptExpired(key));
         return result;

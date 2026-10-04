@@ -23,6 +23,10 @@ class _Gateway {
   bool sendReadyImmediately = true;
   bool answerClientCapabilities = true;
   bool rejectClientCapabilities = false;
+
+  /// While set, every `session.resume` is recorded but answered only once it
+  /// completes: a barrier that parks a reattach on the server.
+  Completer<void>? resumeGate;
   Map<String, dynamic> Function(Map<String, dynamic> frame) resumeResult =
       (_) => {'session_id': 'runtime-1', 'stored_session_id': 'stored-1'};
   Map<String, dynamic> Function(Map<String, dynamic> frame) activeListResult =
@@ -46,6 +50,10 @@ class _Gateway {
         if (!_frames.isClosed) _frames.add(frame);
         final method = frame['method'];
         if (method is! String) continue; // a server-request response
+        final heldResume = resumeGate;
+        if (method == 'session.resume' && heldResume != null) {
+          await heldResume.future;
+        }
         if (method == 'client.capabilities' && !answerClientCapabilities) {
           continue;
         }
@@ -148,6 +156,61 @@ SavedConnection _connectionFor(_Gateway gateway) => SavedConnection(
   apiKey: 'gateway-key',
   dashboardUrl: 'http://127.0.0.1:${gateway.server.port}',
 );
+
+/// The real client, with barriers around prompt answers: a test decides
+/// whether the transport loss reaches the chat before or after the outcome
+/// of an answer already written into the socket.
+class _GatedClient extends TuiGatewayClient {
+  _GatedClient(super.connection, {super.dashboard});
+
+  /// Holds a clarify answer's outcome after its frame was written.
+  Completer<void>? clarifyOutcomeGate;
+
+  /// Holds a terminal.read answer before its frame is written.
+  Completer<void>? terminalReadWriteGate;
+
+  /// Holds an approval choice's outcome after it was sent.
+  Completer<void>? approvalOutcomeGate;
+
+  @override
+  Future<DesktopApprovalResult> resolveApprovalChecked(
+    String runtimeSessionId,
+    String choice, {
+    required String requestId,
+  }) async {
+    final result = await super.resolveApprovalChecked(
+      runtimeSessionId,
+      choice,
+      requestId: requestId,
+    );
+    final gate = approvalOutcomeGate;
+    if (gate != null) await gate.future;
+    return result;
+  }
+
+  @override
+  Future<DesktopPromptResponse> respondToClarify(
+    String requestId,
+    String answer, {
+    String? questionId,
+  }) async {
+    final result = await super.respondToClarify(
+      requestId,
+      answer,
+      questionId: questionId,
+    );
+    final gate = clarifyOutcomeGate;
+    if (gate != null) await gate.future;
+    return result;
+  }
+
+  @override
+  Future<DesktopPromptResponse> respondToTerminalRead(String requestId) async {
+    final gate = terminalReadWriteGate;
+    if (gate != null) await gate.future;
+    return super.respondToTerminalRead(requestId);
+  }
+}
 
 TuiGatewayClient _clientFor(_Gateway gateway) {
   final client = TuiGatewayClient(
@@ -998,6 +1061,79 @@ void main() {
       expect(gateway.rpcCalls('approval.respond'), hasLength(1));
       expect(answersTo('srq-stale0000001'), isEmpty);
     });
+
+    Future<(ActiveChat, _FlakyProxy, _GatedClient)> gatedThroughProxy() async {
+      final proxy = await _FlakyProxy.start(gateway.server.port);
+      addTearDown(proxy.close);
+      final client = _GatedClient(
+        _connectionFor(
+          gateway,
+        ).copyWith(dashboardUrl: 'http://127.0.0.1:${proxy.port}'),
+        dashboard: _TicketDashboardClient(),
+      );
+      addTearDown(client.close);
+      final chat = _chatFor(gateway, client, attach: true);
+      await chat.loadMessages();
+      return (chat, proxy, client);
+    }
+
+    for (final lossFirst in const [true, false]) {
+      final order = lossFirst
+          ? 'the drop is observed before the reattach resume answers'
+          : 'the resume already re-offered the card';
+      test('a clarify answer lost with the socket whose outcome lands after '
+          '$order is answerable again and reaches Hermes once', () async {
+        const id = 'srq-lateoutcome1';
+        gateway.resumeResult = (_) => waiting([_openClarify(id)]);
+        final (chat, proxy, client) = await gatedThroughProxy();
+        await _waitUntil(() => chat.pendingInteractivePrompt != null);
+        final key = chat.pendingInteractivePrompt!.key;
+        final resumesBefore = gateway.rpcCalls('session.resume').length;
+        final resumeGate = gateway.resumeGate = Completer<void>();
+        final outcomeGate = client.clarifyOutcomeGate = Completer<void>();
+
+        // Written into a dead socket; the chat learns the outcome only when
+        // the barrier opens.
+        proxy.severAll();
+        final lost = chat.respondToClarify(key, 'si');
+        // Barrier: the loss reached the chat, whose reattach resume is now
+        // parked on the server.
+        await _eventually(
+          () =>
+              chat.desktopRuntimeSessionId == null &&
+              gateway.rpcCalls('session.resume').length > resumesBefore,
+        );
+        client.clarifyOutcomeGate = null;
+        if (lossFirst) {
+          outcomeGate.complete();
+          expect((await lost).deliveryAcknowledged, isFalse);
+          gateway.resumeGate = null;
+          resumeGate.complete();
+          await _eventually(() => chat.desktopRuntimeSessionId == 'runtime-1');
+        } else {
+          gateway.resumeGate = null;
+          resumeGate.complete();
+          await _eventually(
+            () => chat.pendingInteractivePrompt?.key.requestId == id,
+          );
+          outcomeGate.complete();
+          expect((await lost).deliveryAcknowledged, isFalse);
+        }
+        expect(chat.desktopRuntimeSessionId, 'runtime-1');
+        expect(
+          chat.pendingInteractivePrompt?.status,
+          InteractivePromptStatus.pending,
+        );
+        expect(answersTo(id), isEmpty);
+
+        await chat.respondToClarify(chat.pendingInteractivePrompt!.key, 'no');
+        final frame = await gateway
+            .nextFrame((frame) => frame['id'] == id)
+            .timeout(const Duration(seconds: 2));
+        expect(frame['result'], {'answer': 'no'});
+        expect(answersTo(id), hasLength(1));
+      });
+    }
   });
 }
 
