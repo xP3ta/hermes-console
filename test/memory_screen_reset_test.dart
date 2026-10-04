@@ -4,7 +4,6 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hermes_android/core/models/memory_info.dart';
 import 'package:hermes_android/core/screens/memory_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -32,11 +31,7 @@ const _status = {
       'configured': false,
       'status': 'needs_config',
     },
-    {
-      'name': 'legacy',
-      'description': 'Old provider',
-      'configured': false,
-    },
+    {'name': 'legacy', 'description': 'Old provider', 'configured': false},
   ],
   'builtin_files': {'memory': 2048, 'user': 0},
 };

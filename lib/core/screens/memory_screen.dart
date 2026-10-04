@@ -3,10 +3,11 @@
 // Shows the active memory provider, all available providers, and
 // the size of the built-in memory files (memory.md, user.md).
 //
-// NOTE on write API: /api/memory is GET-only. The dashboard exposes no
-// POST/PUT endpoint for writing memory files. A "backup" action serialises
-// the API response JSON and saves it to getApplicationDocumentsDirectory()
-// via path_provider.
+// NOTE on write API: /api/memory is GET-only; the only write is
+// POST /api/memory/reset (`{target: memory|user}`, always with an explicit
+// `?profile=`), offered per built-in file behind a confirmation. A "backup"
+// action serialises the API response JSON and saves it to
+// getApplicationDocumentsDirectory() via path_provider.
 import 'dart:convert';
 import 'dart:io';
 
@@ -20,6 +21,13 @@ import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
 import '../services/memory_draft_store.dart';
 import '../design/hermes_design.dart' as d show HermesListRow;
+import '../design/hermes_design.dart'
+    show
+        HermesAction,
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        showHermesDialog,
+        showHermesMenu;
 import '../design/hermes_design.dart'
     show
         HermesActionButton,
@@ -71,6 +79,11 @@ class _MemoryScreenState extends State<MemoryScreen>
       DashboardDependencyFailure.other;
   bool _backingUp = false;
   MemoryDraftStore? _drafts;
+
+  /// Cleared when the server answers 404/405 to a reset: the action is then
+  /// hidden for the rest of this screen's life.
+  bool _resetSupported = true;
+  bool _resetting = false;
 
   // Local filter applied over providers + builtin files
   final TextEditingController _filterController = TextEditingController();
@@ -148,6 +161,76 @@ class _MemoryScreenState extends State<MemoryScreen>
         _dependencyFailure = classifyDashboardDependencyFailure(e);
         _loading = false;
       });
+    }
+  }
+
+  bool get _canReset =>
+      _resetSupported && !_resetting && !widget.connection.readOnly;
+
+  Future<void> _resetFile(String key, GlobalKey anchor) async {
+    final s = Strings.of(context);
+    final target = key == 'user' ? 'user' : 'memory';
+    final file = '${target.toUpperCase()}.md';
+    final chosen = await showHermesMenu<bool>(
+      context: context,
+      anchorKey: anchor,
+      actions: [
+        HermesAction(
+          key: const ValueKey('mem-file-reset'),
+          value: true,
+          label: s.memResetFile,
+          icon: Icons.delete_outline_rounded,
+          destructive: true,
+        ),
+      ],
+    );
+    if (chosen != true || !mounted) return;
+    final confirmed = await showHermesDialog<bool>(
+      context: context,
+      title: s.memResetConfirmTitle(file),
+      message: s.memResetConfirmBody,
+      actions: [
+        HermesDialogAction(
+          key: const ValueKey('mem-reset-cancel'),
+          label: s.commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          key: const ValueKey('mem-reset-confirm'),
+          label: s.memResetFile,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
+    );
+    if (confirmed != true || !mounted) return;
+    final notices = HermesNotice.of(context);
+    // The server rejects an omitted profile once it hosts several, so the
+    // default profile is named explicitly.
+    final profile = _profile.isEmpty ? 'default' : _profile;
+    setState(() => _resetting = true);
+    try {
+      final result = await _client.apiPost(
+        'memory/reset?profile=${Uri.encodeQueryComponent(profile)}',
+        body: {'target': target},
+      );
+      if (!mounted) return;
+      final deleted = (result['deleted'] as List? ?? const [])
+          .whereType<String>()
+          .join(', ');
+      notices.show(
+        message: s.memResetDone(deleted.isEmpty ? file : deleted),
+        kind: HermesNoticeKind.success,
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      final status = e is DashboardHttpException ? e.statusCode : 0;
+      if (status == 404 || status == 405) _resetSupported = false;
+      notices.show(message: s.memResetFailed, kind: HermesNoticeKind.error);
+    } finally {
+      if (mounted) setState(() => _resetting = false);
     }
   }
 
@@ -589,6 +672,12 @@ class _MemoryScreenState extends State<MemoryScreen>
                               size: 14,
                               color: colors.textDisabled,
                             ),
+                            if (_canReset &&
+                                (e.key == 'memory' || e.key == 'user'))
+                              _FileMoreButton(
+                                fileKey: e.key,
+                                onPressed: _resetFile,
+                              ),
                           ],
                         ),
                       ],
@@ -643,6 +732,20 @@ class _MemoryScreenState extends State<MemoryScreen>
         ),
       ],
     );
+  }
+
+  /// The server's own status when it sends one; otherwise today's
+  /// «not configured» wording for providers that are not configured.
+  String? _statusLabel(MemoryProvider provider) {
+    final s = Strings.of(context);
+    return switch (provider.status) {
+      MemoryProviderStatus.ready => s.memStatusReady,
+      MemoryProviderStatus.needsConfig => s.memStatusNeedsConfig,
+      MemoryProviderStatus.unavailable => s.memStatusUnavailable,
+      MemoryProviderStatus.missing => s.memStatusMissing,
+      MemoryProviderStatus.unknown =>
+        provider.configured ? null : s.memoryProviderNotConfigured,
+    };
   }
 
   Widget _buildProviderTile(
@@ -717,9 +820,9 @@ class _MemoryScreenState extends State<MemoryScreen>
                             ),
                           ),
                         )
-                      else if (!provider.configured)
+                      else if (_statusLabel(provider) != null)
                         Text(
-                          Strings.of(context).memoryProviderNotConfigured,
+                          _statusLabel(provider)!,
                           style: TextStyle(
                             fontSize: 10,
                             color: colors.textDisabled,
@@ -747,6 +850,32 @@ class _MemoryScreenState extends State<MemoryScreen>
       ),
     );
   }
+}
+
+/// Overflow button of one built-in file row.
+class _FileMoreButton extends StatefulWidget {
+  final String fileKey;
+  final void Function(String key, GlobalKey anchor) onPressed;
+
+  _FileMoreButton({required this.fileKey, required this.onPressed})
+    : super(key: ValueKey('mem-file-more-$fileKey'));
+
+  @override
+  State<_FileMoreButton> createState() => _FileMoreButtonState();
+}
+
+class _FileMoreButtonState extends State<_FileMoreButton> {
+  final GlobalKey _anchor = GlobalKey();
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    key: _anchor,
+    tooltip: Strings.of(context).cphMore,
+    visualDensity: VisualDensity.compact,
+    iconSize: 18,
+    icon: const Icon(Icons.more_vert_rounded),
+    onPressed: () => widget.onPressed(widget.fileKey, _anchor),
+  );
 }
 
 /// Memory file detail (spec 080): one page scroll, one primary action.

@@ -7480,6 +7480,29 @@
       }
     }
   },
+  "memStatusReady": "Listo",
+  "memStatusNeedsConfig": "Falta configurar",
+  "memStatusUnavailable": "No disponible",
+  "memStatusMissing": "No instalado",
+  "memResetFile": "Restablecer",
+  "memResetConfirmTitle": "¿Borrar {file}?",
+  "@memResetConfirmTitle": {
+    "placeholders": {
+      "file": {
+        "type": "String"
+      }
+    }
+  },
+  "memResetConfirmBody": "No se puede deshacer.",
+  "memResetDone": "Borrado: {files}",
+  "@memResetDone": {
+    "placeholders": {
+      "files": {
+        "type": "String"
+      }
+    }
+  },
+  "memResetFailed": "No se pudo restablecer la memoria.",
   "memoryProviderNotConfigured": "No configurado",
   "bridgeLogTitle": "Log del bridge",
   "bridgeViewLog": "Ver log del bridge",
