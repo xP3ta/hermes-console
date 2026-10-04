@@ -78,6 +78,7 @@ import '../models/session_activity.dart';
 import '../models/session_live_status.dart';
 import '../models/session_artifact.dart';
 import '../models/subagent_activity.dart';
+import '../models/tool_output.dart';
 import '../navigation/chat_route.dart';
 import '../models/desktop_control_center.dart' show SessionGoalSnapshot;
 import '../services/hermes_update_monitor.dart';
@@ -173,7 +174,9 @@ import '../widgets/generated_image_card.dart';
 import '../widgets/generated_video_card.dart';
 import '../widgets/generated_artifact_viewer.dart';
 import '../widgets/callout_card.dart';
+import '../utils/unified_diff.dart';
 import '../widgets/chat_event_cards.dart';
+import '../widgets/chat/tool_output_cards.dart';
 import '../widgets/chat_control_sheet.dart';
 import '../widgets/hermes_drawer.dart';
 import '../widgets/hermes_bot_face.dart';
@@ -1066,9 +1069,9 @@ String friendlyModelName(String id) {
       RegExp(
         r'^claude-(opus|sonnet|haiku)-(\d+)(?:[.-](\d{1,2})(?!\d))?',
       ).firstMatch(lower) ??
-      RegExp(r'^claude-(\d+)(?:[.-](\d))?-(opus|sonnet|haiku)').firstMatch(
-        lower,
-      );
+      RegExp(
+        r'^claude-(\d+)(?:[.-](\d))?-(opus|sonnet|haiku)',
+      ).firstMatch(lower);
   if (claude != null) {
     final legacy = RegExp(r'^\d').hasMatch(claude.group(1)!);
     final family = legacy ? claude.group(3)! : claude.group(1)!;
@@ -1076,7 +1079,9 @@ String friendlyModelName(String id) {
     final minor = legacy ? claude.group(2) : claude.group(3);
     final capitalized = family[0].toUpperCase() + family.substring(1);
     final version = minor == null ? major : '$major.$minor';
-    final rest = lower.substring(claude.end).replaceFirst(RegExp(r'-\d{8}'), '');
+    final rest = lower
+        .substring(claude.end)
+        .replaceFirst(RegExp(r'-\d{8}'), '');
     final variant = RegExp(
       r'^-(fast|thinking|preview|latest|flash)\b',
     ).firstMatch(rest)?.group(1);
@@ -9047,6 +9052,29 @@ class _ChatScreenState extends State<ChatScreen>
       ? prefix
       : '$prefix\n\n$content';
 
+  /// pt1215: durable tool outputs (diffs, terminal output) by tool id, built
+  /// lazily from the internal transcript and reused while it is unchanged.
+  Map<String, ToolOutputRecord> _durableToolOutputs = const {};
+  Object? _durableToolOutputsSource;
+
+  ToolOutputRecord? _toolOutputFor(String toolId) {
+    final live = _chat.toolOutputs[toolId];
+    if (live != null) return live;
+    // While a turn streams the transcript changes every flush; the live
+    // ledger covers the running turn and history keeps its last index.
+    if (!_chat.isStreaming) {
+      final source = _messages;
+      if (!identical(source, _durableToolOutputsSource)) {
+        _durableToolOutputsSource = source;
+        _durableToolOutputs = indexDurableToolOutputs(
+          _chat.contentHistoryTranscript,
+          toolResultsKey: assistantToolResultEvidenceKey,
+        );
+      }
+    }
+    return _durableToolOutputs[toolId];
+  }
+
   bool _isLatestAssistant(Map<String, dynamic> target) {
     final indexes = _currentRenderProjection.assistantMessageIndexesNewestFirst;
     return indexes.isNotEmpty && identical(_messages[indexes.first], target);
@@ -15737,6 +15765,7 @@ class _ChatScreenState extends State<ChatScreen>
     final msg = unit as Map<String, dynamic>;
     final role = (msg['role'] as String?) ?? 'assistant';
     var content = (msg['content'] as String?) ?? '';
+    final rawContent = content;
     // Un turno del agente llega en varias filas (herramientas, razonamiento,
     // texto intermedio y final). Como Desktop, todas comparten UNA burbuja:
     // una cabecera, un «Pensó ⌄» con todas las herramientas y el texto al
@@ -16008,6 +16037,20 @@ class _ChatScreenState extends State<ChatScreen>
           ? (suggestion) => _useAssistantSuggestion(msg, suggestion)
           : null,
       compact: compact,
+      toolOutputs: role == 'assistant' ? _toolOutputFor : null,
+      latestReplyText:
+          role == 'assistant' &&
+              groupPrefix.isNotEmpty &&
+              rawContent.trim().isNotEmpty
+          ? () => projectAssistantSuggestions(
+              splitReasoning(rawContent).answer,
+            ).body
+          : null,
+      showChangedFiles:
+          role == 'assistant' &&
+          !isStreaming &&
+          !isPipeline &&
+          _isLatestAssistant(msg),
     );
   }
 
@@ -17668,6 +17711,9 @@ class _MessageBubble extends StatelessWidget {
   final AssistantSuggestionCallback? onSuggestionSelected;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
+  final ToolOutputLookup? toolOutputs;
+  final String Function()? latestReplyText;
+  final bool showChangedFiles;
 
   const _MessageBubble({
     required this.content,
@@ -17700,6 +17746,9 @@ class _MessageBubble extends StatelessWidget {
     this.onSuggestionSelected,
     this.compact = false,
     this.performanceProbe,
+    this.toolOutputs,
+    this.latestReplyText,
+    this.showChangedFiles = false,
   });
 
   @override
@@ -17741,6 +17790,9 @@ class _MessageBubble extends StatelessWidget {
             onSuggestionSelected: onSuggestionSelected,
             compact: compact,
             performanceProbe: performanceProbe,
+            toolOutputs: toolOutputs,
+            latestReplyText: latestReplyText,
+            showChangedFiles: showChangedFiles,
           );
   }
 }
@@ -18835,8 +18887,9 @@ class _UserMessage extends StatelessWidget {
 List<ChatTraceEvent> _assistantActivityEvents(
   BuildContext context,
   Map<String, dynamic> metadata,
-  String legacyReasoning,
-) {
+  String legacyReasoning, {
+  ToolOutputLookup? toolOutputs,
+}) {
   final s = Strings.of(context);
   final normalized = normalizeAssistantActivityTrace(
     metadata[assistantActivityTraceKey],
@@ -18870,6 +18923,7 @@ List<ChatTraceEvent> _assistantActivityEvents(
         startedAt: measured?.startedAt,
         duration: measured?.duration,
         memory: MemoryWrite.fromStep(step[memoryWriteStepKey]),
+        output: _settledToolOutput(step, label, toolOutputs),
       ),
     );
   }
@@ -18886,6 +18940,23 @@ List<ChatTraceEvent> _assistantActivityEvents(
     );
   }
   return events;
+}
+
+typedef ToolOutputLookup = ToolOutputRecord? Function(String toolId);
+
+/// Only a settled step of a tool that can leave a diff/terminal output asks
+/// the lookup, so ordinary traces never touch the durable index.
+ToolOutputRecord? _settledToolOutput(
+  Map<String, dynamic> step,
+  String label,
+  ToolOutputLookup? lookup,
+) {
+  if (lookup == null || step['status'] == 'running') return null;
+  if (!isFileEditToolName(label) && !terminalOutputToolNames.contains(label)) {
+    return null;
+  }
+  final id = step['id'];
+  return id is String && id.isNotEmpty ? lookup(id) : null;
 }
 
 Duration? _assistantActivityDuration(Map<String, dynamic> metadata) {
@@ -19098,6 +19169,15 @@ class _AssistantMessage extends StatelessWidget {
   final AssistantSuggestionCallback? onSuggestionSelected;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
+  final ToolOutputLookup? toolOutputs;
+
+  /// The turn's newest reply alone, when earlier replies share this bubble
+  /// (Desktop «copy message» vs «copy full response»). Read at copy time.
+  final String Function()? latestReplyText;
+
+  /// Close the turn with its «N files changed» card (Desktop shows it only
+  /// on the newest settled reply).
+  final bool showChangedFiles;
 
   const _AssistantMessage({
     required this.content,
@@ -19121,7 +19201,66 @@ class _AssistantMessage extends StatelessWidget {
     this.onSuggestionSelected,
     this.compact = false,
     this.performanceProbe,
+    this.toolOutputs,
+    this.latestReplyText,
+    this.showChangedFiles = false,
   });
+
+  static final RegExp _markdownSyntax = RegExp(r'[`*#\[_|>~]');
+
+  /// Cheap gate for the long-press menu: an earlier reply in the bubble or
+  /// any Markdown syntax, indented code blocks included. The scopes
+  /// themselves are built on long press.
+  bool _hasCopyScopes(String answer) =>
+      latestReplyText != null ||
+      _markdownSyntax.hasMatch(answer) ||
+      markdownMayHaveCodeBlock(answer);
+
+  /// Long-press copy scopes; only those that differ from a plain copy and
+  /// have data are offered (no dead entries).
+  List<ChatCopyScope> _copyScopes(BuildContext context, String answer) {
+    final s = Strings.of(context);
+    final raw = trimMarkdownBlankLines(
+      GeneratedMediaService.stripDirectives(answer),
+    );
+    if (raw.isEmpty) return const [];
+    final plain = markdownToClipboardText(raw);
+    final latest = latestReplyText;
+    final code = markdownCodeBlocks(raw);
+    return [
+      if (latest != null) ...[
+        ChatCopyScope(
+          label: s.tc1215CopyLatest,
+          icon: Icons.short_text_rounded,
+          text: () => markdownToClipboardText(
+            GeneratedMediaService.stripDirectives(latest()),
+          ),
+        ),
+        ChatCopyScope(
+          label: s.tc1215CopyFull,
+          icon: Icons.copy_all_rounded,
+          text: () => plain,
+        ),
+      ] else
+        ChatCopyScope(
+          label: s.chaCopyMessage,
+          icon: Icons.copy_rounded,
+          text: () => plain,
+        ),
+      if (raw != plain)
+        ChatCopyScope(
+          label: s.tc1215CopyMarkdown,
+          icon: Icons.notes_rounded,
+          text: () => raw,
+        ),
+      if (code.isNotEmpty)
+        ChatCopyScope(
+          label: s.tc1215CopyCode(code.length),
+          icon: Icons.code_rounded,
+          text: () => code.join('\n\n'),
+        ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -19142,6 +19281,7 @@ class _AssistantMessage extends StatelessWidget {
       context,
       metadata,
       split.reasoning,
+      toolOutputs: toolOutputs,
     );
     final activityActive =
         activityEvents.isNotEmpty &&
@@ -19162,6 +19302,10 @@ class _AssistantMessage extends StatelessWidget {
           TraceOutcome.recovered => HermesSparkMood.success,
         };
     final headerAnimated = isStreaming || metadata['_pipeline'] == true;
+    final changedFiles =
+        showChangedFiles && showFooter && !headerAnimated && !stopped
+        ? aggregateChangedFiles(activityEvents.map((event) => event.output))
+        : const <FileDiff>[];
     final showTrace = showHeader && (activityEvents.isNotEmpty || stopped);
     final structuredImages = _structuredGeneratedImages(metadata);
     final structuredVideos = _structuredGeneratedVideos(metadata);
@@ -19395,6 +19539,9 @@ class _AssistantMessage extends StatelessWidget {
         text: () => markdownToClipboardText(
           GeneratedMediaService.stripDirectives(answer),
         ),
+        scopes: isStreaming || !_hasCopyScopes(answer)
+            ? null
+            : () => _copyScopes(context, answer),
       ),
       if (onRegenerate != null)
         ChatMessageActionButton(
@@ -19454,6 +19601,7 @@ class _AssistantMessage extends StatelessWidget {
         if (showHeader && metaLines.isNotEmpty)
           _MetaBlock(lines: metaLines, onDark: false),
         if (answer.isNotEmpty) ...answerWidgets(),
+        if (changedFiles.isNotEmpty) ChangedFilesCard(files: changedFiles),
         if (showFooter && technicalDetails.isNotEmpty)
           _AssistantTechnicalDetails(details: technicalDetails),
         if (showFooter && suggestionProjection.hasSuggestions)

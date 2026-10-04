@@ -719,6 +719,7 @@ class ActivityDoneSection extends StatelessWidget {
     this.dense = false,
     this.muted = false,
     this.showTitle = true,
+    this.trailingFor,
     super.key,
   });
 
@@ -728,6 +729,10 @@ class ActivityDoneSection extends StatelessWidget {
   final bool dense;
   final bool muted;
   final bool showTitle;
+
+  /// Optional card under a step's row (a file diff, terminal output). Only
+  /// called while this section is built, i.e. while the trace is unfolded.
+  final Widget? Function(ActivityStep step)? trailingFor;
 
   @override
   Widget build(BuildContext context) {
@@ -745,7 +750,7 @@ class ActivityDoneSection extends StatelessWidget {
             title: s.liveSectionDone,
             keyName: 'activity-done-title',
           ),
-        for (final step in shown)
+        for (final step in shown) ...[
           ActivityStepRow(
             key: ValueKey('activity-done-${step.id}'),
             step: step,
@@ -753,6 +758,8 @@ class ActivityDoneSection extends StatelessWidget {
             dense: dense,
             muted: muted,
           ),
+          ?trailingFor?.call(step),
+        ],
         if (hidden > 0)
           Padding(
             padding: const EdgeInsets.only(top: 4),
