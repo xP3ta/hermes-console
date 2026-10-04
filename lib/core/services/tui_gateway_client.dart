@@ -6459,7 +6459,9 @@ class TuiGatewayClient
           DesktopGatewayCapability.messageReactions,
           DesktopGatewayCapabilityState.unsupported,
         );
-      } else if (error.code == -32602) {
+      } else if (error.code == -32602 || error.code == 4023) {
+        // -32602: invalid params; 4023: the agent's own refusal when neither
+        // row_id nor newest_role is given. Either means the method answered.
         _capabilityCache.mark(
           DesktopGatewayCapability.messageReactions,
           DesktopGatewayCapabilityState.supported,

@@ -68,7 +68,7 @@ abstract class HermesMessageReactionGateway {
 
   /// Learns whether the server has `message.react` without writing anything:
   /// the probe names only the session, which a server that has the method
-  /// refuses with invalid params (-32602). Returns [messageReactionsAvailable]
+  /// refuses with invalid params (-32602, or the agent's 4023). Returns [messageReactionsAvailable]
   /// afterwards; a timeout or any other failure confirms nothing.
   Future<bool> confirmMessageReactions(String runtimeSessionId);
 

@@ -201,6 +201,24 @@ void main() {
   );
 
   test(
+    'an inconclusive probe may be retried after the cooldown, not before',
+    () async {
+      final gateway = _FakeDesktopGateway()
+        ..available = false
+        ..serverHasReactions = false;
+      final chat = await _liveChat(gateway);
+      await chat.confirmReactions();
+      await chat.confirmReactions();
+      expect(gateway.confirmCalls, 1, reason: 'inside the cooldown');
+      chat.reactionProbeRetryAfter = Duration.zero;
+      gateway.serverHasReactions = true;
+      await chat.confirmReactions();
+      expect(gateway.confirmCalls, 2);
+      expect(chat.canReact, isTrue);
+    },
+  );
+
+  test(
     'reactions are offered only while the gateway says it can take them',
     () async {
       final gateway = _FakeDesktopGateway();

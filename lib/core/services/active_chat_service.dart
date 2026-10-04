@@ -4553,21 +4553,36 @@ class ActiveChat {
         gateway.messageReactionsAvailable;
   }
 
-  bool _reactionProbeStarted = false;
+  bool _reactionProbeRunning = false;
+  DateTime? _reactionProbeAt;
+
+  /// An inconclusive probe (timeout, a refusal that does not name the method)
+  /// may be asked again, but never faster than this, so a rebuild loop cannot
+  /// turn into a request loop.
+  @visibleForTesting
+  Duration reactionProbeRetryAfter = const Duration(seconds: 60);
 
   /// Asks the gateway once for this chat whether the server takes reactions
   /// (a probe that writes nothing) and repaints when that settles. Safe to
   /// call on every build: only the first call sends anything.
   Future<void> confirmReactions() async {
-    if (_reactionProbeStarted || _disposed || canReact) return;
+    if (_reactionProbeRunning || _disposed || canReact) return;
+    final last = _reactionProbeAt;
+    if (last != null &&
+        DateTime.now().difference(last) < reactionProbeRetryAfter) {
+      return;
+    }
     final runtimeId = _desktopRuntimeSessionId;
     final gateway = _desktopGateway as Object?;
     if (runtimeId == null || gateway is! HermesMessageReactionGateway) return;
-    _reactionProbeStarted = true;
+    _reactionProbeRunning = true;
+    _reactionProbeAt = DateTime.now();
     try {
       await gateway.confirmMessageReactions(runtimeId);
     } catch (_) {
       // Nothing learned; the entry stays hidden.
+    } finally {
+      _reactionProbeRunning = false;
     }
     if (!_disposed) _emit(ActiveChatEvent.reactionsChanged);
   }
