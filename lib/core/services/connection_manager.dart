@@ -3708,7 +3708,6 @@ class DashboardClient {
     final Map<String, dynamic> data;
     try {
       data = await apiGet('model/options$suffix');
-      _noteRestartRecovered();
     } on DashboardHttpException catch (error) {
       _noteRestartRequired(error);
       rethrow;
@@ -3728,7 +3727,10 @@ class DashboardClient {
         : (rawProviders as List? ?? const []).whereType<Map>().map(
             (provider) => provider.cast<String, dynamic>(),
           );
-    return providers.map(ModelProvider.fromJson).toList();
+    final result = providers.map(ModelProvider.fromJson).toList();
+    // Only a catalog that parsed counts as the server being well again.
+    _noteRestartRecovered();
+    return result;
   }
 
   /// GET /api/model/auxiliary — asignaciones por función + principal.
@@ -3758,12 +3760,13 @@ class DashboardClient {
           if (apiKey.isNotEmpty) 'api_key': apiKey,
         },
       );
-      _noteRestartRecovered();
     } on DashboardHttpException catch (error) {
       _noteRestartRequired(error);
       rethrow;
     }
-    return (res['ok'] as bool?) ?? false;
+    final accepted = (res['ok'] as bool?) ?? false;
+    if (accepted) _noteRestartRecovered();
+    return accepted;
   }
 
   /// Passive: a good model call clears the note a 503 left (no request).

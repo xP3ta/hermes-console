@@ -5251,7 +5251,6 @@ class TuiGatewayClient
       _noteRestartRequired(error);
       rethrow;
     }
-    _noteRestartRecovered();
     if (result['providers'] is! List) {
       _capabilityCache.mark(
         DesktopGatewayCapability.modelOptions,
@@ -5262,7 +5261,9 @@ class TuiGatewayClient
         'Hermes returned an invalid model catalog',
       );
     }
-    return DesktopModelCatalog.fromJson(result);
+    final catalog = DesktopModelCatalog.fromJson(result);
+    _noteRestartRecovered();
+    return catalog;
   }
 
   /// mk1215: `model.options` without `session_id`; the server resolves the
@@ -5318,7 +5319,6 @@ class TuiGatewayClient
       }
       rethrow;
     }
-    _noteRestartRecovered();
     if (result['providers'] is! List) {
       throw const TuiGatewayRpcError(
         method,
@@ -5329,7 +5329,9 @@ class TuiGatewayClient
       DesktopGatewayCapability.modelOptions,
       DesktopGatewayCapabilityState.supported,
     );
-    return DesktopModelCatalog.fromJson(result);
+    final catalog = DesktopModelCatalog.fromJson(result);
+    _noteRestartRecovered();
+    return catalog;
   }
 
   @override
