@@ -361,6 +361,10 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('https://llm.example.test/v1'), findsOneWidget);
         expect(find.text('Ready'), findsOneWidget);
+        final validate = calls.singleWhere(
+          (request) => request.url.path.endsWith('/validate'),
+        );
+        expect(validate.url.queryParameters, {'profile': 'team one'});
 
         await tester.drag(find.byType(ListView), const Offset(0, 500));
         await tester.pumpAndSettle();

@@ -189,10 +189,17 @@ extension CustomEndpointsApi on DashboardClient {
     return (json['id'] ?? '').toString();
   }
 
+  /// Scoped like Desktop's `validateCustomEndpoint(payload, scopeProfile)`.
+  /// The server probe is stateless today and ignores the query, but sending
+  /// the profile keeps validation on the same scope as list/save/activate.
   Future<CustomEndpointValidation> validateCustomEndpoint(
-    CustomEndpointDraft draft,
-  ) async => CustomEndpointValidation.fromJson(
-    await apiPost('providers/custom-endpoints/validate', body: draft.toJson()),
+    CustomEndpointDraft draft, {
+    String? profile,
+  }) async => CustomEndpointValidation.fromJson(
+    await apiPost(
+      'providers/custom-endpoints/validate${_profileQuery(profile)}',
+      body: draft.toJson(),
+    ),
   );
 
   Future<void> activateCustomEndpoint(String id, {String? profile}) async {

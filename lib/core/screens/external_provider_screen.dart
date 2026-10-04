@@ -395,6 +395,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
       if (!_isLocal && _savedEndpointsSupported == true) {
         final validation = await _dashboard.validateCustomEndpoint(
           _endpointDraft(),
+          profile: widget.profile,
         );
         if (!mounted) return;
         final resolved = validation.resolvedBaseUrl.trim();

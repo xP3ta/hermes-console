@@ -111,14 +111,17 @@ void main() {
 
     await client.saveCustomEndpoint(empty, profile: 'default');
     await client.saveCustomEndpoint(typed, profile: 'team one');
-    await client.validateCustomEndpoint(empty);
+    await client.validateCustomEndpoint(empty, profile: 'team one');
+    await client.validateCustomEndpoint(empty, profile: 'default');
 
     expect(requests[0].url.queryParameters, isEmpty);
     expect(jsonDecode(requests[0].body), isNot(contains('api_key')));
     expect(requests[1].url.queryParameters, {'profile': 'team one'});
     expect(jsonDecode(requests[1].body)['api_key'], 'test-key');
     expect(requests[2].url.path, '/api/providers/custom-endpoints/validate');
-    expect(requests[2].url.queryParameters, isEmpty);
+    expect(requests[2].url.queryParameters, {'profile': 'team one'});
+    expect(requests[3].url.path, '/api/providers/custom-endpoints/validate');
+    expect(requests[3].url.queryParameters, isEmpty);
   });
 
   test('404 and 405 report unsupported', () async {
