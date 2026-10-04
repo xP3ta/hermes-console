@@ -919,10 +919,7 @@ void main() {
   group('issue 113 Stop never retires a started row', () {
     PreparedTurn persisted(String id, int order, PreparedTurnState state) =>
         PreparedTurn.fromJson(
-          _prepared(
-            id,
-            id,
-          ).copyWith(queueOrder: order, state: state).toJson(),
+          _prepared(id, id).copyWith(queueOrder: order, state: state).toJson(),
         );
 
     test('a queue restored with an accepted row sends nothing', () async {
@@ -942,26 +939,62 @@ void main() {
       expect(chat.queueParked, isTrue);
     });
 
-    test('clearing the queue keeps the accepted row and drops the rest', () async {
-      final gateway = _MentionLifecycleGateway();
-      final chat = _chat('queue-prepared', gateway: gateway)
-        ..state = ChatPipelineState.idle;
-      addTearDown(chat.dispose);
-      addTearDown(gateway.close);
-      final store = _MemoryOutbox();
-      await chat.restoreQueuedTurns([
-        persisted('i113-accepted', 1, PreparedTurnState.accepted),
-        persisted('i113-prepared', 2, PreparedTurnState.prepared),
-      ], store);
+    test(
+      'clearing the queue keeps the accepted row and drops the rest',
+      () async {
+        final gateway = _MentionLifecycleGateway();
+        final chat = _chat('queue-prepared', gateway: gateway)
+          ..state = ChatPipelineState.idle;
+        addTearDown(chat.dispose);
+        addTearDown(gateway.close);
+        final store = _MemoryOutbox();
+        await chat.restoreQueuedTurns([
+          persisted('i113-accepted', 1, PreparedTurnState.accepted),
+          persisted('i113-prepared', 2, PreparedTurnState.prepared),
+        ], store);
 
-      chat.clearQueueForTesting();
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+        chat.clearQueueForTesting();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(chat.queuedEntries.map((e) => e.id), ['prepared:i113-accepted']);
-      expect(chat.queuedEntries.single.stopWaitingAvailable, isTrue);
-      expect(store.deletes.map((turn) => turn.clientTurnId), [
-        'i113-prepared',
-      ]);
-    });
+        expect(chat.queuedEntries.map((e) => e.id), ['prepared:i113-accepted']);
+        expect(chat.queuedEntries.single.stopWaitingAvailable, isTrue);
+        expect(store.deletes.map((turn) => turn.clientTurnId), [
+          'i113-prepared',
+        ]);
+      },
+    );
+
+    for (final state in [
+      PreparedTurnState.submitting,
+      PreparedTurnState.ambiguous,
+    ]) {
+      test(
+        'clearing keeps a ${state.name} row whose transport started',
+        () async {
+          final gateway = _MentionLifecycleGateway();
+          final chat = _chat('queue-prepared', gateway: gateway)
+            ..state = ChatPipelineState.idle;
+          addTearDown(chat.dispose);
+          addTearDown(gateway.close);
+          final store = _MemoryOutbox();
+          await chat.restoreQueuedTurns([
+            persisted('i113-started', 1, state),
+            persisted('i113-prepared', 2, PreparedTurnState.prepared),
+          ], store);
+
+          chat.clearQueueForTesting();
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+
+          expect(chat.queuedEntries.map((e) => e.id), [
+            'prepared:i113-started',
+          ]);
+          expect(
+            store.deletes.map((turn) => turn.clientTurnId),
+            isNot(contains('i113-started')),
+          );
+          expect(gateway.submissions, isEmpty);
+        },
+      );
+    }
   });
 }

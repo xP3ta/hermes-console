@@ -184,6 +184,8 @@ void main() {
 
         expect(gateway.submissions, ['initial', 'head']);
         expect(chat.queueParked, isTrue);
+        expect(chat.queuedMessages, ['second']);
+        expect(chat.queuedEntries.single.text, 'second');
       },
     );
 
@@ -211,7 +213,9 @@ void main() {
   });
 
   group('a durable prepared head is pinned until its transport settles', () {
-    Future<(ActiveChat, _GatedGateway)> preparedHeadInFlight(String id) async {
+    Future<(ActiveChat, _GatedGateway, _KeepingOutbox)> preparedHeadInFlight(
+      String id,
+    ) async {
       final gateway = _GatedGateway();
       final chat = _chat(id, gateway);
       addTearDown(chat.dispose);
@@ -241,11 +245,13 @@ void main() {
         ),
         isTrue,
       );
-      return (chat, gateway);
+      return (chat, gateway, store);
     }
 
     test('edit, promote, move and send-now cannot reorder it', () async {
-      final (chat, gateway) = await preparedHeadInFlight('prepared-in-flight');
+      final (chat, gateway, _) = await preparedHeadInFlight(
+        'prepared-in-flight',
+      );
       expect(chat.queuedEntries.map((entry) => entry.id), [
         'prepared:a',
         'prepared:b',
@@ -273,7 +279,9 @@ void main() {
     test(
       'Stop while it is in flight: the late ACK sends nothing more',
       () async {
-        final (chat, gateway) = await preparedHeadInFlight('prepared-stop');
+        final (chat, gateway, store) = await preparedHeadInFlight(
+          'prepared-stop',
+        );
 
         await chat.cancel();
         gateway.gate!.complete();
@@ -281,6 +289,9 @@ void main() {
 
         expect(gateway.submissions, ['initial', 'a']);
         expect(chat.queueParked, isTrue);
+        expect(chat.queuedEntries.map((entry) => entry.id), ['prepared:b']);
+        expect(store.latest.keys, contains('b'));
+        expect(store.latest['b']!.state, PreparedTurnState.prepared);
       },
     );
   });
@@ -499,6 +510,41 @@ void main() {
       await _pump();
       expect(gateway.submissions, ['initial', 'edited']);
       expect(chat.queuedMessages, ['second']);
+    });
+
+    test('a non-head hold lets earlier rows drain in order first', () async {
+      final gateway = _GatedGateway();
+      final chat = _chat('hold-non-head', gateway);
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.send(fullText: 'initial', model: 'hermes-agent', history: []);
+      chat.state = ChatPipelineState.idle;
+      chat
+        ..enqueue('first')
+        ..enqueue('edited')
+        ..enqueue('last');
+      final ids = chat.queuedEntries.map((entry) => entry.id).toList();
+      expect(chat.holdQueuedTurn(ids[1]), isTrue);
+
+      await _pump();
+      expect(gateway.submissions, ['initial', 'first']);
+      gateway.controller.add(
+        const TuiGatewayEvent(
+          type: 'message.complete',
+          sessionId: 'runtime-turn-control',
+          payload: {'text': 'ok'},
+        ),
+      );
+      await _pump();
+
+      // The held row is now the head: it stops the drain, `last` waits.
+      expect(gateway.submissions, ['initial', 'first']);
+      expect(chat.queuedMessages, ['edited', 'last']);
+
+      chat.releaseQueuedTurn(ids[1]);
+      await _pump();
+      expect(gateway.submissions, ['initial', 'first', 'edited']);
+      expect(chat.queuedMessages, ['last']);
     });
 
     test('a head the drain already took cannot be held', () async {
