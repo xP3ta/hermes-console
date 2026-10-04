@@ -66,12 +66,20 @@ Object? serverConfigValueAt(Map<String, dynamic> config, String path) {
   return node;
 }
 
+/// What the Advanced pages need from the config: the repository, or a fake.
+abstract interface class ServerConfigStore {
+  bool get isWritable;
+  Future<Map<String, dynamic>> readConfig();
+  Future<Map<String, dynamic>> readSchema();
+  Future<Object?> save(String path, Object? value);
+}
+
 /// Reads and writes single fields of the server config through the
 /// Dashboard's deep-merge, and confirms every write by reading the value
 /// back. Never sends the record it read: only the branch of the edited path.
 ///
 /// Borrows [dashboard]; the owner closes it.
-final class ServerConfigRepository {
+final class ServerConfigRepository implements ServerConfigStore {
   final DashboardClient _dashboard;
   final bool _writable;
   final String? _profile;
@@ -89,31 +97,46 @@ final class ServerConfigRepository {
   ServerConfigRepository._(this._dashboard, this._profile, this._writable);
 
   String? get profile => _profile;
+  @override
   bool get isWritable => _writable;
 
   /// Stops new work; a write already sent still finishes its re-read.
   void close() => _closed = true;
 
-  /// Config and schema, one read each.
-  Future<ServerConfigSnapshot> load() async {
+  /// The config tree, one read.
+  @override
+  Future<Map<String, dynamic>> readConfig() async {
     _requireOpen();
     try {
-      final config = await _dashboard.getServerConfig(profile: _profile);
+      return await _dashboard.getServerConfig(profile: _profile);
+    } catch (error) {
+      throw serverConfigFailureOf(error);
+    }
+  }
+
+  /// The schema, one read. A schema without `fields` is not one.
+  @override
+  Future<Map<String, dynamic>> readSchema() async {
+    _requireOpen();
+    try {
       final schema = await _dashboard.getServerConfigSchema(profile: _profile);
       if (schema['fields'] is! Map) {
         throw const ServerConfigException(
           ServerConfigFailureKind.invalidResponse,
         );
       }
-      return ServerConfigSnapshot(
-        profile: _profile,
-        config: config,
-        schema: schema,
-      );
+      return schema;
     } catch (error) {
       throw serverConfigFailureOf(error);
     }
   }
+
+  /// Config and schema, one read each.
+  Future<ServerConfigSnapshot> load() async => ServerConfigSnapshot(
+    profile: _profile,
+    config: await readConfig(),
+    schema: await readSchema(),
+  );
 
   /// Writes [value] at [path], re-reads the config and returns the value the
   /// server now holds. Throws [ServerConfigFailureKind.notSaved] (with the
@@ -122,6 +145,7 @@ final class ServerConfigRepository {
   ///
   /// A second save of the same field waits for the first; other fields do
   /// not wait for each other.
+  @override
   Future<Object?> save(String path, Object? value) {
     if (_closed) {
       return Future.error(
