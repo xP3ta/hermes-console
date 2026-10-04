@@ -159,8 +159,10 @@ Widget spanishApp(Widget home) => MaterialApp(
   home: home,
 );
 
-CapabilitiesRepository repoOf(ScriptedRest rest) => CapabilitiesRepository(
-  rest: rest,
-  sleep: (_) async {},
-  actionPollInterval: Duration.zero,
-);
+CapabilitiesRepository repoOf(ScriptedRest rest, {CapabilitiesRpc? rpc}) =>
+    CapabilitiesRepository(
+      rest: rest,
+      rpc: rpc,
+      sleep: (_) async {},
+      actionPollInterval: Duration.zero,
+    );
