@@ -397,4 +397,46 @@ void main() {
       reason: 'a lease that landed after leaving is released',
     );
   });
+
+  testWidgets('tapping Retry twice sends one probe and keeps the answer', (
+    tester,
+  ) async {
+    gateway.availableError = StateError('timeout');
+    await open(tester, app(await lock(enabled: true)));
+    expect(gateway.calls, ['probe']);
+    final gate = Completer<bool>();
+    gateway
+      ..availableError = null
+      ..availableGate = gate;
+    await tester.tap(find.byKey(const ValueKey('backup-retry')));
+    await tester.pump();
+    final retry = find.byKey(const ValueKey('backup-retry'));
+    if (retry.evaluate().isNotEmpty) {
+      await tester.tap(retry, warnIfMissed: false);
+      await tester.pump();
+    }
+    gate.complete(true);
+    await tester.pumpAndSettle();
+    expect(gateway.calls, ['probe', 'probe']);
+    expect(find.byKey(const ValueKey('backup-create')), findsOneWidget);
+  });
+
+  testWidgets('a second unlock while one is in flight cannot undo it', (
+    tester,
+  ) async {
+    final appLock = await lock(enabled: true);
+    final first = Completer<bool>();
+    gateway.availableGate = first;
+    await tester.pumpWidget(app(appLock));
+    await tester.pump(const Duration(milliseconds: 50));
+    final state = tester.state(find.byType(BackupRestoreScreen)) as dynamic;
+    unawaited(state.unlockForTesting() as Future<void>);
+    await tester.pump();
+    expect(gateway.calls, [
+      'probe',
+    ], reason: 'no duplicate availability request');
+    first.complete(true);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('backup-create')), findsOneWidget);
+  });
 }

@@ -186,7 +186,24 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen>
     await _unlock();
   }
 
+  bool _unlocking = false;
+
+  @visibleForTesting
+  Future<void> unlockForTesting() => _unlock();
+
+  /// One verification and availability probe at a time: a second tap while
+  /// one is in flight sends nothing and cannot overwrite its answer.
   Future<void> _unlock() async {
+    if (_unlocking) return;
+    _unlocking = true;
+    try {
+      await _unlockOnce();
+    } finally {
+      _unlocking = false;
+    }
+  }
+
+  Future<void> _unlockOnce() async {
     if (!(_appLock?.enabled ?? false)) {
       setState(() => _access = _Access.appLockRequired);
       return;
