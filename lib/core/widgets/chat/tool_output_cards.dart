@@ -28,29 +28,34 @@ const int terminalPreviewLines = 4;
 /// Hard cap of rendered terminal lines once unfolded (tail kept).
 const int terminalMaxLines = 400;
 
-class _DiffCount extends StatelessWidget {
-  const _DiffCount(this.stats);
-  final DiffStats stats;
+/// One count of a diff summary: at least two digits so stacked rows line up
+/// (`+12 −03`).
+String diffCountText(int value) => value.toString().padLeft(2, '0');
 
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final style = TextStyle(
-      fontFamily: _mono,
-      fontSize: 11,
-      fontWeight: FontWeight.w600,
-    );
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (stats.added > 0)
-          Text('+${stats.added}', style: style.copyWith(color: colors.success)),
-        if (stats.added > 0 && stats.removed > 0) const SizedBox(width: 5),
-        if (stats.removed > 0)
-          Text('−${stats.removed}', style: style.copyWith(color: colors.error)),
-      ],
-    );
-  }
+/// The one-line summary of a folded diff: `+12 −03 · file.dart`.
+String diffSummaryText(DiffStats stats, String name) =>
+    '+${diffCountText(stats.added)} −${diffCountText(stats.removed)} · $name';
+
+/// Coloured `+12 −03` (both counts always shown, like the summary text).
+TextSpan _diffCountSpan(DiffStats stats, HermesThemeColors colors) {
+  const style = TextStyle(
+    fontFamily: _mono,
+    fontSize: 11,
+    fontWeight: FontWeight.w600,
+  );
+  return TextSpan(
+    children: [
+      TextSpan(
+        text: '+${diffCountText(stats.added)}',
+        style: style.copyWith(color: colors.success),
+      ),
+      const TextSpan(text: ' '),
+      TextSpan(
+        text: '−${diffCountText(stats.removed)}',
+        style: style.copyWith(color: colors.error),
+      ),
+    ],
+  );
 }
 
 class _FoldRow extends StatelessWidget {
@@ -62,10 +67,14 @@ class _FoldRow extends StatelessWidget {
     required this.semanticsLabel,
     this.trailing,
     this.rowKey,
+    this.labelSpan,
   });
 
   final IconData icon;
   final String label;
+
+  /// Styled label replacing [label]'s plain text (same text content).
+  final InlineSpan? labelSpan;
   final bool expanded;
   final VoidCallback? onTap;
   final String semanticsLabel;
@@ -93,8 +102,8 @@ class _FoldRow extends StatelessWidget {
                 Icon(icon, size: 14, color: colors.textSecondary),
                 const SizedBox(width: 7),
                 Flexible(
-                  child: Text(
-                    label,
+                  child: Text.rich(
+                    labelSpan ?? TextSpan(text: label),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -164,7 +173,8 @@ class _HorizontalCode extends StatelessWidget {
 // File edit diff
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// One edited file: name with +/- counts; tap to unfold the unified diff.
+/// One edited file folded to `+12 −03 · file.dart`; tap to unfold the
+/// unified diff (Desktop FileDiffPanel header: DiffCount + basename).
 class FileDiffCard extends StatefulWidget {
   const FileDiffCard({required this.file, super.key});
 
@@ -180,6 +190,7 @@ class _FileDiffCardState extends State<FileDiffCard> {
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
     final file = widget.file;
     final name = file.name.isEmpty ? '—' : file.name;
     return Padding(
@@ -191,14 +202,19 @@ class _FileDiffCardState extends State<FileDiffCard> {
           _FoldRow(
             rowKey: ValueKey('file-diff-row-${file.path}'),
             icon: Icons.difference_outlined,
-            label: name,
+            label: diffSummaryText(file.stats, name),
+            labelSpan: TextSpan(
+              children: [
+                _diffCountSpan(file.stats, colors),
+                TextSpan(text: ' · $name'),
+              ],
+            ),
             expanded: _expanded,
             semanticsLabel: s.tc1215DiffSemantics(
               name,
               file.stats.added,
               file.stats.removed,
             ),
-            trailing: _DiffCount(file.stats),
             onTap: () => setState(() => _expanded = !_expanded),
           ),
           if (_expanded) FileDiffBody(diff: file.diff),
@@ -298,17 +314,21 @@ class _FileDiffBodyState extends State<FileDiffBody> {
 // Terminal output (ANSI)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// ANSI palette slot → theme colour (Desktop `lib/ansi.ts` maps the same
+/// eight hues to its UI palette). Hues without a theme role are blended from
+/// theme roles, so light/dark contrast follows the active theme.
 Color? ansiPaletteColor(AnsiColorIndex? index, HermesThemeColors colors) {
   if (index == null) return null;
+  final bright = index >= 8;
   return switch (index % 8) {
-    0 => index >= 8 ? colors.textDisabled : colors.textSecondary,
+    0 => bright ? colors.textDisabled : colors.textSecondary,
     1 => colors.error,
     2 => colors.success,
     3 => colors.warning,
-    4 => const Color(0xFF5B9BEA),
-    5 => const Color(0xFFB57EDC),
-    6 => const Color(0xFF4FB6BE),
-    _ => colors.textPrimary,
+    4 => colors.accent,
+    5 => colors.secondary,
+    6 => Color.lerp(colors.accent, colors.success, 0.5),
+    _ => bright ? colors.textPrimary : colors.textSecondary,
   };
 }
 
@@ -365,19 +385,20 @@ class TerminalOutputCard extends StatefulWidget {
 
 class _TerminalOutputCardState extends State<TerminalOutputCard> {
   bool _expanded = false;
-  late List<String> _lines = _split(widget.output);
+  _TerminalLines _lines = _TerminalLines.empty;
 
-  static List<String> _split(String output) {
-    final lines = output.split('\n');
-    return lines.length > terminalMaxLines
-        ? lines.sublist(lines.length - terminalMaxLines)
-        : lines;
+  @override
+  void initState() {
+    super.initState();
+    _lines = _TerminalLines(widget.output);
   }
 
   @override
   void didUpdateWidget(TerminalOutputCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.output != widget.output) _lines = _split(widget.output);
+    if (oldWidget.output != widget.output) {
+      _lines = _TerminalLines(widget.output);
+    }
   }
 
   @override
@@ -386,10 +407,11 @@ class _TerminalOutputCardState extends State<TerminalOutputCard> {
     final s = Strings.of(context);
     final exit = widget.exitCode;
     final failed = exit != null && exit != 0;
-    final foldable = _lines.length > terminalPreviewLines;
+    final count = _lines.count;
+    final foldable = count > terminalPreviewLines;
     final shown = _expanded || !foldable
-        ? _lines
-        : _lines.sublist(_lines.length - terminalPreviewLines);
+        ? _lines.tail(terminalMaxLines)
+        : _lines.tail(terminalPreviewLines);
     final style = TextStyle(
       fontFamily: _mono,
       fontSize: _monoSize,
@@ -397,7 +419,7 @@ class _TerminalOutputCardState extends State<TerminalOutputCard> {
       color: colors.textSecondary,
     );
     final label = foldable && !_expanded
-        ? s.tc1215OutputShowAll(_lines.length)
+        ? s.tc1215OutputShowAll(math.min(count, terminalMaxLines))
         : s.tc1215TerminalOutput;
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
@@ -435,9 +457,9 @@ class _TerminalOutputCardState extends State<TerminalOutputCard> {
             child: _HorizontalCode(
               children: [
                 AnsiTextView(
-                  text: shown.join('\n'),
+                  text: shown.text,
                   style: style,
-                  maxLines: math.max(1, shown.length),
+                  maxLines: math.max(1, shown.lines),
                 ),
               ],
             ),
@@ -446,6 +468,32 @@ class _TerminalOutputCardState extends State<TerminalOutputCard> {
       ),
     );
   }
+}
+
+/// Line view over a terminal output that never splits the whole string: the
+/// folded card reads only its last lines (found from the end), so a long
+/// output costs one newline count however often its row is rebuilt.
+final class _TerminalLines {
+  _TerminalLines(this.output) : count = '\n'.allMatches(output).length + 1;
+
+  static final empty = _TerminalLines('');
+
+  final String output;
+
+  /// Number of lines of [output] (capped only when shown).
+  final int count;
+
+  final Map<int, ({String text, int lines})> _tails = {};
+
+  /// The last [lines] lines (or all of them when fewer).
+  ({String text, int lines}) tail(int lines) => _tails[lines] ??= () {
+    if (count <= lines) return (text: output, lines: count);
+    var start = output.length;
+    for (var i = 0; i < lines; i++) {
+      start = output.lastIndexOf('\n', start - 1);
+    }
+    return (text: output.substring(start + 1), lines: lines);
+  }();
 }
 
 /// The card a finished tool contributes, or null when it has nothing to show.
@@ -537,7 +585,10 @@ class _ChangedFilesCardState extends State<ChangedFilesCard> {
             label: label,
             expanded: _expanded,
             semanticsLabel: s.tc1215DiffSemantics(label, added, removed),
-            trailing: _DiffCount(DiffStats(added, removed)),
+            trailing: Text.rich(
+              _diffCountSpan(DiffStats(added, removed), colors),
+              maxLines: 1,
+            ),
             onTap: () => setState(() => _expanded = !_expanded),
           ),
           if (_expanded)

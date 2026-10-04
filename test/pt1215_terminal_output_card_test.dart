@@ -49,6 +49,29 @@ void main() {
     test('bright colours map to the upper palette', () {
       expect(parseAnsi('$_e[94mblue').single.fg, 12);
     });
+
+    test('every palette slot is a theme colour, in light and dark', () {
+      for (final theme in [AppTheme.hermesRedDark, AppTheme.hermesRedLight]) {
+        final c = theme.hermes;
+        expect(
+          [for (var i = 0; i < 8; i++) ansiPaletteColor(i, c)],
+          [
+            c.textSecondary,
+            c.error,
+            c.success,
+            c.warning,
+            c.accent,
+            c.secondary,
+            Color.lerp(c.accent, c.success, 0.5),
+            c.textSecondary,
+          ],
+        );
+        expect(ansiPaletteColor(8, c), c.textDisabled);
+        expect(ansiPaletteColor(12, c), c.accent);
+        expect(ansiPaletteColor(15, c), c.textPrimary);
+        expect(ansiPaletteColor(null, c), isNull);
+      }
+    });
   });
 
   group('terminal records', () {

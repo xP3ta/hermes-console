@@ -116,19 +116,43 @@ void main() {
     });
   });
 
-  testWidgets('a diff card is folded to name and counts; tap unfolds it', (
+  testWidgets('a diff card folds to «+02 −01 · foo.dart»; tap unfolds it', (
     tester,
   ) async {
     final file = ToolOutputRecord.fromCompletePayload(
       _complete(),
     )!.files.single;
     await tester.pumpWidget(_host(FileDiffCard(file: file)));
-    expect(find.text('foo.dart'), findsOneWidget);
-    expect(find.text('+2'), findsOneWidget);
-    expect(find.text('−1'), findsOneWidget);
+    expect(find.text('+02 −01 · foo.dart'), findsOneWidget);
+    expect(
+      diffSummaryText(const DiffStats(12, 3), 'x.dart'),
+      '+12 −03 · x.dart',
+    );
+    expect(
+      diffSummaryText(const DiffStats(1200, 0), 'x.dart'),
+      '+1200 −00 · x.dart',
+    );
     expect(find.byType(FileDiffBody), findsNothing);
+    // Counts keep the theme's add/remove colours.
+    final colors = AppTheme.hermesRedDark.hermes;
+    final spans = <String, Color?>{};
+    for (final rich in tester.widgetList<RichText>(
+      find.descendant(
+        of: find.byType(FileDiffCard),
+        matching: find.byType(RichText),
+      ),
+    )) {
+      rich.text.visitChildren((span) {
+        if (span is TextSpan && span.text != null) {
+          spans[span.text!] = span.style?.color;
+        }
+        return true;
+      });
+    }
+    expect(spans['+02'], colors.success);
+    expect(spans['−01'], colors.error);
 
-    await tester.tap(find.text('foo.dart'));
+    await tester.tap(find.byType(FileDiffCard));
     await tester.pump();
     expect(find.byType(FileDiffBody), findsOneWidget);
     expect(find.text('+new line'), findsOneWidget);
@@ -145,7 +169,7 @@ void main() {
     await tester.pumpWidget(
       _host(SingleChildScrollView(child: FileDiffCard(file: file))),
     );
-    await tester.tap(find.text('big.txt'));
+    await tester.tap(find.byType(FileDiffCard));
     await tester.pump();
     expect(find.text('+line ${fileDiffPageLines - 2}'), findsOneWidget);
     expect(find.text('+line 150'), findsNothing);

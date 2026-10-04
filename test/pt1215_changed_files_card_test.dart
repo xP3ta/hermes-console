@@ -49,7 +49,7 @@ void main() {
     ];
     await tester.pumpWidget(_host(ChangedFilesCard(files: files)));
     expect(find.text('50 archivos cambiados'), findsOneWidget);
-    expect(find.text('+50'), findsOneWidget);
+    expect(find.text('+50 −50'), findsOneWidget);
     expect(find.byType(FileDiffCard), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('changed-files-row')));

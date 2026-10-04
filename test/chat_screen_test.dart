@@ -23944,8 +23944,7 @@ void main() {
       expect(find.byType(ChangedFilesCard), findsOneWidget);
       expect(find.text('2 archivos cambiados'), findsOneWidget);
       // lib/a.dart +3 −2 across two edits, README.md +1 −1.
-      expect(find.text('+4'), findsOneWidget);
-      expect(find.text('−3'), findsOneWidget);
+      expect(find.text('+04 −03'), findsOneWidget);
       expect(find.byType(FileDiffCard), findsNothing);
 
       final row = find.byKey(const ValueKey('changed-files-row'));
@@ -23954,8 +23953,8 @@ void main() {
       await tester.tap(row);
       await tester.pump();
       expect(find.byType(FileDiffCard), findsNWidgets(2));
-      expect(find.text('a.dart'), findsOneWidget);
-      expect(find.text('README.md'), findsOneWidget);
+      expect(find.text('+03 −02 · a.dart'), findsOneWidget);
+      expect(find.text('+01 −01 · README.md'), findsOneWidget);
       expect(find.byType(FileDiffBody), findsNothing);
       expect(tester.takeException(), isNull);
     },
