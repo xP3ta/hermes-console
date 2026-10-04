@@ -2087,6 +2087,8 @@ class TuiGatewayClient
       if (disposition == ReplayLiveDisposition.dispatch) {
         _observeWatchdogEvent(sessionEvent, _now());
         if (!_events.isClosed) _events.add(_translateRequestCancel(event));
+      } else if (disposition != ReplayLiveDisposition.ignored) {
+        _rehydrateOnWithheldTurnEnd(sessionEvent);
       }
     } catch (_) {
       _handleMalformedFrame(generation, channel);
@@ -2839,24 +2841,45 @@ class TuiGatewayClient
       // full snapshot-to-tail cut. Quarantine before notifying ActiveChat so it
       // rehydrates authoritative REST/roster state instead of publishing the
       // replay payload directly.
-      _replayCoordinator.quarantine(runtime);
-      _retireWatchdogRuntime(runtime);
-      if (!_events.isClosed) {
-        _events.addError(
-          TuiGatewayRpcError(
-            'session.events.since',
-            'Hermes Desktop live subscription requires rehydration',
-            failureKind: TuiGatewayRpcFailureKind.connectionLost,
-            // A shared socket carries many chats: name the runtime so only
-            // its owner rehydrates (the socket itself is healthy).
-            data: {'session_id': runtime},
-          ),
-        );
-      }
+      _requestRuntimeRehydration(runtime);
     } catch (_) {
       // A failed diagnostic read is not itself proof that the healthy socket or
       // fanout lease is lost. Retry only after another bounded idle window.
     }
+  }
+
+  /// Quarantines [runtime] and asks its owner chat to rehydrate from
+  /// authoritative REST/roster state. Retiring the watchdog bounds it to one
+  /// request per bind: the next resume/activate arms the runtime again.
+  void _requestRuntimeRehydration(String runtime) {
+    _replayCoordinator.quarantine(runtime);
+    _retireWatchdogRuntime(runtime);
+    if (!_events.isClosed) {
+      _events.addError(
+        TuiGatewayRpcError(
+          'session.events.since',
+          'Hermes Desktop live subscription requires rehydration',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+          // A shared socket carries many chats: name the runtime so only
+          // its owner rehydrates (the socket itself is healthy).
+          data: {'session_id': runtime},
+        ),
+      );
+    }
+  }
+
+  /// lt1215: after a reconnect a runtime's live frames are withheld (held or
+  /// quarantined, never projected) because current Hermes cannot prove a
+  /// snapshot/replay cut, so a chat that rebound a running turn sees nothing
+  /// until the fanout watchdog's next busy idle window (15-30 s with the
+  /// Desktop heartbeat). A withheld frame that ends the turn is Hermes saying
+  /// the answer is final now: rehydrate at once, exactly like a probed gap.
+  /// Nothing of the frame is projected, and frames that do not end the turn
+  /// send nothing, so a long turn costs no extra traffic.
+  void _rehydrateOnWithheldTurnEnd(SessionGatewayEvent event) {
+    final watched = _watchdogs[event.sessionId];
+    if (watched == null || !watched.busy || !_eventEndsTurn(event)) return;
+    _requestRuntimeRehydration(event.sessionId);
   }
 
   @visibleForTesting
@@ -2921,27 +2944,14 @@ class TuiGatewayClient
     watched.lastActivityAt = observedAt;
     watched.revision += 1;
 
+    if (_eventEndsTurn(event)) {
+      watched.busy = false;
+      return;
+    }
     final status = event.payload['status']?.toString().trim().toLowerCase();
     final info = event.payload['info'];
     final running =
         event.payload['running'] ?? (info is Map ? info['running'] : null);
-    if (event.type == 'message.complete' ||
-        event.type == 'error' ||
-        event.type == 'session.closed' ||
-        running == false ||
-        const <String>{
-          'idle',
-          'complete',
-          'completed',
-          'terminal',
-          'failed',
-          'cancelled',
-          'canceled',
-          'stopped',
-        }.contains(status)) {
-      watched.busy = false;
-      return;
-    }
     if (running == true ||
         const <String>{
           'running',
@@ -2956,6 +2966,27 @@ class TuiGatewayClient
         event.type == 'tool.start') {
       watched.busy = true;
     }
+  }
+
+  static bool _eventEndsTurn(SessionGatewayEvent event) {
+    final status = event.payload['status']?.toString().trim().toLowerCase();
+    final info = event.payload['info'];
+    final running =
+        event.payload['running'] ?? (info is Map ? info['running'] : null);
+    return event.type == 'message.complete' ||
+        event.type == 'error' ||
+        event.type == 'session.closed' ||
+        running == false ||
+        const <String>{
+          'idle',
+          'complete',
+          'completed',
+          'terminal',
+          'failed',
+          'cancelled',
+          'canceled',
+          'stopped',
+        }.contains(status);
   }
 
   void _stopHeartbeat() {
