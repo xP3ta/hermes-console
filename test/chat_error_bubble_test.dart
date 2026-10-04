@@ -82,6 +82,32 @@ void main() {
       expect(newChats, 1);
     });
 
+    for (final code in const ['rate_limit', 'upstream_rate_limit']) {
+      testWidgets('$code reads as a busy provider, not an exhausted quota', (
+        tester,
+      ) async {
+        for (final (locale, title, notTitle) in const [
+          ('es', 'El servicio de IA está ocupado', 'Límite de uso alcanzado'),
+          ('en', 'The AI service is busy', 'Usage limit reached'),
+        ]) {
+          await tester.pumpWidget(
+            _host(
+              ChatErrorBubble(
+                error: 'throttled',
+                prompt: 'hola',
+                onRetry: () {},
+                surface: _surface(code),
+              ),
+              locale: Locale(locale),
+            ),
+          );
+
+          expect(find.text(title), findsOneWidget);
+          expect(find.text(notTitle), findsNothing);
+        }
+      });
+    }
+
     testWidgets('model_not_found opens the model picker and never retries', (
       tester,
     ) async {
