@@ -133,4 +133,42 @@ void main() {
     expect(s.backlog('a').length, 256000);
     expect(s.received('missing'), 0);
   });
+
+  group('a close that arrives before the process is known', () {
+    test('is kept and applied when a stale seed later lists it open', () {
+      final s = AgentTerminalStream();
+      s.onClose('quiet');
+      s.seed([_seed('quiet', tail: '')]);
+      expect(s.isClosed('quiet'), isTrue);
+    });
+
+    test('is applied when the process first shows up through a chunk', () {
+      final s = AgentTerminalStream();
+      s.onClose('p');
+      s.onChunk('p', 'late');
+      expect(s.isClosed('p'), isTrue);
+    });
+
+    test('does not mark an unrelated process closed', () {
+      final s = AgentTerminalStream();
+      s.onClose('a');
+      s.seed([_seed('b', tail: 'x')]);
+      expect(s.isClosed('b'), isFalse);
+    });
+
+    test('the remembered closes are bounded and dropped on dispose', () {
+      final s = AgentTerminalStream();
+      for (var i = 0; i < 1000; i++) {
+        s.onClose('p$i');
+      }
+      s.seed([_seed('p0', tail: ''), _seed('p999', tail: '')]);
+      expect(s.isClosed('p999'), isTrue);
+      expect(s.isClosed('p0'), isFalse, reason: 'oldest tombstone evicted');
+      final t = AgentTerminalStream();
+      t.onClose('gone');
+      t.dispose();
+      t.seed([_seed('gone', tail: '')]);
+      expect(t.ids, isEmpty);
+    });
+  });
 }

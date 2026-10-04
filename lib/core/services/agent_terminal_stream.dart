@@ -18,6 +18,13 @@ class AgentTerminalStream extends ChangeNotifier {
   final int maxTotal;
 
   final Map<String, _Proc> _procs = {};
+
+  /// Ids whose `terminal.close` arrived before the process was known (a
+  /// silent process that exits between attaching and the first
+  /// `process.list` read). Applied when the process shows up, so a stale seed
+  /// cannot leave it open. Insertion-ordered and capped.
+  final Set<String> _closedEarly = {};
+  static const int _maxClosedEarly = 256;
   String? _visible;
   bool _disposed = false;
   int _tick = 0;
@@ -52,7 +59,7 @@ class AgentTerminalStream extends ChangeNotifier {
       }
       final proc = _proc(seed.id);
       proc.command = seed.command;
-      proc.closed = seed.closed;
+      proc.closed = proc.closed || seed.closed;
       _append(proc, seed.outputTail);
     }
     _enforce();
@@ -71,7 +78,15 @@ class AgentTerminalStream extends ChangeNotifier {
   void onClose(String id) {
     if (_disposed) return;
     final proc = _procs[id];
-    if (proc == null || proc.closed) return;
+    if (proc == null) {
+      _closedEarly.remove(id);
+      _closedEarly.add(id);
+      while (_closedEarly.length > _maxClosedEarly) {
+        _closedEarly.remove(_closedEarly.first);
+      }
+      return;
+    }
+    if (proc.closed) return;
     proc.closed = true;
     notifyListeners();
   }
@@ -79,6 +94,7 @@ class AgentTerminalStream extends ChangeNotifier {
   _Proc _proc(String id) => _procs.putIfAbsent(id, () {
     final proc = _Proc();
     proc.touched = ++_tick;
+    proc.closed = _closedEarly.remove(id);
     return proc;
   });
 
@@ -116,6 +132,7 @@ class AgentTerminalStream extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _procs.clear();
+    _closedEarly.clear();
     super.dispose();
   }
 }
