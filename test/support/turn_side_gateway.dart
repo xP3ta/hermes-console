@@ -39,6 +39,7 @@ class FakeTurnSideGateway
   ) => calls.where((call) => call.method == method).toList(growable: false);
 
   void emit(String type, Map<String, dynamic> payload, {String? sessionId}) {
+    if (controller.isClosed) return;
     controller.add(
       TuiGatewayEvent(
         type: type,

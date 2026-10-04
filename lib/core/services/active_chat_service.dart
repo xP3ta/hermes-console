@@ -59,6 +59,7 @@ import '../models/transcript_privacy_state.dart';
 import '../screens/chat_render_projection.dart';
 import '../utils/assistant_content.dart';
 import '../utils/chat_turn.dart';
+import '../utils/turn_control.dart';
 import 'approval_policy.dart';
 import 'artifact_index.dart';
 import 'attachment_uploader.dart';
@@ -673,7 +674,10 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
           rawDisplayKind == 'auto_continue' ||
           rawDisplayKind == 'async_delegation_complete' ||
           rawDisplayKind == 'compression_result' ||
-          rawDisplayKind == 'process_complete'
+          rawDisplayKind == 'process_complete' ||
+          (rawDisplayKind == 'side_answer' &&
+              retainProjectionState &&
+              message['_local'] == true)
       ? rawDisplayKind
       : effectiveUserDisplayKind(normalized);
   if (displayKind == 'model_switch' ||
@@ -689,6 +693,18 @@ Map<String, dynamic>? normalizeTranscriptMessageForDisplay(
     if (metadata?.isNotEmpty == true) {
       normalized['display_metadata'] = metadata;
     }
+  } else if (displayKind == 'side_answer') {
+    final raw = message['display_metadata'];
+    final question = raw is Map ? raw['question'] : null;
+    normalized['display_kind'] = displayKind;
+    normalized['display_metadata'] = <String, dynamic>{
+      'kind': 'btw',
+      'question': question is String ? question : '',
+      'is_error': raw is Map && raw['is_error'] == true,
+    };
+    normalized['_local'] = true;
+    final taskId = message['_btwTaskId'];
+    if (taskId is String && taskId.isNotEmpty) normalized['_btwTaskId'] = taskId;
   } else if (displayKind == 'compression_result') {
     final metadata = _compressionResultDisplayMetadata(
       message['display_metadata'],
@@ -16228,6 +16244,221 @@ class ActiveChat {
     );
   }
 
+  // ── Side agents (/btw, /bg) ────────────────────────────────────────────
+
+  /// Whether `/btw` and `/bg` may be offered: a writable connection whose
+  /// gateway speaks `prompt.btw` / `prompt.background` and has not answered
+  /// method-not-found.
+  bool get canRunSideAgents {
+    final gateway = _desktopGateway;
+    return !connection.readOnly &&
+        !mutationsBlockedByOwnershipConflict &&
+        gateway is HermesDesktopTurnSideGateway &&
+        !(gateway as HermesDesktopTurnSideGateway).turnSideKnownUnsupported;
+  }
+
+  /// `/btw <question>`: a side question over the live conversation. It never
+  /// queues, never touches the running turn and never acquires a runtime for a
+  /// busy chat; the answer lands as a local row when `btw.complete` arrives.
+  Future<SideCommandOutcome> askSideQuestion(String text) =>
+      _runSideAgent(text, background: false);
+
+  /// `/bg <prompt>`: a detached task on a fresh agent. The result arrives as
+  /// `background.complete` and shows in the background strip.
+  Future<SideCommandOutcome> startBackgroundPrompt(String text) =>
+      _runSideAgent(text, background: true);
+
+  Future<SideCommandOutcome> _runSideAgent(
+    String text, {
+    required bool background,
+  }) async {
+    final prompt = text.trim();
+    if (prompt.isEmpty) return SideCommandOutcome.usage;
+    if (connection.readOnly) return SideCommandOutcome.readOnly;
+    if (_disposed || mutationsBlockedByOwnershipConflict) {
+      return SideCommandOutcome.failed;
+    }
+    final gateway = _desktopGateway;
+    if (gateway is! HermesDesktopTurnSideGateway ||
+        (gateway as HermesDesktopTurnSideGateway).turnSideKnownUnsupported) {
+      return SideCommandOutcome.unsupported;
+    }
+    final side = gateway as HermesDesktopTurnSideGateway;
+    var runtimeId = _desktopRuntimeSessionId;
+    if (runtimeId == null) {
+      // A busy chat without a bound runtime has nothing to snapshot, and
+      // acquiring one now could disturb the running turn: use the slash path.
+      if (isStreaming) return SideCommandOutcome.unsupported;
+      if (!await ensureDesktopRuntime(acquireForExplicitAction: true)) {
+        return SideCommandOutcome.unsupported;
+      }
+      runtimeId = _desktopRuntimeSessionId;
+      if (_disposed || runtimeId == null) return SideCommandOutcome.failed;
+    }
+    try {
+      if (background) {
+        await side.startBackgroundPrompt(runtimeId, prompt);
+      } else {
+        await side.askSideQuestion(runtimeId, prompt);
+      }
+      return SideCommandOutcome.started;
+    } on DesktopControlFailure catch (failure) {
+      return switch (failure.kind) {
+        DesktopControlFailureKind.unsupported => SideCommandOutcome.unsupported,
+        DesktopControlFailureKind.forbidden => SideCommandOutcome.readOnly,
+        _ => SideCommandOutcome.failed,
+      };
+    } catch (_) {
+      return SideCommandOutcome.failed;
+    }
+  }
+
+  /// `btw.complete {task_id, text, question?}` becomes a local row, in memory
+  /// only: like Desktop, a side answer does not survive reopening the chat.
+  void _applySideQuestionAnswer(Map<String, dynamic> payload) {
+    final taskId = payload['task_id']?.toString().trim() ?? '';
+    final answer = payload['text']?.toString() ?? '';
+    if (taskId.isEmpty || answer.trim().isEmpty) return;
+    final isError = answer.startsWith('error:');
+    final question = payload['question']?.toString().trim() ?? '';
+    _messages.removeWhere((message) => message['_btwTaskId'] == taskId);
+    _messages.insert(0, <String, dynamic>{
+      'role': 'assistant',
+      'content': answer,
+      'display_kind': 'side_answer',
+      'display_metadata': <String, dynamic>{
+        'kind': 'btw',
+        'question': question,
+        'is_error': isError,
+      },
+      '_local': true,
+      '_btwTaskId': taskId,
+    });
+    _emit(ActiveChatEvent.backgroundTaskComplete);
+  }
+
+  // ── Branch ─────────────────────────────────────────────────────────────
+
+  bool _branchInFlight = false;
+
+  /// One key per branch attempt. It is kept after a lost response so the retry
+  /// of the same attempt returns the same child, and dropped once the server
+  /// gave a definitive answer.
+  final Map<String, String> _branchKeys = {};
+
+  /// Whether the branch entries may be offered.
+  bool get canBranchChat {
+    final gateway = _desktopGateway;
+    return !connection.readOnly &&
+        gateway is HermesDesktopTurnSideGateway &&
+        !(gateway as HermesDesktopTurnSideGateway).turnBranchKnownUnsupported;
+  }
+
+  /// Forks the live chat into a child chat; the parent stays untouched. With
+  /// [fromMessage] only the rows up to and including it are kept, counted in
+  /// the server's user/assistant row space against the durable transcript.
+  Future<BranchOutcome> branchChat({Map<String, dynamic>? fromMessage}) async {
+    if (connection.readOnly) return const BranchOutcome(BranchStatus.readOnly);
+    if (_disposed) return const BranchOutcome(BranchStatus.failed);
+    if (_branchInFlight) return const BranchOutcome(BranchStatus.inFlight);
+    final gateway = _desktopGateway;
+    if (gateway is! HermesDesktopTurnSideGateway ||
+        (gateway as HermesDesktopTurnSideGateway).turnBranchKnownUnsupported) {
+      return const BranchOutcome(BranchStatus.unsupported);
+    }
+    final side = gateway as HermesDesktopTurnSideGateway;
+    if (isStreaming) return const BranchOutcome(BranchStatus.busy);
+    final runtimeId = _desktopRuntimeSessionId;
+    if (runtimeId == null) return const BranchOutcome(BranchStatus.noRuntime);
+    _branchInFlight = true;
+    try {
+      int? count;
+      if (fromMessage != null) {
+        // Every earlier page first: the count is over the whole history.
+        var guard = 0;
+        while (hasEarlierMessages && guard++ < 200) {
+          if (!await loadEarlierMessages() || _disposed) {
+            return const BranchOutcome(BranchStatus.failed);
+          }
+        }
+        if (hasEarlierMessages) return const BranchOutcome(BranchStatus.failed);
+        if (isStreaming || _desktopRuntimeSessionId != runtimeId) {
+          return const BranchOutcome(BranchStatus.busy);
+        }
+        final position = branchPositionOf(
+          _messages.reversed.toList(growable: false),
+          fromMessage,
+        );
+        if (position == null) {
+          return const BranchOutcome(BranchStatus.targetNotFound);
+        }
+        count = position.isLatest ? null : position.count;
+      }
+      final signature = count == null ? 'whole' : 'count:$count';
+      final key = _branchKeys[signature] ??= newBranchIdempotencyKey();
+      Future<DesktopBranchResult> once() async {
+        if (count == null) {
+          try {
+            return await side.branchWholeSession(
+              runtimeId,
+              idempotencyKey: key,
+            );
+          } on DesktopControlFailure catch (failure) {
+            if (failure.kind != DesktopControlFailureKind.unsupported ||
+                failure.code != -32601) {
+              rethrow;
+            }
+            return side.branchSession(runtimeId, idempotencyKey: key);
+          }
+        }
+        return side.branchSession(
+          runtimeId,
+          count: count,
+          idempotencyKey: key,
+        );
+      }
+
+      try {
+        DesktopBranchResult result;
+        try {
+          result = await once();
+        } on DesktopControlFailure catch (failure) {
+          // A lost response may still have created the child: retry the same
+          // attempt once, with the same key, after the socket is back.
+          if (failure.kind != DesktopControlFailureKind.unavailable ||
+              failure.code != null) {
+            rethrow;
+          }
+          await _desktopGateway?.connect();
+          result = await once();
+        }
+        _branchKeys.remove(signature);
+        return BranchOutcome(
+          BranchStatus.opened,
+          storedSessionId: result.storedSessionId,
+          title: result.title,
+          messageCount: result.messageCount,
+        );
+      } on DesktopControlFailure catch (failure) {
+        final ambiguous =
+            failure.kind == DesktopControlFailureKind.unavailable &&
+            failure.code == null;
+        if (!ambiguous) _branchKeys.remove(signature);
+        return BranchOutcome(switch (failure.kind) {
+          DesktopControlFailureKind.unsupported => BranchStatus.unsupported,
+          DesktopControlFailureKind.forbidden => BranchStatus.readOnly,
+          DesktopControlFailureKind.rejected when failure.code == 4008 =>
+            BranchStatus.nothingToBranch,
+          _ => BranchStatus.failed,
+        });
+      } catch (_) {
+        return const BranchOutcome(BranchStatus.failed);
+      }
+    } finally {
+      _branchInFlight = false;
+    }
+  }
+
   String get _compressionRestoreProfile => Session.profileOwner(
     _sessionProfileOwner,
     fallback: _storedSessionProfile,
@@ -20964,6 +21195,10 @@ class ActiveChat {
         return;
       }
       _applyDesktopStatusUpdate(payload);
+      return;
+    }
+    if (event.type == 'btw.complete') {
+      _applySideQuestionAnswer(payload);
       return;
     }
     if (event.type == 'background.complete') {

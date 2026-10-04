@@ -1387,6 +1387,7 @@ class TuiGatewayClient
         HermesDesktopSubagentGateway,
         HermesDesktopProcessStopGateway,
         HermesDesktopControlGateway,
+        HermesDesktopTurnSideGateway,
         HermesDesktopSessionControlGateway,
         HermesProjectManagementGateway,
         HermesProjectFilesGateway,
@@ -6180,6 +6181,124 @@ class TuiGatewayClient
       return _invalidControlResponse(DesktopGatewayCapability.agentCenter);
     }
     return taskId;
+  }
+
+  @override
+  bool get turnSideKnownUnsupported =>
+      !_capabilityCache.canAttempt(DesktopGatewayCapability.turnSide);
+
+  @override
+  bool get turnBranchKnownUnsupported =>
+      !_capabilityCache.canAttempt(DesktopGatewayCapability.turnBranch);
+
+  Future<String> _sideAgentRequest(
+    String method,
+    String runtimeSessionId,
+    String text,
+  ) async {
+    _requireWritableControlConnection();
+    final result = await _controlRequest(
+      method,
+      {
+        'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+        'text': _validatedControlValue(text, maxLength: 2000),
+      },
+      timeout: const Duration(seconds: 30),
+      capability: DesktopGatewayCapability.turnSide,
+    );
+    final taskId = result['task_id'];
+    if (taskId is! String || taskId.trim().isEmpty || taskId.length > 512) {
+      return _invalidControlResponse(DesktopGatewayCapability.turnSide);
+    }
+    return taskId;
+  }
+
+  @override
+  Future<String> askSideQuestion(String runtimeSessionId, String text) =>
+      _sideAgentRequest('prompt.btw', runtimeSessionId, text);
+
+  @override
+  Future<String> startBackgroundPrompt(String runtimeSessionId, String text) =>
+      _sideAgentRequest('prompt.background', runtimeSessionId, text);
+
+  @override
+  Future<DesktopBranchResult> branchSession(
+    String runtimeSessionId, {
+    int? count,
+    String? name,
+    required String idempotencyKey,
+  }) => _branchRequest(
+    'session.branch',
+    runtimeSessionId,
+    count: count,
+    name: name,
+    idempotencyKey: idempotencyKey,
+    capability: DesktopGatewayCapability.turnBranch,
+  );
+
+  @override
+  Future<DesktopBranchResult> branchWholeSession(
+    String runtimeSessionId, {
+    String? name,
+    required String idempotencyKey,
+  }) => _branchRequest(
+    'session.branch_whole',
+    runtimeSessionId,
+    name: name,
+    idempotencyKey: idempotencyKey,
+    // A missing `branch_whole` is answered by `session.branch` without
+    // `count`, so it must not switch the whole feature off.
+    capability: null,
+  );
+
+  Future<DesktopBranchResult> _branchRequest(
+    String method,
+    String runtimeSessionId, {
+    int? count,
+    String? name,
+    required String idempotencyKey,
+    required DesktopGatewayCapability? capability,
+  }) async {
+    _requireWritableControlConnection();
+    if (count != null && count < 1) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    final cleanName = name?.trim();
+    final result = await _controlRequest(
+      method,
+      {
+        'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+        'count': ?count,
+        if (cleanName != null && cleanName.isNotEmpty)
+          'name': _validatedControlValue(cleanName, maxLength: 200),
+        'idempotency_key': _validatedControlValue(
+          idempotencyKey,
+          maxLength: 128,
+        ),
+      },
+      timeout: const Duration(seconds: 60),
+      capability: capability,
+    );
+    final runtimeId = result['session_id'];
+    final storedId = result['stored_session_id'];
+    final title = result['title'];
+    final messageCount = result['message_count'];
+    if (runtimeId is! String ||
+        runtimeId.trim().isEmpty ||
+        storedId is! String ||
+        storedId.trim().isEmpty ||
+        storedId != storedId.trim() ||
+        storedId.length > 512) {
+      return _invalidControlResponse(capability);
+    }
+    return DesktopBranchResult(
+      runtimeSessionId: runtimeId,
+      storedSessionId: storedId,
+      title: title is String ? title : '',
+      messageCount: messageCount is int && messageCount >= 0
+          ? messageCount
+          : 0,
+    );
   }
 
   @override
