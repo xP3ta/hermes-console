@@ -171,6 +171,28 @@ void main() {
       expect(t.ids, isEmpty);
     });
 
+    test(
+      'a burst up to the cap is all kept and one more evicts the oldest',
+      () {
+        final s = AgentTerminalStream(maxProcesses: 1000);
+        for (var i = 0; i < 256; i++) {
+          s.onClose('p$i');
+        }
+        s.seed([for (var i = 0; i < 256; i++) _seed('p$i')]);
+        for (var i = 0; i < 256; i++) {
+          expect(s.isClosed('p$i'), isTrue, reason: 'p$i');
+        }
+        final t = AgentTerminalStream(maxProcesses: 1000);
+        for (var i = 0; i < 257; i++) {
+          t.onClose('q$i');
+        }
+        t.seed([_seed('q0'), _seed('q1'), _seed('q256')]);
+        expect(t.isClosed('q0'), isFalse);
+        expect(t.isClosed('q1'), isTrue);
+        expect(t.isClosed('q256'), isTrue);
+      },
+    );
+
     test('two different early closes are both kept', () {
       final s = AgentTerminalStream();
       s.onClose('first');
