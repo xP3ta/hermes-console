@@ -71,12 +71,49 @@ String? insertedChunk(TextEditingValue oldValue, TextEditingValue newValue) {
   return after.substring(prefix, after.length - suffix);
 }
 
-/// Intercepts a large paste before it lands in the field: the field keeps its
-/// previous value and [onLargePaste] receives the text to attach. Only user
-/// edits pass through formatters, so programmatic restores never trigger it.
+/// Start of the occurrence of [run] in [text] closest to [near], or -1 when
+/// the field no longer holds it verbatim (the user edited the pasted run).
+int pastedRunOffset(String text, String run, {required int near}) {
+  if (run.isEmpty) return -1;
+  var best = -1;
+  for (var at = text.indexOf(run); at >= 0; at = text.indexOf(run, at + 1)) {
+    if (best < 0 || (at - near).abs() < (best - near).abs()) best = at;
+  }
+  return best;
+}
+
+/// [value] without the [length] characters at [start], keeping the caret on
+/// the text it was next to.
+TextEditingValue removePastedRun(
+  TextEditingValue value,
+  int start,
+  int length,
+) {
+  final end = start + length;
+  int shift(int offset) => offset <= start
+      ? offset
+      : offset >= end
+      ? offset - length
+      : start;
+  final selection = value.selection;
+  return TextEditingValue(
+    text: value.text.replaceRange(start, end, ''),
+    selection: selection.isValid
+        ? selection.copyWith(
+            baseOffset: shift(selection.baseOffset),
+            extentOffset: shift(selection.extentOffset),
+          )
+        : TextSelection.collapsed(offset: value.text.length - length),
+  );
+}
+
+/// Spots a large paste as it lands in the field: the field keeps it (its only
+/// durable copy until a chip exists) and [onLargePaste] receives the text and
+/// where it starts. Only user edits pass through formatters, so programmatic
+/// restores never trigger it.
 final class LargePasteFormatter extends TextInputFormatter {
   final bool Function() enabled;
-  final ValueChanged<String> onLargePaste;
+  final void Function(String text, int offset) onLargePaste;
   final int threshold;
 
   LargePasteFormatter({
@@ -99,7 +136,16 @@ final class LargePasteFormatter extends TextInputFormatter {
         !shouldConvertPasteToAttachment(chunk, threshold: threshold)) {
       return newValue;
     }
-    onLargePaste(chunk);
-    return oldValue;
+    onLargePaste(chunk, _commonPrefix(oldValue.text, newValue.text));
+    return newValue;
   }
+}
+
+int _commonPrefix(String a, String b) {
+  final limit = min(a.length, b.length);
+  var index = 0;
+  while (index < limit && a.codeUnitAt(index) == b.codeUnitAt(index)) {
+    index++;
+  }
+  return index;
 }

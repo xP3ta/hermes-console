@@ -428,21 +428,19 @@ void main() {
       expect(pasteSizeLabel('a' * 2048), '2.0 KB');
     });
 
-    test('the formatter keeps the field and hands over the paste', () {
-      final pasted = <String>[];
+    test('the formatter lets the paste land and hands it over', () {
+      final pasted = <(String, int)>[];
       var enabled = true;
       final formatter = LargePasteFormatter(
         enabled: () => enabled,
-        onLargePaste: pasted.add,
+        onLargePaste: (text, offset) => pasted.add((text, offset)),
       );
       final big = 'y' * 3500;
       final before = at('hi there', 3);
-      final result = formatter.formatEditUpdate(
-        before,
-        at('hi ${big}there', 3 + big.length),
-      );
-      expect(result, before);
-      expect(pasted, [big]);
+      final landed = at('hi ${big}there', 3 + big.length);
+      // The field keeps the paste: it is its only copy until a chip exists.
+      expect(formatter.formatEditUpdate(before, landed), landed);
+      expect(pasted, [(big, 3)]);
 
       final small = at('hi ${'y' * 10}there');
       expect(formatter.formatEditUpdate(before, small), small);
@@ -452,6 +450,24 @@ void main() {
       expect(formatter.formatEditUpdate(before, inline), inline);
       expect(pasted, hasLength(1));
       expect(insertedChunk(at('abc'), at('aXYbc')), 'XY');
+    });
+
+    test('the pasted run leaves the field only while it is verbatim', () {
+      // Two identical pastes: the one nearest the recorded start goes.
+      expect(pastedRunOffset('P-x-P', 'P', near: 4), 4);
+      expect(pastedRunOffset('P-x-P', 'P', near: 0), 0);
+      expect(pastedRunOffset('edited', 'P', near: 0), -1);
+      final removed = removePastedRun(at('ab PASTE cd', 11), 3, 5);
+      expect(removed.text, 'ab  cd');
+      expect(removed.selection, const TextSelection.collapsed(offset: 6));
+      expect(
+        removePastedRun(at('ab PASTE cd', 1), 3, 5).selection,
+        const TextSelection.collapsed(offset: 1),
+      );
+      expect(
+        removePastedRun(at('ab PASTE cd', 5), 3, 5).selection,
+        const TextSelection.collapsed(offset: 3),
+      );
     });
   });
 }

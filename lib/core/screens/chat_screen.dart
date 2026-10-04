@@ -11639,22 +11639,26 @@ class _ChatScreenState extends State<ChatScreen>
       !_attachmentSubmitting &&
       !_compressingSession;
 
-  void _onLargePaste(String text) {
-    // The field already kept its previous value; the paste lands as a chip,
-    // or inline if it cannot (never lost, like Desktop).
-    final selection = _textController.selection;
+  /// Longest wait for a paste's private copy. Past it the paste simply stays
+  /// in the field as text and send is no longer held by it.
+  static const Duration _largePasteAttachTimeout = Duration(seconds: 15);
+
+  void _onLargePaste(String text, int offset) {
+    // The paste already sits in the field, which stays its only durable copy
+    // (draft, dispose, send) until the chip exists; only then does it leave.
     unawaited(
-      _serializeAttachmentMutation(() => _attachPastedText(text, selection)),
+      _serializeAttachmentMutation(() => _attachPastedText(text, offset)),
     );
   }
 
-  Future<void> _attachPastedText(String text, TextSelection selection) async {
+  Future<void> _attachPastedText(String text, int offset) async {
     final bytes = utf8.encode(text);
     final batchBytes = _pendingAttachments.fold<int>(
       0,
       (sum, item) => sum + item.sizeBytes,
     );
     AttachmentDraft? persisted;
+    File? source;
     if (!_attachmentSubmitting &&
         pendingAttachmentLimitViolation(
               sizeBytes: bytes.length,
@@ -11663,56 +11667,68 @@ class _ChatScreenState extends State<ChatScreen>
             ) ==
             null) {
       final name = pastedContentFileName();
-      final source = File(
+      final file = source = File(
         '${Directory.systemTemp.path}/hermes-paste-${const Uuid().v4()}.txt',
       );
       try {
-        await source.writeAsBytes(bytes, flush: true);
-        persisted = await _materializeAttachment(
+        await file.writeAsBytes(bytes, flush: true);
+        // Re-typed: a materializer may return a non-nullable future, whose
+        // timeout could not yield null.
+        final pending = _materializeAttachment(
           AttachmentDraft(
             localId: const Uuid().v4(),
             type: AttachmentType.document,
             name: name,
             mimeType: 'text/plain',
             sizeBytes: bytes.length,
-            localPath: source.path,
+            localPath: file.path,
           ),
+        ).then<AttachmentDraft?>((copy) => copy);
+        persisted = await pending.timeout(
+          _largePasteAttachTimeout,
+          onTimeout: () {
+            // A copy that shows up late is never attached: discard it.
+            unawaited(
+              pending.then((late) async {
+                if (late != null) await _deletePrivateAttachmentCopy(late);
+              }, onError: (Object _) {}),
+            );
+            return null;
+          },
         );
       } catch (_) {
         persisted = null;
       } finally {
-        if (persisted?.localPath != source.path) {
-          try {
-            if (await source.exists()) await source.delete();
-          } catch (_) {}
-        }
+        if (persisted?.localPath != file.path) await _deleteQuietly(file);
       }
     }
-    if (!mounted || _disposed) {
-      if (persisted != null) await _deletePrivateAttachmentCopy(persisted);
-      return;
-    }
-    if (persisted == null) {
-      _insertComposerText(text, selection);
-      return;
-    }
     final attached = persisted;
+    if (attached == null) return;
+    final at = mounted && !_disposed
+        ? pastedRunOffset(_textController.text, text, near: offset)
+        : -1;
+    if (at < 0) {
+      // Disposed, or the user edited the pasted run meanwhile: the field copy
+      // is the one the user sees, so the chip is dropped instead.
+      await _deletePrivateAttachmentCopy(attached);
+      if (source != null && attached.localPath == source.path) {
+        await _deleteQuietly(source);
+      }
+      return;
+    }
+    _textController.value = removePastedRun(
+      _textController.value,
+      at,
+      text.length,
+    );
     setState(() => _pendingAttachments.add(attached));
     _scheduleDraftSave();
   }
 
-  void _insertComposerText(String text, TextSelection selection) {
-    final value = _textController.value;
-    final start = selection.isValid
-        ? selection.start.clamp(0, value.text.length)
-        : value.text.length;
-    final end = selection.isValid
-        ? selection.end.clamp(start, value.text.length)
-        : value.text.length;
-    _textController.value = TextEditingValue(
-      text: value.text.replaceRange(start, end, text),
-      selection: TextSelection.collapsed(offset: start + text.length),
-    );
+  Future<void> _deleteQuietly(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
   }
 
   /// Expands a collapsed paste to edit it; only while it is still a local
