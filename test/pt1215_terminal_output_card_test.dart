@@ -242,6 +242,62 @@ void main() {
     });
   });
 
+  group('an output ending in a newline has no extra blank line', () {
+    // Real commands end their output with '\n' (or '\r\n'); the line it
+    // closes is not one more line to count, fold or show.
+    String lines(int n, String eol) =>
+        [for (var i = 1; i <= n; i++) 'line $i$eol'].join();
+
+    Future<void> pumpRecord(WidgetTester tester, ToolOutputRecord? record) =>
+        tester.pumpWidget(_host(toolOutputCard(record)!));
+
+    String tailText(WidgetTester tester) => _plain(
+      tester,
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('terminal-output-tail')),
+            matching: find.byType(RichText),
+          )
+          .first,
+    );
+
+    for (final eol in ['\n', '\r\n']) {
+      final name = eol == '\n' ? 'LF' : 'CRLF';
+
+      testWidgets('live, folded: $name', (tester) async {
+        await pumpRecord(
+          tester,
+          ToolOutputRecord.fromCompletePayload({
+            'tool_id': 't1',
+            'name': 'terminal',
+            'args': {'command': 'seq'},
+            'result': {'output': lines(10, eol), 'exit_code': 0},
+          }),
+        );
+        expect(tailText(tester), 'line 7\nline 8\nline 9\nline 10');
+        expect(find.text('Show all (10 lines)'), findsOneWidget);
+      });
+
+      testWidgets('durable, exactly the preview: $name', (tester) async {
+        final index = indexDurableToolOutputs([
+          {
+            'role': 'tool',
+            'tool_name': 'terminal',
+            'tool_call_id': 't2',
+            'content': jsonEncode({
+              'output': lines(terminalPreviewLines, eol),
+              'exit_code': 0,
+            }),
+          },
+        ], toolResultsKey: '_activity_tool_results');
+        await pumpRecord(tester, index['t2']);
+        expect(tailText(tester), 'line 1\nline 2\nline 3\nline 4');
+        expect(find.text('Output'), findsOneWidget);
+        expect(find.byIcon(Icons.expand_more), findsNothing);
+      });
+    }
+  });
+
   testWidgets('short output has nothing to unfold', (tester) async {
     await tester.pumpWidget(_host(const TerminalOutputCard(output: 'a\nb')));
     expect(find.text('Output'), findsOneWidget);
