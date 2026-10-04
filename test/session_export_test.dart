@@ -3,6 +3,7 @@
 // message_count, messages}` written to a temporary file, shared once and
 // deleted. The transcript read is capped so a huge chat cannot exhaust the
 // phone.
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -286,6 +287,51 @@ void main() {
         requests.single.path,
         '/p/work/api/sessions/stored-0123456789/messages',
       );
+    });
+
+    test('overlapping exports of one chat never share a path', () async {
+      final firstShareStarted = Completer<File>();
+      final releaseFirst = Completer<void>();
+      final paths = <String>[];
+      final contents = <String>[];
+      var calls = 0;
+      final svc = SessionExportService(
+        readMessages: (id, {profile, maxJsonChars}) async =>
+            _messages(calls == 0 ? 3 : 5),
+        tempDir: () async => temp,
+        shareFile: (file) async {
+          final index = calls++;
+          paths.add(file.path);
+          if (index == 0) {
+            firstShareStarted.complete(file);
+            await releaseFirst.future;
+          }
+          contents.add(file.readAsStringSync());
+        },
+        clock: () => now,
+      );
+
+      final first = svc.export(_session(), title: 'Plan de viaje');
+      await firstShareStarted.future;
+      // The second export starts, shares and cleans up while the first is
+      // still waiting on its share sheet.
+      final second = await svc.export(_session(), title: 'Plan de viaje');
+      expect(second, SessionExportResult.shared);
+      releaseFirst.complete();
+      expect(await first, SessionExportResult.shared);
+
+      expect(paths.toSet(), hasLength(2));
+      expect(
+        paths.map((p) => p.split(Platform.pathSeparator).last).toSet(),
+        {'plan-de-viaje-stored-0.json'},
+        reason: 'the user-facing name is kept',
+      );
+      // Each share still saw its own transcript.
+      final counts = contents
+          .map((c) => (jsonDecode(c) as Map)['message_count'])
+          .toList();
+      expect(counts, [5, 3]);
+      expect(temp.listSync(), isEmpty);
     });
 
     test('the temporary file is deleted after sharing', () async {
