@@ -393,6 +393,25 @@ void main() {
       });
     }
 
+    test(
+      'a decorative phrase after a wait notice clears the stale status',
+      () async {
+        final (gateway, chat) = await live();
+        gateway.emit('reasoning.delta', {'text': 'checking the files'});
+        gateway.emit('thinking.delta', {'text': wait});
+        await Future<void>.delayed(Duration.zero);
+        expect(chat.providerWaitText, wait);
+
+        gateway.emit('thinking.delta', {'text': 'pondering…'});
+        await Future<void>.delayed(Duration.zero);
+
+        expect(chat.providerWaitText, isNull);
+        expect(reasoningOf(chat), contains('checking the files'));
+        expect(reasoningOf(chat), contains('pondering…'));
+        expect(reasoningOf(chat), isNot(contains('waiting on provider')));
+      },
+    );
+
     test('a new notice replaces the previous one', () async {
       final (gateway, chat) = await live();
       gateway.emit('thinking.delta', {'text': wait});
