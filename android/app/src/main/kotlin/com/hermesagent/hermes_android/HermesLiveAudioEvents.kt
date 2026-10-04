@@ -6,6 +6,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import com.cloudwebrtc.webrtc.audio.AudioSwitchManager
 import io.flutter.plugin.common.EventChannel
 
@@ -14,6 +15,10 @@ import io.flutter.plugin.common.EventChannel
 // instead of continuing on an unexpected route. Dart listens only while a
 // live session is open.
 class HermesLiveAudioEvents(context: Context) : EventChannel.StreamHandler {
+    private companion object {
+        const val TAG = "HermesLiveAudio"
+    }
+
     private val audioManager =
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val main = Handler(Looper.getMainLooper())
@@ -29,10 +34,19 @@ class HermesLiveAudioEvents(context: Context) : EventChannel.StreamHandler {
                 checkRoute()
         }
 
-    // flutter_webrtc hands this listener to its AudioSwitch when the first
-    // microphone is opened, so it must be installed before that happens.
+    // flutter_webrtc creates AudioSwitchManager.instance when its plugin
+    // attaches to the engine (FlutterWebRTCPlugin.startListening), which runs
+    // inside super.configureFlutterEngine, and it hands audioFocusChangeListener
+    // to its AudioSwitch only when that is first created (microphone open). The
+    // listener is therefore installed after the instance exists and before it
+    // is read; a missing instance is logged instead of failing silently.
     fun installFocusListener() {
-        AudioSwitchManager.instance?.audioFocusChangeListener =
+        val manager = AudioSwitchManager.instance
+        if (manager == null) {
+            Log.w(TAG, "AudioSwitchManager not ready: audio focus loss will not close live voice")
+            return
+        }
+        manager.audioFocusChangeListener =
             AudioManager.OnAudioFocusChangeListener { change ->
                 if (change == AudioManager.AUDIOFOCUS_LOSS ||
                     change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
