@@ -14,6 +14,7 @@ import 'package:hermes_android/core/screens/server_diagnostics_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/server_restart_signal.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/hermes_pill.dart' show TuiLoader;
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -193,6 +194,22 @@ void main() {
     ) async {
       await pumpAdvanced(tester, ScriptedRest());
       final s = strings(tester);
+      expect(find.text(s.sd1215Diagnostics), findsNothing);
+      expect(find.text(s.sd1215NothingToShow), findsOneWidget);
+    });
+
+    testWidgets('an unreachable dashboard ends the probe without a row', (
+      tester,
+    ) async {
+      final rest = ScriptedRest()
+        ..gets['actions/doctor/status'] = Exception('Dashboard not accessible')
+        ..gets['actions/security-audit/status'] = Exception('unreachable')
+        ..gets['health'] = Exception('unreachable');
+      await pumpAdvanced(tester, rest);
+
+      final s = strings(tester);
+      expect(tester.takeException(), isNull);
+      expect(find.byType(TuiLoader), findsNothing);
       expect(find.text(s.sd1215Diagnostics), findsNothing);
       expect(find.text(s.sd1215NothingToShow), findsOneWidget);
     });
