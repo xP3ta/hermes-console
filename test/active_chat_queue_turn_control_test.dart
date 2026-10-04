@@ -210,6 +210,81 @@ void main() {
     );
   });
 
+  group('a durable prepared head is pinned until its transport settles', () {
+    Future<(ActiveChat, _GatedGateway)> preparedHeadInFlight(String id) async {
+      final gateway = _GatedGateway();
+      final chat = _chat(id, gateway);
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      expect(
+        await chat.send(
+          fullText: 'initial',
+          model: 'hermes-agent',
+          history: [],
+        ),
+        isTrue,
+      );
+      chat.state = ChatPipelineState.idle;
+      gateway.gate = Completer<void>();
+      final store = _KeepingOutbox();
+      expect(
+        await chat.enqueuePreparedTurn(
+          ActiveTurnDelivery(prepared: _prepared('a', 'a'), store: store),
+        ),
+        isTrue,
+      );
+      await _pump();
+      expect(gateway.submissions, ['initial', 'a']);
+      expect(
+        await chat.enqueuePreparedTurn(
+          ActiveTurnDelivery(prepared: _prepared('b', 'b'), store: store),
+        ),
+        isTrue,
+      );
+      return (chat, gateway);
+    }
+
+    test('edit, promote, move and send-now cannot reorder it', () async {
+      final (chat, gateway) = await preparedHeadInFlight('prepared-in-flight');
+      expect(chat.queuedEntries.map((entry) => entry.id), [
+        'prepared:a',
+        'prepared:b',
+      ]);
+      expect(chat.queuedEntries.first.sending, isTrue);
+
+      expect(await chat.editQueuedTurn('prepared:a', 'edited'), isFalse);
+      expect(chat.holdQueuedTurn('prepared:a'), isFalse);
+      expect(chat.promoteQueuedTurn('prepared:b'), isFalse);
+      expect(await chat.moveQueuedTurn('prepared:b', up: true), isFalse);
+      expect(await chat.moveQueuedTurn('prepared:a', up: false), isFalse);
+      expect(await chat.sendQueuedNow('prepared:b'), isFalse);
+
+      expect(chat.queuedEntries.map((entry) => entry.id), [
+        'prepared:a',
+        'prepared:b',
+      ]);
+      expect(gateway.submissions, ['initial', 'a']);
+
+      gateway.gate!.complete();
+      await _pump(60);
+      expect(gateway.submissions, ['initial', 'a']);
+    });
+
+    test(
+      'Stop while it is in flight: the late ACK sends nothing more',
+      () async {
+        final (chat, gateway) = await preparedHeadInFlight('prepared-stop');
+
+        await chat.cancel();
+        gateway.gate!.complete();
+        await _pump(60);
+
+        expect(gateway.submissions, ['initial', 'a']);
+        expect(chat.queueParked, isTrue);
+      },
+    );
+  });
+
   group('moving a queued row swaps persisted orders', () {
     test('text rows swap with their neighbour and keep their ids', () async {
       final (chat, _) = await _idleChatWithQueue('move-text');
