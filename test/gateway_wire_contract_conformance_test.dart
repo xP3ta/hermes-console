@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/terminal_exec.dart';
 import 'package:hermes_android/core/models/agent_task_list.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
@@ -281,6 +282,33 @@ final List<_Consumer> _consumers = [
       return true;
     },
   ),
+  _Consumer(
+    'result',
+    'shell.exec',
+    (c) => c.methodResultSchema('shell.exec'),
+    (s) => ShellExecResult.tryParse(s) != null,
+  ),
+  _Consumer(
+    'result',
+    'process.list',
+    (c) => c.methodResultSchema('process.list'),
+    (s) {
+      final rows = s['processes'];
+      if (rows is! List) return false;
+      for (final row in rows) {
+        AgentProcessSeed.tryParse(row);
+      }
+      return true;
+    },
+    semanticallyEmpty: (s) => (s['processes'] as List?)?.isEmpty ?? true,
+  ),
+  for (final type in const ['agent.terminal.output', 'terminal.close'])
+    _Consumer(
+      'event',
+      type,
+      (c) => c.eventPayloadSchema(type),
+      (s) => parseAgentTerminalEvent(s) != null,
+    ),
   _Consumer(
     'result',
     'session.control.read',
