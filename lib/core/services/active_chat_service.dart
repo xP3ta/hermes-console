@@ -98,6 +98,7 @@ import 'subagent_activity_reducer.dart';
 import 'subagent_live_watch.dart';
 import 'subagent_transcript_projection.dart';
 import 'terminal_transcript_authority.dart';
+import 'prompt_client_surface.dart';
 import 'tui_gateway_client.dart';
 import 'turn_outbox_store.dart';
 
@@ -14333,6 +14334,7 @@ class ActiveChat {
     List<AttachmentDraft> nativeAttachments = const [],
     String? desktopText,
     bool voicePlaybackInterrupted = false,
+    PromptClientSurface? clientSurface,
     bool queued = false,
     int? truncateBeforeUserOrdinal,
     ActiveTurnDelivery? delivery,
@@ -14392,6 +14394,7 @@ class ActiveChat {
           nativeAttachments: nativeAttachments,
           desktopText: desktopText,
           voicePlaybackInterrupted: voicePlaybackInterrupted,
+          clientSurface: clientSurface,
           queued: queued,
           truncateBeforeUserOrdinal: truncateBeforeUserOrdinal,
           delivery: delivery,
@@ -14446,6 +14449,7 @@ class ActiveChat {
       nativeAttachments: nativeAttachments,
       desktopText: desktopText,
       voicePlaybackInterrupted: voicePlaybackInterrupted,
+      clientSurface: clientSurface,
       queued: queued,
       truncateBeforeUserOrdinal: truncateBeforeUserOrdinal,
       delivery: delivery,
@@ -14477,6 +14481,7 @@ class ActiveChat {
     required List<AttachmentDraft> nativeAttachments,
     required String? desktopText,
     required bool voicePlaybackInterrupted,
+    required PromptClientSurface? clientSurface,
     required bool queued,
     required int? truncateBeforeUserOrdinal,
     required ActiveTurnDelivery? delivery,
@@ -14499,6 +14504,7 @@ class ActiveChat {
       nativeAttachments: nativeAttachments,
       desktopText: desktopText,
       voicePlaybackInterrupted: voicePlaybackInterrupted,
+      clientSurface: clientSurface,
       queued: queued,
       truncateBeforeUserOrdinal: truncateBeforeUserOrdinal,
       delivery: delivery,
@@ -14550,6 +14556,7 @@ class ActiveChat {
     List<AttachmentDraft> nativeAttachments = const [],
     String? desktopText,
     bool voicePlaybackInterrupted = false,
+    PromptClientSurface? clientSurface,
     bool queued = false,
     int? truncateBeforeUserOrdinal,
     int? truncateBeforeRowId,
@@ -14778,6 +14785,7 @@ class ActiveChat {
         sessionProfile,
         turnEpoch,
         nativeAttachments: nativeAttachments,
+        clientSurface: clientSurface,
         capturedLifecycle: capturedLifecycle,
         transcriptOperation: transcriptOperation,
       );
@@ -14815,6 +14823,7 @@ class ActiveChat {
       nativeAttachments: nativeAttachments,
       desktopText: desktopText,
       voicePlaybackInterrupted: voicePlaybackInterrupted,
+      clientSurface: clientSurface,
       queued: queued,
       truncateBeforeUserOrdinal: truncateBeforeUserOrdinal,
       truncateBeforeRowId: truncateBeforeRowId,
@@ -18070,6 +18079,7 @@ class ActiveChat {
     List<AttachmentDraft> nativeAttachments = const [],
     String? desktopText,
     bool voicePlaybackInterrupted = false,
+    PromptClientSurface? clientSurface,
     bool queued = false,
     int? truncateBeforeUserOrdinal,
     int? truncateBeforeRowId,
@@ -18100,6 +18110,7 @@ class ActiveChat {
       nativeAttachments: nativeAttachments,
       desktopText: desktopText,
       voicePlaybackInterrupted: voicePlaybackInterrupted,
+      clientSurface: clientSurface,
       queued: queued,
       truncateBeforeUserOrdinal: truncateBeforeUserOrdinal,
       truncateBeforeRowId: truncateBeforeRowId,
@@ -18205,6 +18216,7 @@ class ActiveChat {
     List<AttachmentDraft> nativeAttachments = const [],
     String? desktopText,
     bool voicePlaybackInterrupted = false,
+    PromptClientSurface? clientSurface,
     bool queued = false,
     int? truncateBeforeUserOrdinal,
     int? truncateBeforeRowId,
@@ -18721,21 +18733,52 @@ class ActiveChat {
                 await _canUseTurnIdempotency(gateway)
             ? gateway as HermesDesktopIdempotentGateway
             : null;
+        // Without the capability the turn goes out as before: the metadata
+        // is dropped, the send is never rejected.
+        final surface = clientSurface;
+        final surfaceGateway =
+            surface != null &&
+                gateway is HermesDesktopClientSurfacePromptGateway
+            ? gateway as HermesDesktopClientSurfacePromptGateway
+            : null;
         Future<void> submitPrompt(String targetRuntimeId) async {
           captureRuntimeAttempt(targetRuntimeId);
           if (voicePlaybackInterrupted &&
               gateway is HermesDesktopInterruptedPromptGateway) {
-            await (gateway as HermesDesktopInterruptedPromptGateway)
-                .submitInterruptedPrompt(targetRuntimeId, promptText);
+            if (surfaceGateway != null) {
+              await surfaceGateway.submitInterruptedPromptWithSurface(
+                targetRuntimeId,
+                promptText,
+                surface!,
+              );
+            } else {
+              await (gateway as HermesDesktopInterruptedPromptGateway)
+                  .submitInterruptedPrompt(targetRuntimeId, promptText);
+            }
           } else if (idempotentGateway != null) {
             idempotentSubmission = true;
             final ack = queued && gateway is HermesDesktopQueuedPromptGateway
-                ? await (gateway as HermesDesktopQueuedPromptGateway)
-                      .submitQueuedPromptIdempotent(
-                        targetRuntimeId,
-                        promptText,
-                        delivery!.current.clientTurnId,
-                      )
+                ? surfaceGateway != null
+                      ? await surfaceGateway
+                            .submitQueuedPromptIdempotentWithSurface(
+                              targetRuntimeId,
+                              promptText,
+                              delivery!.current.clientTurnId,
+                              surface!,
+                            )
+                      : await (gateway as HermesDesktopQueuedPromptGateway)
+                            .submitQueuedPromptIdempotent(
+                              targetRuntimeId,
+                              promptText,
+                              delivery!.current.clientTurnId,
+                            )
+                : surfaceGateway != null
+                ? await surfaceGateway.submitPromptIdempotentWithSurface(
+                    targetRuntimeId,
+                    promptText,
+                    delivery!.current.clientTurnId,
+                    surface!,
+                  )
                 : await idempotentGateway.submitPromptIdempotent(
                     targetRuntimeId,
                     promptText,
@@ -18755,8 +18798,22 @@ class ActiveChat {
               await _completeRun();
             }
           } else if (queued && gateway is HermesDesktopQueuedPromptGateway) {
-            await (gateway as HermesDesktopQueuedPromptGateway)
-                .submitQueuedPrompt(targetRuntimeId, promptText);
+            if (surfaceGateway != null) {
+              await surfaceGateway.submitQueuedPromptWithSurface(
+                targetRuntimeId,
+                promptText,
+                surface!,
+              );
+            } else {
+              await (gateway as HermesDesktopQueuedPromptGateway)
+                  .submitQueuedPrompt(targetRuntimeId, promptText);
+            }
+          } else if (surfaceGateway != null) {
+            await surfaceGateway.submitPromptWithSurface(
+              targetRuntimeId,
+              promptText,
+              surface!,
+            );
           } else {
             await gateway.submitPrompt(targetRuntimeId, promptText);
           }
@@ -23273,6 +23330,7 @@ class ActiveChat {
     String profile,
     int turnEpoch, {
     List<AttachmentDraft> nativeAttachments = const [],
+    PromptClientSurface? clientSurface,
     required LocalConversationLifecycle? capturedLifecycle,
     LocalConversationOperation? transcriptOperation,
   }) async {
@@ -23321,6 +23379,7 @@ class ActiveChat {
         sessionConfig: _turnSessionConfig,
         profile: profile,
         nativeAttachments: nativeAttachments,
+        clientSurface: clientSurface,
       );
     }
   }

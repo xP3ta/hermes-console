@@ -13,6 +13,8 @@ import 'instance_edit_screen.dart';
 import '../services/connection_manager.dart';
 import '../services/voice/conversation/native_voice.dart';
 import '../services/voice/hermes_speech_stream.dart';
+import '../services/voice/live/voice_live_api.dart';
+import '../services/voice/live/voice_live_protocol.dart';
 import '../services/voice/tts_engine.dart';
 import '../services/voice/model_download.dart';
 import '../services/voice/server_voice_config.dart';
@@ -180,6 +182,13 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
   bool _serverVoiceConfigFailed = false;
   Object? _serverVoiceConfigError;
   bool _serverVoiceDetailsExpanded = false;
+
+  // GPT-Live (experimental): a single status read when the screen opens, no
+  // polling. `null` = server without the feature (404/405) or an error.
+  bool _gptLiveStatusRequested = false;
+  bool _gptLiveStatusLoaded = false;
+  VoiceLiveStatus? _gptLiveStatus;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -219,6 +228,35 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
     });
     _loaded = true;
     unawaited(_loadNativeVoiceChoice());
+  }
+
+  /// Reuses the screen's own Dashboard client: one extra GET, no second login.
+  Future<void> _loadGptLiveStatus(
+    DashboardClient dashboard,
+    String? profile,
+  ) async {
+    if (_gptLiveStatusRequested) return;
+    _gptLiveStatusRequested = true;
+    final status = await DashboardVoiceLiveApi(
+      dashboard,
+    ).fetchStatus(profile: profile ?? '');
+    if (!mounted) return;
+    setState(() {
+      _gptLiveStatus = status;
+      _gptLiveStatusLoaded = true;
+    });
+  }
+
+  String _gptLiveSubtitle(Strings s) {
+    if (!_s.gptLiveEnabled) return s.voiceGptLiveDescription;
+    if (!_gptLiveStatusLoaded) return s.voiceGptLiveChecking;
+    final status = _gptLiveStatus;
+    if (status == null) return s.voiceGptLiveUnavailableNoReason;
+    if (status.available) return s.voiceGptLiveAvailable;
+    final reason = status.reason?.trim() ?? '';
+    return reason.isEmpty
+        ? s.voiceGptLiveUnavailableNoReason
+        : s.voiceGptLiveUnavailable(reason);
   }
 
   Future<void> _loadNativeVoiceChoice() async {
@@ -310,6 +348,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
         _nativeVoiceLoading =
             capability == null || !capabilityStore.isFresh(capability);
       });
+      unawaited(_loadGptLiveStatus(dashboard, effectiveProfile));
     }
     if (storedMode == NativeVoiceMode.server &&
         storedConsent == NativeVoiceConsent.accepted) {
@@ -2436,6 +2475,19 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
               ? null
               : (value) => _update(_s.copyWith(bargeInEnabled: value)),
         ),
+        // Without the feature on the server there is no row (unless it was
+        // already on: then it must be possible to turn it off).
+        if (_s.gptLiveEnabled || _gptLiveStatus != null)
+          HermesSwitchTile(
+            controlKey: const ValueKey('voice_gpt_live_enabled'),
+            contentPadding: EdgeInsets.zero,
+            title: s.voiceGptLiveTitle,
+            subtitle: _gptLiveSubtitle(s),
+            value: _s.gptLiveEnabled,
+            onChanged: _voice == null
+                ? null
+                : (value) => _update(_s.copyWith(gptLiveEnabled: value)),
+          ),
       ],
     );
   }

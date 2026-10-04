@@ -3297,6 +3297,33 @@
       "version": "1.4.5"
     },
     {
+      "bom-ref": "pkg:maven/com.github.davidliu/audioswitch@039a35aefab7747c557242fa216c9ea11743b604",
+      "group": "com.github.davidliu",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "name": "audioswitch",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://github.com/davidliu/audioswitch/blob/dl/jitpack/LICENSE.txt"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/com.github.davidliu/audioswitch@039a35aefab7747c557242fa216c9ea11743b604",
+      "type": "library",
+      "version": "039a35aefab7747c557242fa216c9ea11743b604"
+    },
+    {
       "bom-ref": "pkg:maven/com.google.code.findbugs/jsr305@3.0.2",
       "group": "com.google.code.findbugs",
       "licenses": [
@@ -3727,6 +3754,33 @@
       "purl": "pkg:maven/io.flutter/x86_64_release@1.0.0-5d531788691ec3404cac0cee66ead4007b177363",
       "type": "library",
       "version": "1.0.0-5d531788691ec3404cac0cee66ead4007b177363"
+    },
+    {
+      "bom-ref": "pkg:maven/io.github.webrtc-sdk/android@150.7871.01",
+      "group": "io.github.webrtc-sdk",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "name": "android",
+      "properties": [
+        {
+          "name": "hermes.gradle.configuration",
+          "value": "playReleaseRuntimeClasspath"
+        },
+        {
+          "name": "hermes.license.evidence",
+          "value": "https://github.com/webrtc-sdk/webrtc/blob/m137_release/LICENSE"
+        },
+        {
+          "name": "hermes.license.evidenceKind",
+          "value": "curated-catalog"
+        }
+      ],
+      "purl": "pkg:maven/io.github.webrtc-sdk/android@150.7871.01",
+      "type": "library",
+      "version": "150.7871.01"
     },
     {
       "bom-ref": "pkg:maven/org.apache.commons/commons-imaging@1.0-alpha3",
@@ -5071,6 +5125,32 @@
       "version": "3.1.9"
     },
     {
+      "bom-ref": "pkg:pub/dart_webrtc@1.8.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "name": "dart_webrtc",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/dart_webrtc@1.8.2",
+      "type": "library",
+      "version": "1.8.2"
+    },
+    {
       "bom-ref": "pkg:pub/dartssh2@2.18.0",
       "licenses": [
         {
@@ -5953,6 +6033,32 @@
       "purl": "pkg:pub/flutter_web_plugins@0.0.0",
       "type": "library",
       "version": "0.0.0"
+    },
+    {
+      "bom-ref": "pkg:pub/flutter_webrtc@1.6.2+hotfix.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "name": "flutter_webrtc",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "direct"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/flutter_webrtc@1.6.2+hotfix.3",
+      "type": "library",
+      "version": "1.6.2+hotfix.3"
     },
     {
       "bom-ref": "pkg:pub/freezed_annotation@3.1.0",
@@ -6915,6 +7021,32 @@
       "purl": "pkg:pub/local_auth_windows@1.0.11",
       "type": "library",
       "version": "1.0.11"
+    },
+    {
+      "bom-ref": "pkg:pub/logger@2.8.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "name": "logger",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/logger@2.8.0",
+      "type": "library",
+      "version": "2.8.0"
     },
     {
       "bom-ref": "pkg:pub/logging@1.3.0",
@@ -9621,6 +9753,32 @@
       "version": "3.0.3"
     },
     {
+      "bom-ref": "pkg:pub/webrtc_interface@1.5.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "name": "webrtc_interface",
+      "properties": [
+        {
+          "name": "hermes.dependency.kind",
+          "value": "transitive"
+        },
+        {
+          "name": "hermes.dependency.source",
+          "value": "hosted"
+        },
+        {
+          "name": "hermes.license.files",
+          "value": "LICENSE"
+        }
+      ],
+      "purl": "pkg:pub/webrtc_interface@1.5.1",
+      "type": "library",
+      "version": "1.5.1"
+    },
+    {
       "bom-ref": "pkg:pub/webview_flutter@4.14.1",
       "licenses": [
         {
@@ -10214,6 +10372,17 @@
     },
     {
       "dependsOn": [
+        "pkg:pub/collection@1.19.1",
+        "pkg:pub/logging@1.3.0",
+        "pkg:pub/meta@1.19.0",
+        "pkg:pub/synchronized@3.4.1",
+        "pkg:pub/web@1.1.1",
+        "pkg:pub/webrtc_interface@1.5.1"
+      ],
+      "ref": "pkg:pub/dart_webrtc@1.8.2"
+    },
+    {
+      "dependsOn": [
         "pkg:pub/asn1lib@1.6.5",
         "pkg:pub/convert@3.1.2",
         "pkg:pub/meta@1.19.0",
@@ -10501,6 +10670,18 @@
     {
       "dependsOn": [
         "pkg:pub/collection@1.19.1",
+        "pkg:pub/dart_webrtc@1.8.2",
+        "pkg:pub/flutter@0.0.0",
+        "pkg:pub/logger@2.8.0",
+        "pkg:pub/path_provider@2.1.5",
+        "pkg:pub/web@1.1.1",
+        "pkg:pub/webrtc_interface@1.5.1"
+      ],
+      "ref": "pkg:pub/flutter_webrtc@1.6.2+hotfix.3"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/collection@1.19.1",
         "pkg:pub/json_annotation@4.12.0",
         "pkg:pub/meta@1.19.0"
       ],
@@ -10567,6 +10748,7 @@
         "pkg:pub/flutter_staggered_animations@1.1.1",
         "pkg:pub/flutter_test@0.0.0",
         "pkg:pub/flutter_tts@4.2.5",
+        "pkg:pub/flutter_webrtc@1.6.2+hotfix.3",
         "pkg:pub/gal@2.3.2",
         "pkg:pub/go_router@14.8.1",
         "pkg:pub/highlight@0.7.0",
@@ -10866,6 +11048,13 @@
         "pkg:pub/local_auth_platform_interface@1.1.0"
       ],
       "ref": "pkg:pub/local_auth_windows@1.0.11"
+    },
+    {
+      "dependsOn": [
+        "pkg:pub/clock@1.1.2",
+        "pkg:pub/meta@1.19.0"
+      ],
+      "ref": "pkg:pub/logger@2.8.0"
     },
     {
       "dependsOn": [],
@@ -11702,6 +11891,10 @@
       "ref": "pkg:pub/web_socket_channel@3.0.3"
     },
     {
+      "dependsOn": [],
+      "ref": "pkg:pub/webrtc_interface@1.5.1"
+    },
+    {
       "dependsOn": [
         "pkg:pub/flutter@0.0.0",
         "pkg:pub/webview_flutter_android@4.14.1",
@@ -11826,7 +12019,7 @@
     "properties": [
       {
         "name": "hermes.input.sha256",
-        "value": "b5182df5f24d74f21d03499c70fa9275d0ada3be23be87288f36211b99669871"
+        "value": "a3bb6279411c6e3f6f67aee506f0a268f1b2448b324a96e1e9a6db5950e12adb"
       },
       {
         "name": "hermes.android.variant",
@@ -11838,7 +12031,7 @@
       }
     ]
   },
-  "serialNumber": "urn:uuid:c4c1382e-a06f-45f0-a3c8-46b4d17facf9",
+  "serialNumber": "urn:uuid:95815495-3a29-4a1a-ac49-0f3214e1e7a7",
   "specVersion": "1.6",
   "version": 1
 }
