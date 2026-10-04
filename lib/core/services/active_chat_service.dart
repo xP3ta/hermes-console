@@ -24212,27 +24212,24 @@ class ActiveChat {
     final storedMoved = movedDelivery?.current.queueOrder;
     final storedNeighbour = neighbourDelivery?.current.queueOrder;
     try {
-      if (movedDelivery != null &&
-          !await movedDelivery.updateQueueOrder(neighbour.queueOrder)) {
-        return false;
-      }
-      if (neighbourDelivery != null &&
-          !await neighbourDelivery.updateQueueOrder(moved.queueOrder)) {
-        if (movedDelivery != null && storedMoved != null) {
-          await movedDelivery.updateQueueOrder(storedMoved);
-        }
+      if (!await _persistOrders(
+        movedDelivery,
+        neighbour.queueOrder,
+        neighbourDelivery,
+        moved.queueOrder,
+      )) {
         return false;
       }
       // The drain may have taken a head while the stores were written.
       if (_disposed ||
           _queueDrainInFlightId != null ||
           !_swapQueueOrders(moved, neighbour)) {
-        if (movedDelivery != null && storedMoved != null) {
-          await movedDelivery.updateQueueOrder(storedMoved);
-        }
-        if (neighbourDelivery != null && storedNeighbour != null) {
-          await neighbourDelivery.updateQueueOrder(storedNeighbour);
-        }
+        await _persistOrders(
+          movedDelivery,
+          storedMoved,
+          neighbourDelivery,
+          storedNeighbour,
+        );
         return false;
       }
       _emit(ActiveChatEvent.queueChanged);
@@ -24240,6 +24237,44 @@ class ActiveChat {
     } finally {
       _queueMoveInFlight = false;
     }
+  }
+
+  /// Stores [first] at [firstOrder] and [second] at [secondOrder] (either may
+  /// be null for a text row, which has nothing stored). Two stored rows trade
+  /// places through a spare order nobody holds, so no crash between the writes
+  /// leaves two rows with the same order: after a restart the queue is always a
+  /// total order. A failed write rolls the earlier ones back the same way.
+  Future<bool> _persistOrders(
+    ActiveTurnDelivery? first,
+    int? firstOrder,
+    ActiveTurnDelivery? second,
+    int? secondOrder,
+  ) async {
+    if (first != null && second != null) {
+      final firstStored = first.current.queueOrder;
+      final secondStored = second.current.queueOrder;
+      if (firstOrder == null ||
+          secondOrder == null ||
+          firstStored == null ||
+          secondStored == null) {
+        return false;
+      }
+      if (!await first.updateQueueOrder(_nextQueueOrder++)) return false;
+      if (!await second.updateQueueOrder(secondOrder)) {
+        await first.updateQueueOrder(firstStored);
+        return false;
+      }
+      if (!await first.updateQueueOrder(firstOrder)) {
+        await second.updateQueueOrder(secondStored);
+        await first.updateQueueOrder(firstStored);
+        return false;
+      }
+      return true;
+    }
+    final single = first ?? second;
+    final order = first != null ? firstOrder : secondOrder;
+    if (single == null) return true;
+    return order != null && await single.updateQueueOrder(order);
   }
 
   ActiveTurnDelivery? _preparedDeliveryFor(String id) {

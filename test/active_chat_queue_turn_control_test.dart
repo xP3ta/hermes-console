@@ -373,6 +373,88 @@ void main() {
       );
     });
 
+    for (final failing in [1, 2, 3]) {
+      test('write $failing of the swap fails: both durable orders return '
+          'exactly', () async {
+        final gateway = _GatedGateway();
+        final chat = _chat('move-write-$failing', gateway);
+        addTearDown(chat.dispose);
+        addTearDown(gateway.close);
+        await chat.send(
+          fullText: 'initial',
+          model: 'hermes-agent',
+          history: [],
+        );
+        final store = _FlakyOutbox();
+        for (final id in ['a', 'b']) {
+          await chat.enqueuePreparedTurn(
+            ActiveTurnDelivery(prepared: _prepared(id, id), store: store),
+          );
+        }
+        final before = {
+          for (final entry in store.latest.entries)
+            entry.key: entry.value.queueOrder,
+        };
+        store.failOnly(failing);
+
+        expect(await chat.moveQueuedTurn('prepared:b', up: true), isFalse);
+
+        expect({
+          for (final entry in store.latest.entries)
+            entry.key: entry.value.queueOrder,
+        }, before);
+        expect(chat.queuedEntries.map((entry) => entry.text), ['a', 'b']);
+      });
+    }
+
+    for (final crashAt in [1, 2, 3]) {
+      test(
+        'a crash before write $crashAt never leaves a duplicate order',
+        () async {
+          final gateway = _GatedGateway();
+          final chat = _chat('move-crash-$crashAt', gateway);
+          addTearDown(chat.dispose);
+          addTearDown(gateway.close);
+          await chat.send(
+            fullText: 'initial',
+            model: 'hermes-agent',
+            history: [],
+          );
+          final store = _FlakyOutbox();
+          for (final id in ['a', 'b']) {
+            await chat.enqueuePreparedTurn(
+              ActiveTurnDelivery(prepared: _prepared(id, id), store: store),
+            );
+          }
+          store.failFrom(crashAt);
+
+          await chat.moveQueuedTurn('prepared:b', up: true);
+
+          final orders = store.latest.values
+              .map((turn) => turn.queueOrder)
+              .toList();
+          expect(orders.toSet(), hasLength(2));
+          final reopened = _chat('move-crash-$crashAt', _GatedGateway());
+          addTearDown(reopened.dispose);
+          await reopened.restoreQueuedTurns(
+            store.latest.values.map(
+              (turn) => PreparedTurn.fromJson(turn.toJson()),
+            ),
+            store,
+            scheduleDrain: false,
+          );
+          final restored = reopened.queuedEntries
+              .map((entry) => entry.queueOrder)
+              .toList();
+          expect(restored.toSet(), hasLength(2));
+          expect(reopened.queuedEntries.map((entry) => entry.text).toSet(), {
+            'a',
+            'b',
+          });
+        },
+      );
+    }
+
     test('the head in flight cannot move and cannot be overtaken', () async {
       final (chat, gateway) = await _idleChatWithQueue('move-in-flight');
       final ids = chat.queuedEntries.map((entry) => entry.id).toList();
@@ -466,4 +548,31 @@ class _FailingOutbox implements TurnOutboxPersistence {
 
   @override
   Future<void> delete(PreparedTurn turn) async {}
+}
+
+/// Keeps what it saved and throws on chosen save numbers (counted from when
+/// the test arms it), like a disk that dies part way through a swap.
+class _FlakyOutbox extends _KeepingOutbox {
+  int _saves = 0;
+  int? _only;
+  int? _from;
+
+  void failOnly(int n) {
+    _saves = 0;
+    _only = n;
+  }
+
+  void failFrom(int n) {
+    _saves = 0;
+    _from = n;
+  }
+
+  @override
+  Future<void> save(PreparedTurn turn) async {
+    _saves++;
+    if (_saves == _only || (_from != null && _saves >= _from!)) {
+      throw StateError('disk full');
+    }
+    await super.save(turn);
+  }
 }
