@@ -6438,13 +6438,22 @@ class TuiGatewayClient
       _capabilityCache.state(DesktopGatewayCapability.messageReactions) ==
           DesktopGatewayCapabilityState.supported;
 
+  Future<bool>? _reactionProbe;
+
+  /// One probe per connection: chats that ask while it is in flight share its
+  /// answer instead of sending the same request again.
   @override
-  Future<bool> confirmMessageReactions(String runtimeSessionId) async {
-    if (_connection.readOnly) return false;
+  Future<bool> confirmMessageReactions(String runtimeSessionId) {
+    if (_connection.readOnly) return Future.value(false);
     if (_capabilityCache.state(DesktopGatewayCapability.messageReactions) !=
         DesktopGatewayCapabilityState.unknown) {
-      return messageReactionsAvailable;
+      return Future.value(messageReactionsAvailable);
     }
+    return _reactionProbe ??= _probeMessageReactions(runtimeSessionId)
+        .whenComplete(() => _reactionProbe = null);
+  }
+
+  Future<bool> _probeMessageReactions(String runtimeSessionId) async {
     try {
       await _request('message.react', {
         'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),

@@ -193,6 +193,20 @@ void main() {
       },
     );
 
+    test('concurrent probes share one request and one answer', () async {
+      final h = _client((_) => -32602);
+      final answers = await Future.wait([
+        h.client.confirmMessageReactions('rt-1'),
+        h.client.confirmMessageReactions('rt-2'),
+        h.client.confirmMessageReactions('rt-3'),
+      ]);
+      expect(answers, [true, true, true]);
+      expect(
+        h.requests.where((f) => f['method'] == 'message.react'),
+        hasLength(1),
+      );
+    });
+
     test(
       '-32601 on the probe keeps it hidden and is not asked again',
       () async {
