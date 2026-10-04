@@ -7,26 +7,20 @@ import '../design/hermes_design.dart'
 import '../theme/app_theme.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
-import '../widgets/profile_scope.dart';
 import 'bridge_editor_mixin.dart';
 import '../widgets/hermes_app_bar.dart';
 
 /// Editor/visor genérico de un archivo real del servidor vía Mobile Bridge.
 ///
-/// Sirve para destinos que no tienen pantalla propia: `cron` (editable, JSON
-/// validado en el servidor) y `config` (solo lectura con secretos enmascarados).
+/// Sirve para destinos que no tienen pantalla propia: `cron` (JSON validado en
+/// el servidor; solo lectura en instancias de solo lectura).
 /// Carga el contenido real al abrir; «aplicar» guarda con backup+diff+App Lock.
 class BridgeFileEditorScreen extends StatefulWidget {
   final String connectionId;
-  final String target; // 'cron', 'config', …
+  final String target; // 'cron', …
   final String titleLabel; // p.ej. 'jobs.json'
-  final bool readOnly; // config: solo lectura
+  final bool readOnly;
   final String lockReason;
-
-  /// Profile whose file this is (empty = default), shown under the title.
-  /// The Bridge reads the files of its own home, the default profile, so
-  /// `config.yaml` passes ''. Null shows no profile line.
-  final String? scopeProfile;
 
   const BridgeFileEditorScreen({
     required this.connectionId,
@@ -34,7 +28,6 @@ class BridgeFileEditorScreen extends StatefulWidget {
     required this.titleLabel,
     this.readOnly = false,
     this.lockReason = '',
-    this.scopeProfile,
     super.key,
   });
 
@@ -71,7 +64,7 @@ class _BridgeFileEditorScreenState extends State<BridgeFileEditorScreen>
 
   bool get _editable => !widget.readOnly && bridgeCanWrite;
 
-  /// Read-only files (config.yaml) are text to read, not a form: ONE page
+  /// Read-only files are text to read, not a form: ONE page
   /// scroll with the content as selectable mono text (spec 080 step 8).
   Widget _buildReadOnly(BuildContext context) {
     final colors = Theme.of(context).hermes;
@@ -82,17 +75,11 @@ class _BridgeFileEditorScreenState extends State<BridgeFileEditorScreen>
     return Scaffold(
       appBar: HermesAppBar(
         centerTitle: false,
-        title: widget.scopeProfile == null
-            ? Text(
-                widget.titleLabel,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              )
-            : ProfileScopedTitle(
-                title: widget.titleLabel,
-                profile: widget.scopeProfile!,
-                connectionId: widget.connectionId,
-              ),
+        title: Text(
+          widget.titleLabel,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           if (bridgeCanRead) ...[
             IconButton(
