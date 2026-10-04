@@ -561,6 +561,14 @@ void main() {
         async.flushMicrotasks();
         expect(rig.controller.active, isFalse);
         expect(rig.transportsCreated, 1);
+        // Entering again opens exactly one fresh session.
+        unawaited(rig.controller.enter(chat: rig.chat, model: 'hermes-agent'));
+        async.flushMicrotasks();
+        expect(rig.controller.active, isTrue);
+        expect(rig.transportsCreated, 2);
+        expect(rig.api.createCalls, hasLength(2));
+        // One answer per session: the first, then the fresh one.
+        expect(rig.log.where((e) => e == 'setRemoteAnswer'), hasLength(2));
       });
     });
 
@@ -582,6 +590,17 @@ void main() {
         rig.api.createError = null;
         rig.transport.channelOpen = true;
         expect(rig.transportsCreated, 1);
+        rig.controller.retry();
+        async.flushMicrotasks();
+        expect(rig.transportsCreated, 2);
+        expect(rig.api.createCalls, hasLength(2));
+        expect(rig.log.where((e) => e == 'setRemoteAnswer'), hasLength(1));
+        expect(rig.controller.note, isNull);
+        // A second retry while the session is live opens nothing.
+        rig.controller.retry();
+        async.flushMicrotasks();
+        expect(rig.transportsCreated, 2);
+        expect(rig.api.createCalls, hasLength(2));
       });
     });
 
