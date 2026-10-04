@@ -4743,7 +4743,24 @@ class TuiGatewayClient
   Future<DesktopSessionSnapshot> resumeWatchSession(
     String childSessionId, {
     required String profile,
-  }) => resumeExisting(childSessionId, profile: profile);
+  }) async {
+    // A watch must not become the socket's legacy event runtime nor replace
+    // the chat's watchdog anchor: it is read-only and owned by the page.
+    final result = await _requestExclusiveSessionMutation('session.resume', {
+      'session_id': childSessionId,
+      'source': 'desktop',
+      'cols': 96,
+      'lazy': true,
+      if (profile.trim().isNotEmpty) 'profile': profile.trim(),
+    }, preserveCapabilityFailure: true);
+    return _parseSessionSnapshot(
+      result,
+      requestedStoredSessionId: childSessionId,
+      created: false,
+      method: 'session.resume',
+      rememberLegacyRuntime: false,
+    );
+  }
 
   @override
   Future<DesktopSessionSnapshot> resumeExistingForRecovery(
