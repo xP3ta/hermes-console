@@ -130,7 +130,7 @@ final class SessionExportService {
     }
     if (isCancelled?.call() ?? false) return SessionExportResult.cancelled;
 
-    File? file;
+    Directory? workDir;
     try {
       final payload = <String, Object?>{
         'exported_at': _clock().toUtc().toIso8601String(),
@@ -140,9 +140,12 @@ final class SessionExportService {
         'message_count': messages.length,
         'messages': messages,
       };
+      // One directory per invocation keeps the user-facing file name while
+      // two overlapping exports of the same chat never share a path.
       final directory = await _tempDir();
-      file = File(
-        '${directory.path}/${sessionExportFileName(title, session.id)}',
+      workDir = await directory.createTemp('hermes-export-');
+      final file = File(
+        '${workDir.path}/${sessionExportFileName(title, session.id)}',
       );
       await file.writeAsString(
         const JsonEncoder.withIndent('  ').convert(payload),
@@ -154,7 +157,9 @@ final class SessionExportService {
       return SessionExportResult.failed;
     } finally {
       try {
-        if (file != null && file.existsSync()) await file.delete();
+        if (workDir != null && workDir.existsSync()) {
+          await workDir.delete(recursive: true);
+        }
       } catch (_) {
         // A temp file the OS will clear anyway.
       }
