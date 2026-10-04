@@ -383,7 +383,12 @@ class NotificationService
   /// respuesta, fin de ejecución) es de ESTE chat y la app está delante, la UI
   /// inline ya lo muestra → NO duplicamos con una notificación del sistema.
   /// Null = no hay ningún chat en pantalla (home, ajustes, otra pestaña…).
-  String? visibleSessionId;
+  String? get visibleSessionId => visibleSession.value;
+  set visibleSessionId(String? value) => visibleSession.value = value;
+
+  /// Observable form of [visibleSessionId]; GPT-Live ends its session when the
+  /// chat that owns it stops being the visible one.
+  final ValueNotifier<String?> visibleSession = ValueNotifier<String?>(null);
 
   /// Sesión cuya respuesta ya está cubierta por la tarjeta de conversación de
   /// voz. Solo la fija el harness QA mientras esa superficie está activa.
