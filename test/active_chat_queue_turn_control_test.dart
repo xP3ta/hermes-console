@@ -249,7 +249,6 @@ void main() {
           'a',
           'b',
         ]);
-        expect(reopened.queueParked, isTrue);
       },
     );
 

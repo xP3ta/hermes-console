@@ -2896,6 +2896,33 @@ class ActiveTurnDelivery {
     return true;
   }
 
+  /// Stores a new durable queue position for a turn that has not started its
+  /// transport. Used by the panel's move actions, which swap two existing
+  /// orders; a negative order (only ever held in memory after a promote) can
+  /// not be stored and is refused.
+  Future<bool> updateQueueOrder(int queueOrder) => _serializeMutation(() async {
+    if (_discarded ||
+        _transportStarted ||
+        _acknowledged ||
+        queueOrder < 0 ||
+        _current.queueOrder == null) {
+      return false;
+    }
+    if (_current.queueOrder == queueOrder) return true;
+    final next = _current.copyWith(
+      updatedAtMs: _nowMs(),
+      queueOrder: queueOrder,
+    );
+    try {
+      await _store.save(next);
+      _current = next;
+      return true;
+    } catch (_) {
+      _persistenceFailed = true;
+      return false;
+    }
+  });
+
   Future<bool> persistPrepared() => _serializeMutation(() async {
     if (_discarded || _transportStarted || _acknowledged) return false;
     try {
@@ -23824,6 +23851,141 @@ class ActiveChat {
       ..add(promoted)
       ..addAll(items.where((item) => !identical(item, target)));
     _emit(ActiveChatEvent.queueChanged);
+    return true;
+  }
+
+  bool _queueMoveInFlight = false;
+
+  /// Swaps the queue position of [id] with the row above ([up]) or below it.
+  /// The two existing `queueOrder` values trade places (no new order is
+  /// minted) and prepared rows store theirs, so the order survives a restart.
+  /// Refused for the head the drain has taken and for any row whose transport
+  /// already started; nothing is changed when a store write fails.
+  Future<bool> moveQueuedTurn(String id, {required bool up}) async {
+    if (mutationsBlockedByOwnershipConflict ||
+        _disposed ||
+        _queueMoveInFlight ||
+        _queueDrainInFlightId != null) {
+      return false;
+    }
+    final entries = queuedEntries
+        .where((entry) => entry.kind != QueuedEntryKind.desktopAccepted)
+        .toList(growable: false);
+    final index = entries.indexWhere((entry) => entry.id == id);
+    final other = up ? index - 1 : index + 1;
+    if (index < 0 || other < 0 || other >= entries.length) return false;
+    final moved = entries[index];
+    final neighbour = entries[other];
+    final movedDelivery = _preparedDeliveryFor(moved.id);
+    final neighbourDelivery = _preparedDeliveryFor(neighbour.id);
+    if (!_isMovableQueueEntry(moved, movedDelivery) ||
+        !_isMovableQueueEntry(neighbour, neighbourDelivery)) {
+      return false;
+    }
+    _queueMoveInFlight = true;
+    final storedMoved = movedDelivery?.current.queueOrder;
+    final storedNeighbour = neighbourDelivery?.current.queueOrder;
+    try {
+      if (movedDelivery != null &&
+          !await movedDelivery.updateQueueOrder(neighbour.queueOrder)) {
+        return false;
+      }
+      if (neighbourDelivery != null &&
+          !await neighbourDelivery.updateQueueOrder(moved.queueOrder)) {
+        if (movedDelivery != null && storedMoved != null) {
+          await movedDelivery.updateQueueOrder(storedMoved);
+        }
+        return false;
+      }
+      // The drain may have taken a head while the stores were written.
+      if (_disposed ||
+          _queueDrainInFlightId != null ||
+          !_swapQueueOrders(moved, neighbour)) {
+        if (movedDelivery != null && storedMoved != null) {
+          await movedDelivery.updateQueueOrder(storedMoved);
+        }
+        if (neighbourDelivery != null && storedNeighbour != null) {
+          await neighbourDelivery.updateQueueOrder(storedNeighbour);
+        }
+        return false;
+      }
+      _emit(ActiveChatEvent.queueChanged);
+      return true;
+    } finally {
+      _queueMoveInFlight = false;
+    }
+  }
+
+  ActiveTurnDelivery? _preparedDeliveryFor(String id) {
+    if (!id.startsWith('prepared:')) return null;
+    final clientTurnId = id.substring('prepared:'.length);
+    for (final item in _preparedTurnQueue) {
+      if (item.turn.clientTurnId == clientTurnId) return item.delivery;
+    }
+    return null;
+  }
+
+  bool _isMovableQueueEntry(
+    QueuedEntryView entry,
+    ActiveTurnDelivery? delivery,
+  ) {
+    if (entry.kind == QueuedEntryKind.text) return true;
+    if (delivery == null) return false;
+    final clientTurnId = delivery.current.clientTurnId;
+    return !delivery.transportStarted &&
+        !delivery.acknowledged &&
+        !delivery.discarded &&
+        _preparedTurnOwners[clientTurnId]?.state ==
+            _PreparedTurnOwnershipState.queued &&
+        !_preparedTurnCancellationsInFlight.contains(clientTurnId);
+  }
+
+  /// Trades the two orders in memory. Returns false, changing nothing, when
+  /// either row left the queue while the stores were written.
+  bool _swapQueueOrders(QueuedEntryView first, QueuedEntryView second) {
+    bool present(QueuedEntryView entry) => entry.kind == QueuedEntryKind.text
+        ? _messageQueue.any((item) => item.id == entry.id)
+        : _preparedTurnQueue.any(
+            (item) => 'prepared:${item.turn.clientTurnId}' == entry.id,
+          );
+    if (!present(first) || !present(second)) return false;
+    final newOrders = {
+      first.id: second.queueOrder,
+      second.id: first.queueOrder,
+    };
+    final texts =
+        _messageQueue
+            .map(
+              (item) => newOrders.containsKey(item.id)
+                  ? _QueuedTextTurn(
+                      item.text,
+                      newOrders[item.id]!,
+                      id: item.id,
+                      allowTransportFallback: item.allowTransportFallback,
+                    )
+                  : item,
+            )
+            .toList()
+          ..sort((left, right) => left.queueOrder.compareTo(right.queueOrder));
+    final prepared =
+        _preparedTurnQueue.map((item) {
+            final order = newOrders['prepared:${item.turn.clientTurnId}'];
+            if (order == null) return item;
+            final owner = _preparedTurnOwners[item.turn.clientTurnId];
+            if (owner != null) owner.queueOrder = order;
+            return QueuedPreparedTurn(
+              item.delivery,
+              queueOrder: order,
+              allowTransportFallback: item.allowTransportFallback,
+            );
+          }).toList()
+          ..sort((left, right) => left.queueOrder.compareTo(right.queueOrder));
+    _messageQueue
+      ..clear()
+      ..addAll(texts);
+    _preparedTurnQueue
+      ..clear()
+      ..addAll(prepared);
     return true;
   }
 
