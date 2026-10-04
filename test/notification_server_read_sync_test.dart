@@ -1,5 +1,7 @@
 // A chat read on another device (Desktop) clears this phone's reply
 // notification the next time the app reads the session list; nothing else.
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -178,10 +180,138 @@ void main() {
       await sync.clearSession(connId: 'c1', profile: '', sessionId: 's1');
       expect(cancels.ids, [6100]);
     });
+
+    test('a cancel that fails keeps the entry for the next read', () async {
+      var fail = true;
+      final tried = <int>[];
+      final flaky = ChatNotificationReadSync(
+        prefs,
+        cancel: (id, tag) async {
+          tried.add(id);
+          if (fail) throw StateError('plugin down');
+        },
+      );
+      SessionArchive.listReadObserver = flaky;
+      flaky.record(id: 6100, connId: 'c1', profile: 'default', sessionId: 's1');
+      final archive = await SessionArchive.load(prefs, 'c1');
+      archive.beginListRead().end(rows: [_row('s1')]);
+      await settle();
+      expect(tried, [6100]);
+      // Still in the tray: the next read tries again, and then it is gone.
+      fail = false;
+      archive.beginListRead().end(rows: [_row('s1')]);
+      await settle();
+      expect(tried, [6100, 6100]);
+      archive.beginListRead().end(rows: [_row('s1')]);
+      await settle();
+      expect(tried, [6100, 6100]);
+    });
+
+    test('a repost recorded while the cancel is pending is kept', () async {
+      final gate = <Completer<void>>[];
+      final gated = ChatNotificationReadSync(
+        prefs,
+        cancel: (id, tag) {
+          cancels.calls.add((id, tag));
+          final done = Completer<void>();
+          gate.add(done);
+          return done.future;
+        },
+      );
+      SessionArchive.listReadObserver = gated;
+      gated.record(id: 6100, connId: 'c1', profile: 'default', sessionId: 's1');
+      final archive = await SessionArchive.load(prefs, 'c1');
+      archive.beginListRead().end(rows: [_row('s1')]);
+      await settle();
+      expect(cancels.ids, [6100]);
+      // A new reply lands at the same address before the cancel answers.
+      gated.record(id: 6100, connId: 'c1', profile: 'default', sessionId: 's1');
+      gate.single.complete();
+      await settle();
+      // The answer of the old cancel does not drop the new one.
+      archive.beginListRead().end(rows: [_row('s1')]);
+      await settle();
+      expect(cancels.ids, [6100, 6100]);
+    });
+
+    test('a post waits for a pending cancel at its address', () async {
+      final gate = Completer<void>();
+      final gated = ChatNotificationReadSync(
+        prefs,
+        cancel: (id, tag) {
+          cancels.calls.add((id, tag));
+          return gate.future;
+        },
+      );
+      SessionArchive.listReadObserver = gated;
+      gated.record(id: 6100, connId: 'c1', profile: 'default', sessionId: 's1');
+      final archive = await SessionArchive.load(prefs, 'c1');
+      archive.beginListRead().end(rows: [_row('s1')]);
+      var posting = false;
+      unawaited(gated.beginPost(6100, null).then((_) => posting = true));
+      // Another address is not held back.
+      var other = false;
+      unawaited(gated.beginPost(6101, null).then((_) => other = true));
+      await settle();
+      expect(posting, isFalse);
+      expect(other, isTrue);
+      gate.complete();
+      await settle();
+      expect(posting, isTrue);
+      gated.endPost(6100, null);
+      gated.endPost(6101, null);
+    });
+
+    test('a cancel never lands on a post in flight', () async {
+      final order = <String>[];
+      final ordered = ChatNotificationReadSync(
+        prefs,
+        cancel: (id, tag) async => order.add('cancel $id'),
+      );
+      SessionArchive.listReadObserver = ordered;
+      ordered.record(
+        id: 6100,
+        connId: 'c1',
+        profile: 'default',
+        sessionId: 's1',
+      );
+      final archive = await SessionArchive.load(prefs, 'c1');
+      // The read answers and a repost starts in the same turn: the cancel
+      // goes out before the post, never after it.
+      archive.beginListRead().end(rows: [_row('s1')]);
+      order.add('post');
+      final post = ordered.beginPost(6100, null);
+      await settle();
+      await post;
+      expect(order, ['cancel 6100', 'post']);
+      // A read that ends while a post is on its way leaves the tray alone,
+      // even for what it proves read.
+      ordered.record(
+        id: 6101,
+        connId: 'c1',
+        profile: 'default',
+        sessionId: 's2',
+      );
+      await ordered.beginPost(6101, null);
+      archive.beginListRead().end(rows: [_row('s2')]);
+      await settle();
+      expect(order, ['cancel 6100', 'post']);
+      ordered.endPost(6101, null);
+      archive.beginListRead().end(rows: [_row('s2')]);
+      await settle();
+      expect(order, ['cancel 6100', 'post', 'cancel 6101']);
+      ordered.endPost(6100, null);
+    });
   });
 
   group('NotificationService', () {
     late List<MethodCall> calls;
+    var failCancels = 0;
+    void Function()? onShow;
+    setUp(() {
+      failCancels = 0;
+      onShow = null;
+    });
 
     Future<NotificationService> service() async {
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
@@ -199,11 +329,16 @@ void main() {
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       messenger.setMockMethodCallHandler(channel, (call) async {
         calls.add(call);
+        if (call.method == 'show') onShow?.call();
         if (call.method == 'initialize' ||
             call.method == 'areNotificationsEnabled') {
           return true;
         }
         if (call.method == 'getActiveNotifications') return <Object?>[];
+        if (call.method == 'cancel' && failCancels > 0) {
+          failCancels--;
+          throw PlatformException(code: 'error');
+        }
         return null;
       });
       addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
@@ -248,6 +383,54 @@ void main() {
       expect(shown, hasLength(2));
       await readList([_row('s1'), _row('s2', unread: true)]);
       expect(ids('cancel'), [shown.first]);
+    });
+
+    test('a read that ends while a repost is being shown spares it', () async {
+      final notif = await service();
+      await notif.replyReady(
+        preview: 'done',
+        session: 'Plan',
+        connId: 'c1',
+        sessionId: 's1',
+        profile: 'default',
+      );
+      final prefs = await SharedPreferences.getInstance();
+      final archive = await SessionArchive.load(prefs, 'c1');
+      // The phone's list read of the chat (read on Desktop) answers right
+      // when the plugin is showing the next reply at the same address.
+      onShow = () => archive.beginListRead().end(rows: [_row('s1')]);
+      await notif.replyReady(
+        preview: 'more',
+        session: 'Plan',
+        connId: 'c1',
+        sessionId: 's1',
+        profile: 'default',
+      );
+      onShow = null;
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(ids('show'), hasLength(2));
+      expect(ids('cancel'), isEmpty);
+    });
+
+    test('a cancel the plugin refuses is retried on the next read', () async {
+      final notif = await service();
+      await notif.replyReady(
+        preview: 'done',
+        session: 'Plan',
+        connId: 'c1',
+        sessionId: 's1',
+        profile: 'default',
+      );
+      final shown = ids('show');
+      failCancels = 1;
+      await readList([_row('s1')]);
+      expect(ids('cancel'), shown);
+      await readList([_row('s1')]);
+      expect(ids('cancel'), [...shown, ...shown]);
+      await readList([_row('s1')]);
+      expect(ids('cancel'), [...shown, ...shown]);
     });
 
     test(

@@ -545,10 +545,16 @@ class NotificationService
         cancel: (id, tag) => _cancelChatNotification(id, tag, 'chat read'),
       );
 
-  Future<void> _cancelChatNotification(int id, String? tag, String reason) {
-    if (tag == null) return cancelById(id, reason);
-    _log('CANCEL id=$id tag motivo="$reason"');
-    return _plugin.cancel(id, tag: tag);
+  /// The ledger's own cancel: unlike [cancelById] it leaves the ledger
+  /// alone, which drops the entry only once this succeeds.
+  Future<void> _cancelChatNotification(
+    int id,
+    String? tag,
+    String reason,
+  ) async {
+    _log('CANCEL id=$id${tag == null ? '' : ' tag'} motivo="$reason"');
+    await _plugin.cancel(id, tag: tag);
+    if (tag == null) await _refreshGroupSummary();
   }
 
   /// The user is looking at [sessionId] on this phone: its chat
@@ -2443,37 +2449,43 @@ class NotificationService
     RichCardSpec? rich,
     _ChatReadScope? readScope,
   }) async {
-    final outcome = await _showUnrecorded(
-      kind: kind,
-      id: id,
-      androidTag: androidTag,
-      title: title,
-      body: body,
-      ongoingFeel: ongoingFeel,
-      bypassForeground: bypassForeground,
-      payload: payload,
-      targetSessionId: targetSessionId,
-      subText: subText,
-      actions: actions,
-      compact: compact,
-      largeIconPath: largeIconPath,
-      rich: rich,
-    );
     final ledger = _chatReadSync;
-    if (ledger != null && outcome == _ShowOutcome.alertShown) {
-      if (readScope == null) {
-        ledger.forget(id, androidTag);
-      } else {
-        ledger.record(
-          id: id,
-          tag: androidTag,
-          connId: readScope.connId,
-          profile: readScope.profile,
-          sessionId: readScope.sessionId,
-        );
+    // Fences the address: no ledger cancel lands on this post.
+    await ledger?.beginPost(id, androidTag);
+    try {
+      final outcome = await _showUnrecorded(
+        kind: kind,
+        id: id,
+        androidTag: androidTag,
+        title: title,
+        body: body,
+        ongoingFeel: ongoingFeel,
+        bypassForeground: bypassForeground,
+        payload: payload,
+        targetSessionId: targetSessionId,
+        subText: subText,
+        actions: actions,
+        compact: compact,
+        largeIconPath: largeIconPath,
+        rich: rich,
+      );
+      if (ledger != null && outcome == _ShowOutcome.alertShown) {
+        if (readScope == null) {
+          ledger.forget(id, androidTag);
+        } else {
+          ledger.record(
+            id: id,
+            tag: androidTag,
+            connId: readScope.connId,
+            profile: readScope.profile,
+            sessionId: readScope.sessionId,
+          );
+        }
       }
+      return outcome;
+    } finally {
+      ledger?.endPost(id, androidTag);
     }
-    return outcome;
   }
 
   Future<_ShowOutcome> _showUnrecorded({

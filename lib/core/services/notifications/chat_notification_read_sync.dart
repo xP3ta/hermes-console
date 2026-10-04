@@ -27,6 +27,13 @@ import '../session_archive.dart';
 ///
 /// Only the main isolate records; the ledger is persisted so a notification
 /// left in the tray by an earlier process is still cleared.
+///
+/// Every tray address is fenced: an entry leaves the ledger only once its
+/// cancel is confirmed (a failed cancel keeps it, so the next read retries),
+/// a cancel is checked against the current generation of its address right
+/// before it goes out and is skipped while a post to that address is on its
+/// way ([beginPost]), and a post waits for a cancel already sent there. So a
+/// late cancel can never take down a newer notification at the same address.
 class ChatNotificationReadSync implements SessionListReadObserver {
   ChatNotificationReadSync(this._prefs, {required this.cancel}) {
     _load();
@@ -45,6 +52,12 @@ class ChatNotificationReadSync implements SessionListReadObserver {
 
   int _seq = 0;
   final Map<String, _Entry> _entries = {};
+
+  /// Cancels sent and not answered yet, per address.
+  final Map<String, Future<void>> _cancelling = {};
+
+  /// Posts started and not finished yet, per address.
+  final Map<String, int> _posting = {};
 
   static String _address(int id, String? tag) => '$id|${tag ?? ''}';
 
@@ -87,6 +100,32 @@ class ChatNotificationReadSync implements SessionListReadObserver {
   /// Something else now lives at (id, tag), or it was cancelled.
   void forget(int id, String? tag) {
     if (_entries.remove(_address(id, tag)) != null) _persist();
+  }
+
+  /// A notification is about to be posted at (id, tag): waits for a cancel
+  /// already sent there, and keeps new cancels off the address until
+  /// [endPost]. Callers must pair it with [endPost] (try/finally).
+  Future<void> beginPost(int id, String? tag) async {
+    final address = _address(id, tag);
+    _posting[address] = (_posting[address] ?? 0) + 1;
+    await _cancelSettled(address);
+  }
+
+  /// The post started with [beginPost] is done (recorded or not).
+  void endPost(int id, String? tag) {
+    final address = _address(id, tag);
+    final left = (_posting[address] ?? 0) - 1;
+    if (left > 0) {
+      _posting[address] = left;
+    } else {
+      _posting.remove(address);
+    }
+  }
+
+  Future<void> _cancelSettled(String address) async {
+    for (var p = _cancelling[address]; p != null; p = _cancelling[address]) {
+      await p;
+    }
   }
 
   @override
@@ -144,22 +183,41 @@ class ChatNotificationReadSync implements SessionListReadObserver {
   }
 
   Future<int> _cancelWhere(bool Function(_Entry entry) test) async {
-    final due = _entries.entries.where((e) => test(e.value)).toList();
-    if (due.isEmpty) return 0;
-    for (final e in due) {
-      _entries.remove(e.key);
-    }
-    _persist();
+    final due = [
+      for (final e in _entries.entries)
+        if (test(e.value)) (e.key, e.value),
+    ];
     var cancelled = 0;
-    for (final e in due) {
-      try {
-        await cancel(e.value.id, e.value.tag);
-        cancelled++;
-      } catch (_) {
-        // Best effort: the tray keeps it; nothing else depends on this.
-      }
+    for (final (address, entry) in due) {
+      if (await _cancelEntry(address, entry)) cancelled++;
     }
     return cancelled;
+  }
+
+  /// Cancels [entry] if it still is what lives at [address]; drops it from
+  /// the ledger only once the cancel is confirmed.
+  Future<bool> _cancelEntry(String address, _Entry entry) async {
+    if (_cancelling.containsKey(address)) await _cancelSettled(address);
+    // Nothing may run between this check and the cancel going out.
+    if (!identical(_entries[address], entry) || _posting.containsKey(address)) {
+      return false;
+    }
+    final settled = Completer<void>();
+    _cancelling[address] = settled.future;
+    try {
+      await cancel(entry.id, entry.tag);
+    } catch (_) {
+      // Still in the tray: the entry stays, the next read retries.
+      return false;
+    } finally {
+      _cancelling.remove(address);
+      settled.complete();
+    }
+    if (identical(_entries[address], entry)) {
+      _entries.remove(address);
+      _persist();
+    }
+    return true;
   }
 
   void _load() {
