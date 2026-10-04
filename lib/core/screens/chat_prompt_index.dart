@@ -1,11 +1,11 @@
-/// Índice de prompts del chat (salto a un prompt). Funciones puras: derivan las
-/// entradas desde la transcripción ya cargada, sin I/O ni estado.
+/// Chat prompt index (jump to a prompt). Pure functions: they derive the
+/// entries from the transcript that is already loaded, with no I/O or state.
 ///
-/// Reglas portadas de `deriveTimelineEntries`/`timelinePreview` de Desktop:
-/// una entrada por mensaje de usuario con texto no vacío, vista previa con los
-/// espacios colapsados y como mucho 120 caracteres terminados en `…`, y entrada
-/// activa = último prompt a la altura del borde superior (8 px de holgura) o,
-/// si no hay ninguno, el primero pintado.
+/// Rules ported from Desktop's `deriveTimelineEntries`/`timelinePreview`: one
+/// entry per user message with non-empty text, a preview with collapsed
+/// whitespace and at most 120 characters ending in `…`, and the active entry =
+/// the last prompt at or above the top edge (8 px of slack) or, if there is none,
+/// the first painted one.
 library;
 
 import '../utils/chat_turn.dart';
@@ -20,10 +20,10 @@ class ChatPromptEntry {
     required this.preview,
   });
 
-  /// Mensaje de la transcripción (identidad, para localizar su ancla).
+  /// Transcript message (identity, used to find its anchor).
   final Map<String, dynamic> message;
 
-  /// Posición en la lista recibida (más reciente primero).
+  /// Position in the received list (newest first).
   final int messageIndex;
   final String preview;
 }
@@ -52,7 +52,8 @@ final RegExp _completeProcessNotification = RegExp(
 /// notification is dropped (the structured carrier through the visible-content
 /// projection, any other complete bracketed row through the anchored pattern),
 /// so a real prompt that merely starts with the same words stays a prompt.
-/// [isSystemRow] drops other rows the transcript paints as system chips instead of prompts.
+/// [isSystemRow] drops other rows the transcript paints as system chips
+/// instead of prompts.
 bool isChatPromptMessage(
   Map<String, dynamic> message, {
   bool Function(Map<String, dynamic> message)? isSystemRow,
@@ -65,10 +66,10 @@ bool isChatPromptMessage(
   return isSystemRow == null || !isSystemRow(message);
 }
 
-/// Índice, en [newestFirst], del prompt que abrió el turno al que pertenece la
-/// fila [topIndex] (la que cruza el borde superior del viewport). El prompt es
-/// la fila de usuario más próxima hacia atrás en el tiempo; recorre solo la
-/// longitud de ese turno.
+/// Index, in [newestFirst], of the prompt that opened the turn the row
+/// [topIndex] belongs to (the one crossing the viewport's top edge). The prompt
+/// is the nearest user row going back in time; the scan covers only the length of
+/// that turn.
 int? stickyPromptIndex(
   List<Map<String, dynamic>> newestFirst,
   int topIndex, {
@@ -81,8 +82,7 @@ int? stickyPromptIndex(
   return null;
 }
 
-/// Entradas de [newestFirst] (el orden de la transcripción del chat), más
-/// reciente primero.
+/// Entries of [newestFirst] (the chat transcript order), newest first.
 List<ChatPromptEntry> deriveChatPromptEntries(
   List<Map<String, dynamic>> newestFirst, {
   bool Function(Map<String, dynamic> message)? isSystemRow,
@@ -102,8 +102,8 @@ List<ChatPromptEntry> deriveChatPromptEntries(
   return entries;
 }
 
-/// Índice de la entrada activa dado el borde superior de cada prompt respecto
-/// al viewport (`null` si no está pintado). Orden de [tops] libre.
+/// Index of the active entry given each prompt's top edge relative to the
+/// viewport (`null` if it is not painted). The order of [tops] is free.
 int? activeChatPromptIndex(
   List<double?> tops, {
   double slack = chatPromptActiveSlack,
@@ -127,8 +127,8 @@ int? activeChatPromptIndex(
   return atOrAbove ?? first;
 }
 
-/// Id de fila durable del mensaje (nunca el texto). Mismas claves que el
-/// servicio de transcripción usa para identificar filas.
+/// Durable row id of the message (never the text). Same keys the transcript
+/// service uses to identify rows.
 int? chatPromptRowId(Map<String, dynamic> message) {
   for (final key in const ['_desktopRowId', 'row_id', '_row_id', 'id']) {
     final value = message[key];
@@ -137,25 +137,25 @@ int? chatPromptRowId(Map<String, dynamic> message) {
   return null;
 }
 
-/// Un renglón de la lista de prompts: cargado en la transcripción
-/// ([message] no nulo) o solo conocido por el índice del servidor.
+/// One row of the prompt list: loaded in the transcript ([message] not null)
+/// or known only from the server index.
 class ChatPromptItem {
   const ChatPromptItem({required this.preview, this.message, this.rowId});
 
   final String preview;
 
-  /// Mensaje ya cargado; null si hay que traer páginas anteriores para llegar.
+  /// Already loaded message; null if earlier pages must be fetched to reach it.
   final Map<String, dynamic>? message;
 
-  /// Id de fila durable (`null` si el mensaje cargado no lo lleva).
+  /// Durable row id (`null` if the loaded message does not carry one).
   final int? rowId;
 }
 
-/// Une los prompts cargados (más reciente primero) con los del índice del
-/// servidor. Del índice solo entran las filas más antiguas que el prompt
-/// cargado más antiguo —o que [oldestLoadedRowId] si se conoce—: las demás ya
-/// están cargadas. Sin ancla durable no se puede deduplicar y el índice se
-/// ignora. El resultado va de más reciente a más antiguo.
+/// Merges the loaded prompts (newest first) with those of the server index.
+/// Only index rows older than the oldest loaded prompt (or than
+/// [oldestLoadedRowId] when known) are taken: the rest are already loaded.
+/// Without a durable anchor nothing can be deduplicated and the index is
+/// ignored. The result goes from newest to oldest.
 List<ChatPromptItem> mergeChatPromptItems(
   List<ChatPromptEntry> loaded,
   Iterable<({int rowId, String preview})> remote, {

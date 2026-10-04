@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'hermes_premium_ui.dart';
 
-/// Estado que pinta [ChatPromptSheet]; lo posee quien abre la hoja.
+/// State painted by [ChatPromptSheet]; owned by whoever opens the sheet.
 @immutable
 class ChatPromptSheetModel {
   const ChatPromptSheetModel({
@@ -14,18 +14,19 @@ class ChatPromptSheetModel {
     this.loading = false,
   });
 
-  /// Vistas previas, de la más reciente a la más antigua.
+  /// Previews, from the newest to the oldest.
   final List<String> previews;
   final int? activeIndex;
 
-  /// El índice del servidor tiene más prompts por leer (acción del usuario).
+  /// The server index has more prompts to read (a user action).
   final bool hasMore;
   final bool loading;
 }
 
-/// Lista de prompts del chat para saltar a uno. Solo proyecta las vistas
-/// previas ya derivadas: no lee la transcripción ni conoce el scroll, ni hace
-/// ninguna petición; el dueño del modelo decide cuándo se lee algo.
+/// List of the chat's prompts to jump to one. It only projects the previews
+/// that are already derived: it does not read the transcript, know the scroll
+/// position or make any request; the owner of the model decides when anything is
+/// read.
 class ChatPromptSheet extends StatelessWidget {
   const ChatPromptSheet({
     required this.title,
@@ -127,9 +128,9 @@ class ChatPromptSheet extends StatelessWidget {
   }
 }
 
-/// Fila "cargar anteriores". Pide una sola lectura por aparición: un segundo
-/// toque antes de que el dueño pase a `loading` (y cambie la fila por el
-/// indicador) no repite la petición con el mismo cursor.
+/// "Load earlier" row. It asks for a single read per appearance: a second tap
+/// before the owner switches to `loading` (and the row is replaced by the
+/// indicator) does not repeat the request with the same cursor.
 class _LoadEarlierRow extends StatefulWidget {
   const _LoadEarlierRow({
     required this.label,

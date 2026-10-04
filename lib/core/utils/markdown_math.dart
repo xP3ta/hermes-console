@@ -1,23 +1,23 @@
-/// Protección de fórmulas TeX en el Markdown del asistente (fase A).
+/// Protection of TeX formulas in the assistant's Markdown (phase A).
 ///
-/// Sin un compositor de fórmulas, `$a_1 * b_2$` llegaba al parser Markdown, que
-/// interpretaba `_` y `*` como énfasis y destrozaba el texto. Esta pasada pura
-/// localiza los tramos matemáticos (`$…$`, `\(…\)`, `$$…$$`, `\[…\]`) y los
-/// reescribe como código en línea o bloque de código, de modo que el fuente
-/// TeX se ve intacto con el estilo de código existente.
+/// Without a formula renderer, `$a_1 * b_2$` reached the Markdown parser, which
+/// read `_` and `*` as emphasis and mangled the text. This pure pass finds the
+/// math spans (`$…$`, `\(…\)`, `$$…$$`, `\[…\]`) and rewrites them as inline
+/// code or a code block, so the TeX source shows intact in the existing code
+/// style.
 ///
-/// Reglas portadas del preprocesado de Desktop: el dinero (`$5 and $10`,
-/// `R$ 12.345`) es prosa; las vallas y los tramos de código no se tocan;
-/// solo una valla `math` sería fórmula y ya se pinta como bloque de código.
+/// Rules ported from Desktop's preprocessing: money (`$5 and $10`, `R$ 12.345`)
+/// is prose; fences and code spans are left alone; only a `math` fence would be a
+/// formula and it is already painted as a code block.
 library;
 
 const int _cacheLimit = 32;
 
 final Map<String, String> _cache = <String, String>{};
 
-/// Devuelve [text] con los tramos matemáticos convertidos en código. El
-/// resultado se memoiza por texto: mientras una respuesta crece en streaming
-/// solo se recalcula el texto nuevo, y un `build` repetido no repite la pasada.
+/// Returns [text] with the math spans turned into code. The result is
+/// memoised per text: while an answer grows while streaming only the new text is
+/// recomputed, and a repeated `build` does not repeat the pass.
 String protectMarkdownMath(String text) {
   if (!text.contains(r'$') && !text.contains(r'\(') && !text.contains(r'\[')) {
     return text;
@@ -107,13 +107,13 @@ final RegExp _wordChar = RegExp(r'[\p{L}\p{N}]', unicode: true);
 
 bool _isWord(String c) => _wordChar.hasMatch(c);
 
-/// Índice del `$` que cierra el tramo que abre `s[open]`, o `null` si no es
-/// matemática. El tramo no cruza líneas ni queda vacío. Con delimitadores
-/// pegados (`$x$`) el de cierre no puede ir precedido de espacio ni seguido de
-/// un dígito (`$5 and $10` es dinero). Con apertura espaciada (`$ 2 * 2 $`,
-/// como admite Desktop) se exige además que el `$` no cuelgue de una palabra
-/// (`R$ 12`), que el de cierre no preceda a un número (`$ 5 and $ 10`) ni a
-/// una palabra pegada.
+/// Index of the `$` that closes the span opened by `s[open]`, or `null` if it
+/// is not math. The span does not cross lines or stay empty. With attached
+/// delimiters (`$x$`) the closing one cannot be preceded by a space or followed
+/// by a digit (`$5 and $10` is money). With a spaced opening (`$ 2 * 2 $`, as
+/// Desktop accepts) it also requires that the `$` does not hang off a word
+/// (`R$ 12`), and that the closing one does not precede a number
+/// (`$ 5 and $ 10`) or an attached word.
 int? _inlineDollarEnd(String s, int open) {
   if (open + 1 >= s.length) return null;
   final spacedOpen = _isSpace(s[open + 1]);
@@ -160,8 +160,8 @@ String _protectProse(String s) {
   final out = StringBuffer();
   var i = 0;
 
-  /// Escribe un bloque de fórmula en sus propias líneas y salta el espacio
-  /// que lo rodeaba.
+  /// Writes a formula block on its own lines and skips the whitespace around
+  /// it.
   int emitDisplay(String tex, int after) {
     final before = out.toString().trimRight();
     out.clear();

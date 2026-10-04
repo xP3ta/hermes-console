@@ -1,7 +1,7 @@
 import 'connection_manager.dart';
 
-/// Un prompt del índice de Dashboard: solo metadatos (nunca cuerpos de
-/// herramientas ni de asistente), con la identidad durable de su fila.
+/// A prompt of the Dashboard index: metadata only (never tool or assistant
+/// bodies), with the durable identity of its row.
 class SessionTimelineEntry {
   const SessionTimelineEntry({required this.rowId, required this.preview});
 
@@ -16,19 +16,19 @@ class SessionTimelinePage {
     required this.nextCursor,
   });
 
-  /// Entradas de la página, tal como las devuelve el servidor.
+  /// Entries of the page, as the server returns them.
   final List<SessionTimelineEntry> entries;
 
-  /// Solo es true si el servidor lo afirma y entrega un cursor utilizable.
+  /// True only if the server says so and provides a usable cursor.
   final bool hasMore;
   final int? nextCursor;
 }
 
-/// Interpreta `GET /api/sessions/{id}/timeline`:
+/// Parses `GET /api/sessions/{id}/timeline`:
 /// `{entries: [{row_id, preview, timestamp}], pagination: {has_more,
-/// next_cursor, …}}`. Las filas sin id numérico o sin vista previa de texto se
-/// descartan; `null` equivale a ausente. Devuelve null si el cuerpo no es un
-/// índice (sin lista `entries`).
+/// next_cursor, …}}`. Rows without a numeric id or without a text preview are
+/// dropped; `null` is the same as absent. Returns null if the body is not an
+/// index (no `entries` list).
 SessionTimelinePage? parseSessionTimelinePage(Object? raw) {
   if (raw is! Map) return null;
   final rawEntries = raw['entries'];
@@ -53,12 +53,12 @@ SessionTimelinePage? parseSessionTimelinePage(Object? raw) {
   );
 }
 
-/// Lectura opcional del índice de prompts de Dashboard (hermano de
-/// [DashboardClient], no parte de `connection_manager.dart`).
+/// Optional read of the Dashboard prompt index (a sibling of
+/// [DashboardClient], not part of `connection_manager.dart`).
 extension DashboardSessionTimeline on DashboardClient {
-  /// Una página del índice. Devuelve null si el Dashboard no ofrece la ruta
-  /// (404/405): quien llama muestra solo lo ya cargado. Cualquier otro fallo
-  /// se propaga.
+  /// One page of the index. Returns null if the Dashboard does not offer the
+  /// route (404/405): the caller then shows only what is already loaded. Any other
+  /// failure propagates.
   Future<SessionTimelinePage?> getSessionTimelinePage(
     String sessionId, {
     String profile = '',
