@@ -91,6 +91,10 @@ class Session implements SessionSortKey {
   /// The server's derived read state (`last_read_at` watermark against the
   /// latest activity). Null when the server does not publish it.
   final bool? unread;
+
+  /// The server's `last_read_at` watermark (seconds). Null when the server
+  /// does not publish it or never tracked the session (NULL = read there).
+  final double? lastReadAt;
   final String? profile;
   final bool? isDefaultProfile;
   final String? handoffPlatform;
@@ -142,6 +146,7 @@ class Session implements SessionSortKey {
     this.pinned,
     this.hidden,
     this.unread,
+    this.lastReadAt,
     this.profile,
     this.isDefaultProfile,
     this.handoffPlatform,
@@ -169,6 +174,12 @@ class Session implements SessionSortKey {
   /// un resume permite que el Gateway use el perfil global que esté activo en
   /// ese instante. Los borradores antiguos sin sello capturan una sola vez el
   /// fallback recibido y desde entonces el binding conserva este valor.
+  /// Someone read this session on the server after its latest activity:
+  /// it is not unread and carries a real watermark. A NULL watermark means
+  /// "never tracked" (Hermes reads it as read), which says nothing about
+  /// whether anyone saw the latest reply.
+  bool get readOnServer => unread == false && (lastReadAt ?? 0) > 0;
+
   static String profileOwner(String? profile, {String? fallback}) {
     final owner = profile?.trim();
     if (owner != null && owner.isNotEmpty) return owner;
@@ -545,6 +556,7 @@ class Session implements SessionSortKey {
     bool? pinned,
     bool? hidden,
     bool? unread,
+    double? lastReadAt,
     String? profile,
     bool? isDefaultProfile,
     String? handoffPlatform,
@@ -578,6 +590,7 @@ class Session implements SessionSortKey {
     pinned: pinned ?? this.pinned,
     hidden: hidden ?? this.hidden,
     unread: unread ?? this.unread,
+    lastReadAt: lastReadAt ?? this.lastReadAt,
     profile: profile ?? this.profile,
     isDefaultProfile: isDefaultProfile ?? this.isDefaultProfile,
     handoffPlatform: handoffPlatform ?? this.handoffPlatform,
@@ -643,6 +656,9 @@ class Session implements SessionSortKey {
       pinned: json['pinned'] is bool ? json['pinned'] as bool : null,
       hidden: _flag(json['hidden']),
       unread: json['unread'] is bool ? json['unread'] as bool : null,
+      lastReadAt: json['last_read_at'] is num
+          ? (json['last_read_at'] as num).toDouble()
+          : null,
       profile: _boundedText(json['profile'], 256),
       isDefaultProfile: json['is_default_profile'] is bool
           ? json['is_default_profile'] as bool
