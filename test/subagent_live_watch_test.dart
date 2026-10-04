@@ -5,87 +5,13 @@ import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/services/subagent_live_watch.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 
-const _child = 'child-stored-1';
+import 'support/fake_subagent_watch_gateway.dart';
+
+const _child = watchTestChild;
 const _parentProfile = 'parent-profile';
 
-DesktopSessionSnapshot _snapshot(
-  String runtime, {
-  bool running = true,
-  List<Map<String, dynamic>> messages = const [],
-}) => DesktopSessionSnapshot.fromJson(
-  {
-    'session_id': runtime,
-    'session_key': _child,
-    'running': running,
-    'status': running ? 'streaming' : 'idle',
-    'messages': messages,
-    'info': {'lazy': true},
-  },
-  requestedStoredSessionId: _child,
-  created: false,
-  method: 'session.resume',
-);
-
-/// Records every call so tests can count what reached the wire.
-class _FakeWatchGateway implements SubagentWatchGateway {
-  final StreamController<TuiGatewayEvent> _events =
-      StreamController<TuiGatewayEvent>.broadcast(sync: true);
-  final resumes = <({String childId, String profile})>[];
-  final closed = <String>[];
-  final retained = <String>[];
-  final released = <String>[];
-  int _runtimes = 0;
-
-  /// Completes each resume; defaults to a fresh runtime with no history.
-  Future<DesktopSessionSnapshot> Function(String runtime)? answer;
-
-  @override
-  Stream<TuiGatewayEvent> get events => _events.stream;
-
-  @override
-  Future<DesktopSessionSnapshot> resumeWatchSession(
-    String childSessionId, {
-    required String profile,
-  }) {
-    resumes.add((childId: childSessionId, profile: profile));
-    final runtime = 'watch-${++_runtimes}';
-    return answer?.call(runtime) ?? Future.value(_snapshot(runtime));
-  }
-
-  @override
-  Future<bool> closeSession(String runtimeSessionId) async {
-    closed.add(runtimeSessionId);
-    return true;
-  }
-
-  @override
-  void retainSessionRuntime(String runtimeSessionId) =>
-      retained.add(runtimeSessionId);
-
-  @override
-  void releaseSessionRuntime(String runtimeSessionId) =>
-      released.add(runtimeSessionId);
-
-  void emit(String runtime, String type, [Map<String, dynamic>? payload]) =>
-      _events.add(
-        TuiGatewayEvent(
-          type: type,
-          sessionId: runtime,
-          payload: payload ?? const {},
-        ),
-      );
-
-  void drop() => _events.addError(
-    const TuiGatewayRpcError(
-      'gateway.transport',
-      'Hermes Desktop connection lost',
-      failureKind: TuiGatewayRpcFailureKind.connectionLost,
-    ),
-  );
-}
-
 SubagentLiveWatch _watch(
-  _FakeWatchGateway gateway, {
+  FakeWatchGateway gateway, {
   bool Function()? isCurrent,
   bool Function()? childIsLive,
 }) {
@@ -104,7 +30,7 @@ void main() {
   test(
     'projects the upstream child mirror sequence and drops reasoning',
     () async {
-      final gateway = _FakeWatchGateway();
+      final gateway = FakeWatchGateway();
       final watch = _watch(gateway)..start();
       await pumpEventQueue();
       expect(watch.value.status, SubagentLiveWatchStatus.live);
@@ -138,7 +64,7 @@ void main() {
   );
 
   test('grows the child text token by token', () async {
-    final gateway = _FakeWatchGateway();
+    final gateway = FakeWatchGateway();
     final watch = _watch(gateway)..start();
     await pumpEventQueue();
 
@@ -151,8 +77,8 @@ void main() {
   });
 
   test('renders only public stored history before the live events', () async {
-    final gateway = _FakeWatchGateway()
-      ..answer = (runtime) async => _snapshot(
+    final gateway = FakeWatchGateway()
+      ..answer = (runtime) async => watchTestSnapshot(
         runtime,
         messages: [
           {'role': 'user', 'content': 'goal prompt'},
@@ -175,7 +101,7 @@ void main() {
   test(
     'resumes the child lazily with the parent profile and one retain',
     () async {
-      final gateway = _FakeWatchGateway();
+      final gateway = FakeWatchGateway();
       final watch = _watch(gateway)..start();
       watch.start(); // idempotent while opening
       await pumpEventQueue();
@@ -190,7 +116,7 @@ void main() {
   test(
     'closing sends exactly one session.close and releases the runtime',
     () async {
-      final gateway = _FakeWatchGateway();
+      final gateway = FakeWatchGateway();
       final watch = _watch(gateway)..start();
       await pumpEventQueue();
 
@@ -204,7 +130,7 @@ void main() {
   test(
     'a late delta after leaving the page paints nothing and throws nothing',
     () async {
-      final gateway = _FakeWatchGateway();
+      final gateway = FakeWatchGateway();
       final watch = _watch(gateway)..start();
       await pumpEventQueue();
       gateway.emit('watch-1', 'message.delta', {'text': 'antes'});
@@ -228,7 +154,7 @@ void main() {
   test(
     'a socket drop mid-stream resumes a fresh runtime without duplicating text',
     () async {
-      final gateway = _FakeWatchGateway();
+      final gateway = FakeWatchGateway();
       final watch = _watch(gateway)..start();
       await pumpEventQueue();
       gateway.emit('watch-1', 'message.delta', {'text': 'parcial'});
@@ -259,7 +185,7 @@ void main() {
   test(
     'a failed re-resume after a drop falls back to the polled tail',
     () async {
-      final gateway = _FakeWatchGateway();
+      final gateway = FakeWatchGateway();
       final watch = _watch(gateway)..start();
       await pumpEventQueue();
 
@@ -276,7 +202,7 @@ void main() {
 
   test('a profile switch while the resume is in flight ignores the answer and '
       'closes the runtime', () async {
-    final gateway = _FakeWatchGateway();
+    final gateway = FakeWatchGateway();
     final pending = Completer<DesktopSessionSnapshot>();
     gateway.answer = (_) => pending.future;
     var current = true;
@@ -286,7 +212,7 @@ void main() {
 
     current = false; // ActiveProfileScope epoch moved
     pending.complete(
-      _snapshot(
+      watchTestSnapshot(
         'watch-1',
         messages: [
           {'role': 'assistant', 'content': 'otro perfil'},
@@ -304,7 +230,7 @@ void main() {
   test(
     'an event after the owner moved on closes the runtime and stops painting',
     () async {
-      final gateway = _FakeWatchGateway();
+      final gateway = FakeWatchGateway();
       var current = true;
       final watch = _watch(gateway, isCurrent: () => current)..start();
       await pumpEventQueue();
@@ -323,14 +249,14 @@ void main() {
   test(
     'closing while the resume is in flight closes the late runtime once',
     () async {
-      final gateway = _FakeWatchGateway();
+      final gateway = FakeWatchGateway();
       final pending = Completer<DesktopSessionSnapshot>();
       gateway.answer = (_) => pending.future;
       final watch = _watch(gateway)..start();
       await pumpEventQueue();
 
       await watch.close();
-      pending.complete(_snapshot('watch-1'));
+      pending.complete(watchTestSnapshot('watch-1'));
       await pumpEventQueue();
 
       expect(gateway.closed, ['watch-1']);
@@ -342,8 +268,8 @@ void main() {
   test(
     'a child that already finished shows its history and keeps no runtime',
     () async {
-      final gateway = _FakeWatchGateway()
-        ..answer = (runtime) async => _snapshot(
+      final gateway = FakeWatchGateway()
+        ..answer = (runtime) async => watchTestSnapshot(
           runtime,
           running: false,
           messages: [
@@ -362,8 +288,8 @@ void main() {
 
   test('a resume without a running turn keeps the watch while the parent '
       'still shows the child working', () async {
-    final gateway = _FakeWatchGateway()
-      ..answer = (runtime) async => _snapshot(runtime, running: false);
+    final gateway = FakeWatchGateway()
+      ..answer = (runtime) async => watchTestSnapshot(runtime, running: false);
     final watch = _watch(gateway, childIsLive: () => true)..start();
     await pumpEventQueue();
 
@@ -377,7 +303,7 @@ void main() {
   });
 
   test('an old server rejecting the resume degrades silently', () async {
-    final gateway = _FakeWatchGateway()
+    final gateway = FakeWatchGateway()
       ..answer = (_) => Future.error(
         const TuiGatewayRpcError(
           'session.resume',
