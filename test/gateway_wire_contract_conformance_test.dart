@@ -17,6 +17,7 @@ import 'package:hermes_android/core/models/desktop_model_catalog.dart';
 import 'package:hermes_android/core/models/desktop_session_config.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
+import 'package:hermes_android/core/models/session_workspace_move.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -317,6 +318,16 @@ final List<_Consumer> _consumers = [
     }, expectedKey: DesktopSessionConfigKey.model);
     return true;
   }),
+  // Move a stored session to a project folder.
+  _Consumer(
+    'result',
+    'session.workspace.move',
+    (c) => c.methodResultSchema('session.workspace.move'),
+    (s) => SessionWorkspaceMoveResult.tryParse(s) != null,
+    // A result without a folder carries nothing to apply to the row.
+    semanticallyEmpty: (s) =>
+        s['cwd'] is! String || (s['cwd'] as String).trim().isEmpty,
+  ),
   _Consumer(
     'result',
     'session.events.since',
