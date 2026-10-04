@@ -267,6 +267,20 @@ final List<_Consumer> _consumers = [
       return catalog.providers.length >= rows.length;
     },
   ),
+  for (final method in const ['prompt.btw', 'prompt.background'])
+    _Consumer(
+      'result',
+      method,
+      (c) => c.methodResultSchema(method),
+      (s) => TuiGatewayClient.parseSideAgentTaskId(s) != null,
+    ),
+  for (final method in const ['session.branch', 'session.branch_whole'])
+    _Consumer(
+      'result',
+      method,
+      (c) => c.methodResultSchema(method),
+      (s) => TuiGatewayClient.parseBranchResult(s) != null,
+    ),
   _Consumer(
     'result',
     'subagent.list',

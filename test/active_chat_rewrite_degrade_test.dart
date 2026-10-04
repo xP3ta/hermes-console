@@ -45,6 +45,10 @@ class _RewriteGateway
   final durableEntered = Completer<void>();
   Completer<void>? durableGate;
   Completer<void>? interruptGate;
+  Completer<void>? resolverGate;
+  final resolverEntered = Completer<void>();
+  bool connected = true;
+  int connectCalls = 0;
   bool emitInterruptTerminal = true;
   int interruptCalls = 0;
 
@@ -70,10 +74,13 @@ class _RewriteGateway
   Stream<TuiGatewayEvent> get events => _events.stream;
 
   @override
-  bool get isConnected => true;
+  bool get isConnected => connected;
 
   @override
-  Future<void> connect() async {}
+  Future<void> connect() async {
+    connectCalls++;
+    if (!connected) throw StateError('socket down');
+  }
 
   @override
   Future<DesktopSessionBinding> resumeSession(
@@ -149,6 +156,8 @@ class _RewriteGateway
     required int expectedOrdinal,
   }) async {
     resolverCalls++;
+    if (!resolverEntered.isCompleted) resolverEntered.complete();
+    await resolverGate?.future;
     return resolvedRowId;
   }
 
@@ -1045,4 +1054,109 @@ void main() {
       expect(old.single.phase, SubagentActivityPhase.cancelled);
     },
   );
+
+  group('issue 113 edit while a reply streams', () {
+    test('tokens of the running turn do not supersede the edit', () async {
+      final gateway = _RewriteGateway(resolvedRowId: 73)
+        ..resolverGate = Completer<void>();
+      final attached = _attach(gateway);
+      addTearDown(attached.service.dispose);
+      final chat = attached.chat;
+      expect(
+        await chat.send(
+          fullText: 'pregunta original',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+
+      final rewrite = chat.rewrite(
+        userOrdinal: 0,
+        text: 'pregunta corregida',
+        model: 'hermes-agent',
+      );
+      await gateway.resolverEntered.future;
+      final tokenSeen = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.token,
+      );
+      gateway.emit('message.delta', const {'text': 'primeras palabras'});
+      await tokenSeen;
+      gateway.resolverGate!.complete();
+      await rewrite;
+
+      expect(chat.takeRewindRestoredOnError(), isFalse);
+      expect(gateway.interruptCalls, 1);
+      expect(gateway.durableRewinds.single.text, 'pregunta corregida');
+    });
+
+    test('a target row replaced meanwhile still aborts the edit', () async {
+      final gateway = _RewriteGateway(resolvedRowId: 73)
+        ..resolverGate = Completer<void>();
+      final attached = _attach(gateway);
+      addTearDown(attached.service.dispose);
+      final chat = attached.chat;
+      expect(
+        await chat.send(
+          fullText: 'pregunta original',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+
+      final rewrite = chat.rewrite(
+        userOrdinal: 0,
+        text: 'pregunta corregida',
+        model: 'hermes-agent',
+      );
+      await gateway.resolverEntered.future;
+      final rows = chat.internalMessagesForTesting
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
+      chat.internalMessagesForTesting = rows;
+      final tokenSeen = chat.changes.firstWhere(
+        (event) => event == ActiveChatEvent.token,
+      );
+      gateway.emit('message.delta', const {'text': 'texto'});
+      await tokenSeen;
+      gateway.resolverGate!.complete();
+      await rewrite;
+
+      expect(chat.takeRewindRestoredOnError(), isTrue);
+      expect(gateway.interruptCalls, 0);
+      expect(gateway.durableRewinds, isEmpty);
+    });
+
+    test('without transport admission nothing is interrupted', () async {
+      final gateway = _RewriteGateway(resolvedRowId: 73);
+      final attached = _attach(gateway);
+      addTearDown(attached.service.dispose);
+      final chat = attached.chat;
+      expect(
+        await chat.send(
+          fullText: 'pregunta original',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+      final before = chat.internalMessagesForTesting
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
+      gateway.connected = false;
+
+      await chat.rewrite(
+        userOrdinal: 0,
+        text: 'pregunta corregida',
+        model: 'hermes-agent',
+      );
+
+      expect(chat.takeRewindRestoredOnError(), isTrue);
+      expect(gateway.interruptCalls, 0);
+      expect(gateway.durableRewinds, isEmpty);
+      expect(chat.isStreaming, isTrue);
+      expect(chat.internalMessagesForTesting, before);
+    });
+  });
 }

@@ -151,6 +151,7 @@ import '../utils/session_title.dart';
 import '../utils/short_server_path.dart';
 import '../utils/voice_error.dart';
 import '../utils/chat_error.dart';
+import '../utils/turn_control.dart';
 import '../utils/byte_bounded_lru_cache.dart';
 import '../utils/chat_turn.dart';
 import '../utils/chat_read_marker.dart';
@@ -207,7 +208,12 @@ import '../bots/ui/room/room_widgets.dart' show RoomSeparator;
 import '../widgets/motion_entrance.dart';
 import '../widgets/subagent_activity_card.dart';
 import '../design/modal.dart'
-    show showHermesDialog, HermesDialogAction, HermesDialogActionStyle;
+    show
+        showHermesDialog,
+        showHermesMenu,
+        HermesAction,
+        HermesDialogAction,
+        HermesDialogActionStyle;
 import 'subagent_detail_screen.dart'
     show SubagentTranscriptPage, subagentIsLive;
 import '../widgets/activity_panel.dart';
@@ -1043,6 +1049,7 @@ enum _ChatControlAction {
   refresh,
   prompts,
   content,
+  branch,
   artifacts,
   details,
   cron,
@@ -3805,7 +3812,12 @@ class _ChatScreenState extends State<ChatScreen>
     // programáticos (restaurar, descartar, soltar el lote al enviar) ya se
     // envuelven en `_restoringDraft` y no la marcan.
     if (isEmpty && !_restoringDraft) _composerEmptiedByUser = true;
-    final suggestions = slashSuggestionsFor(text, Strings.of(context));
+    final suggestions = slashSuggestionsFor(
+      text,
+      Strings.of(context),
+      sideAgents: _chat.canRunSideAgents,
+      branch: _chat.canBranchChat,
+    );
     final changed =
         isEmpty != _composerEmpty ||
         suggestions.length != _slashSuggestions.length ||
@@ -4022,7 +4034,12 @@ class _ChatScreenState extends State<ChatScreen>
     }
     final merged = mergeSlashSuggestions(
       input: input,
-      local: slashSuggestionsFor(input, Strings.of(context)),
+      local: slashSuggestionsFor(
+        input,
+        Strings.of(context),
+        sideAgents: _chat.canRunSideAgents,
+        branch: _chat.canBranchChat,
+      ),
       catalog: lookup.catalog,
       completion: lookup.completion,
     );
@@ -9598,6 +9615,24 @@ class _ChatScreenState extends State<ChatScreen>
     return _durableToolOutputs[toolId];
   }
 
+  /// While a sent message is being edited the composer and the queue strip
+  /// ignore touches and screen readers (the existing dim stays).
+  Widget _lockWhileEditing(Widget child) => IgnorePointer(
+    ignoring: _editingUserMessage,
+    child: ExcludeSemantics(excluding: _editingUserMessage, child: child),
+  );
+
+  /// How many user turns come after [ordinal]: editing there removes them.
+  int _laterTurnsAfter(int? ordinal) {
+    if (ordinal == null) return 0;
+    final latest = _currentRenderProjection.latestUserMessage;
+    final latestOrdinal = latest == null
+        ? null
+        : _currentRenderProjection.userOrdinalFor(latest);
+    if (latestOrdinal == null || latestOrdinal <= ordinal) return 0;
+    return latestOrdinal - ordinal;
+  }
+
   bool _isLatestAssistant(Map<String, dynamic> target) {
     final indexes = _currentRenderProjection.assistantMessageIndexesNewestFirst;
     return indexes.isNotEmpty && identical(_messages[indexes.first], target);
@@ -9668,6 +9703,20 @@ class _ChatScreenState extends State<ChatScreen>
     final rawContent = (message['content'] ?? '').toString();
     final parsed = _parseUserContent(rawContent);
     if (edited.isEmpty || edited == parsed.text.trim()) return;
+    // Saving while a reply streams interrupts that reply: ask first, and keep
+    // the editor open if the user backs out.
+    if (_chat.isStreaming) {
+      final str = Strings.of(context);
+      final confirmed = await showHermesConfirmDialog(
+        context: context,
+        title: str.tc1215EditStopsReplyTitle,
+        message: str.tc1215EditStopsReplyBody,
+        confirmLabel: str.tc1215EditStopsReplyConfirm,
+        cancelLabel: str.commonCancel,
+        destructive: true,
+      );
+      if (!confirmed || !mounted || _editingRewriteSubmitted) return;
+    }
     setState(() => _editingRewriteSubmitted = true);
 
     final nativeAttachments = parsed.attachments.isEmpty
@@ -9754,6 +9803,12 @@ class _ChatScreenState extends State<ChatScreen>
         entry.kind == QueuedEntryKind.desktopAccepted) {
       return;
     }
+    // The editor holds the row so the drain cannot send the old text while it
+    // is open. If the drain already took the row there is nothing to edit.
+    if (entry.sending || !_chat.holdQueuedTurn(entry.id)) {
+      _showQueueActionFailed(Strings.of(context).chaQueueEditFailed);
+      return;
+    }
     setState(() => _editingQueuedEntryId = entry.id);
     final edited = await showHermesFloatingSurface<String>(
       context: context,
@@ -9762,13 +9817,14 @@ class _ChatScreenState extends State<ChatScreen>
       maxHeightFactor: 1,
       builder: (_) => _EditQueuedEntrySheet(initialText: entry.text),
     );
-    if (!mounted) return;
     var saved = true;
-    if (edited != null &&
+    if (mounted &&
+        edited != null &&
         edited.trim().isNotEmpty &&
         edited.trim() != entry.text) {
       saved = await _chat.editQueuedTurn(entry.id, edited);
     }
+    _chat.releaseQueuedTurn(entry.id);
     if (!mounted) return;
     setState(() => _editingQueuedEntryId = null);
     if (!saved) {
@@ -9780,13 +9836,30 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _sendQueuedEntryNow(QueuedEntryView entry) async {
-    if (await _chat.sendQueuedNow(entry.id) || !mounted) return;
     final strings = Strings.of(context);
+    // Sending now while a reply streams stops that reply: say so first.
+    if (_chat.isStreaming) {
+      final confirmed = await showHermesConfirmDialog(
+        context: context,
+        title: strings.tc1215QueueStopAndSendTitle,
+        message: strings.tc1215QueueStopAndSendBody,
+        confirmLabel: strings.tc1215EditStopsReplyConfirm,
+        cancelLabel: strings.commonCancel,
+        destructive: true,
+      );
+      if (!confirmed || !mounted) return;
+    }
+    if (await _chat.sendQueuedNow(entry.id) || !mounted) return;
     _showQueueActionFailed(
       entry.missingAttachment
           ? strings.q1215QueueMissingAttachment
           : strings.chaQueueSendNowFailed,
     );
+  }
+
+  Future<void> _moveQueuedEntry(String id, {required bool up}) async {
+    if (await _chat.moveQueuedTurn(id, up: up) || !mounted) return;
+    _showQueueActionFailed(Strings.of(context).tc1215QueueMoveFailed);
   }
 
   Future<void> _deleteQueuedEntry(String id) async {
@@ -10040,6 +10113,20 @@ class _ChatScreenState extends State<ChatScreen>
       _consumeSlashInvocation(invocation);
       return;
     }
+    if (cmd.action == SlashAction.btw || cmd.action == SlashAction.background) {
+      final invocation = _textController.text;
+      final consumed = await _runSideSlash(cmd, arg);
+      if (!mounted || !consumed) return;
+      _consumeSlashInvocation(invocation);
+      return;
+    }
+    if (cmd.action == SlashAction.branch) {
+      final invocation = _textController.text;
+      final opened = await _branchChat();
+      if (!mounted || !opened) return;
+      _consumeSlashInvocation(invocation);
+      return;
+    }
     _textController.clear();
     setState(() => _slashSuggestions = const []);
     switch (cmd.action) {
@@ -10080,10 +10167,114 @@ class _ChatScreenState extends State<ChatScreen>
         _openFind(initialQuery: arg);
       case SlashAction.unavailable:
         return;
+      case SlashAction.btw:
+      case SlashAction.background:
+      case SlashAction.branch:
       case SlashAction.remote:
-        // Se maneja antes de limpiar el compositor para conservarlo si falla.
+        // Se manejan antes de limpiar el compositor para conservarlo si fallan.
         return;
     }
+  }
+
+  /// `/btw` and `/bg`: one direct request, allowed while a reply streams and
+  /// never queued. Returns whether the composer text was consumed; the generic
+  /// slash path takes over (and clears it itself) when the server lacks the
+  /// method.
+  Future<bool> _runSideSlash(SlashCommand cmd, String arg) async {
+    final str = Strings.of(context);
+    final isBtw = cmd.action == SlashAction.btw;
+    if (arg.trim().isEmpty) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(isBtw ? str.tc1215BtwUsage : str.tc1215BgUsage)),
+        kind: HermesNoticeKind.warning,
+      );
+      return false;
+    }
+    final outcome = isBtw
+        ? await _chat.askSideQuestion(arg)
+        : await _chat.startBackgroundPrompt(arg);
+    if (!mounted) return false;
+    switch (outcome) {
+      case SideCommandOutcome.started:
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isBtw ? str.tc1215BtwStarted : str.tc1215BgStarted),
+          ),
+          kind: HermesNoticeKind.success,
+        );
+        return true;
+      case SideCommandOutcome.unsupported:
+        await _executeRemoteSlash(
+          SlashCommand.remote(name: cmd.name, description: ''),
+          arg,
+        );
+        return false;
+      case SideCommandOutcome.readOnly:
+        showReadOnlyNotice(context);
+        return false;
+      case SideCommandOutcome.usage:
+      case SideCommandOutcome.failed:
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(str.tc1215SideFailed)),
+          kind: HermesNoticeKind.error,
+        );
+        return false;
+    }
+  }
+
+  /// Branches the live chat (up to [fromMessage], or the whole chat) and opens
+  /// the child on top of this one; the parent stays open and untouched.
+  /// Returns whether the child opened.
+  Future<bool> _branchChat({Map<String, dynamic>? fromMessage}) async {
+    final outcome = await _chat.branchChat(fromMessage: fromMessage);
+    if (!mounted) return false;
+    final str = Strings.of(context);
+    if (outcome.opened) {
+      final childId = outcome.storedSessionId;
+      if (childId == null || childId.isEmpty) return false;
+      final child = Session(
+        id: childId,
+        title: outcome.title ?? '',
+        model: '',
+        source: 'mobile',
+        messageCount: outcome.messageCount,
+        isActive: true,
+        preview: '',
+        startedAt: DateTime.now().millisecondsSinceEpoch / 1000,
+        parentSessionId: _chat.sessionId,
+        profile: _effectiveSessionProfile,
+      );
+      unawaited(
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                ChatScreen(connection: widget.connection, session: child),
+          ),
+        ),
+      );
+      return true;
+    }
+    final message = switch (outcome.status) {
+      BranchStatus.busy => str.tc1215BranchStopFirst,
+      BranchStatus.noRuntime => str.tc1215BranchNoRuntime,
+      BranchStatus.nothingToBranch => str.tc1215BranchNothing,
+      BranchStatus.targetNotFound => str.tc1215BranchTargetMissing,
+      BranchStatus.readOnly => str.readOnlyNotice,
+      BranchStatus.unsupported || BranchStatus.failed => str.tc1215BranchFailed,
+      // A second tap while one branch is pending does nothing.
+      BranchStatus.inFlight || BranchStatus.opened => null,
+    };
+    if (message != null) {
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+        kind:
+            outcome.status == BranchStatus.busy ||
+                outcome.status == BranchStatus.nothingToBranch
+            ? HermesNoticeKind.warning
+            : HermesNoticeKind.error,
+      );
+    }
+    return false;
   }
 
   Future<void> _executeRemoteSlash(SlashCommand cmd, String arg) async {
@@ -10697,7 +10888,11 @@ class _ChatScreenState extends State<ChatScreen>
             style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
           ),
           const SizedBox(height: 12),
-          for (final c in slashCommands(Strings.of(context)))
+          for (final c in slashCommands(
+            Strings.of(context),
+            sideAgents: _chat.canRunSideAgents,
+            branch: _chat.canBranchChat,
+          ))
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 6),
               child: Row(
@@ -10802,6 +10997,7 @@ class _ChatScreenState extends State<ChatScreen>
             artifacts: strings.chaArtifactsAction,
             content: strings.sa1215ContentAction,
             prompts: strings.pj1215PromptsAction,
+            branch: strings.tc1215BranchChat,
             details: strings.chaSessionDetailsAction,
             cron: strings.crnOpenFromConversation,
             recovery: strings.chaControlRecovery,
@@ -10823,6 +11019,9 @@ class _ChatScreenState extends State<ChatScreen>
           onArtifacts: () => select(_ChatControlAction.artifacts),
           onContent: () => select(_ChatControlAction.content),
           onPrompts: () => select(_ChatControlAction.prompts),
+          onBranch: _chat.canBranchChat
+              ? () => select(_ChatControlAction.branch)
+              : null,
           onDetails: () => select(_ChatControlAction.details),
           onCron: () => select(_ChatControlAction.cron),
           onRecovery:
@@ -10852,6 +11051,8 @@ class _ChatScreenState extends State<ChatScreen>
         unawaited(_showPromptSheet());
       case _ChatControlAction.content:
         unawaited(_openChatContent());
+      case _ChatControlAction.branch:
+        unawaited(_branchChat());
       case _ChatControlAction.artifacts:
         unawaited(_showSessionArtifacts());
       case _ChatControlAction.details:
@@ -13355,7 +13556,7 @@ class _ChatScreenState extends State<ChatScreen>
                                 // Column or shift the composer.
                                 _buildStopStatusStrip(colors),
                                 _buildBackgroundTaskStrip(colors),
-                                _buildQueueStrip(colors),
+                                _lockWhileEditing(_buildQueueStrip(colors)),
                                 if ((_vc?.active ?? false) && !showVoiceSurface)
                                   _buildVoiceReturnBar(
                                     colors,
@@ -13364,7 +13565,7 @@ class _ChatScreenState extends State<ChatScreen>
                                 if (!showVoiceSurface)
                                   Opacity(
                                     opacity: _editingUserMessage ? 0.62 : 1,
-                                    child: _buildInputBar(),
+                                    child: _lockWhileEditing(_buildInputBar()),
                                   ),
                               ],
                             ),
@@ -15718,6 +15919,10 @@ class _ChatScreenState extends State<ChatScreen>
                 transportCanSteer: _chat.canSteerLiveTurn,
                 editingId: _editingQueuedEntryId,
                 onEdit: () => unawaited(_editQueuedEntry(queuedEntries[i])),
+                canMoveUp: _queueEntryMovable(queuedEntries, i, up: true),
+                canMoveDown: _queueEntryMovable(queuedEntries, i, up: false),
+                onMove: (up) =>
+                    unawaited(_moveQueuedEntry(queuedEntries[i].id, up: up)),
                 onSteer: () =>
                     unawaited(_steerQueuedEntry(queuedEntries[i].id)),
                 onSendNow: () =>
@@ -15739,6 +15944,24 @@ class _ChatScreenState extends State<ChatScreen>
         ],
       ),
     );
+  }
+
+  /// Whether row [index] can swap places with its neighbour: neither row may
+  /// be the one being sent, already on the server or of unknown delivery.
+  bool _queueEntryMovable(
+    List<QueuedEntryView> entries,
+    int index, {
+    required bool up,
+  }) {
+    final other = index + (up ? -1 : 1);
+    if (other < 0 || other >= entries.length) return false;
+    bool movable(QueuedEntryView entry) =>
+        entry.kind != QueuedEntryKind.desktopAccepted &&
+        !entry.sending &&
+        !entry.serverAccepted &&
+        !entry.deliveryUnknown &&
+        !entry.stopWaitingAvailable;
+    return movable(entries[index]) && movable(entries[other]);
   }
 
   /// Nothing is running and the first queued row will not go on its own
@@ -16623,6 +16846,36 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// "Branch from here" for [message] when the chat can branch and the row is
+  /// part of the server's user/assistant history. Reached by long-pressing the
+  /// assistant header: the text itself keeps its own long-press selection and
+  /// the action buttons keep their tooltips.
+  VoidCallback? _branchFromHereFor(Map<String, dynamic> message) {
+    if (!_chat.canBranchChat ||
+        !isBranchHistoryRow(message) ||
+        message['_optimistic'] == true) {
+      return null;
+    }
+    return () async {
+      final strings = Strings.of(context);
+      final chosen = await showHermesMenu<bool>(
+        context: context,
+        surfaceKey: const ValueKey('chat-message-menu'),
+        actions: [
+          HermesAction<bool>(
+            key: const ValueKey('chat-message-branch'),
+            value: true,
+            label: strings.tc1215BranchFromHere,
+            icon: Icons.call_split_rounded,
+          ),
+        ],
+      );
+      if (chosen == true && mounted) {
+        unawaited(_branchChat(fromMessage: message));
+      }
+    };
+  }
+
   List<Map<String, dynamic>> _sourceMessagesForRenderPlan(
     ChatRenderUnitPlan plan,
   ) {
@@ -16756,6 +17009,7 @@ class _ChatScreenState extends State<ChatScreen>
         editingDraft: _editingUserMessageDraft,
         editingWidth: _editingUserMessageWidth,
         editSaving: _editingRewriteSubmitted,
+        editingLaterTurns: _laterTurnsAfter(_editingUserMessageOrdinal),
         onCancelEdit: _cancelUserMessageEdit,
         onSaveEdit: (text) => unawaited(_saveUserMessageEdit(text)),
       );
@@ -17068,11 +17322,13 @@ class _ChatScreenState extends State<ChatScreen>
       editingDraft: _editingUserMessageDraft,
       editingWidth: _editingUserMessageWidth,
       editSaving: _editingRewriteSubmitted,
+      editingLaterTurns: _laterTurnsAfter(_editingUserMessageOrdinal),
       onCancelEdit: _cancelUserMessageEdit,
       onSaveEdit: (text) => unawaited(_saveUserMessageEdit(text)),
       onRegenerate: role == 'assistant' && _isLatestAssistant(msg)
           ? _regenerateLastResponse
           : null,
+      onBranch: _branchFromHereFor(msg),
       onSuggestionSelected: suggestionsEnabled
           ? (suggestion) => _useAssistantSuggestion(msg, suggestion)
           : null,
@@ -19292,6 +19548,8 @@ class _MessageBubble extends StatelessWidget {
   final String? editingDraft;
   final double? editingWidth;
   final bool editSaving;
+  final int editingLaterTurns;
+  final VoidCallback? onBranch;
   final VoidCallback? onCancelEdit;
   final ValueChanged<String>? onSaveEdit;
   final VoidCallback? onRegenerate;
@@ -19327,6 +19585,8 @@ class _MessageBubble extends StatelessWidget {
     this.editingDraft,
     this.editingWidth,
     this.editSaving = false,
+    this.editingLaterTurns = 0,
+    this.onBranch,
     this.onCancelEdit,
     this.onSaveEdit,
     this.onRegenerate,
@@ -19351,6 +19611,7 @@ class _MessageBubble extends StatelessWidget {
             editingDraft: editingDraft,
             editingWidth: editingWidth,
             editSaving: editSaving,
+            editingLaterTurns: editingLaterTurns,
             onCancelEdit: onCancelEdit,
             onSaveEdit: onSaveEdit,
             compact: compact,
@@ -19374,6 +19635,7 @@ class _MessageBubble extends StatelessWidget {
             terminalProjection: terminalProjection,
             technicalDetails: technicalDetails,
             onRegenerate: onRegenerate,
+            onBranch: onBranch,
             onSuggestionSelected: onSuggestionSelected,
             compact: compact,
             performanceProbe: performanceProbe,
@@ -19547,6 +19809,33 @@ _timelineSystemEventPresentation(
         title: title.isNotEmpty ? title : strings.chaTimelineProcessFinished,
         detail: null,
         icon: Icons.terminal_rounded,
+      );
+    case 'side_answer':
+      // Local `/btw` or `/bg` answer: the header is the title, the answer the
+      // body (the full Desktop-format line stays in `content` for copy/export).
+      final rawMetadata = message['display_metadata'];
+      final metadata = rawMetadata is Map ? rawMetadata : const {};
+      final question = metadata['question'];
+      final asked = question is String ? question.trim() : '';
+      final answer = metadata['answer'];
+      final taskId = message['_btwTaskId'];
+      final isBackground = metadata['kind'] == 'bg';
+      return (
+        title: isBackground
+            ? (taskId is String && taskId.isNotEmpty
+                  ? strings.tc1215BgAnswerTitle(taskId)
+                  : 'bg')
+            : asked.isEmpty
+            ? strings.tc1215BtwAnswerNoQuestion
+            : strings.tc1215BtwAnswerTitle(asked),
+        detail: answer is String
+            ? answer
+            : (message['content'] ?? '').toString(),
+        icon: metadata['is_error'] == true
+            ? Icons.error_outline_rounded
+            : isBackground
+            ? Icons.task_alt_rounded
+            : Icons.chat_bubble_outline_rounded,
       );
     case 'model_switch':
       return (
@@ -20162,6 +20451,7 @@ class _UserMessage extends StatelessWidget {
   final String? editingDraft;
   final double? editingWidth;
   final bool editSaving;
+  final int editingLaterTurns;
   final VoidCallback? onCancelEdit;
   final ValueChanged<String>? onSaveEdit;
   final bool compact;
@@ -20177,6 +20467,7 @@ class _UserMessage extends StatelessWidget {
     this.editingDraft,
     this.editingWidth,
     this.editSaving = false,
+    this.editingLaterTurns = 0,
     this.onCancelEdit,
     this.onSaveEdit,
     this.compact = false,
@@ -20410,6 +20701,15 @@ class _UserMessage extends StatelessWidget {
                 ),
               ),
             ),
+            if (editing && editingLaterTurns > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  Strings.of(context).tc1215EditLaterTurns(editingLaterTurns),
+                  key: const ValueKey('chat-edit-later-turns'),
+                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                ),
+              ),
             if (!editing)
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -20620,6 +20920,24 @@ class _BotChatIdentity extends InheritedWidget {
 
 /// Cabecera de un mensaje del asistente: la mascota (o la inicial, sin
 /// presencia) + título en acento + la segunda línea que pase el llamador.
+/// Opens the "Branch from here" menu on a long-press of an assistant header,
+/// outside the selectable text.
+class _BranchLongPress extends StatelessWidget {
+  const _BranchLongPress({required this.onLongPress, required this.child});
+
+  final VoidCallback? onLongPress;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => onLongPress == null
+      ? child
+      : GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onLongPress: onLongPress,
+          child: child,
+        );
+}
+
 class _AssistantAvatarHeader extends StatelessWidget {
   const _AssistantAvatarHeader({
     required this.name,
@@ -20753,6 +21071,7 @@ class _AssistantMessage extends StatelessWidget {
   final _AssistantTerminalProjection? terminalProjection;
   final List<String> technicalDetails;
   final VoidCallback? onRegenerate;
+  final VoidCallback? onBranch;
   final AssistantSuggestionCallback? onSuggestionSelected;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
@@ -20785,6 +21104,7 @@ class _AssistantMessage extends StatelessWidget {
     this.terminalProjection,
     this.technicalDetails = const [],
     this.onRegenerate,
+    this.onBranch,
     this.onSuggestionSelected,
     this.compact = false,
     this.performanceProbe,
@@ -21109,6 +21429,10 @@ class _AssistantMessage extends StatelessWidget {
       yield* structuredVideoWidgets();
     }
 
+    Widget? branchable(Widget? header) => header == null
+        ? null
+        : _BranchLongPress(onLongPress: onBranch, child: header);
+
     // La copia completa vive en la cabecera y la selección parcial en la región
     // exterior. El Markdown permanece como texto normal: ningún párrafo crea un
     // EditableText que pueda mover el scroll al mostrar sus tiradores.
@@ -21151,39 +21475,41 @@ class _AssistantMessage extends StatelessWidget {
         bottom: showFooter ? (compact ? 1 : 3) : 0,
       ),
       time: showFooter ? timestamp : null,
-      header: !showHeader
-          ? null
-          : showTrace
-          ? ThinkingTraceCard(
-              key: const ValueKey('assistant-activity-trace'),
-              events: activityEvents,
-              active: isStreaming || metadata['_pipeline'] == true,
-              liveInPill: true,
-              headline: Strings.of(context).chatActivityThinking,
-              activeMood: headerMood,
-              waitingForUser: activityActive && waitingForUser,
-              stopped: stopped,
-              duration: _assistantActivityDuration(metadata),
-              headerBuilder: (context, summary, details) => Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _AssistantAvatarHeader(
-                    name: agentName,
-                    mood: headerMood,
-                    animate: headerAnimated,
-                    subtitle: summary,
-                    actions: headerActions(),
-                  ),
-                  details,
-                ],
+      header: branchable(
+        !showHeader
+            ? null
+            : showTrace
+            ? ThinkingTraceCard(
+                key: const ValueKey('assistant-activity-trace'),
+                events: activityEvents,
+                active: isStreaming || metadata['_pipeline'] == true,
+                liveInPill: true,
+                headline: Strings.of(context).chatActivityThinking,
+                activeMood: headerMood,
+                waitingForUser: activityActive && waitingForUser,
+                stopped: stopped,
+                duration: _assistantActivityDuration(metadata),
+                headerBuilder: (context, summary, details) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _AssistantAvatarHeader(
+                      name: agentName,
+                      mood: headerMood,
+                      animate: headerAnimated,
+                      subtitle: summary,
+                      actions: headerActions(),
+                    ),
+                    details,
+                  ],
+                ),
+              )
+            : _AssistantAvatarHeader(
+                name: agentName,
+                mood: headerMood,
+                animate: headerAnimated,
+                actions: headerActions(),
               ),
-            )
-          : _AssistantAvatarHeader(
-              name: agentName,
-              mood: headerMood,
-              animate: headerAnimated,
-              actions: headerActions(),
-            ),
+      ),
       children: [
         if (showHeader && metaLines.isNotEmpty)
           _MetaBlock(lines: metaLines, onDark: false),
@@ -21859,9 +22185,15 @@ class _QueuedRow extends StatelessWidget {
   final VoidCallback onSendNow;
   final VoidCallback onDelete;
   final VoidCallback onAbandon;
+  final bool canMoveUp;
+  final bool canMoveDown;
+  final ValueChanged<bool>? onMove;
 
   const _QueuedRow({
     required this.entry,
+    this.canMoveUp = false,
+    this.canMoveDown = false,
+    this.onMove,
     this.retryExhausted = false,
     this.attachmentNames = const [],
     required this.busy,
@@ -21876,6 +22208,40 @@ class _QueuedRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    final canMove = onMove != null && (canMoveUp || canMoveDown);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPress: canMove
+          ? () async {
+              final up = await showHermesMenu<bool>(
+                context: context,
+                surfaceKey: ValueKey('chat-queue-menu-${entry.id}'),
+                actions: [
+                  if (canMoveUp)
+                    HermesAction<bool>(
+                      key: ValueKey('chat-queue-move-up-${entry.id}'),
+                      value: true,
+                      label: strings.tc1215QueueMoveUp,
+                      icon: Icons.arrow_upward_rounded,
+                    ),
+                  if (canMoveDown)
+                    HermesAction<bool>(
+                      key: ValueKey('chat-queue-move-down-${entry.id}'),
+                      value: false,
+                      label: strings.tc1215QueueMoveDown,
+                      icon: Icons.arrow_downward_rounded,
+                    ),
+                ],
+              );
+              if (up != null) onMove!(up);
+            }
+          : null,
+      child: _buildRow(context),
+    );
+  }
+
+  Widget _buildRow(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
     final preview = entry.text.length > 72
@@ -21886,14 +22252,17 @@ class _QueuedRow extends StatelessWidget {
     // cancel the running turn), so the row shows them disabled.
     final accepted =
         entry.kind == QueuedEntryKind.desktopAccepted || entry.serverAccepted;
-    final editEnabled = !accepted && (editingId == null || isEditing);
+    final editEnabled =
+        !accepted && !entry.sending && (editingId == null || isEditing);
     final canSteer =
         busy &&
         transportCanSteer &&
         entry.isSteerable &&
         !isEditing &&
         !accepted;
-    final sendLabel = busy ? strings.chaQueueSendNext : strings.chaQueueSend;
+    final sendLabel = busy
+        ? strings.tc1215QueueStopAndSend
+        : strings.chaQueueSend;
     Widget action({
       required String keyName,
       required String label,
@@ -21940,7 +22309,16 @@ class _QueuedRow extends StatelessWidget {
                       color: colors.textSecondary,
                     ),
                   ),
-                if (entry.deliveryUnknown)
+                if (entry.sending)
+                  Text(
+                    strings.tc1215QueueSending,
+                    key: ValueKey('chat-queue-sending-${entry.id}'),
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: colors.textDisabled,
+                    ),
+                  )
+                else if (entry.deliveryUnknown)
                   Text(
                     Strings.of(context).chatQueueDeliveryUnknown,
                     key: ValueKey('chat-queue-unknown-${entry.id}'),
@@ -22041,7 +22419,9 @@ class _QueuedRow extends StatelessWidget {
               keyName: 'chat-queue-send-now-${entry.id}',
               label: sendLabel,
               icon: Icons.keyboard_return_rounded,
-              onPressed: isEditing || accepted ? null : onSendNow,
+              onPressed: isEditing || accepted || entry.sending
+                  ? null
+                  : onSendNow,
             ),
             action(
               keyName: 'chat-queue-delete-${entry.id}',

@@ -14,6 +14,7 @@ class ChatControlLabels {
   final String artifacts;
   final String? content;
   final String? prompts;
+  final String? branch;
   final String details;
   final String cron;
   final String? recovery;
@@ -42,6 +43,7 @@ class ChatControlLabels {
     this.extensions,
     this.content,
     this.prompts,
+    this.branch,
   });
 }
 
@@ -58,6 +60,7 @@ class ChatControlSheet extends StatelessWidget {
   final VoidCallback onArtifacts;
   final VoidCallback? onContent;
   final VoidCallback? onPrompts;
+  final VoidCallback? onBranch;
   final VoidCallback? onDetails;
   final VoidCallback? onCron;
   final VoidCallback? onRecovery;
@@ -77,6 +80,7 @@ class ChatControlSheet extends StatelessWidget {
     this.onDelete,
     this.onContent,
     this.onPrompts,
+    this.onBranch,
     this.readOnly = false,
     this.showDetails = false,
     this.showCron = false,
@@ -173,6 +177,13 @@ class ChatControlSheet extends StatelessWidget {
                   icon: Icons.chat_bubble_outline_rounded,
                   title: labels.prompts!,
                   onTap: onPrompts,
+                ),
+              if (labels.branch != null && onBranch != null)
+                _ActionRow(
+                  key: const ValueKey('chat-control-branch'),
+                  icon: Icons.call_split_rounded,
+                  title: labels.branch!,
+                  onTap: onBranch,
                 ),
               if (showReleaseDesktop)
                 _ActionRow(

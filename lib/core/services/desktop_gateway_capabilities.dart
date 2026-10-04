@@ -19,6 +19,8 @@ enum DesktopGatewayCapability {
   profilePets,
   sessionControl,
   composerPathCompletion,
+  turnSide,
+  turnBranch,
 }
 
 enum DesktopGatewayCapabilityState { unknown, supported, unsupported, invalid }
