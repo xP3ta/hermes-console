@@ -154,4 +154,75 @@ void main() {
       expect(stickyPromptIndex(rows, 0), 2);
     });
   });
+
+  group('mergeChatPromptItems', () {
+    final newest = _msg('user', 'carga 3', rowId: 30);
+    final oldestLoaded = _msg('user', 'carga 2', rowId: 20);
+    final loaded = deriveChatPromptEntries([newest, oldestLoaded]);
+
+    test('without remote entries the loaded prompts are the whole list', () {
+      final items = mergeChatPromptItems(loaded, const []);
+      expect(items.map((i) => i.preview), ['carga 3', 'carga 2']);
+      expect(items.every((i) => i.message != null), isTrue);
+    });
+
+    test('remote prompts older than the loaded tail follow it, newest first', () {
+      final items = mergeChatPromptItems(loaded, [
+        (rowId: 5, preview: 'cinco'),
+        (rowId: 12, preview: 'doce'),
+        (rowId: 20, preview: 'carga 2'),
+      ]);
+      expect(items.map((i) => i.preview), [
+        'carga 3',
+        'carga 2',
+        'doce',
+        'cinco',
+      ]);
+      expect(items.map((i) => i.message == null), [
+        false,
+        false,
+        true,
+        true,
+      ]);
+      expect(items.map((i) => i.rowId), [30, 20, 12, 5]);
+    });
+
+    test('a remote row that is already loaded is not listed twice', () {
+      final items = mergeChatPromptItems(loaded, [
+        (rowId: 30, preview: 'carga 3'),
+        (rowId: 20, preview: 'carga 2'),
+      ]);
+      expect(items, hasLength(2));
+    });
+
+    test('remote rows newer than the oldest loaded prompt are ignored', () {
+      final items = mergeChatPromptItems(loaded, [
+        (rowId: 25, preview: 'intermedio'),
+        (rowId: 40, preview: 'futuro'),
+      ]);
+      expect(items.map((i) => i.preview), ['carga 3', 'carga 2']);
+    });
+
+    test('without durable ids on loaded prompts nothing can be deduped', () {
+      final bare = deriveChatPromptEntries([_msg('user', 'sin id')]);
+      final items = mergeChatPromptItems(bare, [(rowId: 1, preview: 'uno')]);
+      expect(items.map((i) => i.preview), ['sin id']);
+    });
+
+    test('remote previews are collapsed and bounded like local ones', () {
+      final items = mergeChatPromptItems(loaded, [
+        (rowId: 1, preview: 'a\n\nb ' + 'c' * 300),
+      ]);
+      final remote = items.last.preview;
+      expect(remote.startsWith('a b '), isTrue);
+      expect(remote.length, 120);
+    });
+
+    test('an empty loaded list has no anchor for remote rows', () {
+      final items = mergeChatPromptItems(const [], [
+        (rowId: 1, preview: 'uno'),
+      ]);
+      expect(items, isEmpty);
+    });
+  });
 }
