@@ -107,25 +107,76 @@ void main() {
     expect(h.proven, isEmpty);
   });
 
-  test('a generation without groups.state reads nothing', () async {
+  for (final missing in ['groups.list', 'groups.state', 'groups.log']) {
+    test('a generation without $missing reads nothing', () async {
+      final reads = <int>[];
+      final reader = OpenHostedRoomReads(
+        capabilities: () async => GroupsCapabilities.tryParse(
+          {
+            'protocol_version': 2,
+            'driver': true,
+            'methods': [
+              for (final m in [
+                'groups.capabilities',
+                'groups.list',
+                'groups.state',
+                'groups.log',
+              ])
+                if (m != missing) m,
+            ],
+            'max_log_limit': 50,
+          },
+          connectionId: 'conn-home',
+          generation: 1,
+        )!,
+        readUnder: (room, generation) {
+          reads.add(generation);
+          throw StateError('must not read');
+        },
+      );
+      await expectLater(
+        reader.read(spec070Room()),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'hosted group capability unavailable',
+          ),
+        ),
+      );
+      expect(reads, isEmpty);
+      expect(reader.newestGeneration, isNull);
+    });
+  }
+
+  test('the full shared room surface reads under its generation', () async {
     final reads = <int>[];
     final reader = OpenHostedRoomReads(
       capabilities: () async => GroupsCapabilities.tryParse(
         {
           'protocol_version': 2,
-          'driver': true,
-          'methods': ['groups.capabilities', 'groups.list'],
+          'driver': false,
+          'methods': [
+            'groups.capabilities',
+            'groups.list',
+            'groups.state',
+            'groups.log',
+          ],
           'max_log_limit': 50,
         },
         connectionId: 'conn-home',
-        generation: 1,
+        generation: 3,
       )!,
-      readUnder: (room, generation) {
+      readUnder: (room, generation) async {
         reads.add(generation);
-        throw StateError('must not read');
+        return HostedGroupWorkspaceReadback(
+          room: room,
+          log: null,
+          capabilityGeneration: generation,
+        );
       },
     );
-    await expectLater(reader.read(spec070Room()), throwsStateError);
-    expect(reads, isEmpty);
+    expect((await reader.read(spec070Room())).capabilityGeneration, 3);
+    expect(reads, [3]);
   });
 }

@@ -7,7 +7,9 @@ import '../models/hosted_groups.dart';
 /// reconnect every call bound to the previous generation is refused, so a
 /// room that kept the generation it was opened with could never refresh
 /// again until it was reopened. Each read therefore asks for
-/// `groups.capabilities` first and reads under that generation.
+/// `groups.capabilities` first and reads under that generation, and only
+/// when that generation still serves the whole shared room surface
+/// ([GroupsCapabilities.hasSharedRoomSurface]: list, state and log).
 ///
 /// Generations only move forward. Once a read under a newer generation has
 /// started, a read still in flight under an older one is discarded when it
@@ -46,7 +48,10 @@ final class OpenHostedRoomReads {
   Future<HostedGroupWorkspaceReadback> read(HostedGroupRoom room) async {
     final current = await capabilities();
     final generation = current.generation;
-    if (!current.supports(GroupMethod.state)) {
+    // The same contract the room was opened under: a generation that
+    // dropped groups.list or groups.log no longer serves the shared room
+    // surface, even when groups.state still answers.
+    if (!current.hasSharedRoomSurface) {
       throw StateError('hosted group capability unavailable');
     }
     if (supersedes(generation)) {
