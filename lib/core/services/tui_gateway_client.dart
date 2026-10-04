@@ -37,6 +37,7 @@ import '../models/profile_pet.dart';
 import '../models/project_files.dart';
 import 'capability_payload_sanitizer.dart';
 import 'connection_manager.dart';
+import 'connection_request_gateway.dart';
 import 'delegation_control.dart';
 import 'desktop_control_gateway.dart';
 import 'desktop_gateway_capabilities.dart';
@@ -275,6 +276,7 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
     super.pendingClarifyProvided,
     super.pendingApproval,
     super.pendingApprovalProvided,
+    super.pendingConnection,
     super.openRequests,
     super.todoState,
     super.running,
@@ -305,6 +307,7 @@ class DesktopSessionBinding extends DesktopSessionSnapshot {
       pendingClarifyProvided: snapshot.pendingClarifyProvided,
       pendingApproval: snapshot.pendingApproval,
       pendingApprovalProvided: snapshot.pendingApprovalProvided,
+      pendingConnection: snapshot.pendingConnection,
       openRequests: snapshot.openRequests,
       todoState: snapshot.todoState,
       running: snapshot.running,
@@ -1347,6 +1350,7 @@ final class _SessionRosterSocketLease {
 
 class TuiGatewayClient
     implements
+        HermesConnectionRequestGateway,
         HermesDelegationGateway,
         HermesDesktopGateway,
         HermesDesktopOpenRequestsGateway,
@@ -5524,6 +5528,38 @@ class TuiGatewayClient
         'Hermes returned an invalid subagent interrupt result',
       );
     }
+  }
+
+  @override
+  Future<void> respondToConnection(
+    String runtimeSessionId,
+    String opId,
+    Map<String, dynamic> result,
+  ) async {
+    const method = 'connection.respond';
+    await _request(method, {
+      'op_id': opId,
+      'owner': {
+        'type': 'session',
+        'session_id': _validatedRuntimeId(method, runtimeSessionId),
+      },
+      'result': result,
+    });
+  }
+
+  @override
+  Future<void> wakeConnectionOperation(
+    String runtimeSessionId,
+    String opId,
+  ) async {
+    const method = 'connectors.operation.wake';
+    await _request(method, {
+      'op_id': opId,
+      'owner': {
+        'type': 'session',
+        'session_id': _validatedRuntimeId(method, runtimeSessionId),
+      },
+    });
   }
 
   @override

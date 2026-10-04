@@ -4,6 +4,7 @@
 // the session owner; nothing is sent from a read-only connection. Fixtures
 // are synthetic and links use an example host.
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/connection_request.dart';
@@ -25,7 +26,8 @@ class _Gateway implements HermesDesktopGateway, HermesConnectionRequestGateway {
 
   /// Everything that reached the server, in order.
   final calls = <String>[];
-  final responses = <({String runtime, String op, Map<String, dynamic> body})>[];
+  final responses =
+      <({String runtime, String op, Map<String, dynamic> body})>[];
   final wakes = <({String runtime, String op})>[];
   Object? respondError;
   Completer<void>? respondGate;
@@ -175,7 +177,7 @@ Future<(ActiveChat, _Gateway, List<ActiveChatEvent>)> _liveChat({
     desktopGateway: gateway,
   );
   final emitted = <ActiveChatEvent>[];
-  chat.events.listen(emitted.add);
+  chat.changes.listen(emitted.add);
   addTearDown(chat.dispose);
   // A read-only connection may not submit; the runtime still binds on the
   // first send attempt in the other tests, so bind through it either way.
@@ -192,6 +194,7 @@ void main() {
     final (chat, gateway, emitted) = await _liveChat();
     emitted.clear();
     gateway.emit('connection.request', _requestPayload());
+    await Future<void>.delayed(Duration.zero);
 
     final request = chat.connectionRequest!;
     expect(request.toolCallId, 'call-1');
@@ -206,40 +209,58 @@ void main() {
     expect(chat.connectionRequest, isNull);
   });
 
-  test('updates follow seq order and a settled card keeps its final state', () async {
-    final (chat, gateway, _) = await _liveChat();
-    gateway.emit('connection.request', _requestPayload(seq: 3));
-    gateway.emit('connection.update', _updatePayload(seq: 2, state: 'failed'));
-    expect(chat.connectionRequest!.targets.single.state, ConnectionTargetState.pending);
-    gateway.emit('connection.update', _updatePayload(seq: 4, settled: true));
-    expect(chat.connectionRequest!.settled, isTrue);
-    expect(chat.connectionRequest!.targets.single.state, ConnectionTargetState.connected);
-    gateway.emit('connection.update', _updatePayload(seq: 9, state: 'failed'));
-    expect(chat.connectionRequest!.targets.single.state, ConnectionTargetState.connected);
-    expect(chat.canActOnConnection, isFalse);
-  });
+  test(
+    'updates follow seq order and a settled card keeps its final state',
+    () async {
+      final (chat, gateway, _) = await _liveChat();
+      gateway.emit('connection.request', _requestPayload(seq: 3));
+      gateway.emit(
+        'connection.update',
+        _updatePayload(seq: 2, state: 'failed'),
+      );
+      expect(
+        chat.connectionRequest!.targets.single.state,
+        ConnectionTargetState.pending,
+      );
+      gateway.emit('connection.update', _updatePayload(seq: 4, settled: true));
+      expect(chat.connectionRequest!.settled, isTrue);
+      expect(
+        chat.connectionRequest!.targets.single.state,
+        ConnectionTargetState.connected,
+      );
+      gateway.emit(
+        'connection.update',
+        _updatePayload(seq: 9, state: 'failed'),
+      );
+      expect(
+        chat.connectionRequest!.targets.single.state,
+        ConnectionTargetState.connected,
+      );
+      expect(chat.canActOnConnection, isFalse);
+    },
+  );
 
-  test('Not now and Continue send the exact bodies with the session owner', () async {
-    final (chat, gateway, _) = await _liveChat();
-    gateway.emit('connection.request', _requestPayload());
-    expect(chat.canActOnConnection, isTrue);
+  test(
+    'Not now and Continue send the exact bodies with the session owner',
+    () async {
+      final (chat, gateway, _) = await _liveChat();
+      gateway.emit('connection.request', _requestPayload());
+      expect(chat.canActOnConnection, isTrue);
 
-    await chat.skipConnectionTarget('gmail');
-    await chat.continueConnection();
+      await chat.skipConnectionTarget('gmail');
+      await chat.continueConnection();
 
-    expect(gateway.responses.map((r) => (r.runtime, r.op, r.body)), [
-      (
-        _runtime,
-        'op-1',
-        {
-          'targets': [
-            {'name': 'gmail', 'status': 'skipped'},
-          ],
-        },
-      ),
-      (_runtime, 'op-1', {'settled_by': 'continue'}),
-    ]);
-  });
+      expect(
+        gateway.responses.map(
+          (r) => '${r.runtime}|${r.op}|${jsonEncode(r.body)}',
+        ),
+        [
+          'runtime-conn|op-1|{"targets":[{"name":"gmail","status":"skipped"}]}',
+          'runtime-conn|op-1|{"settled_by":"continue"}',
+        ],
+      );
+    },
+  );
 
   test('a read-only connection shows the card but never answers it', () async {
     final (chat, gateway, _) = await _liveChat(readOnly: true);
@@ -298,7 +319,10 @@ void main() {
   test('a failing Continue does not block the typed message', () async {
     final (chat, gateway, _) = await _liveChat();
     gateway.emit('connection.request', _requestPayload());
-    gateway.respondError = const TuiGatewayRpcError('connection.respond', 'nope');
+    gateway.respondError = const TuiGatewayRpcError(
+      'connection.respond',
+      'nope',
+    );
 
     expect(chat.enqueue('typed'), isTrue);
     gateway.emit('message.complete', {'status': 'complete', 'text': 'ok'});
@@ -332,17 +356,20 @@ void main() {
     expect(chat.connectionRequest!.seq, 2);
   });
 
-  test('late frames after dispose are ignored and nothing is emitted', () async {
-    final (chat, gateway, emitted) = await _liveChat();
-    gateway.emit('connection.request', _requestPayload());
-    chat.dispose();
-    emitted.clear();
+  test(
+    'late frames after dispose are ignored and nothing is emitted',
+    () async {
+      final (chat, gateway, emitted) = await _liveChat();
+      gateway.emit('connection.request', _requestPayload());
+      chat.dispose();
+      emitted.clear();
 
-    expect(
-      () => gateway.emit('connection.update', _updatePayload(seq: 5)),
-      returnsNormally,
-    );
-    expect(emitted, isEmpty);
-    expect(chat.connectionRequest, isNull);
-  });
+      expect(
+        () => gateway.emit('connection.update', _updatePayload(seq: 5)),
+        returnsNormally,
+      );
+      expect(emitted, isEmpty);
+      expect(chat.connectionRequest, isNull);
+    },
+  );
 }

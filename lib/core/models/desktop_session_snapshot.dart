@@ -1,3 +1,4 @@
+import 'connection_request.dart';
 import '../utils/assistant_content.dart';
 import 'agent_task_list.dart';
 import 'transcript_privacy_state.dart';
@@ -38,6 +39,11 @@ class DesktopSessionSnapshot {
   final Map<String, dynamic>? pendingApproval;
   final bool pendingApprovalProvided;
 
+  /// `pending_connection`: the connector prompt still waiting on this
+  /// session, so a client that missed `connection.request` restores the card
+  /// with the server's deadline. Null when absent, null or unusable.
+  final ConnectionRequest? pendingConnection;
+
   /// `open_requests`: server→client requests (clarify, approval, sudo, …)
   /// still waiting on this session. Hermes only sends each request frame once,
   /// so a client that was offline or not yet attached when it was written
@@ -76,6 +82,7 @@ class DesktopSessionSnapshot {
     this.pendingClarifyProvided = false,
     this.pendingApproval,
     this.pendingApprovalProvided = false,
+    this.pendingConnection,
     this.openRequests = const [],
     this.todoState,
   });
@@ -103,6 +110,7 @@ class DesktopSessionSnapshot {
     pendingClarifyProvided: pendingClarifyProvided,
     pendingApproval: pendingApproval,
     pendingApprovalProvided: pendingApprovalProvided,
+    pendingConnection: pendingConnection,
     openRequests: openRequests,
     todoState: todoState,
     raw: raw,
@@ -254,6 +262,7 @@ class DesktopSessionSnapshot {
       pendingClarifyProvided: json.containsKey('pending_clarify'),
       pendingApproval: _stringKeyedMap(json['pending_approval']),
       pendingApprovalProvided: json.containsKey('pending_approval'),
+      pendingConnection: normalizeConnectionRequest(json['pending_connection']),
       openRequests: _openServerRequests(json['open_requests']),
       todoState: AgentTaskList.tryParse(json['todo_state']),
       // Keep only unknown, non-payload extension fields. The 0.19 snapshot can
@@ -1095,6 +1104,7 @@ const _snapshotParsedKeys = <String>{
   'info',
   'pending_clarify',
   'pending_approval',
+  'pending_connection',
   'open_requests',
   'todo_state',
 };
