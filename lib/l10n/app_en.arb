@@ -768,6 +768,29 @@
   "commonSave2": "Save",
   "lockUnlockShort": "Unlock",
   "kanbanTitle": "KANBAN",
+  "kanbanOrchestrationTitle": "Orchestration",
+  "kanbanOrchestrationSubtitle": "Profiles, assignment and task decomposition",
+  "kanbanOrchestratorProfile": "Orchestrator profile",
+  "kanbanDefaultAssignee": "Default assignee",
+  "kanbanOrchestrationDefault": "(default)",
+  "kanbanAutoDecompose": "Auto-decompose",
+  "kanbanAutoDecomposeSubtitle": "Split suitable tasks into child tasks automatically",
+  "kanbanProfileDescriptions": "Profile descriptions",
+  "kanbanDescriptionSave": "Save",
+  "kanbanDescriptionAuto": "Auto",
+  "kanbanDescriptionAutoConfirmTitle": "Generate a profile description?",
+  "kanbanDescriptionAutoConfirmBody": "Hermes will call a model to describe {profile}.",
+  "@kanbanDescriptionAutoConfirmBody": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "kanbanDescriptionAutoFailed": "Hermes could not generate a description.",
+  "kanbanCreateModel": "Model",
+  "kanbanProfileDefault": "Profile default",
+  "kanbanCreateReasoning": "Reasoning effort",
   "kanbanColBacklog": "Backlog",
   "kanbanColInProgress": "In progress",
   "kanbanColDone": "Done",

@@ -1160,6 +1160,29 @@
   "commonSave2": "Guardar",
   "lockUnlockShort": "Desbloquear",
   "kanbanTitle": "KANBAN",
+  "kanbanOrchestrationTitle": "Orquestación",
+  "kanbanOrchestrationSubtitle": "Perfiles, asignación y desglose de tareas",
+  "kanbanOrchestratorProfile": "Perfil orquestador",
+  "kanbanDefaultAssignee": "Asignado predeterminado",
+  "kanbanOrchestrationDefault": "(predeterminado)",
+  "kanbanAutoDecompose": "Desglosar automáticamente",
+  "kanbanAutoDecomposeSubtitle": "Divide automáticamente las tareas adecuadas en subtareas",
+  "kanbanProfileDescriptions": "Descripciones de perfiles",
+  "kanbanDescriptionSave": "Guardar",
+  "kanbanDescriptionAuto": "Auto",
+  "kanbanDescriptionAutoConfirmTitle": "¿Generar una descripción del perfil?",
+  "kanbanDescriptionAutoConfirmBody": "Hermes llamará a un modelo para describir {profile}.",
+  "@kanbanDescriptionAutoConfirmBody": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "kanbanDescriptionAutoFailed": "Hermes no pudo generar una descripción.",
+  "kanbanCreateModel": "Modelo",
+  "kanbanProfileDefault": "Predeterminado del perfil",
+  "kanbanCreateReasoning": "Nivel de razonamiento",
   "kanbanColBacklog": "Backlog",
   "kanbanColInProgress": "En curso",
   "kanbanColDone": "Hecho",
