@@ -124,4 +124,13 @@ void main() {
     expect(s.ids, isEmpty);
     expect(s.totalChars, 0);
   });
+
+  test('received counts every character ever appended, trimming included', () {
+    final s = AgentTerminalStream();
+    s.onChunk('a', 'A' * 200000);
+    s.onChunk('a', 'B' * 100000);
+    expect(s.received('a'), 300000);
+    expect(s.backlog('a').length, 256000);
+    expect(s.received('missing'), 0);
+  });
 }

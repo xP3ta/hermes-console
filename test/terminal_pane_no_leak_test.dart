@@ -12,9 +12,7 @@ import 'package:hermes_android/core/services/app_error_log.dart';
 import 'package:hermes_android/core/services/diagnostic_bundle_service.dart';
 import 'package:hermes_android/core/services/terminal_pane_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:hermes_android/core/models/terminal_exec.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 

@@ -30,26 +30,24 @@ String joinPastedLines(String text) =>
 /// written anywhere.
 class TerminalPaneController extends ChangeNotifier {
   TerminalPaneController({
-    required HermesTerminalGateway gateway,
-    required String profile,
-    required bool Function() appLockEnabled,
-    required Future<bool> Function() verify,
-    ValueListenable<bool>? appLocked,
-  }) : _gateway = gateway,
-       _profile = profile,
-       _appLockEnabled = appLockEnabled,
-       _verify = verify,
-       _appLocked = appLocked {
-    _appLocked?.addListener(_onAppLocked);
+    required this.gateway,
+    required this.profile,
+    required this.appLockEnabled,
+    required this.verify,
+    this.appLocked,
+  }) {
+    appLocked?.addListener(_onAppLocked);
   }
 
   static const int historyLimit = 20;
 
-  final HermesTerminalGateway _gateway;
-  final bool Function() _appLockEnabled;
-  final Future<bool> Function() _verify;
-  final ValueListenable<bool>? _appLocked;
-  String _profile;
+  final HermesTerminalGateway gateway;
+  final bool Function() appLockEnabled;
+  final Future<bool> Function() verify;
+  final ValueListenable<bool>? appLocked;
+
+  /// Profile every command runs for; changed only through [switchProfile].
+  String profile;
   int _epoch = 0;
   bool _disposed = false;
 
@@ -82,7 +80,7 @@ class TerminalPaneController extends ChangeNotifier {
   /// anything) to learn whether `shell.exec` exists.
   Future<void> open() async {
     if (_disposed) return;
-    if (!_appLockEnabled()) {
+    if (!appLockEnabled()) {
       _setAccess(TerminalPaneAccess.appLockRequired);
       return;
     }
@@ -93,23 +91,23 @@ class TerminalPaneController extends ChangeNotifier {
   /// a re-lock.
   Future<void> unlock() async {
     if (_disposed) return;
-    if (!_appLockEnabled()) {
+    if (!appLockEnabled()) {
       _setAccess(TerminalPaneAccess.appLockRequired);
       return;
     }
     final epoch = _epoch;
-    final ok = await _verify();
+    final ok = await verify();
     if (_disposed || epoch != _epoch) return;
     if (!ok) {
       _setAccess(TerminalPaneAccess.locked);
       return;
     }
-    if (!_gateway.shellExecAvailable) {
+    if (!gateway.shellExecAvailable) {
       _setAccess(TerminalPaneAccess.unsupported);
       return;
     }
     try {
-      await _gateway.shellExec('', profile: _profile);
+      await gateway.shellExec('', profile: profile);
     } on ShellExecUnsupported {
       if (_disposed || epoch != _epoch) return;
       _setAccess(TerminalPaneAccess.unsupported);
@@ -125,7 +123,7 @@ class TerminalPaneController extends ChangeNotifier {
   Future<void> run(String raw) async {
     if (_disposed || _busy) return;
     if (_access != TerminalPaneAccess.ready) return;
-    if (!_appLockEnabled()) {
+    if (!appLockEnabled()) {
       _setAccess(TerminalPaneAccess.appLockRequired);
       return;
     }
@@ -144,7 +142,7 @@ class TerminalPaneController extends ChangeNotifier {
     final epoch = _epoch;
     notifyListeners();
     try {
-      final result = await _gateway.shellExec(command, profile: _profile);
+      final result = await gateway.shellExec(command, profile: profile);
       if (_disposed || epoch != _epoch) return;
       _lastResult = result;
     } on ShellExecUnsupported {
@@ -195,16 +193,16 @@ class TerminalPaneController extends ChangeNotifier {
     return _history[_recall];
   }
 
-  void switchProfile(String profile) {
-    if (_disposed || profile == _profile) return;
-    _profile = profile;
+  void switchProfile(String next) {
+    if (_disposed || next == profile) return;
+    profile = next;
     _epoch += 1;
     _wipe();
     notifyListeners();
   }
 
   void _onAppLocked() {
-    if (_disposed || _appLocked?.value != true) return;
+    if (_disposed || appLocked?.value != true) return;
     _epoch += 1;
     _wipe();
     _access = TerminalPaneAccess.locked;
@@ -233,7 +231,7 @@ class TerminalPaneController extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     _epoch += 1;
-    _appLocked?.removeListener(_onAppLocked);
+    appLocked?.removeListener(_onAppLocked);
     _wipe();
     super.dispose();
   }

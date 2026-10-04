@@ -28,6 +28,10 @@ class AgentTerminalStream extends ChangeNotifier {
 
   String command(String id) => _procs[id]?.command ?? '';
 
+  /// Characters ever appended to [id], trimmed or not. A view that has shown
+  /// `n` of them writes only the difference.
+  int received(String id) => _procs[id]?.received ?? 0;
+
   bool isClosed(String id) => _procs[id]?.closed ?? false;
 
   int get totalChars => _procs.values.fold(0, (sum, p) => sum + p.text.length);
@@ -80,9 +84,11 @@ class AgentTerminalStream extends ChangeNotifier {
 
   void _append(_Proc proc, String chunk) {
     if (chunk.isEmpty) return;
+    proc.received += chunk.length;
     var text = proc.text + chunk;
-    if (text.length > maxBacklog)
+    if (text.length > maxBacklog) {
       text = text.substring(text.length - maxBacklog);
+    }
     proc.text = text;
   }
 
@@ -117,6 +123,7 @@ class AgentTerminalStream extends ChangeNotifier {
 class _Proc {
   String text = '';
   String command = '';
+  int received = 0;
   bool closed = false;
   int touched = 0;
 }

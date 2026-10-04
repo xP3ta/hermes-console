@@ -16,8 +16,9 @@ void main() {
         .setMockMethodCallHandler(const MethodChannel('hermes/security'), (
           call,
         ) async {
-          if (call.method == 'setSecureScreen')
+          if (call.method == 'setSecureScreen') {
             calls.add(call.arguments as bool);
+          }
           return null;
         });
   });
