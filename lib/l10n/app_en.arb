@@ -7743,5 +7743,8 @@
   "tc1215OutputShowAll": "Show all ({count} lines)",
   "@tc1215OutputShowAll": {"placeholders": {"count": {"type": "int"}}},
   "tc1215FilesChanged": "{count, plural, =1{1 file changed} other{{count} files changed}}",
-  "@tc1215FilesChanged": {"placeholders": {"count": {"type": "int"}}}
+  "@tc1215FilesChanged": {"placeholders": {"count": {"type": "int"}}},
+  "au1215CronRunViewOnly": "Scheduled run that never closed — view only",
+  "au1215CronRunSendBlocked": "This scheduled run is view-only — sending is disabled.",
+  "au1215BgNeededForAutomation": "Cron and Kanban notices only arrive while this is on."
 }

@@ -9428,5 +9428,8 @@
   "tc1215OutputShowAll": "Ver todo ({count} líneas)",
   "@tc1215OutputShowAll": {"placeholders": {"count": {"type": "int"}}},
   "tc1215FilesChanged": "{count, plural, =1{1 archivo cambiado} other{{count} archivos cambiados}}",
-  "@tc1215FilesChanged": {"placeholders": {"count": {"type": "int"}}}
+  "@tc1215FilesChanged": {"placeholders": {"count": {"type": "int"}}},
+  "au1215CronRunViewOnly": "Ejecución programada sin cerrar: solo lectura",
+  "au1215CronRunSendBlocked": "Esta ejecución programada es de solo lectura: no se puede enviar.",
+  "au1215BgNeededForAutomation": "Los avisos de cron y Kanban solo llegan con esto activado."
 }

@@ -78,6 +78,15 @@ class Session implements SessionSortKey {
   /// The server's `is_internal_child`: a delegate run Desktop folds under its
   /// parent whatever its source. Null when an older server omits it.
   final bool? isInternalChild;
+
+  /// The server's `scheduler_owned` (cron run rows and session detail): the
+  /// scheduler still holds this run's in-flight execution. Null when an
+  /// older server omits it.
+  final bool? schedulerOwned;
+
+  /// Whether the server published `is_active` itself. [isActive] falls back
+  /// to `ended_at == null` when it is absent, which is not liveness.
+  final bool isActivePublished;
   final String? cwd;
   final String? gitRepoRoot;
   final String? gitBranch;
@@ -139,6 +148,8 @@ class Session implements SessionSortKey {
     this.lineageRootId,
     this.lineageIds = const [],
     this.isInternalChild,
+    this.schedulerOwned,
+    this.isActivePublished = false,
     this.cwd,
     this.gitRepoRoot,
     this.gitBranch,
@@ -549,6 +560,8 @@ class Session implements SessionSortKey {
     String? lineageRootId,
     List<String>? lineageIds,
     bool? isInternalChild,
+    bool? schedulerOwned,
+    bool? isActivePublished,
     String? cwd,
     String? gitRepoRoot,
     String? gitBranch,
@@ -583,6 +596,8 @@ class Session implements SessionSortKey {
     lineageRootId: lineageRootId ?? this.lineageRootId,
     lineageIds: lineageIds ?? this.lineageIds,
     isInternalChild: isInternalChild ?? this.isInternalChild,
+    schedulerOwned: schedulerOwned ?? this.schedulerOwned,
+    isActivePublished: isActivePublished ?? this.isActivePublished,
     cwd: cwd ?? this.cwd,
     gitRepoRoot: gitRepoRoot ?? this.gitRepoRoot,
     gitBranch: gitBranch ?? this.gitBranch,
@@ -649,6 +664,10 @@ class Session implements SessionSortKey {
       isInternalChild: json['is_internal_child'] is bool
           ? json['is_internal_child'] as bool
           : null,
+      schedulerOwned: json['scheduler_owned'] is bool
+          ? json['scheduler_owned'] as bool
+          : null,
+      isActivePublished: explicitActive is bool,
       cwd: _boundedText(json['cwd'], 1024),
       gitRepoRoot: _boundedText(json['git_repo_root'], 1024),
       gitBranch: _boundedText(json['git_branch'], 512),

@@ -1455,6 +1455,11 @@ class NotificationService
   /// Resultado de una automatización cron descubierta desde las sesiones de
   /// Hermes Desktop. Usa su propio opt-in ([notifyCronResults]), independiente
   /// del de Kanban y del toggle de runs iniciadas desde Task Center.
+  ///
+  /// Not a delivery path: Cron notices are discovered only by the background
+  /// listener (BackgroundAutomationDiscovery → [deliverDiscoveryBatch]), which
+  /// shares this presentation. A second caller here would bypass its cursors.
+  @visibleForTesting
   Future<void> cronFinished({
     required String title,
     required bool ok,
@@ -1569,6 +1574,23 @@ class NotificationService
 
   /// Rich card of a Kanban transition: the assignee Bot's face when the task
   /// has one, else the neutral glyph; "Abrir tarea".
+  /// Title of a Kanban status notice. [eventKinds] are the terminal events
+  /// read with it: `gave_up` / `block_loop_detected` say why the task is
+  /// blocked or in triage, as Desktop's completion-notify.ts does.
+  static String kanbanTitle(
+    NotifL10n t,
+    String status, {
+    Set<String> eventKinds = const <String>{},
+  }) => switch (status) {
+    'done' => t.kanbanCompleted,
+    'blocked' when eventKinds.contains('gave_up') => t.kanbanGaveUp,
+    'blocked' => t.kanbanBlocked,
+    'triage' when eventKinds.contains('block_loop_detected') =>
+      t.kanbanBlockLoop,
+    'triage' => t.kanbanNeedsAttention,
+    _ => t.kanbanUpdated,
+  };
+
   static RichCardSpec kanbanRichSpec({
     required NotifL10n t,
     required String title,
@@ -1617,6 +1639,10 @@ class NotificationService
   /// lleva el `taskId` autoritativo en el payload: el tap abre la tarjeta
   /// exacta en TasksScreen, sin inventar un destino de Task Center.
   /// Opt-in propio ([notifyKanbanResults]), independiente del de Cron.
+  ///
+  /// Not a delivery path: Kanban notices are discovered only by the
+  /// background listener, which shares [kanbanTitle] and [kanbanRichSpec].
+  @visibleForTesting
   Future<void> kanbanTransition({
     required String connId,
     required String taskId,
@@ -1648,12 +1674,7 @@ class NotificationService
       sourceVersion: version,
     );
     final t = NotifL10n.of(_prefs);
-    final notificationTitle = switch (status) {
-      'done' => t.kanbanCompleted,
-      'blocked' => t.kanbanBlocked,
-      'triage' => t.kanbanNeedsAttention,
-      _ => t.kanbanUpdated,
-    };
+    final notificationTitle = kanbanTitle(t, status);
     _pendingDisplays[identity.eventKey] = _DurableDisplay(
       kind: NotificationKind.run,
       title: notificationTitle,

@@ -544,7 +544,7 @@ void main() {
     expect(queries, hasLength(1));
     expect(
       queries.single['exclude_sources'],
-      'cron,kanban,subagent,tool,acp,hermes_flow,vulcan_delegate,webhook',
+      'cron,kanban,subagent,tool,acp,hermes_flow,vulcan_delegate,webhook,oneshot',
     );
     expect(queries.single['sources'], isNull);
     expect(queries.single['source'], isNull);
@@ -558,7 +558,7 @@ void main() {
     expect(queries, hasLength(2));
     expect(
       queries.last['sources'],
-      'cron,kanban,subagent,tool,acp,hermes_flow,vulcan_delegate,webhook',
+      'cron,kanban,subagent,tool,acp,hermes_flow,vulcan_delegate,webhook,oneshot',
     );
     expect(queries.last['exclude_sources'], isNull);
     expect(queries.last['archived'], 'exclude');
@@ -571,7 +571,7 @@ void main() {
     expect(queries, hasLength(3));
     expect(
       queries.last['sources'],
-      'cron,kanban,subagent,tool,acp,hermes_flow,vulcan_delegate,webhook',
+      'cron,kanban,subagent,tool,acp,hermes_flow,vulcan_delegate,webhook,oneshot',
     );
     expect(queries.last['exclude_sources'], isNull);
     expect(queries.last['archived'], 'only');

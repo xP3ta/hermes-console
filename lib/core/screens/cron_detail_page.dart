@@ -666,8 +666,48 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
       dividerIndent: HermesSpace.rowH,
       children: [
         for (final session in runs.sessions.take(10))
-          _RunRow(session: session, onTap: () => widget.onOpenRun(session)),
+          if (_isCronOutputRun(session))
+            _CronOutputRow(session: session)
+          else
+            _RunRow(session: session, onTap: () => widget.onOpenRun(session)),
       ],
+    );
+  }
+}
+
+/// Script-only (no_agent) jobs have no agent session: the runs endpoint
+/// serves their per-fire output docs as `source: cron_output` rows (Desktop
+/// `cron-jobs-section.tsx` `isSyntheticCronOutputRun`). Nothing backs them
+/// to open, so they are plain rows.
+bool _isCronOutputRun(Session run) => run.source.trim() == 'cron_output';
+
+/// Desktop `cron/index.tsx` output row: the recorded title or preview and the
+/// run time, without a chat-navigation affordance.
+class _CronOutputRow extends StatelessWidget {
+  final Session session;
+
+  const _CronOutputRow({required this.session});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final title = session.title.trim();
+    final preview = session.preview.trim();
+    final at = session.updatedAt ?? session.startedAt;
+    return HermesListRow(
+      muted: true,
+      title: title.isNotEmpty && title != 'Untitled'
+          ? title
+          : preview.isNotEmpty
+          ? preview
+          : session.id,
+      value: at > 0
+          ? hermesFormatNextRun(
+              s,
+              DateTime.fromMillisecondsSinceEpoch((at * 1000).round()),
+            )
+          : null,
+      showChevron: false,
     );
   }
 }
