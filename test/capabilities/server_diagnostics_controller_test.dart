@@ -6,6 +6,8 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
+import 'package:hermes_android/core/capabilities/capability_models.dart'
+    show CapabilityActionStatus;
 import 'package:hermes_android/core/capabilities/server_diagnostics_controller.dart';
 import 'package:hermes_android/core/capabilities/server_diagnostics_models.dart';
 import 'package:hermes_android/core/services/active_profile_scope.dart';
@@ -359,6 +361,72 @@ void main() {
       },
     );
 
+    test('coming back while the paused loop is still unwinding still '
+        're-attaches', () async {
+      final steps = <Completer<void>>[];
+      final rest = _server()
+        ..posts['ops/doctor'] = {'ok': true, 'name': 'doctor'};
+      rest.statusQueue.addAll([
+        _status(exitCode: 0),
+        _status(running: true, lines: ['=== doctor started t ===', 'a']),
+      ]);
+      ServerDiagnosticsController? controller;
+      Future<void>? resumed;
+      final c = ServerDiagnosticsController(
+        scope: scope,
+        repoFor: (profile) => _ResumeWhileUnwinding(
+          rest: rest,
+          profile: profile,
+          sleep: (_) {
+            final gate = Completer<void>();
+            steps.add(gate);
+            return gate.future;
+          },
+          // The old loop has seen the pause and returned, but the controller
+          // has not cleaned it up yet: the screen comes back right here.
+          onUnwinding: () {
+            rest.statusQueue.addAll([
+              _status(
+                running: true,
+                lines: ['=== doctor started t ===', 'a', 'b'],
+              ),
+              _status(
+                exitCode: 0,
+                lines: ['=== doctor started t ===', 'a', 'b', 'c'],
+              ),
+            ]);
+            resumed = controller!.resume();
+          },
+        ),
+        mcpReader: (_) async => const [],
+        restartHosts: _hosts,
+      );
+      controller = c;
+      addTearDown(c.dispose);
+
+      unawaited(c.runOps(OpsAction.doctor));
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      c.pause();
+      steps.last.complete();
+      for (var i = 0; i < 30; i++) {
+        await Future<void>.delayed(Duration.zero);
+        if (steps.isNotEmpty && !steps.last.isCompleted) {
+          steps.last.complete();
+        }
+      }
+      await resumed;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        c.ops(OpsAction.doctor).phase,
+        OpsPhase.finished,
+        reason: 'a stale running card must not be left behind',
+      );
+      expect(c.ops(OpsAction.doctor).lines, ['a', 'b', 'c']);
+      expect(rest.mutations, ['POST ops/doctor'], reason: 'nothing relaunched');
+    });
+
     test('dispose mid follow throws nothing and notifies nothing', () async {
       final gate = Completer<void>();
       final rest = _server()
@@ -488,4 +556,32 @@ final class _SlowRest implements CapabilitiesRest {
 
   @override
   Future<void> delete(String e) => inner.delete(e);
+}
+
+/// A repository whose `runOps` reports, right after the follow ended on the
+/// pause and before returning to the controller, that the screen came back.
+final class _ResumeWhileUnwinding extends CapabilitiesRepository {
+  _ResumeWhileUnwinding({
+    required super.rest,
+    required super.profile,
+    required super.sleep,
+    required this.onUnwinding,
+  }) : super(actionPollInterval: Duration.zero);
+
+  final void Function() onUnwinding;
+
+  @override
+  Future<CapabilityActionStatus?> runOps(
+    OpsAction action, {
+    void Function(CapabilityActionStatus)? onProgress,
+    bool Function()? shouldStop,
+  }) async {
+    final result = await super.runOps(
+      action,
+      onProgress: onProgress,
+      shouldStop: shouldStop,
+    );
+    if (result == null) onUnwinding();
+    return result;
+  }
 }
