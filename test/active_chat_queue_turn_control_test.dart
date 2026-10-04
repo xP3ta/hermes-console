@@ -296,7 +296,74 @@ void main() {
       expect(chat.queuedMessages, ['second']);
     });
   });
+
+  group('an editor holds its row against the drain', () {
+    test('a held head is not drained and nothing overtakes it', () async {
+      final gateway = _GatedGateway();
+      final chat = _chat('hold-head', gateway);
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.send(fullText: 'initial', model: 'hermes-agent', history: []);
+      chat.state = ChatPipelineState.idle;
+      chat
+        ..enqueue('head')
+        ..enqueue('second');
+      final ids = chat.queuedEntries.map((entry) => entry.id).toList();
+      expect(chat.holdQueuedTurn(ids.first), isTrue);
+
+      await _pump();
+      expect(gateway.submissions, ['initial']);
+      expect(chat.promoteQueuedTurn(ids.last), isFalse);
+      expect(await chat.moveQueuedTurn(ids.first, up: false), isFalse);
+
+      expect(await chat.editQueuedTurn(ids.first, 'edited'), isTrue);
+      chat.releaseQueuedTurn(ids.first);
+      await _pump();
+      expect(gateway.submissions, ['initial', 'edited']);
+      expect(chat.queuedMessages, ['second']);
+    });
+
+    test('a head the drain already took cannot be held', () async {
+      final (chat, gateway) = await _idleChatWithQueue('hold-too-late');
+      final headId = chat.queuedEntries.first.id;
+      gateway.gate = Completer<void>();
+
+      final sending = chat.sendQueuedNow(headId);
+      await _pump();
+      expect(gateway.submissions, ['initial', 'head']);
+
+      expect(chat.holdQueuedTurn(headId), isFalse);
+
+      gateway.gate!.complete();
+      await sending;
+    });
+
+    test('a row that left the queue cannot be held', () async {
+      final (chat, _) = await _idleChatWithQueue('hold-missing');
+      expect(chat.holdQueuedTurn('text:999'), isFalse);
+      expect(chat.holdQueuedTurn('prepared:missing'), isFalse);
+    });
+
+    test('a prepared row whose transport started is never held', () async {
+      final gateway = _GatedGateway();
+      final chat = _chat('hold-started', gateway);
+      addTearDown(chat.dispose);
+      addTearDown(gateway.close);
+      await chat.send(fullText: 'initial', model: 'hermes-agent', history: []);
+      final store = _KeepingOutbox();
+      final delivery = ActiveTurnDelivery(
+        prepared: _prepared('started', 'started'),
+        store: store,
+      );
+      await chat.enqueuePreparedTurn(delivery);
+      await delivery.beginTransport(PreparedTurnTransport.desktop);
+
+      expect(chat.holdQueuedTurn('prepared:started'), isFalse);
+      expect(await chat.editQueuedTurn('prepared:started', 'late'), isFalse);
+    });
+  });
 }
+
 
 class _FailingOutbox implements TurnOutboxPersistence {
   @override
