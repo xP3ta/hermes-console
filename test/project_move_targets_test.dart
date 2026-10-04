@@ -83,6 +83,23 @@ void main() {
       );
     });
 
+    test('a session inside the project folder is already in it', () {
+      final tree = _tree([
+        _project('a', path: '/srv/work/a'),
+        _project('b', path: '/srv/work/b'),
+      ]);
+      expect(
+        _ids(projectMoveTargets(tree, sessionCwd: '/srv/work/a/src')),
+        ['b'],
+      );
+      expect(
+        _ids(
+          projectMoveTargets(tree, sessionGitRepoRoot: '/srv/work/b/pkg/x'),
+        ),
+        ['a'],
+      );
+    });
+
     test('a session in a subfolder is not in another project', () {
       final tree = _tree([_project('a', path: '/srv/work/a')]);
       expect(_ids(projectMoveTargets(tree, sessionCwd: '/srv/work/a-extra')), [
