@@ -111,8 +111,13 @@ const int _maxEvidenceBytes = 4096;
 /// for unreadable arguments and for anything oversized, so no other tool's
 /// arguments ever reach the loaded transcript.
 String? agentPreviewEvidenceArguments(String toolName, Object? rawArguments) {
-  Map<String, String> pick(Object? arguments) {
+  // Null drops the call: a `url` that is present but not a string is a
+  // malformed call, and keeping its `action` alone would turn a close into a
+  // close-all once loaded.
+  Map<String, String>? pick(Object? arguments) {
     if (arguments is! Map) return const {};
+    final url = arguments['url'];
+    if (url != null && url is! String) return null;
     return {
       for (final key in const ['action', 'url', 'label'])
         if (arguments[key] is String) key: arguments[key] as String,
@@ -126,13 +131,14 @@ String? agentPreviewEvidenceArguments(String toolName, Object? rawArguments) {
     final calls = [
       for (final call in wrapped)
         if (call.name.trim().toLowerCase() == agentPreviewToolName)
-          {'name': agentPreviewToolName, 'arguments': pick(call.arguments)},
+          if (pick(call.arguments) case final kept?)
+            {'name': agentPreviewToolName, 'arguments': kept},
     ];
     if (calls.isEmpty) return null;
     encoded = jsonEncode({'calls': calls});
   } else if (toolName.trim().toLowerCase() == agentPreviewToolName) {
     final kept = pick(decodeToolArguments(rawArguments));
-    if (kept.isEmpty) return null;
+    if (kept == null || kept.isEmpty) return null;
     encoded = jsonEncode(kept);
   } else {
     return null;
