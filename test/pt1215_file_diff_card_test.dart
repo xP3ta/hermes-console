@@ -104,6 +104,108 @@ void main() {
       );
     });
 
+    test('the review header is chrome in every Hermes locale', () {
+      // Hermes localizes `display.diff.review_header` (locales/*.yaml).
+      for (final header in [
+        '  ┊ review diff',
+        '  ┊ revisar diff',
+        '  ┊ Review-Diff',
+        '  ┊ レビュー diff',
+      ]) {
+        final record = ToolOutputRecord.fromCompletePayload(
+          _complete(
+            inlineDiff: _inlineDiff.replaceFirst('┊ review diff', header),
+          ),
+        )!;
+        expect(record.files, hasLength(1), reason: header);
+        expect(record.files.single.path, 'lib/foo.dart');
+        expect(record.files.single.diff, isNot(contains('┊')));
+      }
+    });
+
+    test('a localized header before bare hunks stays out of the diff', () {
+      final record = ToolOutputRecord.fromCompletePayload(
+        _complete(inlineDiff: '  ┊ revisar diff\n@@ -1 +1 @@\n-a\n+b'),
+      )!;
+      expect(record.files.single.path, 'lib/foo.dart');
+      expect(record.files.single.diff, isNot(contains('┊')));
+    });
+
+    test('a ┊ inside the diff body is source, not the review header', () {
+      const body =
+          '@@ -1,3 +1,3 @@\n'
+          ' ┊ status rail\n'
+          '-┊ removed\n'
+          '+┊ added';
+      for (final raw in [
+        body,
+        ' ┊ status rail\n-┊ removed\n+┊ added',
+        '  ┊ revisar diff\na/lib/foo.dart → b/lib/foo.dart\n$body',
+        '┊ review diff\n$body',
+      ]) {
+        final cleaned = cleanInlineDiff(raw);
+        expect(cleaned, isNot(contains('revisar')), reason: raw);
+        expect(cleaned, isNot(contains('review diff')), reason: raw);
+        for (final line in [' ┊ status rail', '-┊ removed', '+┊ added']) {
+          expect(cleaned.split('\n'), contains(line), reason: raw);
+        }
+      }
+    });
+
+    test('only the exact emitted review header is chrome', () {
+      // Every `display.diff.review_header` in Hermes locales/*.yaml.
+      for (final header in [
+        '  ┊ hersien diff',
+        '  ┊ مراجعة الفرق (diff)',
+        '  ┊ Review-Diff',
+        '  ┊ review diff',
+        '  ┊ revisar diff',
+        '  ┊ diff de revue',
+        '  ┊ diff athbhreithnithe',
+        '  ┊ diff áttekintése',
+        '  ┊ diff della revisione',
+        '  ┊ レビュー diff',
+        '  ┊ 리뷰 변경 사항',
+        '  ┊ diff de revisão',
+        '  ┊ проверить diff',
+        '  ┊ inceleme farkı',
+        '  ┊ diff перевірки',
+        '  ┊ 檢閱差異',
+        '  ┊ 审查 diff',
+      ]) {
+        expect(cleanInlineDiff('$header  \n-a\n+b'), '-a\n+b', reason: header);
+      }
+      // A context line (one diff space) whose source starts with a space,
+      // with no hunk header before it: body, not chrome.
+      for (final first in ['  ┊ indented source', ' ┊ status rail']) {
+        expect(
+          cleanInlineDiff('$first\n-a\n+b').split('\n').first,
+          first,
+          reason: first,
+        );
+        expect(
+          cleanInlineDiff('  ┊ review diff\n$first\n-a').split('\n').first,
+          first,
+          reason: first,
+        );
+      }
+    });
+
+    test('a section without any change or hunk is no diff card', () {
+      final record = ToolOutputRecord.fromCompletePayload(
+        _complete(inlineDiff: 'stray preamble\n$_inlineDiff'),
+      )!;
+      expect(record.files, hasLength(1));
+      expect(record.files.single.stats.isEmpty, isFalse);
+      // Nothing but chrome: no record at all.
+      expect(
+        ToolOutputRecord.fromCompletePayload(
+          _complete(inlineDiff: '  ┊ revisar diff\n'),
+        ),
+        isNull,
+      );
+    });
+
     test('the ledger keys by tool id and stays bounded', () {
       final ledger = ToolOutputLedger(capacity: 2);
       for (final id in ['a', 'b', 'c']) {

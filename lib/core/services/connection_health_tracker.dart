@@ -18,6 +18,10 @@ class ConnectionHealthTracker {
   bool get healthy => _healthy;
   bool get checking => _checking;
 
+  /// What a status label shows: «checking» only while no healthy state is
+  /// known. A re-probe of a healthy connection keeps it «online».
+  bool get showsChecking => _checking && !_healthy;
+
   int beginProbe() {
     _checking = true;
     return ++_generation;

@@ -199,9 +199,14 @@ final List<_Consumer> _consumers = [
     (c) => c.eventPayloadSchema('tool.complete'),
     (s) =>
         ToolOutputRecord.fromCompletePayload({...s, 'name': 'patch'}) != null,
-    semanticallyEmpty: (s) =>
-        s['inline_diff'] is! String ||
-        cleanInlineDiff(s['inline_diff'] as String).isEmpty,
+    // A diff with no change and no hunk is no card (qa9485).
+    semanticallyEmpty: (s) {
+      final raw = s['inline_diff'];
+      if (raw is! String) return true;
+      final cleaned = cleanInlineDiff(raw);
+      return countDiffLineStats(cleaned).isEmpty &&
+          !RegExp(r'^@@', multiLine: true).hasMatch(cleaned);
+    },
   ),
   _Consumer(
     'event',

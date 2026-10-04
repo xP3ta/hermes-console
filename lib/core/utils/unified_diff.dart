@@ -52,20 +52,52 @@ final class FileDiff {
   String get name => fileBasename(path);
 }
 
-final RegExp _reviewHeader = RegExp(
-  r'^\s*┊\s*review diff\s*$',
-  caseSensitive: false,
-);
+/// The CLI review header, exactly as Hermes emits it: `_emit_inline_diff`
+/// in `agent/display.py` prints `t("display.diff.review_header")`, one value
+/// per `locales/<lang>.yaml`. Keep in sync with those files. Matching the
+/// exact text (not a `┊` pattern) keeps body lines such as `  ┊ indented
+/// source` (context space + source) or ` ┊ status rail`.
+const List<String> kInlineDiffReviewHeaders = [
+  '  ┊ hersien diff', // af
+  '  ┊ مراجعة الفرق (diff)', // ar
+  '  ┊ Review-Diff', // de
+  '  ┊ review diff', // en
+  '  ┊ revisar diff', // es
+  '  ┊ diff de revue', // fr
+  '  ┊ diff athbhreithnithe', // ga
+  '  ┊ diff áttekintése', // hu
+  '  ┊ diff della revisione', // it
+  '  ┊ レビュー diff', // ja
+  '  ┊ 리뷰 변경 사항', // ko
+  '  ┊ diff de revisão', // pt
+  '  ┊ проверить diff', // ru
+  '  ┊ inceleme farkı', // tr
+  '  ┊ diff перевірки', // uk
+  '  ┊ 檢閱差異', // zh-hant
+  '  ┊ 审查 diff', // zh
+];
 
-/// Strips ANSI and the CLI `┊ review diff` header (Desktop
-/// `stripInlineDiffChrome`). Returns '' for blank input.
+/// Exact headers, plus their unindented form (no diff body line starts
+/// with `┊`), compared after trimRight.
+final Set<String> _reviewHeaders = {
+  for (final h in kInlineDiffReviewHeaders) ...[h, h.trimLeft()],
+};
+
+bool _isReviewHeader(String line) => _reviewHeaders.contains(line.trimRight());
+
+/// Strips ANSI and the CLI review header in any locale (Desktop
+/// `stripInlineDiffChrome`). Only leading chrome goes: once the diff body
+/// starts, a `┊` is source text. Returns '' for blank input.
 String cleanInlineDiff(String raw) {
   if (raw.trim().isEmpty) return '';
   final lines = stripAnsi(raw).split('\n');
-  if (lines.isNotEmpty && _reviewHeader.hasMatch(lines.first)) {
-    lines.removeAt(0);
+  var start = 0;
+  while (start < lines.length &&
+      (lines[start].trim().isEmpty || _isReviewHeader(lines[start]))) {
+    start++;
   }
-  return lines.join('\n').trim();
+  // trimRight only: a leading space is the first context line's prefix.
+  return lines.sublist(start).join('\n').trimRight();
 }
 
 DiffStats countDiffLineStats(String diff) {
