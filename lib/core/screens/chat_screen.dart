@@ -8,7 +8,11 @@ export '../widgets/chat/chat_markdown_body.dart'
 export '../widgets/chat/chat_message_selection_area.dart';
 
 import '../models/bot_mention.dart';
+import '../models/composer_reference.dart';
+import '../utils/large_paste.dart';
 import '../widgets/chat_mention_palette.dart';
+import '../widgets/chat/composer_reference_palette.dart';
+import '../widgets/chat/pasted_text_editor.dart';
 import '../widgets/chat/chat_markdown_body.dart';
 import '../widgets/chat/chat_message_frame.dart';
 import '../widgets/chat/console_composer.dart';
@@ -97,6 +101,7 @@ import '../services/chat_content_extractor.dart';
 import '../services/chat_draft_store.dart';
 import '../services/chat_preference_store.dart';
 import '../services/desktop_gateway_capabilities.dart';
+import '../services/composer_completion_scheduler.dart';
 import '../services/mission_bot_chat_store.dart';
 import '../services/notifications/notification_service.dart';
 import '../services/recent_interrupt_guard.dart';
@@ -1641,8 +1646,32 @@ class _ChatScreenState extends State<ChatScreen>
   // (slash palette, floating notices): they must hide while it is open.
   bool _navigationDrawerOpen = false;
   DesktopCommandCatalog? _desktopCommandCatalog;
-  Timer? _slashCompletionDebounce;
-  int _slashCompletionEpoch = 0;
+  // One debounced, cancellable lookup per keystroke burst while the slash
+  // palette is open; closing it (trigger gone, blur, dispose) cancels.
+  late final ComposerCompletionScheduler<_SlashLookup> _slashCompletions =
+      ComposerCompletionScheduler<_SlashLookup>(fetch: _fetchSlashLookup);
+  // Who answers composer completions (Desktop `scopeKey`): the bound runtime,
+  // or the profile a new-chat draft is routed to. Every slash key carries it.
+  String? _completionScope;
+  // `@` references (`complete.path`), same debounce/cancel contract. The key
+  // carries the runtime the listing is asked of and answered for, so another
+  // session's tree is never served; a listing expires like Desktop's (15 s).
+  late final ComposerCompletionScheduler<PathCompletionBatch>
+  _referenceCompletions = ComposerCompletionScheduler<PathCompletionBatch>(
+    fetch: _fetchReferences,
+    cacheTtl: const Duration(seconds: 15),
+  );
+  List<PathCompletionItem> _referenceItems = const [];
+  String? _referenceKey;
+  late final List<TextInputFormatter> _composerInputFormatters = [
+    LargePasteFormatter(
+      enabled: () => _largePasteAttachable,
+      onLargePaste: _onLargePaste,
+    ),
+    ComposerReferenceFormatter(
+      enabled: () => _chatBound && _chat.supportsDesktopPathCompletion,
+    ),
+  ];
   // Resolviendo una aprobación del agente (deshabilita los botones).
   bool _resolvingApproval = false;
   bool _resolvingInteractivePrompt = false;
@@ -2384,6 +2413,10 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _onComposerFocusChanged() {
+    if (!_textFocusNode.hasFocus) {
+      _slashCompletions.cancel();
+      _closeReferencePalette();
+    }
     if (mounted && !_disposed) setState(() {});
   }
 
@@ -3642,16 +3675,9 @@ class _ChatScreenState extends State<ChatScreen>
         _slashSuggestions = suggestions;
       });
     }
-    _slashCompletionDebounce?.cancel();
-    final completionEpoch = ++_slashCompletionEpoch;
-    if (text.startsWith('/') &&
-        !text.contains(RegExp(r'\s')) &&
-        text.length <= 65) {
-      _slashCompletionDebounce = Timer(
-        const Duration(milliseconds: 150),
-        () => unawaited(_refreshDesktopSlashSuggestions(text, completionEpoch)),
-      );
-    }
+    _syncComposerCompletionScope();
+    _refreshSlashCompletion(text);
+    _refreshReferenceQuery();
     _maybeDiscardFailedTurnFromExplicitEmptyComposer();
     _scheduleDraftSave();
   }
@@ -3686,6 +3712,9 @@ class _ChatScreenState extends State<ChatScreen>
       final catalog = await _chat.loadDesktopCommandCatalog();
       if (!_disposed && mounted && catalog != null) {
         _desktopCommandCatalog = catalog;
+        _rememberRemoteSlashNames(
+          catalog.commands.map((entry) => entry.canonicalName),
+        );
       }
       return catalog;
     } catch (_) {
@@ -3693,66 +3722,197 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  Future<void> _refreshDesktopSlashSuggestions(
-    String input,
-    int completionEpoch,
-  ) async {
+  void _refreshReferenceQuery() {
+    final runtime = _chatBound ? _chat.desktopRuntimeSessionId : null;
+    final query =
+        _textFocusNode.hasFocus &&
+            runtime != null &&
+            runtime.isNotEmpty &&
+            _chat.supportsDesktopPathCompletion
+        ? composerReferenceQuery(_textController.value)
+        : null;
+    if (query == null) {
+      _closeReferencePalette();
+      return;
+    }
+    final key = '$runtime\n${query.word}';
+    if (key == _referenceKey) return;
+    _referenceKey = key;
+    _referenceCompletions.schedule(key, _applyReferences);
+  }
+
+  void _closeReferencePalette() {
+    _referenceCompletions.cancel();
+    _referenceKey = null;
+    if (_referenceItems.isNotEmpty && mounted && !_disposed) {
+      setState(() => _referenceItems = const []);
+    }
+  }
+
+  Future<PathCompletionBatch?> _fetchReferences(String key) {
+    final split = key.indexOf('\n');
+    return _chat.completeDesktopPath(
+      key.substring(split + 1),
+      runtimeSessionId: key.substring(0, split),
+    );
+  }
+
+  void _applyReferences(String key, PathCompletionBatch? batch) {
+    if (_disposed || !mounted) return;
+    // A rotation no chat event announced yet still retires this answer and
+    // asks the new runtime instead.
+    _syncComposerCompletionScope();
+    if (key != _referenceKey) return;
+    final items = batch?.items ?? const <PathCompletionItem>[];
+    if (items.isEmpty && _referenceItems.isEmpty) return;
+    setState(() => _referenceItems = items);
+  }
+
+  void _pickReference(PathCompletionItem item) {
+    final query = composerReferenceQuery(_textController.value);
+    if (query == null) return;
+    _textController.value = applyReferencePick(
+      _textController.value,
+      query,
+      item,
+    );
+  }
+
+  void _descendReference(PathCompletionItem item) {
+    final query = composerReferenceQuery(_textController.value);
+    if (query == null) return;
+    _textController.value = applyReferenceDescend(
+      _textController.value,
+      query,
+      item,
+    );
+  }
+
+  bool get _referencePaletteVisible =>
+      _referenceItems.isNotEmpty &&
+      _textFocusNode.hasFocus &&
+      !_isRecording &&
+      !_transcribing &&
+      !_navigationDrawerOpen;
+
+  String get _composerCompletionScope {
+    final runtime = _chatBound ? _chat.desktopRuntimeSessionId : null;
+    return runtime != null && runtime.isNotEmpty
+        ? 'runtime:$runtime'
+        : 'profile:$_effectiveSessionProfile';
+  }
+
+  /// A runtime bind/rotation or profile change retires every completion keyed
+  /// to the previous scope: pending lookups, memoised answers and rows.
+  void _syncComposerCompletionScope() {
+    final scope = _composerCompletionScope;
+    final previous = _completionScope;
+    _completionScope = scope;
+    if (previous == null || previous == scope) return;
+    _slashCompletions
+      ..cancel()
+      ..clearCache();
+    _forgetRuntimeSlashNames();
+    _referenceCompletions
+      ..cancel()
+      ..clearCache();
+    _referenceKey = null;
+    if (_disposed || !mounted) return;
+    if (_referenceItems.isNotEmpty) {
+      setState(() => _referenceItems = const []);
+    }
+    _refreshReferenceQuery();
+    final text = _textController.text;
+    final local = slashSuggestionsFor(text, Strings.of(context));
+    setState(() => _slashSuggestions = local);
+    _refreshSlashCompletion(text);
+  }
+
+  void _refreshSlashCompletion(String text) {
+    if (_textFocusNode.hasFocus &&
+        text.startsWith('/') &&
+        !text.contains(RegExp(r'\s')) &&
+        text.length <= 65) {
+      _slashCompletions.schedule(
+        '$_composerCompletionScope\n$text',
+        _applySlashLookup,
+      );
+    } else {
+      _slashCompletions.cancel();
+    }
+  }
+
+  Future<_SlashLookup?> _fetchSlashLookup(String key) async {
+    final split = key.indexOf('\n');
+    final scope = key.substring(0, split);
+    final input = key.substring(split + 1);
+    if (scope != _composerCompletionScope) return null;
     final catalog = await _loadDesktopCommandCatalog();
     SlashCompletionBatch? completion;
     try {
-      completion = await _chat.completeDesktopSlash(input);
+      completion = await _chat.completeDesktopSlash(
+        input,
+        runtimeSessionId: scope.startsWith('runtime:')
+            ? scope.substring('runtime:'.length)
+            : null,
+        profile: scope.startsWith('profile:')
+            ? scope.substring('profile:'.length)
+            : '',
+      );
     } catch (_) {
       // El catálogo sigue siendo un fallback válido para Gateway modernos que
       // no publiquen complete.slash.
     }
+    if (catalog == null && completion == null) return null;
+    return _SlashLookup(catalog: catalog, completion: completion);
+  }
+
+  void _applySlashLookup(String key, _SlashLookup? lookup) {
+    final split = key.indexOf('\n');
+    final input = key.substring(split + 1);
     if (_disposed ||
         !mounted ||
-        completionEpoch != _slashCompletionEpoch ||
+        lookup == null ||
+        key.substring(0, split) != _composerCompletionScope ||
         _textController.text != input) {
       return;
     }
+    final merged = mergeSlashSuggestions(
+      input: input,
+      local: slashSuggestionsFor(input, Strings.of(context)),
+      catalog: lookup.catalog,
+      completion: lookup.completion,
+    );
+    _rememberRemoteSlashNames(
+      merged
+          .where((command) => command.action == SlashAction.remote)
+          .map((command) => command.name),
+    );
+    setState(() => _slashSuggestions = merged);
+  }
 
-    final strings = Strings.of(context);
-    final local = slashSuggestionsFor(input, strings);
-    final byName = <String, SlashCommand>{
-      for (final item in local) item.name: item,
-    };
-    final prefix = input.substring(1).toLowerCase();
-    final catalogByName = <String, CommandCatalogEntry>{
-      for (final item in catalog?.commands ?? const <CommandCatalogEntry>[])
-        item.canonicalName: item,
-    };
+  /// Names complete.slash offered belong to the scope that answered: another
+  /// runtime or profile may not have that skill, so only the gateway-wide
+  /// catalog survives a scope change.
+  void _forgetRuntimeSlashNames() {
+    final controller = _textController;
+    if (controller is! _SlashAccentTextEditingController) return;
+    controller.remoteCommandNames = Set<String>.unmodifiable({
+      for (final entry
+          in _desktopCommandCatalog?.commands ?? const <CommandCatalogEntry>[])
+        entry.canonicalName,
+    });
+  }
 
-    final candidates = completion?.suggestions
-        .map((item) => item.replacement.trim().split(RegExp(r'\s+')).first)
-        .map(CommandDescriptor.tryNormalizeName)
-        .whereType<String>();
-    final names =
-        candidates ??
-        catalogByName.keys.where((name) => name.startsWith(prefix));
-    for (final name in names) {
-      if (isUnavailableSlashName(name) || byName.containsKey(name)) continue;
-      final entry = catalogByName[name];
-      // Una completion desconocida puede mostrarse, pero al enviar se vuelve a
-      // resolver contra el catálogo y no adquiere disponibilidad por aparecer.
-      String? meta;
-      for (final item
-          in completion?.suggestions ?? const <SlashCompletionSuggestion>[]) {
-        final suggestionName = CommandDescriptor.tryNormalizeName(
-          item.replacement.trim().split(RegExp(r'\s+')).first,
-        );
-        if (suggestionName == name) {
-          meta = item.meta;
-          break;
-        }
-      }
-      byName[name] = SlashCommand.remote(
-        name: name,
-        description: entry?.description ?? meta ?? '',
-      );
-      if (byName.length >= 20) break;
-    }
-    setState(() => _slashSuggestions = byName.values.toList(growable: false));
+  /// Lets the composer paint a server command or skill with the same accent as
+  /// a local one (owner preference), only once the server has named it.
+  void _rememberRemoteSlashNames(Iterable<String> names) {
+    final controller = _textController;
+    if (controller is! _SlashAccentTextEditingController) return;
+    final next = {...controller.remoteCommandNames, ...names};
+    if (next.length == controller.remoteCommandNames.length) return;
+    controller.remoteCommandNames = Set<String>.unmodifiable(next);
+    if (mounted && !_disposed) setState(() {});
   }
 
   /// No hay nada que enviar: ni texto ni adjunto en cola. Un adjunto solo (sin
@@ -6091,6 +6251,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _onChatEvent(ActiveChatEvent event) {
     if (_disposed || !mounted) return;
+    _syncComposerCompletionScope();
     if (event == ActiveChatEvent.subagentActivity &&
         !_subagentLeadingEdgeUsed &&
         _coalescedPending == null) {
@@ -6954,7 +7115,8 @@ class _ChatScreenState extends State<ChatScreen>
     _vc?.removeListener(_onVoiceState);
     _voice?.voiceConsent.removeListener(_onVoicePreferenceChanged);
     _vcUnavailableSub?.cancel();
-    _slashCompletionDebounce?.cancel();
+    _slashCompletions.dispose();
+    _referenceCompletions.dispose();
     _stopFallback?.cancel();
     _stopConfirmationDismissTimer?.cancel();
     // Detén SOLO el dictado del composer (el de esta pantalla), no el TTS del
@@ -8106,6 +8268,17 @@ class _ChatScreenState extends State<ChatScreen>
               name: remote.canonicalName,
               description: remote.description,
             ),
+            invocation.arg,
+          );
+          return true;
+        }
+        // A skill installed after the catalog was cached is still named by
+        // complete.slash; the server owns it, as on Desktop.
+        final controller = _textController;
+        if (controller is _SlashAccentTextEditingController &&
+            controller.remoteCommandNames.contains(invocation.name)) {
+          await _executeSlash(
+            SlashCommand.remote(name: invocation.name, description: ''),
             invocation.arg,
           );
           return true;
@@ -11487,6 +11660,159 @@ class _ChatScreenState extends State<ChatScreen>
     } finally {
       _imagePickerOpen = false;
     }
+  }
+
+  /// A large paste can become an attachment while the `+` could attach one.
+  bool get _largePasteAttachable =>
+      !widget.connection.readOnly &&
+      !_interactiveMessageRefreshPending &&
+      !_composerSubmissionInFlight &&
+      !_attachmentSubmitting &&
+      !_compressingSession;
+
+  /// Longest wait for a paste's private copy. Past it the paste simply stays
+  /// in the field as text and send is no longer held by it.
+  static const Duration _largePasteAttachTimeout = Duration(seconds: 15);
+
+  void _onLargePaste(String text, int offset) {
+    // The paste already sits in the field, which stays its only durable copy
+    // (draft, dispose, send) until the chip exists; only then does it leave.
+    unawaited(
+      _serializeAttachmentMutation(() => _attachPastedText(text, offset)),
+    );
+  }
+
+  Future<void> _attachPastedText(String text, int offset) async {
+    final bytes = utf8.encode(text);
+    final batchBytes = _pendingAttachments.fold<int>(
+      0,
+      (sum, item) => sum + item.sizeBytes,
+    );
+    AttachmentDraft? persisted;
+    File? source;
+    if (!_attachmentSubmitting &&
+        pendingAttachmentLimitViolation(
+              sizeBytes: bytes.length,
+              itemLimit: AttachmentUploader.maxTextBytes,
+              currentBatchBytes: batchBytes,
+            ) ==
+            null) {
+      final name = pastedContentFileName();
+      final file = source = File(
+        '${Directory.systemTemp.path}/hermes-paste-${const Uuid().v4()}.txt',
+      );
+      try {
+        await file.writeAsBytes(bytes, flush: true);
+        // Re-typed: a materializer may return a non-nullable future, whose
+        // timeout could not yield null.
+        final pending = _materializeAttachment(
+          AttachmentDraft(
+            localId: const Uuid().v4(),
+            type: AttachmentType.document,
+            name: name,
+            mimeType: 'text/plain',
+            sizeBytes: bytes.length,
+            localPath: file.path,
+          ),
+        ).then<AttachmentDraft?>((copy) => copy);
+        persisted = await pending.timeout(
+          _largePasteAttachTimeout,
+          onTimeout: () {
+            // A copy that shows up late is never attached: discard it.
+            unawaited(
+              pending.then((late) async {
+                if (late != null) await _deletePrivateAttachmentCopy(late);
+              }, onError: (Object _) {}),
+            );
+            return null;
+          },
+        );
+      } catch (_) {
+        persisted = null;
+      } finally {
+        if (persisted?.localPath != file.path) await _deleteQuietly(file);
+      }
+    }
+    final attached = persisted;
+    if (attached == null) return;
+    final at = mounted && !_disposed
+        ? pastedRunOffset(_textController.text, text, near: offset)
+        : -1;
+    if (at < 0) {
+      // Disposed, or the user edited the pasted run meanwhile: the field copy
+      // is the one the user sees, so the chip is dropped instead.
+      await _deletePrivateAttachmentCopy(attached);
+      if (source != null && attached.localPath == source.path) {
+        await _deleteQuietly(source);
+      }
+      return;
+    }
+    _textController.value = removePastedRun(
+      _textController.value,
+      at,
+      text.length,
+    );
+    setState(() => _pendingAttachments.add(attached));
+    _scheduleDraftSave();
+  }
+
+  Future<void> _deleteQuietly(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
+  /// Expands a collapsed paste to edit it; only while it is still a local
+  /// draft no delivery has taken.
+  Future<void> _openPastedText(String localId) async {
+    final index = _pendingAttachments.indexWhere(
+      (item) => item.localId == localId,
+    );
+    if (index < 0) return;
+    final attachment = _pendingAttachments[index];
+    final delivery = _chatBound ? _chat.activeTurnDelivery : null;
+    if (attachment.uploadState != AttachmentUploadState.pending ||
+        (delivery?.current.attachments.any((item) => item.localId == localId) ??
+            false)) {
+      return;
+    }
+    final String original;
+    try {
+      original = await File(attachment.localPath).readAsString();
+    } catch (_) {
+      return;
+    }
+    if (!mounted) return;
+    final edited = await showPastedTextEditor(context, original);
+    if (!mounted || _disposed || edited == null || edited == original) return;
+    if (edited.trim().isEmpty) {
+      await _removePendingAttachment(localId);
+      return;
+    }
+    await _serializeAttachmentMutation(() async {
+      final current = _pendingAttachments.indexWhere(
+        (item) => item.localId == localId,
+      );
+      if (current < 0 ||
+          _pendingAttachments[current].uploadState !=
+              AttachmentUploadState.pending) {
+        return;
+      }
+      final bytes = utf8.encode(edited);
+      if (bytes.length > AttachmentUploader.maxTextBytes) return;
+      try {
+        await File(attachment.localPath).writeAsBytes(bytes, flush: true);
+      } catch (_) {
+        return;
+      }
+      if (!mounted || _disposed) return;
+      setState(() {
+        _pendingAttachments[current] = _pendingAttachments[current].copyWith(
+          sizeBytes: bytes.length,
+        );
+      });
+      _scheduleDraftSave();
+    });
   }
 
   Future<void> _pickDocument() =>
@@ -15041,15 +15367,35 @@ class _ChatScreenState extends State<ChatScreen>
               onPick: _pickSlash,
             ),
           );
+    final mentionPalette =
+        _isRecording || _transcribing || _navigationDrawerOpen
+        ? null
+        : ChatMentionPalette(
+            controller: _textController,
+            focusNode: _textFocusNode,
+            connectionId: widget.connection.id,
+            profile: _effectiveSessionProfile,
+          );
+    final referencePalette = !_referencePaletteVisible
+        ? null
+        : TextFieldTapRegion(
+            child: ComposerReferencePalette(
+              items: _referenceItems,
+              onPick: _pickReference,
+              onDescend: _descendReference,
+            ),
+          );
     final floatingPalette =
         slashPalette ??
-        (_isRecording || _transcribing || _navigationDrawerOpen
-            ? null
-            : ChatMentionPalette(
-                controller: _textController,
-                focusNode: _textFocusNode,
-                connectionId: widget.connection.id,
-                profile: _effectiveSessionProfile,
+        (referencePalette == null
+            ? mentionPalette
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Flexible(child: referencePalette),
+                  ?mentionPalette,
+                ],
               ));
     final showStop = _chat.canStopSessionWork && _nothingToSend;
     // Composer premium compartido (ConsoleComposer): contenedor con borde
@@ -15058,6 +15404,8 @@ class _ChatScreenState extends State<ChatScreen>
       controller: _textController,
       focusNode: _textFocusNode,
       palette: floatingPalette,
+      inputFormatters: _composerInputFormatters,
+      onOpenPastedText: (localId) => unawaited(_openPastedText(localId)),
       reduceMotion: _reduceMotion,
       attachments: _pendingAttachments,
       onRemoveAttachment: (localId) =>
@@ -16782,10 +17130,27 @@ class _BotChatAppBarTitle extends StatelessWidget {
   }
 }
 
+final class _SlashLookup {
+  final DesktopCommandCatalog? catalog;
+  final SlashCompletionBatch? completion;
+
+  const _SlashLookup({this.catalog, this.completion});
+}
+
 class _SlashAccentTextEditingController extends TextEditingController {
+  /// Server commands and skills this chat's gateway publishes; they get the
+  /// same accent as local commands once the catalog or a completion names
+  /// them.
+  Set<String> remoteCommandNames = const <String>{};
+
   TextRange? slashCommandRange() {
-    final parsed = parseSlashCommand(value.text);
-    if (parsed == null) return null;
+    final known =
+        parseSlashCommand(value.text) != null ||
+        switch (parseSlashInvocation(value.text)) {
+          final invocation? => remoteCommandNames.contains(invocation.name),
+          null => false,
+        };
+    if (!known) return null;
     final text = value.text;
     final start = text.length - text.trimLeft().length;
     final trimmed = text.trimLeft();
@@ -16809,8 +17174,14 @@ class _SlashAccentTextEditingController extends TextEditingController {
     required bool withComposing,
   }) {
     final text = value.text;
-    final slashRange = slashCommandRange();
-    if (text.isEmpty || slashRange == null) {
+    final slashRange = text.isEmpty ? null : slashCommandRange();
+    // Complete `@file:`/`@folder:`/`@url:` references read as the same accent
+    // token Desktop renders as a chip.
+    final accentRanges = <TextRange>[
+      ?slashRange,
+      ...composerReferenceRanges(text),
+    ];
+    if (text.isEmpty || accentRanges.isEmpty) {
       return super.buildTextSpan(
         context: context,
         style: style,
@@ -16818,22 +17189,30 @@ class _SlashAccentTextEditingController extends TextEditingController {
       );
     }
     final composing = composingRange(value, withComposing);
-    final cuts = <int>{0, slashRange.start, slashRange.end, text.length};
+    final cuts = <int>{0, text.length};
+    for (final range in accentRanges) {
+      cuts
+        ..add(range.start)
+        ..add(range.end);
+    }
     if (!composing.isCollapsed) {
       cuts
         ..add(composing.start)
         ..add(composing.end);
     }
     final orderedCuts = cuts.toList()..sort();
+    final accent = Theme.of(context).hermes.accent;
     final spans = <InlineSpan>[];
     for (var index = 0; index < orderedCuts.length - 1; index++) {
       final start = orderedCuts[index];
       final end = orderedCuts[index + 1];
       if (start == end) continue;
       var segmentStyle = style;
-      if (start >= slashRange.start && end <= slashRange.end) {
+      if (accentRanges.any(
+        (range) => start >= range.start && end <= range.end,
+      )) {
         segmentStyle = (segmentStyle ?? const TextStyle()).copyWith(
-          color: Theme.of(context).hermes.accent,
+          color: accent,
         );
       }
       if (!composing.isCollapsed &&
@@ -16862,6 +17241,7 @@ class _SlashPalette extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final firstSkill = commands.indexWhere((command) => command.isSkill);
     return Container(
       key: const ValueKey('chat-slash-palette'),
       margin: const EdgeInsets.fromLTRB(10, 0, 10, 9),
@@ -16893,88 +17273,115 @@ class _SlashPalette extends StatelessWidget {
             ),
             itemBuilder: (ctx, i) {
               final command = commands[i];
-              return InkWell(
-                key: ValueKey('chat-slash-command-${command.name}'),
-                onTap: () => onPick(command),
-                child: Padding(
-                  padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 14, 8),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: colors.accent.withValues(alpha: 0.11),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: colors.accent.withValues(alpha: 0.24),
-                          ),
-                        ),
-                        child: Text(
-                          '/',
-                          textScaler: TextScaler.noScaling,
-                          style: TextStyle(
-                            color: colors.accent,
-                            fontFamily: 'monospace',
-                            fontWeight: FontWeight.w800,
-                            fontSize: 17,
-                          ),
-                        ),
+              final row = _row(colors, command);
+              if (!command.isSkill || i != firstSkill) return row;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    key: const ValueKey('chat-slash-skills-header'),
+                    padding: const EdgeInsetsDirectional.fromSTEB(14, 8, 14, 2),
+                    child: Text(
+                      Strings.of(ctx).t1215SlashSkillsHeader,
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text.rich(
-                              TextSpan(
-                                children: [
-                                  TextSpan(
-                                    text: '/${command.name}',
-                                    style: TextStyle(
-                                      color: colors.accent,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                  if (command.argHint.isNotEmpty)
-                                    TextSpan(
-                                      text: '  ${command.argHint}',
-                                      style: TextStyle(
-                                        color: colors.textSecondary,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 13.5,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              command.description,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: colors.textSecondary,
-                                fontSize: 12.5,
-                                height: 1.2,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
+                  row,
+                ],
               );
             },
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _row(HermesThemeColors colors, SlashCommand command) {
+    return InkWell(
+      key: ValueKey('chat-slash-command-${command.name}'),
+      onTap: () => onPick(command),
+      child: Padding(
+        padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 14, 8),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: colors.accent.withValues(alpha: 0.11),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: colors.accent.withValues(alpha: 0.24),
+                ),
+              ),
+              child: command.isSkill
+                  ? Icon(Icons.bolt_rounded, size: 18, color: colors.accent)
+                  : Text(
+                      '/',
+                      textScaler: TextScaler.noScaling,
+                      style: TextStyle(
+                        color: colors.accent,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.w800,
+                        fontSize: 17,
+                      ),
+                    ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: '/${command.name}',
+                          style: TextStyle(
+                            color: colors.accent,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        if (command.argHint.isNotEmpty)
+                          TextSpan(
+                            text: '  ${command.argHint}',
+                            style: TextStyle(
+                              color: colors.textSecondary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                      ],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 13.5,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    command.description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 12.5,
+                      height: 1.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

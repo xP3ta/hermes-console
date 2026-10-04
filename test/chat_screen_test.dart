@@ -12286,6 +12286,368 @@ void main() {
     expect(find.byType(AttachmentCard), findsOneWidget);
   });
 
+  testWidgets(
+    'pegar texto grande lo colapsa en un adjunto editable (Desktop 3000)',
+    (tester) async {
+      final temp = Directory.systemTemp.createTempSync('chat-large-paste-');
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+      addTearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null),
+      );
+      await pumpChat(
+        tester,
+        attachmentMaterializer: (attachment) async => attachment,
+      );
+      final composer = find.byType(TextField).last;
+      await tester.enterText(composer, 'resume esto ');
+      await tester.pump();
+
+      // Under the threshold a paste stays inline.
+      final small = 'a' * 3000;
+      await tester.enterText(composer, 'resume esto $small');
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(composer).controller!.text,
+        'resume esto $small',
+      );
+      await tester.enterText(composer, 'resume esto ');
+      await tester.pump();
+
+      final big = List.filled(400, 'línea de log 0123456789').join('\n');
+      expect(big.length, greaterThan(3000));
+      tester.testTextInput.updateEditingValue(
+        TextEditingValue(
+          text: 'resume esto $big',
+          selection: TextSelection.collapsed(offset: 12 + big.length),
+        ),
+      );
+      await tester.pump();
+      await pumpUntilReal(
+        tester,
+        () => find.byType(AttachmentCard).evaluate().isNotEmpty,
+        timeoutMessage: 'large paste did not become an attachment',
+      );
+      // Once the chip exists, the paste leaves the field.
+      expect(
+        tester.widget<TextField>(composer).controller!.text,
+        'resume esto ',
+      );
+      final card = tester.widget<AttachmentCard>(find.byType(AttachmentCard));
+      expect(card.name, 'Texto pegado');
+      expect(card.mimeType, 'text/plain');
+      final draft = tester
+          .widget<ConsoleComposer>(find.byType(ConsoleComposer))
+          .attachments
+          .single;
+      expect(
+        RegExp(r'^pasted_content_[\w-]+\.txt$').hasMatch(draft.name),
+        isTrue,
+      );
+      final stored = await tester.runAsync(
+        () => File(draft.localPath).readAsString(),
+      );
+      expect(stored, big);
+      addTearDown(() {
+        final file = File(draft.localPath);
+        if (file.existsSync()) file.deleteSync();
+      });
+
+      // Tap expands it for editing; saving rewrites the attachment.
+      await tester.tap(find.byType(AttachmentCard));
+      await pumpUntilReal(
+        tester,
+        () => find
+            .byKey(const ValueKey('pasted-text-field'))
+            .evaluate()
+            .isNotEmpty,
+        timeoutMessage: 'paste editor did not open',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('pasted-text-field')),
+        'editado',
+      );
+      await tester.tap(find.byKey(const ValueKey('pasted-text-save')));
+      await pumpUntilReal(
+        tester,
+        () =>
+            tester
+                .widget<ConsoleComposer>(find.byType(ConsoleComposer))
+                .attachments
+                .single
+                .sizeBytes ==
+            'editado'.length,
+        timeoutMessage: 'edited paste was not saved',
+      );
+      expect(
+        await tester.runAsync(() => File(draft.localPath).readAsString()),
+        'editado',
+      );
+    },
+  );
+
+  group('pegado grande sin adjunto confirmado', () {
+    late Directory temp;
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+
+    setUp(() {
+      temp = Directory.systemTemp.createTempSync('chat-paste-durable-');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+    });
+
+    tearDown(() {
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null);
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+
+    String fieldText(WidgetTester tester) =>
+        tester.widget<TextField>(find.byType(TextField).last).controller!.text;
+
+    void paste(WidgetTester tester, String before, String chunk) {
+      tester.testTextInput.updateEditingValue(
+        TextEditingValue(
+          text: '$before$chunk',
+          selection: TextSelection.collapsed(
+            offset: before.length + chunk.length,
+          ),
+        ),
+      );
+    }
+
+    testWidgets(
+      'el texto sigue en el campo hasta el adjunto; un fallo no reordena',
+      (tester) async {
+        final gates = <Completer<AttachmentDraft?>>[];
+        final asked = <AttachmentDraft>[];
+        await pumpChat(
+          tester,
+          attachmentMaterializer: (attachment) {
+            asked.add(attachment);
+            final gate = Completer<AttachmentDraft?>();
+            gates.add(gate);
+            return gate.future;
+          },
+        );
+        final composer = find.byType(TextField).last;
+        await tester.enterText(composer, 'hola ');
+        await tester.pump();
+        final a = 'A' * 3500;
+        final b = 'B' * 3500;
+
+        // Both pastes stay where the user put them while no chip exists.
+        paste(tester, 'hola ', a);
+        await tester.pump();
+        expect(fieldText(tester), 'hola $a');
+        paste(tester, 'hola $a', b);
+        await tester.pump();
+        expect(fieldText(tester), 'hola $a$b');
+        // An edit lands before either outcome.
+        tester.testTextInput.updateEditingValue(
+          TextEditingValue(
+            text: 'X hola $a$b',
+            selection: const TextSelection.collapsed(offset: 1),
+          ),
+        );
+        await tester.pump();
+
+        await pumpUntilReal(
+          tester,
+          () => gates.isNotEmpty,
+          timeoutMessage: 'first paste never reached the materializer',
+        );
+        gates.first.complete(null);
+        await pumpUntilReal(
+          tester,
+          () => gates.length == 2,
+          timeoutMessage: 'second paste never reached the materializer',
+        );
+        addTearDown(() {
+          final file = File(asked.last.localPath);
+          if (file.existsSync()) file.deleteSync();
+        });
+        gates.last.complete(asked.last);
+        await pumpUntilReal(
+          tester,
+          () => find.byType(AttachmentCard).evaluate().isNotEmpty,
+          timeoutMessage: 'second paste did not become an attachment',
+        );
+
+        // A failed and stays in place; B became the chip and left the field;
+        // the edit made meanwhile survives.
+        expect(fieldText(tester), 'X hola $a');
+        final drafts = tester
+            .widget<ConsoleComposer>(find.byType(ConsoleComposer))
+            .attachments;
+        expect(drafts, hasLength(1));
+        expect(
+          await tester.runAsync(
+            () => File(drafts.single.localPath).readAsString(),
+          ),
+          b,
+        );
+      },
+    );
+
+    testWidgets(
+      'un adjunto que nunca llega no bloquea el envío ni se pierde al salir',
+      (tester) async {
+        final hung = Completer<AttachmentDraft?>();
+        final deleted = <String>[];
+        var asked = 0;
+        await pumpChat(
+          tester,
+          attachmentMaterializer: (_) {
+            asked++;
+            return hung.future;
+          },
+          attachmentPrivateCopyDeleter: (draft) async {
+            deleted.add(draft.localId);
+            return true;
+          },
+        );
+        final composer = find.byType(TextField).last;
+        await tester.enterText(composer, 'mira ');
+        await tester.pump();
+        final big = 'C' * 3500;
+        paste(tester, 'mira ', big);
+        await tester.pump();
+        await pumpUntilReal(
+          tester,
+          () => asked == 1,
+          timeoutMessage: 'paste never reached the materializer',
+        );
+        bool sendEnabled() => tester
+            .widget<ConsoleComposer>(find.byType(ConsoleComposer))
+            .sendEnabled;
+        expect(sendEnabled(), isFalse);
+
+        // The wait is bounded: past it the paste is plain text again.
+        await tester.pump(const Duration(seconds: 16));
+        // The scratch file is removed with real IO before send reopens.
+        await pumpUntilReal(
+          tester,
+          sendEnabled,
+          timeoutMessage: 'send stayed blocked past the paste limit',
+        );
+        expect(fieldText(tester), 'mira $big');
+        expect(find.byType(AttachmentCard), findsNothing);
+
+        // A copy that shows up after the limit is discarded, not attached.
+        hung.complete(
+          AttachmentDraft(
+            localId: 'late-copy',
+            type: AttachmentType.document,
+            name: 'pasted_content_late.txt',
+            mimeType: 'text/plain',
+            sizeBytes: big.length,
+            localPath: '${temp.path}/late.txt',
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+        expect(deleted, ['late-copy']);
+        expect(find.byType(AttachmentCard), findsNothing);
+        expect(fieldText(tester), 'mira $big');
+      },
+    );
+
+    testWidgets(
+      'si el usuario edita el pegado antes del adjunto, gana su edición',
+      (tester) async {
+        final gate = Completer<AttachmentDraft?>();
+        final asked = <AttachmentDraft>[];
+        final deleted = <String>[];
+        await pumpChat(
+          tester,
+          attachmentMaterializer: (attachment) {
+            asked.add(attachment);
+            return gate.future;
+          },
+          attachmentPrivateCopyDeleter: (draft) async {
+            deleted.add(draft.localId);
+            return true;
+          },
+        );
+        final composer = find.byType(TextField).last;
+        await tester.enterText(composer, 'nota ');
+        await tester.pump();
+        final big = 'E' * 3500;
+        paste(tester, 'nota ', big);
+        await tester.pump();
+        await pumpUntilReal(
+          tester,
+          () => asked.length == 1,
+          timeoutMessage: 'paste never reached the materializer',
+        );
+        // The pasted run is no longer verbatim in the field.
+        final edited = 'nota ${'E' * 3499}Z';
+        tester.testTextInput.updateEditingValue(
+          TextEditingValue(
+            text: edited,
+            selection: TextSelection.collapsed(offset: edited.length),
+          ),
+        );
+        await tester.pump();
+        gate.complete(asked.single);
+        await pumpUntilReal(
+          tester,
+          () => deleted.isNotEmpty,
+          timeoutMessage: 'the stale private copy was never discarded',
+        );
+
+        expect(deleted, [asked.single.localId]);
+        expect(find.byType(AttachmentCard), findsNothing);
+        expect(fieldText(tester), edited);
+      },
+    );
+
+    testWidgets(
+      'salir con el adjunto pendiente guarda el pegado en el borrador',
+      (tester) async {
+        final hung = Completer<AttachmentDraft?>();
+        var asked = 0;
+        await pumpChat(
+          tester,
+          attachmentMaterializer: (_) {
+            asked++;
+            return hung.future;
+          },
+        );
+        final screen = tester.widget<ChatScreen>(find.byType(ChatScreen));
+        final composer = find.byType(TextField).last;
+        await tester.enterText(composer, 'log: ');
+        await tester.pump();
+        final big = 'D' * 3500;
+        paste(tester, 'log: ', big);
+        await tester.pump();
+        await pumpUntilReal(
+          tester,
+          () => asked == 1,
+          timeoutMessage: 'paste never reached the materializer',
+        );
+
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump();
+        final draft = await tester.runAsync(
+          () => screen.draftStoreOverride!.load(
+            screen.connection.id,
+            screen.session.id,
+          ),
+        );
+        expect(draft!.text, 'log: $big');
+        hung.complete(null);
+        await tester.pump();
+      },
+    );
+  });
+
   testWidgets('pegados IME concurrentes se serializan y deduplican', (
     tester,
   ) async {

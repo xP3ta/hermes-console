@@ -447,6 +447,10 @@ final class DesktopCommandCatalog {
   final int? skillCount;
   final String? revision;
 
+  /// Names (without `/`) the server lists under `skills`: skill commands, as
+  /// opposed to registry commands. Drives the palette's Skills group.
+  final Set<String> skillNames;
+
   const DesktopCommandCatalog._({
     required this.commands,
     required this.categories,
@@ -454,6 +458,7 @@ final class DesktopCommandCatalog {
     this.warning,
     this.skillCount,
     this.revision,
+    this.skillNames = const <String>{},
   });
 
   factory DesktopCommandCatalog.fromJson(Object? value) {
@@ -505,7 +510,16 @@ final class DesktopCommandCatalog {
       json['revision'] ?? json['catalog_revision'],
       96,
     );
+    final skillNames = <String>{};
+    final rawSkills = json['skills'];
+    if (rawSkills is Map) {
+      for (final key in rawSkills.keys.take(maxCommands)) {
+        final name = CommandDescriptor.tryNormalizeName(key);
+        if (name != null) skillNames.add(name);
+      }
+    }
     return DesktopCommandCatalog._(
+      skillNames: Set<String>.unmodifiable(skillNames),
       commands: List<CommandCatalogEntry>.unmodifiable(accumulator.build()),
       categories: List<CommandCatalogCategory>.unmodifiable(
         accumulator.categories.values,
@@ -524,12 +538,19 @@ final class SlashCompletionSuggestion {
   final String meta;
   final int replaceFrom;
 
+  /// `complete.slash` tags each row `skill` or `command`; empty when an older
+  /// gateway omits it.
+  final String kind;
+
   const SlashCompletionSuggestion({
     required this.replacement,
     required this.display,
     required this.meta,
     required this.replaceFrom,
+    this.kind = '',
   });
+
+  bool get isSkill => kind == 'skill';
 }
 
 /// Respuesta tipada y acotada de `complete.slash`.
@@ -590,6 +611,7 @@ final class SlashCompletionBatch {
           display: _boundedText(item['display'], 256) ?? replacement,
           meta: _boundedText(item['meta'], 240) ?? '',
           replaceFrom: replaceFrom,
+          kind: _boundedText(item['kind'], 16)?.toLowerCase() ?? '',
         ),
       );
     }
