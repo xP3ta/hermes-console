@@ -7974,6 +7974,12 @@ class ActiveChat {
   int _queueGeneration = 0;
   int _queueParkGeneration = 0;
   bool _preparedTurnDrainInFlight = false;
+
+  /// Queue id of the head the drain has taken and is still sending. While it
+  /// is set that row cannot be edited, moved or overtaken: the drain removes
+  /// its head by identity once the send settles, so replacing the object or
+  /// putting another row in front of it would send the turn a second time.
+  String? _queueDrainInFlightId;
   bool _queueDrainSuspended = false;
   bool _queueAdmissionFrozen = false;
   QueueLease _queueLease = QueueLease.active;
@@ -23767,6 +23773,7 @@ class ActiveChat {
 
   bool promoteQueuedTurn(String id) {
     if (mutationsBlockedByOwnershipConflict || _disposed) return false;
+    if (_queueDrainInFlightId != null) return false;
     final occupiedOrders = <int>[
       ..._messageQueue.map((item) => item.queueOrder),
       ..._preparedTurnQueue.map((item) => item.queueOrder),
@@ -23823,7 +23830,8 @@ class ActiveChat {
   Future<bool> editQueuedTurn(String id, String text) async {
     if (mutationsBlockedByOwnershipConflict ||
         _disposed ||
-        text.trim().isEmpty) {
+        text.trim().isEmpty ||
+        id == _queueDrainInFlightId) {
       return false;
     }
     final textItems = _messageQueue.toList(growable: false);
@@ -23872,6 +23880,10 @@ class ActiveChat {
     }
     // The drain would re-block it at once: report it instead of pretending.
     if (matches.first.missingAttachment) return false;
+    // The head the drain already took is on its way: nothing to do for it, and
+    // nothing may overtake it.
+    final inFlightId = _queueDrainInFlightId;
+    if (inFlightId != null) return id == inFlightId;
     final preparedId = id.startsWith('prepared:')
         ? id.substring('prepared:'.length)
         : null;
@@ -24315,6 +24327,7 @@ class ActiveChat {
         return;
       }
       _preparedTurnDrainInFlight = true;
+      _queueDrainInFlightId = 'prepared:${turn.clientTurnId}';
       try {
         final accepted = await send(
           fullText: turn.fullText,
@@ -24346,6 +24359,7 @@ class ActiveChat {
         }
       } finally {
         _preparedTurnDrainInFlight = false;
+        _queueDrainInFlightId = null;
       }
       return;
     }
@@ -24357,6 +24371,7 @@ class ActiveChat {
     // dos drenajes solapados (terminal, retry, park levantado, inventario
     // pasivo) podían leer la misma cabeza y enviarla dos veces.
     _preparedTurnDrainInFlight = true;
+    _queueDrainInFlightId = next.id;
     final bool accepted;
     try {
       accepted = await send(
@@ -24370,6 +24385,7 @@ class ActiveChat {
       );
     } finally {
       _preparedTurnDrainInFlight = false;
+      _queueDrainInFlightId = null;
     }
     if (_messageQueue.isEmpty || !identical(_messageQueue.first, next)) {
       return;
