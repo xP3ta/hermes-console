@@ -43,6 +43,7 @@ import 'json_rpc_wire.dart';
 import 'recovery_proof.dart';
 import 'replay_batch_proof.dart';
 import 'replay_coordinator.dart';
+import 'server_restart_signal.dart';
 import '../utils/transport_privacy.dart';
 
 class TuiGatewayRpcError implements Exception {
@@ -4204,6 +4205,11 @@ class TuiGatewayClient
     'connection.respond',
   };
 
+  /// Passive: remembers RPC 5098 (`model.options` on a process older than its
+  /// checkout) so Diagnostics can say it. Never makes a request of its own.
+  void _noteRestartRequired(TuiGatewayRpcError error) =>
+      ServerRestartSignals.noteRpc(_connection.host, error.code, error.message);
+
   static bool capabilitiesRpcAllowed(String method, {required bool readOnly}) =>
       _capabilityReads.contains(method) ||
       (!readOnly && _capabilityWrites.contains(method));
@@ -5224,17 +5230,23 @@ class TuiGatewayClient
   }) async {
     const method = 'model.options';
     final runtime = _validatedRuntimeId(method, runtimeSessionId);
-    final result = await _requestOptionalCapability(
-      DesktopGatewayCapability.modelOptions,
-      method,
-      {
-        'session_id': runtime,
-        'explicit_only': true,
-        'include_unconfigured': false,
-        'refresh': refresh,
-      },
-      connectedOnly: connectedOnly,
-    );
+    final Map<String, dynamic> result;
+    try {
+      result = await _requestOptionalCapability(
+        DesktopGatewayCapability.modelOptions,
+        method,
+        {
+          'session_id': runtime,
+          'explicit_only': true,
+          'include_unconfigured': false,
+          'refresh': refresh,
+        },
+        connectedOnly: connectedOnly,
+      );
+    } on TuiGatewayRpcError catch (error) {
+      _noteRestartRequired(error);
+      rethrow;
+    }
     if (result['providers'] is! List) {
       _capabilityCache.mark(
         DesktopGatewayCapability.modelOptions,
@@ -5292,6 +5304,7 @@ class TuiGatewayClient
         'refresh': refresh,
       }, timeout: remaining);
     } on TuiGatewayRpcError catch (error) {
+      _noteRestartRequired(error);
       if (error.code == -32601) {
         _capabilityCache.mark(
           DesktopGatewayCapability.modelOptions,
