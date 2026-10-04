@@ -140,6 +140,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   List<SavedConnection> _connections = [];
   SavedConnection? _active;
   bool _healthOk = false;
+
+  /// Connection whose last status check proved it online.
+  String? _healthOkConnectionId;
+
+  /// What the status line shows: «checking» only while nothing is known
+  /// for the active connection (first check, after a failure, another
+  /// connection). A background re-check of a healthy connection stays
+  /// «online» until it fails (Desktop keeps its status too).
+  bool get _statusChecking =>
+      _checking &&
+      !(_healthOk && _active != null && _healthOkConnectionId == _active!.id);
   bool _checking = false;
 
   /// Saved Dashboard login of a healthy remote instance; a rejected or
@@ -1172,6 +1183,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
       setState(() {
         _healthOk = false;
+        _healthOkConnectionId = null;
         _dashboardAuth = DashboardAuthCheck.unknown;
         _checking = false;
         _recentSessions = [];
@@ -1396,6 +1408,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     }
     setState(() {
       _healthOk = ok;
+      _healthOkConnectionId = ok ? conn.id : null;
       if (!ok) _dashboardAuth = DashboardAuthCheck.unknown;
       _checking = false;
       _listenArchive(archive, conn);
@@ -1912,7 +1925,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     final app = context.findAncestorStateOfType<HermesAppState>();
     final controller = app?.companion;
     final presence = app?.companionPresence;
-    final connectionMood = _checking
+    final connectionMood = _statusChecking
         ? HermesSparkMood.connecting
         : _healthOk
         ? HermesSparkMood.idle
@@ -2139,13 +2152,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                         height: 6,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: _checking || dashboardLoginIssue
+                          color: _statusChecking || dashboardLoginIssue
                               ? colors.warning
                               : _healthOk
                               ? colors.success
                               : colors.textDisabled,
                           boxShadow:
-                              _healthOk && !_checking && !dashboardLoginIssue
+                              _healthOk &&
+                                  !_statusChecking &&
+                                  !dashboardLoginIssue
                               ? [
                                   BoxShadow(
                                     color: colors.success.withValues(
@@ -2163,7 +2178,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                       Flexible(
                         child: _followsActiveProfile(
                           (context) => Text(
-                            _checking
+                            _statusChecking
                                 ? Strings.of(context).homeStatusChecking(
                                     _active?.label ??
                                         Strings.of(
@@ -2229,7 +2244,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         connManager: widget.connManager,
         current: DrawerSection.home,
         connected: _healthOk,
-        checking: _checking,
+        checking: _statusChecking,
         onSectionReturn: _reload,
       ),
       body: Stack(
