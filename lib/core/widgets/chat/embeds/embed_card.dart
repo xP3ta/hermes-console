@@ -79,6 +79,10 @@ class _EmbedCardState extends State<EmbedCard> {
   ScrollPosition? _position;
   String? _sanitizedSvg;
 
+  /// Bumped whenever the card leaves its live state or starts a load, so a
+  /// load that was already awaiting something can tell it is stale.
+  int _generation = 0;
+
   EmbedConsentStore get _consent => widget.consent ?? EmbedConsentStore.shared;
 
   EmbedType get _type => widget.descriptor?.provider ?? EmbedType.svg;
@@ -116,6 +120,7 @@ class _EmbedCardState extends State<EmbedCard> {
 
   @override
   void dispose() {
+    _generation++;
     _consent.removeListener(_onConsentChanged);
     _position?.removeListener(_checkVisibility);
     EmbedLiveRegistry.instance.drop(this);
@@ -143,6 +148,7 @@ class _EmbedCardState extends State<EmbedCard> {
   /// Back to the placeholder: scrolled away, route covered, another embed took
   /// the single live slot, or consent was withdrawn. Never reloads by itself.
   void _release() {
+    _generation++;
     EmbedLiveRegistry.instance.drop(this);
     if (!_live && _controller == null) return;
     _controller = null;
@@ -169,8 +175,23 @@ class _EmbedCardState extends State<EmbedCard> {
     if (!visible) _release();
   }
 
+  /// Whether a load started under [generation] may still touch the WebView:
+  /// the card is mounted, was not released or reloaded since, still holds the
+  /// single live slot, is visible and uncovered, and consent is not off.
+  bool _stillWanted(int generation) =>
+      mounted &&
+      generation == _generation &&
+      identical(EmbedLiveRegistry.instance.owner, this) &&
+      _visible &&
+      !_covered &&
+      _consent.modeFor(_type) != EmbedMode.off;
+
   Future<void> _load() async {
     if (_live || _failed) return;
+    if (!_visible || _covered || _consent.modeFor(_type) == EmbedMode.off) {
+      return;
+    }
+    final generation = ++_generation;
     final policy = ArtifactHtmlNavigationPolicy(
       launchExternal: widget.launchExternal,
     );
@@ -187,6 +208,7 @@ class _EmbedCardState extends State<EmbedCard> {
         policy: policy,
         settingsFor: widget.settingsFor,
       );
+      if (!_stillWanted(generation)) return;
       final svg = _sanitizedSvg;
       if (svg != null) {
         await controller.loadHtmlString(buildGuardedSvgHtml(svg));
@@ -194,10 +216,14 @@ class _EmbedCardState extends State<EmbedCard> {
         // The page itself needs scripts; it still gets no JavaScript channel,
         // no file access, no window.open and cannot navigate anywhere.
         await controller.setJavaScriptMode(JavaScriptMode.unrestricted);
+        if (!_stillWanted(generation)) {
+          unawaited(controller.setJavaScriptMode(JavaScriptMode.disabled));
+          return;
+        }
         await controller.loadRequest(Uri.parse(widget.descriptor!.embedUrl!));
       }
     } catch (_) {
-      if (!mounted) return;
+      if (!_stillWanted(generation)) return;
       EmbedLiveRegistry.instance.drop(this);
       setState(() {
         _failed = true;

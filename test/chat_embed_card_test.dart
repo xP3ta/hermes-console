@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -340,6 +342,73 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(_fallbackKey), findsOneWidget);
       expect(platform.controllers, isEmpty);
+    });
+  });
+
+  group('a load that finishes after the card changed its mind', () {
+    Future<Completer<void>> startHeldLoad(WidgetTester tester) async {
+      await consent.setMode(EmbedType.youtube, EmbedMode.ask);
+      final gate = Completer<void>();
+      platform.holdConfigure = gate.future;
+      await tester.pumpWidget(_app(card(_youtube())));
+      await tester.tap(find.byKey(const ValueKey('embed-placeholder')));
+      await tester.pump();
+      expect(platform.controllers.length, 1);
+      return gate;
+    }
+
+    testWidgets('consent withdrawn mid-load loads nothing', (tester) async {
+      final gate = await startHeldLoad(tester);
+      await consent.setMode(EmbedType.youtube, EmbedMode.off);
+      await tester.pump();
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(platform.last.loadedRequests, isEmpty);
+      expect(
+        platform.last.javaScriptModes,
+        isNot(contains(JavaScriptMode.unrestricted)),
+      );
+      expect(find.byKey(_fallbackKey), findsOneWidget);
+    });
+
+    testWidgets('a card removed mid-load loads nothing', (tester) async {
+      final gate = await startHeldLoad(tester);
+      await tester.pumpWidget(_app(const SizedBox()));
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(platform.last.loadedRequests, isEmpty);
+      expect(
+        platform.last.javaScriptModes,
+        isNot(contains(JavaScriptMode.unrestricted)),
+      );
+      expect(EmbedLiveRegistry.instance.owner, isNull);
+    });
+
+    testWidgets('a card that lost the live slot mid-load loads nothing', (
+      tester,
+    ) async {
+      final gate = await startHeldLoad(tester);
+      EmbedLiveRegistry.instance.claim(Object(), () {});
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(platform.last.loadedRequests, isEmpty);
+    });
+
+    testWidgets('a card released and loaded again only loads once', (
+      tester,
+    ) async {
+      final gate = await startHeldLoad(tester);
+      await consent.setMode(EmbedType.youtube, EmbedMode.off);
+      await consent.setMode(EmbedType.youtube, EmbedMode.ask);
+      await tester.pump();
+      platform.holdConfigure = null;
+      await tester.tap(find.byKey(const ValueKey('embed-placeholder')));
+      await tester.pumpAndSettle();
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(platform.controllers.length, 2);
+      expect(platform.controllers.first.loadedRequests, isEmpty);
+      expect(platform.controllers.last.loadedRequests.length, 1);
     });
   });
 }
