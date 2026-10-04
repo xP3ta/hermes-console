@@ -7,6 +7,7 @@ import '../design/hermes_design.dart'
 import '../theme/app_theme.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
+import '../widgets/profile_scope.dart';
 import 'bridge_editor_mixin.dart';
 import '../widgets/hermes_app_bar.dart';
 
@@ -22,12 +23,18 @@ class BridgeFileEditorScreen extends StatefulWidget {
   final bool readOnly; // config: solo lectura
   final String lockReason;
 
+  /// Profile whose file this is (empty = default), shown under the title.
+  /// The Bridge reads the files of its own home, the default profile, so
+  /// `config.yaml` passes ''. Null shows no profile line.
+  final String? scopeProfile;
+
   const BridgeFileEditorScreen({
     required this.connectionId,
     required this.target,
     required this.titleLabel,
     this.readOnly = false,
     this.lockReason = '',
+    this.scopeProfile,
     super.key,
   });
 
@@ -75,11 +82,17 @@ class _BridgeFileEditorScreenState extends State<BridgeFileEditorScreen>
     return Scaffold(
       appBar: HermesAppBar(
         centerTitle: false,
-        title: Text(
-          widget.titleLabel,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        title: widget.scopeProfile == null
+            ? Text(
+                widget.titleLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              )
+            : ProfileScopedTitle(
+                title: widget.titleLabel,
+                profile: widget.scopeProfile!,
+                connectionId: widget.connectionId,
+              ),
         actions: [
           if (bridgeCanRead) ...[
             IconButton(

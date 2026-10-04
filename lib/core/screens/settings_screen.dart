@@ -286,6 +286,8 @@ class SettingsScreen extends StatelessWidget {
                           target: Strings.of(context).setSecConfig,
                           titleLabel: 'config.yaml',
                           readOnly: true,
+                          // The Bridge reads its own home's file.
+                          scopeProfile: '',
                         ),
                       ),
                     ),

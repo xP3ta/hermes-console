@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
+import 'package:hermes_android/core/screens/bridge_file_editor_screen.dart';
 import 'package:hermes_android/core/services/bot_roster_store.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/profile_scope.dart';
@@ -74,5 +75,25 @@ void main() {
       ),
     );
     expect(find.text('Profile: ana'), findsOneWidget);
+  });
+
+  testWidgets('config.yaml says which profile it shows', (tester) async {
+    BotRosterRegistry.shared.publish(connectionId, 'QA', [
+      _profile('default', isDefault: true, display: 'Hermes'),
+    ]);
+    await tester.pumpWidget(
+      app(
+        const BridgeFileEditorScreen(
+          connectionId: connectionId,
+          target: 'config',
+          titleLabel: 'config.yaml',
+          readOnly: true,
+          scopeProfile: '',
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('config.yaml'), findsOneWidget);
+    expect(find.text('Profile: Hermes'), findsOneWidget);
   });
 }
