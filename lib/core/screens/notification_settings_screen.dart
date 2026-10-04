@@ -596,6 +596,19 @@ class _NotificationSettingsScreenState
             value: _bgRunning && on,
             onChanged: (on && !_bgBusy) ? _toggleBackground : null,
           ),
+          // Cron and Kanban are only discovered by the background listener:
+          // without this opt-in none of their notices arrive.
+          Padding(
+            key: const ValueKey('notif-bg-automation-needs-listener'),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(
+                s.au1215BgNeededForAutomation,
+                style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+              ),
+            ),
+          ),
           HermesBackgroundNotificationStatus(
             state: _bgBusy
                 ? BackgroundNotificationUiState.activating

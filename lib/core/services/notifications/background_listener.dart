@@ -2789,20 +2789,16 @@ class BackgroundAutomationDiscovery {
               eventKind: status,
               sourceVersion: '${entry.taskId}:$status',
             );
-            final kinds = {
+            final kinds = <String>{
               for (final event in freshEvents[entry.taskId] ?? const [])
                 event.kind,
             };
             // Same notification, Desktop's wording when the event says why.
-            final title = switch (status) {
-              'done' => t.kanbanCompleted,
-              'blocked' when kinds.contains('gave_up') => t.kanbanGaveUp,
-              'blocked' => t.kanbanBlocked,
-              'triage' when kinds.contains('block_loop_detected') =>
-                t.kanbanBlockLoop,
-              'triage' => t.kanbanNeedsAttention,
-              _ => t.kanbanUpdated,
-            };
+            final title = NotificationService.kanbanTitle(
+              t,
+              status,
+              eventKinds: kinds,
+            );
             events.add(
               DurableDiscoveryNotification(
                 identity: identity,
