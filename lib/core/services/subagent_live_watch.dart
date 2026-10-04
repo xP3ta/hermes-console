@@ -235,7 +235,7 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
           payload['text'] is String ? payload['text'] as String : '',
         ).trim();
         if (summary.isNotEmpty && !_alreadyShown(summary)) {
-          _appendRaw('${_onNewLine(_liveRaw)}$summary');
+          _appendFinal('${_onNewLine(_liveRaw)}$summary');
         }
         _stopListening();
         _publish(SubagentLiveWatchStatus.finished);
@@ -310,6 +310,15 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     _publish(value.status);
   }
 
+  /// The closing summary is authoritative: when it does not fit, the oldest
+  /// streamed text makes room for it, and one larger than the whole budget
+  /// keeps its tail.
+  void _appendFinal(String text) {
+    final kept = _takeTail(text, maxLiveChars);
+    _liveRaw = _takeTail(_liveRaw, maxLiveChars - kept.length) + kept;
+    _publish(value.status);
+  }
+
   /// The summary the child closes with usually repeats what was streamed.
   /// Only the line-ending flavour and the ends are normalized: line breaks and
   /// indentation are meaning in Markdown, so a summary that restructures the
@@ -332,6 +341,16 @@ class SubagentLiveWatch extends ValueNotifier<SubagentLiveWatchView> {
     final last = text.codeUnitAt(end - 1);
     if (last >= 0xD800 && last <= 0xDBFF) end--;
     return text.substring(0, end);
+  }
+
+  /// The last [room] code units of [text], never starting in half a pair.
+  static String _takeTail(String text, int room) {
+    if (room <= 0) return '';
+    if (text.length <= room) return text;
+    var start = text.length - room;
+    final first = text.codeUnitAt(start);
+    if (first >= 0xDC00 && first <= 0xDFFF) start++;
+    return text.substring(start);
   }
 
   String get _publicLive =>
