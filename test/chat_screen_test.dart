@@ -962,6 +962,7 @@ class _RunningViewerDropGateway extends _DroppedTransportGateway {
 class _SequencedSuccessorGateway extends _UiRewindGateway {
   final Object producer = Object();
   int sequence = 0;
+  int transportGeneration = 1;
 
   @override
   void emit(String type, [Map<String, dynamic> payload = const {}]) {
@@ -971,7 +972,7 @@ class _SequencedSuccessorGateway extends _UiRewindGateway {
         sessionId: 'runtime-ui-test',
         payload: payload,
         sequence: ++sequence,
-        transportGeneration: 1,
+        transportGeneration: transportGeneration,
         producerChannel: producer,
       ),
     );
@@ -23842,7 +23843,7 @@ void main() {
   testWidgets(
     'pt1215: un tool.complete tardío tras cerrar el turno rellena la misma tarjeta',
     (tester) async {
-      final gateway = _UiRewindGateway();
+      final gateway = _SequencedSuccessorGateway();
       final chat = await pumpChat(
         tester,
         connection: _remoteConn('conn-pt1215-late'),
@@ -23913,6 +23914,283 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  group('pt1215: valla del tool.complete tardío', () {
+    const lateDiff = '@@ -1 +1,2 @@\n-old\n+new\n+more';
+
+    Map<String, dynamic> lateComplete(String id) => {
+      'tool_id': id,
+      'name': 'patch',
+      'args': const {'path': 'lib/late.dart'},
+      'inline_diff': lateDiff,
+      'result': const {'success': true},
+    };
+
+    /// Settles a turn whose only step is `patch` [toolId] with no diff yet,
+    /// trace unfolded.
+    Future<ActiveChat> settleTurn(
+      WidgetTester tester,
+      _UiRewindGateway gateway, {
+      String toolId = 'call-fence',
+    }) async {
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-pt1215-fence'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_FENCE_PARENT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', {
+        'tool_id': toolId,
+        'name': 'patch',
+        'args': const {'path': 'lib/late.dart'},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      gateway.emit('message.complete', const {'text': 'PUBLIC_FENCE_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(FileDiffCard), findsNothing);
+      return chat;
+    }
+
+    Future<void> expectNothingAdmitted(
+      WidgetTester tester,
+      ActiveChat chat, {
+      required String transcriptBefore,
+      required int revisionBefore,
+      required String id,
+    }) async {
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(chat.toolOutputs[id], isNull);
+      expect(chat.toolOutputs.revision, revisionBefore);
+      expect(chat.messages.toString(), transcriptBefore);
+      expect(find.byType(FileDiffCard), findsNothing);
+      expect(find.byType(ChangedFilesCard), findsNothing);
+      expect(tester.takeException(), isNull);
+    }
+
+    testWidgets('un id que el turno cerrado no conoce no entra', (
+      tester,
+    ) async {
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway);
+      final before = chat.messages.toString();
+      final revision = chat.toolOutputs.revision;
+      gateway.emit('tool.complete', lateComplete('call-orphan'));
+      await expectNothingAdmitted(
+        tester,
+        chat,
+        transcriptBefore: before,
+        revisionBefore: revision,
+        id: 'call-orphan',
+      );
+      // A burst of orphans cannot evict a real record either.
+      for (var i = 0; i < chat.toolOutputs.capacity + 4; i++) {
+        gateway.emit('tool.complete', lateComplete('call-flood-$i'));
+      }
+      gateway.emit('tool.complete', lateComplete('call-fence'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(chat.toolOutputs['call-fence'], isNotNull);
+      expect(chat.toolOutputs['call-flood-0'], isNull);
+      expect(find.byType(FileDiffCard), findsOneWidget);
+      expect(chat.messages.toString(), before);
+    });
+
+    testWidgets('el mismo id con otro nombre de herramienta no entra', (
+      tester,
+    ) async {
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway);
+      final before = chat.messages.toString();
+      final revision = chat.toolOutputs.revision;
+      gateway.emit('tool.complete', {
+        ...lateComplete('call-fence'),
+        'name': 'write_file',
+      });
+      await expectNothingAdmitted(
+        tester,
+        chat,
+        transcriptBefore: before,
+        revisionBefore: revision,
+        id: 'call-fence',
+      );
+    });
+
+    testWidgets('sin orden de productor (sin secuencia) no entra', (
+      tester,
+    ) async {
+      final gateway = _UiRewindGateway();
+      final chat = await settleTurn(tester, gateway);
+      final before = chat.messages.toString();
+      final revision = chat.toolOutputs.revision;
+      gateway.emit('tool.complete', lateComplete('call-fence'));
+      await expectNothingAdmitted(
+        tester,
+        chat,
+        transcriptBefore: before,
+        revisionBefore: revision,
+        id: 'call-fence',
+      );
+    });
+
+    testWidgets('de otro transporte (repetición tras reconectar) no entra', (
+      tester,
+    ) async {
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway);
+      final before = chat.messages.toString();
+      final revision = chat.toolOutputs.revision;
+      gateway.transportGeneration = 2;
+      gateway.emit('tool.complete', lateComplete('call-fence'));
+      await expectNothingAdmitted(
+        tester,
+        chat,
+        transcriptBefore: before,
+        revisionBefore: revision,
+        id: 'call-fence',
+      );
+    });
+
+    testWidgets('una repetición no posterior al cierre no entra', (
+      tester,
+    ) async {
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway);
+      final before = chat.messages.toString();
+      final revision = chat.toolOutputs.revision;
+      // The terminal was the last event: replay at its own sequence.
+      gateway.sequence -= 1;
+      gateway.emit('tool.complete', lateComplete('call-fence'));
+      await expectNothingAdmitted(
+        tester,
+        chat,
+        transcriptBefore: before,
+        revisionBefore: revision,
+        id: 'call-fence',
+      );
+    });
+
+    testWidgets('tras salir del chat no crea filas ni falla', (tester) async {
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway);
+      final before = chat.messages.toString();
+      await tester.pumpWidget(const SizedBox.shrink());
+      gateway.emit('tool.complete', lateComplete('call-orphan'));
+      gateway.emit('tool.complete', lateComplete('call-fence'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(chat.toolOutputs['call-orphan'], isNull);
+      expect(chat.messages.toString(), before);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('con un turno nuevo en marcha no crea filas en él', (
+      tester,
+    ) async {
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway, toolId: 'call-old');
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_FENCE_NEXT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-new',
+        'name': 'patch',
+        'args': {'path': 'lib/late.dart'},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      List<Object?> stepIds() => [
+        for (final message in chat.messages)
+          if (message['role'] == 'assistant')
+            for (final step
+                in (message['_activity_trace'] as List?) ?? const [])
+              if (step is Map) '${step['id']}:${step['status']}',
+      ];
+      final stepsBefore = stepIds();
+      expect(stepsBefore, contains('call-new:running'));
+      final revision = chat.toolOutputs.revision;
+
+      // The settled turn's tool completes while the next turn runs.
+      gateway.emit('tool.complete', lateComplete('call-old'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(stepIds(), stepsBefore);
+      expect(chat.toolOutputs['call-old'], isNull);
+      expect(chat.toolOutputs.revision, revision);
+      expect(find.byType(FileDiffCard), findsNothing);
+      // The running turn's own step still settles normally.
+      gateway.emit('tool.complete', {
+        ...lateComplete('call-new'),
+        'args': const {'path': 'lib/late.dart'},
+      });
+      gateway.emit('message.complete', const {
+        'text': 'PUBLIC_FENCE_NEXT_DONE',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(stepIds(), ['call-new:completed', 'call-old:completed']);
+      expect(chat.toolOutputs['call-new'], isNotNull);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('un id reutilizado por el turno en marcha sigue siendo suyo', (
+      tester,
+    ) async {
+      // Some providers number calls per turn (`call_0` again).
+      final gateway = _SequencedSuccessorGateway();
+      final chat = await settleTurn(tester, gateway, toolId: 'call_0');
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_FENCE_REUSE',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'tool_id': 'call_0',
+        'name': 'patch',
+        'args': {'path': 'lib/late.dart'},
+      });
+      gateway.emit('tool.complete', lateComplete('call_0'));
+      gateway.emit('message.complete', const {'text': 'PUBLIC_REUSE_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      final newest = chat.messages.firstWhere((m) => m['role'] == 'assistant');
+      expect(
+        [
+          for (final step in (newest['_activity_trace'] as List?) ?? const [])
+            if (step is Map) '${step['id']}:${step['status']}',
+        ],
+        ['call_0:completed'],
+      );
+      expect(chat.toolOutputs['call_0'], isNotNull);
+      expect(tester.takeException(), isNull);
+    });
+  });
 
   testWidgets(
     'pt1215: la salida de terminal en color aparece plegada en la traza',
