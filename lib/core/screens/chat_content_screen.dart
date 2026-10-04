@@ -6,6 +6,8 @@ import 'package:intl/intl.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../design/hermes_design.dart';
+import '../services/agent_preview_extractor.dart';
+import '../services/agent_preview_target.dart';
 import '../services/chat_content_extractor.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
@@ -58,13 +60,59 @@ class _ChatContentScreenState extends State<ChatContentScreen> {
   bool _loadingOlder = false;
   bool _opening = false;
 
+  List<AgentPreview> _previews = const [];
+
   List<ChatContentItem> get _all {
     final transcript = widget.transcript();
     if (!identical(transcript, _source)) {
       _source = transcript;
       _items = collectChatContent(transcript);
+      _previews = collectAgentPreviews(transcript);
     }
     return _items;
+  }
+
+  /// Previews the agent has open, narrowed by the search box. They are links
+  /// of the conversation, so they stay out of the Images and Files filters.
+  List<AgentPreview> get _visiblePreviews {
+    if (_filter != ChatContentFilter.all && _filter != ChatContentFilter.link) {
+      return const [];
+    }
+    final q = _query.trim().toLowerCase();
+    return [
+      for (final preview in _previews)
+        if (q.isEmpty ||
+            preview.label.toLowerCase().contains(q) ||
+            preview.target.url.toLowerCase().contains(q))
+          preview,
+    ];
+  }
+
+  Future<void> _openPreview(AgentPreview preview) async {
+    final target = preview.target;
+    switch (target.reach) {
+      case AgentPreviewReach.serverOnly:
+        return;
+      case AgentPreviewReach.web:
+        final uri = Uri.tryParse(target.url);
+        final ok = uri != null && await widget.launchExternal(uri);
+        if (!ok && mounted) {
+          HermesNotice.of(context).show(
+            message: Strings.of(context).sa1215OpenFailed(preview.label),
+            kind: HermesNoticeKind.error,
+          );
+        }
+      case AgentPreviewReach.serverFile:
+        final path = target.filePath ?? target.url;
+        await _open(
+          ChatContentItem(
+            kind: ChatContentKind.file,
+            value: path,
+            href: path,
+            label: preview.label,
+          ),
+        );
+    }
   }
 
   Future<void> _loadOlder() async {
@@ -126,6 +174,7 @@ class _ChatContentScreenState extends State<ChatContentScreen> {
     final strings = Strings.of(context);
     final all = _all;
     final visible = filterChatContent(all, _filter, query: _query);
+    final previews = _visiblePreviews;
     final hasOlder = widget.hasOlder();
     final header = <Widget>[
       HermesSearchField(
@@ -157,6 +206,20 @@ class _ChatContentScreenState extends State<ChatContentScreen> {
       if (all.isNotEmpty)
         HermesSectionHeader(strings.artifactCount(visible.length)),
     ];
+    final previewSection = <Widget>[
+      if (previews.isNotEmpty) ...[
+        HermesSectionHeader(strings.sa1215AgentPreviews),
+        for (var i = 0; i < previews.length; i++)
+          _PreviewRow(
+            preview: previews[i],
+            isFirst: i == 0,
+            isLast: i == previews.length - 1,
+            onTap: previews[i].target.reach == AgentPreviewReach.serverOnly
+                ? null
+                : () => unawaited(_openPreview(previews[i])),
+          ),
+      ],
+    ];
     final footer = <Widget>[
       if (hasOlder) ...[
         const SizedBox(height: HermesSpace.x5),
@@ -186,21 +249,24 @@ class _ChatContentScreenState extends State<ChatContentScreen> {
         ),
       ],
     ];
-    final Widget? placeholder = all.isEmpty
+    final Widget? placeholder = all.isEmpty && previews.isEmpty
         ? HermesEmptyStateView(
             icon: Icons.perm_media_outlined,
             title: strings.sa1215EmptyTitle,
             body: strings.sa1215EmptyBody,
           )
-        : visible.isEmpty
+        : visible.isEmpty && previews.isEmpty
         ? HermesEmptyStateView(
             icon: Icons.search_off_rounded,
             title: strings.sa1215NoMatchesTitle,
             body: strings.sa1215NoMatchesBody,
           )
         : null;
-    final bodyCount = placeholder != null ? 1 : visible.length;
-    final count = header.length + bodyCount + footer.length;
+    final bodyCount = placeholder != null
+        ? 1
+        : (visible.isEmpty ? 0 : visible.length);
+    final count =
+        header.length + previewSection.length + bodyCount + footer.length;
 
     return Scaffold(
       appBar: HermesAppBar(
@@ -225,6 +291,8 @@ class _ChatContentScreenState extends State<ChatContentScreen> {
           itemBuilder: (context, index) {
             if (index < header.length) return header[index];
             index -= header.length;
+            if (index < previewSection.length) return previewSection[index];
+            index -= previewSection.length;
             if (index < bodyCount) {
               if (placeholder != null) return placeholder;
               return _ContentRow(
@@ -237,6 +305,78 @@ class _ChatContentScreenState extends State<ChatContentScreen> {
             }
             return footer[index - bodyCount];
           },
+        ),
+      ),
+    );
+  }
+}
+
+/// One agent preview, in the same tile as the conversation's other links.
+/// A target only the server machine can reach is shown but cannot be tapped.
+class _PreviewRow extends StatelessWidget {
+  final AgentPreview preview;
+  final bool isFirst;
+  final bool isLast;
+  final VoidCallback? onTap;
+
+  const _PreviewRow({
+    required this.preview,
+    required this.isFirst,
+    required this.isLast,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    const radius = Radius.circular(HermesRadius.group);
+    final serverOnly = preview.target.reach == AgentPreviewReach.serverOnly;
+    final isFile = preview.target.reach == AgentPreviewReach.serverFile;
+    return ClipRRect(
+      borderRadius: BorderRadius.only(
+        topLeft: isFirst ? radius : Radius.zero,
+        topRight: isFirst ? radius : Radius.zero,
+        bottomLeft: isLast ? radius : Radius.zero,
+        bottomRight: isLast ? radius : Radius.zero,
+      ),
+      child: ColoredBox(
+        color: HermesSurfaces.group(colors),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            HermesListRow(
+              key: ValueKey('sa1215-preview-${preview.label}'),
+              icon: isFile
+                  ? Icons.insert_drive_file_outlined
+                  : Icons.link_rounded,
+              iconColor: serverOnly || isFile
+                  ? colors.textSecondary
+                  : colors.accent,
+              title: preview.label,
+              subtitle: serverOnly
+                  ? strings.sa1215PreviewServerOnly
+                  : preview.target.url,
+              muted: serverOnly,
+              onTap: onTap,
+              trailing: serverOnly
+                  ? null
+                  : Icon(
+                      isFile
+                          ? Icons.chevron_right_rounded
+                          : Icons.open_in_new_rounded,
+                      size: 18,
+                      color: colors.textDisabled,
+                    ),
+              showChevron: false,
+            ),
+            if (!isLast)
+              Divider(
+                height: 1,
+                indent: HermesSpace.rowDividerIndent,
+                color: HermesSurfaces.divider(colors),
+              ),
+          ],
         ),
       ),
     );
