@@ -31,6 +31,7 @@ const _layers = {
 };
 
 const _maxIdentityLength = 128;
+const _maxCodeLength = 64;
 const _maxMessageLength = 500;
 const _maxBillingLineLength = 240;
 const _maxWaitTextLength = 160;
@@ -75,7 +76,7 @@ final class TurnErrorSurface {
   bool get isFreeTier => code.startsWith('free_tier_');
 
   /// Port of `parseErrorSurface`: an unknown layer is no surface, an empty
-  /// code is `unknown`, `retryable` is true unless the gateway says `false`,
+  /// or oversized code is `unknown`, `retryable` is true unless the gateway says `false`,
   /// `resets_at` needs a finite number above zero and `message` a non-blank
   /// string. A JSON `null` counts as absent.
   static TurnErrorSurface? parse(Object? raw) {
@@ -89,7 +90,7 @@ final class TurnErrorSurface {
     final keyEnv = _text(raw['api_key_env']);
     return TurnErrorSurface(
       layer: layer,
-      code: code.isEmpty ? 'unknown' : code,
+      code: code.isEmpty || code.length > _maxCodeLength ? 'unknown' : code,
       retryable: raw['retryable'] != false,
       provider: _identity(raw['provider']),
       providerLabel: _identity(raw['provider_label']),
