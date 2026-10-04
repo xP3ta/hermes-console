@@ -126,7 +126,7 @@ void main() {
       );
       expect(
         classifyAgentPreviewTarget('https://EXAMPLE.com:443')!.url,
-        'https://example.com',
+        'https://example.com/',
       );
       expect(
         classifyAgentPreviewTarget('https://example.com:8443/a?x=1')!.url,
@@ -138,14 +138,31 @@ void main() {
       );
     });
 
+    test('an empty path and the root are one identity', () {
+      for (final raw in [
+        'https://example.com',
+        'https://example.com/',
+        'HTTPS://Example.com:443',
+        'example.com',
+        'example.com/',
+      ]) {
+        expect(classifyAgentPreviewTarget(raw)!.url, 'https://example.com/');
+      }
+      // The query keeps its own identity.
+      expect(
+        classifyAgentPreviewTarget('https://example.com?a=1')!.url,
+        'https://example.com/?a=1',
+      );
+    });
+
     test('normalizes like the tool', () {
       expect(
         classifyAgentPreviewTarget('www.example.com')!.url,
-        'https://www.example.com',
+        'https://www.example.com/',
       );
       expect(
         classifyAgentPreviewTarget('localhost:3000')!.url,
-        'http://localhost:3000',
+        'http://localhost:3000/',
       );
       expect(classifyAgentPreviewTarget('  /srv/a.html ')!.url, '/srv/a.html');
       final file = classifyAgentPreviewTarget('file:///srv/a%20b.html')!;
@@ -205,6 +222,24 @@ void main() {
         isEmpty,
       );
     });
+
+    test(
+      'close with the root spelled with or without a slash finds its open',
+      () {
+        expect(
+          _urls([_open('https://example.com'), _close('https://example.com/')]),
+          isEmpty,
+        );
+        expect(
+          _urls([_open('https://example.com/'), _close('https://example.com')]),
+          isEmpty,
+        );
+        expect(
+          _urls([_open('https://example.com'), _open('https://example.com/')]),
+          ['https://example.com/'],
+        );
+      },
+    );
 
     test('close matches an open written with another scheme or port form', () {
       expect(
