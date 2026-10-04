@@ -7767,5 +7767,18 @@
   "adv1215Unsupported": "This server does not offer these settings",
   "adv1215ListHint": "One value per line",
   "adv1215NumberInvalid": "Enter a valid number",
-  "adv1215IntegerInvalid": "Enter a whole number"
+  "adv1215IntegerInvalid": "Enter a whole number",
+  "adv1215ToolsNone": "The server has no toolsets",
+  "adv1215ToolsLastTitle": "Turn off the last toolset",
+  "adv1215ToolsLastBody": "Hermes will be left with no toolsets on.",
+  "adv1215ToolsLastConfirm": "Turn off",
+  "adv1215ToolUnavailable": "Not available on this server",
+  "adv1215ToolProviders": "Provider",
+  "adv1215ToolModel": "Model",
+  "adv1215ToolCredentials": "Keys",
+  "adv1215ToolKeySet": "Set",
+  "adv1215ToolKeyUnset": "Not set",
+  "adv1215ToolKeyHint": "Paste the key",
+  "adv1215ToolNeedsNous": "Requires a Nous account",
+  "adv1215ToolNothing": "Nothing to configure here"
 }

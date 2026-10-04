@@ -9452,5 +9452,18 @@
   "adv1215Unsupported": "Este servidor no publica estos ajustes",
   "adv1215ListHint": "Un valor por línea",
   "adv1215NumberInvalid": "Introduce un número válido",
-  "adv1215IntegerInvalid": "Introduce un número entero"
+  "adv1215IntegerInvalid": "Introduce un número entero",
+  "adv1215ToolsNone": "El servidor no tiene herramientas",
+  "adv1215ToolsLastTitle": "Desactivar la última herramienta",
+  "adv1215ToolsLastBody": "Hermes se quedará sin herramientas activas.",
+  "adv1215ToolsLastConfirm": "Desactivar",
+  "adv1215ToolUnavailable": "No disponible en este servidor",
+  "adv1215ToolProviders": "Proveedor",
+  "adv1215ToolModel": "Modelo",
+  "adv1215ToolCredentials": "Claves",
+  "adv1215ToolKeySet": "Configurada",
+  "adv1215ToolKeyUnset": "Sin configurar",
+  "adv1215ToolKeyHint": "Pega la clave",
+  "adv1215ToolNeedsNous": "Requiere cuenta de Nous",
+  "adv1215ToolNothing": "No hay nada que configurar aquí"
 }
