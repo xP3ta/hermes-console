@@ -35,6 +35,9 @@ abstract interface class VoiceLiveApi {
     List<Map<String, dynamic>> history = const [],
     String profile = '',
   });
+
+  /// Releases the HTTP client; the api must not be used afterwards.
+  void close();
 }
 
 /// [VoiceLiveApi] over the existing Dashboard client (same auth and cookies).
@@ -44,6 +47,9 @@ final class DashboardVoiceLiveApi implements VoiceLiveApi {
   final DashboardClient _client;
 
   const DashboardVoiceLiveApi(this._client);
+
+  @override
+  void close() => _client.close();
 
   static String _profileQuery(String profile) =>
       profile.isEmpty || profile == 'default'

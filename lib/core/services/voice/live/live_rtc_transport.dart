@@ -7,6 +7,14 @@ enum LiveRtcConnectionState {
   closed,
 }
 
+/// The user denied the microphone permission while the session was starting.
+final class LiveMicrophoneDeniedException implements Exception {
+  const LiveMicrophoneDeniedException();
+
+  @override
+  String toString() => 'LiveMicrophoneDeniedException';
+}
+
 /// What `VoiceLiveSession` needs from a WebRTC stack, and nothing more.
 ///
 /// The production adapter (`FlutterWebRtcTransport`) is the only file that

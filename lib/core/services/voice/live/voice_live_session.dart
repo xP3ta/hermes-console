@@ -323,6 +323,8 @@ class VoiceLiveSession {
   /// [closeTimeout]. No-op once finished or already closing.
   Future<void> close() async {
     if (_finished || _closing) return;
+    // The microphone must not stay live while the vendor winds down.
+    _transport.setMicEnabled(false);
     if (!_send({'type': 'session.close'})) {
       _finish('close_requested', null);
       return;
@@ -330,6 +332,11 @@ class VoiceLiveSession {
     _closing = true;
     _closeTimer = Timer(closeTimeout, () => _finish('close_requested', null));
   }
+
+  /// Ends the session now, without the vendor handshake. Used when audio is
+  /// lost or the user must not be recorded any longer. Reports [reason] to
+  /// [onClosed] unless the session already finished.
+  void abort(String reason) => _finish(reason, null);
 
   /// Idempotent end of the session: every exit funnels here.
   void _finish(String reason, int? usageSeconds) {
