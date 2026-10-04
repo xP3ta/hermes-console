@@ -18,6 +18,7 @@ import '../../widgets/bot_face_identity.dart';
 import '../bot_mention_roster.dart';
 import 'bot_face_bitmap.dart';
 import 'bot_notification_presenter.dart';
+import 'chat_notification_read_sync.dart';
 import 'rich_notifications.dart';
 import '../new_session_launch_coordinator.dart';
 import 'notification_delivery_coordinator.dart';
@@ -529,6 +530,54 @@ class NotificationService
   }
 
   Future<void> closeDelivery() => _delivery.close();
+
+  ChatNotificationReadSync? _chatReadSync;
+
+  /// Retracts chat notifications once their chat is read (on Desktop via
+  /// the server's read state, or opened here). Null until
+  /// [enableChatReadSync]: only the main isolate records, so a background
+  /// isolate never writes a stale copy of the ledger.
+  ChatNotificationReadSync? get chatReadSync => _chatReadSync;
+
+  /// [locked] is App Lock's state: nothing is cleared while it is true.
+  ChatNotificationReadSync enableChatReadSync({
+    ValueListenable<bool>? locked,
+  }) => _chatReadSync ??= ChatNotificationReadSync(
+    _prefs,
+    cancel: (id, tag) => _cancelChatNotification(id, tag, 'chat read'),
+    locked: locked,
+  );
+
+  /// The ledger's own cancel: unlike [cancelById] it leaves the ledger
+  /// alone, which drops the entry only once this succeeds.
+  Future<void> _cancelChatNotification(
+    int id,
+    String? tag,
+    String reason,
+  ) async {
+    _log('CANCEL id=$id${tag == null ? '' : ' tag'} motivo="$reason"');
+    await _plugin.cancel(id, tag: tag);
+    if (tag == null) await _refreshGroupSummary();
+  }
+
+  /// The user is looking at [sessionId] on this phone: its chat
+  /// notifications posted so far are seen.
+  /// Under App Lock it waits for unlock and runs only if [stillWanted].
+  Future<void> clearChatNotifications({
+    required String connId,
+    String? profile,
+    required String sessionId,
+    Iterable<String> aliases = const [],
+    bool Function()? stillWanted,
+  }) async {
+    await _chatReadSync?.clearSession(
+      connId: connId,
+      profile: profile,
+      sessionId: sessionId,
+      aliases: aliases,
+      stillWanted: stillWanted,
+    );
+  }
 
   Future<bool> deliverDiscoveryBatch({
     required String scopeKey,
@@ -1708,6 +1757,7 @@ class NotificationService
       targetSessionId: sessionId,
       payload: _encodePayload(connId, sessionId, null, profile: profile),
       compact: true,
+      readScope: _ChatReadScope.of(connId, profile, sessionId),
     );
   }
 
@@ -1738,6 +1788,7 @@ class NotificationService
       targetSessionId: sessionId,
       payload: _encodePayload(connId, sessionId, null, profile: profile),
       compact: true,
+      readScope: _ChatReadScope.of(connId, profile, sessionId),
     );
   }
 
@@ -1781,6 +1832,13 @@ class NotificationService
           hideSensitive: hideSensitiveContent,
           readOnly: _connectionReadOnly(connId),
         );
+        // Deliberately not recorded in [chatReadSync]: this card lives at the
+        // Bot's conversation address (conversation id + botTag), which Bot
+        // routine results also post to, from the background listener's
+        // isolate as well, where this ledger cannot see them. Retracting the
+        // address on a chat read could take down an unseen routine result,
+        // so the card stays until the user opens or dismisses it. The plain
+        // fallback below has its own per-chat address and is recorded.
         if (posted) return;
         await _replyFallback(
           t,
@@ -1837,6 +1895,7 @@ class NotificationService
         roomId: roomId,
       ),
       compact: true,
+      readScope: _ChatReadScope.of(connId, profile, sessionId),
     );
   }
 
@@ -1879,6 +1938,7 @@ class NotificationService
         roomId: roomId,
       ),
       compact: true,
+      readScope: _ChatReadScope.of(connId, profile, sessionId),
     );
   }
 
@@ -2384,7 +2444,66 @@ class NotificationService
   }
 
   // ── Núcleo ──────────────────────────────────────────────────────────────
+  /// Posts through [_showUnrecorded] and keeps [chatReadSync] in step with
+  /// the tray: a chat notification ([readScope]) is recorded at its address,
+  /// anything else posted there replaces (forgets) what was recorded.
   Future<_ShowOutcome> _show({
+    required NotificationKind kind,
+    required int id,
+    String? androidTag,
+    required String title,
+    required String body,
+    bool ongoingFeel = false,
+    bool bypassForeground = false,
+    String? payload,
+    String? targetSessionId,
+    String? subText,
+    List<AndroidNotificationAction>? actions,
+    bool compact = false,
+    String? largeIconPath,
+    RichCardSpec? rich,
+    _ChatReadScope? readScope,
+  }) async {
+    final ledger = _chatReadSync;
+    // Fences the address: no ledger cancel lands on this post.
+    await ledger?.beginPost(id, androidTag);
+    try {
+      final outcome = await _showUnrecorded(
+        kind: kind,
+        id: id,
+        androidTag: androidTag,
+        title: title,
+        body: body,
+        ongoingFeel: ongoingFeel,
+        bypassForeground: bypassForeground,
+        payload: payload,
+        targetSessionId: targetSessionId,
+        subText: subText,
+        actions: actions,
+        compact: compact,
+        largeIconPath: largeIconPath,
+        rich: rich,
+      );
+      if (ledger != null && outcome == _ShowOutcome.alertShown) {
+        if (readScope == null) {
+          ledger.forget(id, androidTag);
+        } else {
+          ledger.record(
+            id: id,
+            tag: androidTag,
+            connId: readScope.connId,
+            profile: readScope.profile,
+            sessionId: readScope.sessionId,
+          );
+        }
+      }
+      return outcome;
+    } finally {
+      ledger?.endPost(id, androidTag);
+    }
+  }
+
+  Future<_ShowOutcome> _showUnrecorded({
     required NotificationKind kind,
     required int id,
     String? androidTag,
@@ -2710,9 +2829,26 @@ class NotificationService
   /// queda en el log con su pila de llamadas, para depurar desapariciones
   /// inesperadas (p.ej. una notificación que se borra sola a los pocos ms).
   Future<void> cancelById(int id, String reason) async {
+    _chatReadSync?.forget(id, null);
     _log('CANCEL id=$id motivo="$reason"\n${StackTrace.current}');
     await _plugin.cancel(id);
     await _refreshGroupSummary();
+  }
+}
+
+/// Which chat a notification is about (see [ChatNotificationReadSync]).
+class _ChatReadScope {
+  const _ChatReadScope(this.connId, this.profile, this.sessionId);
+
+  final String connId;
+  final String? profile;
+  final String sessionId;
+
+  static _ChatReadScope? of(String? connId, String? profile, String? sid) {
+    final conn = connId?.trim() ?? '';
+    final session = sid?.trim() ?? '';
+    if (conn.isEmpty || session.isEmpty) return null;
+    return _ChatReadScope(conn, profile, session);
   }
 }
 

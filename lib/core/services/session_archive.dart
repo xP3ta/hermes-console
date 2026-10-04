@@ -378,16 +378,36 @@ class SessionArchive extends ChangeNotifier {
   SessionListRead beginListRead() {
     final id = ++_listReadSeq;
     _openListReads.add(id);
-    return SessionListRead._(this, id, _ackSeq);
+    final observer = listReadObserver;
+    return SessionListRead._(
+      this,
+      id,
+      _ackSeq,
+      observer,
+      observer?.listReadStarted(),
+    );
   }
+
+  /// Told about the server rows of every list read, with the token it gave
+  /// when the read began (the phone's chat notifications use it to retract
+  /// what another device read). Set once by the app shell.
+  static SessionListReadObserver? listReadObserver;
 
   void _endListRead(
     int id,
     Iterable<Session> rows,
     String? completeProfile,
     int ackFence,
+    SessionListReadObserver? observer,
+    int? observerToken,
   ) {
     if (!_openListReads.remove(id)) return;
+    if (observer != null && observerToken != null) {
+      final list = rows.toList(growable: false);
+      if (list.isNotEmpty) {
+        observer.listReadEnded(_connectionId, observerToken, list);
+      }
+    }
     _reconcileServerState(rows, ackFence);
     final released = _releaseRecreated(rows);
     // A read started after the delete that still names a confirmed id
@@ -1311,10 +1331,18 @@ final class _AcknowledgedPinWrite {
 
 /// An open session list read; see [SessionArchive.beginListRead].
 final class SessionListRead {
-  SessionListRead._(this._archive, this._id, this._ackFence);
+  SessionListRead._(
+    this._archive,
+    this._id,
+    this._ackFence,
+    this._observer,
+    this._observerToken,
+  );
 
   final SessionArchive _archive;
   final int _id;
+  final SessionListReadObserver? _observer;
+  final int? _observerToken;
 
   /// Server writes acknowledged when this read started: only a read that
   /// began after a write's answer can overrule its optimistic value.
@@ -1327,5 +1355,22 @@ final class SessionListRead {
   /// profile it does not name are then confirmed gone. Only the first call
   /// counts.
   void end({Iterable<Session> rows = const [], String? completeProfile}) =>
-      _archive._endListRead(_id, rows, completeProfile, _ackFence);
+      _archive._endListRead(
+        _id,
+        rows,
+        completeProfile,
+        _ackFence,
+        _observer,
+        _observerToken,
+      );
+}
+
+/// See [SessionArchive.listReadObserver].
+abstract interface class SessionListReadObserver {
+  /// A list read begins; the token comes back with its rows.
+  int listReadStarted();
+
+  /// The read that began with [startToken] returned [rows] of
+  /// [connectionId] (fresh server rows, never a cache).
+  void listReadEnded(String connectionId, int startToken, List<Session> rows);
 }
