@@ -123,7 +123,11 @@ void main() {
     });
 
     test('blank user rows do not open a turn', () {
-      final rows = [_msg('assistant', 'r'), _msg('user', '  '), _msg('user', 'p')];
+      final rows = [
+        _msg('assistant', 'r'),
+        _msg('user', '  '),
+        _msg('user', 'p'),
+      ];
       expect(stickyPromptIndex(rows, 0), 2);
     });
   });

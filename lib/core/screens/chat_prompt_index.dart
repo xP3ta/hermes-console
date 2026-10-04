@@ -30,10 +30,29 @@ String chatPromptPreview(String text) {
   final flat = text.replaceAll(RegExp(r'\s+'), ' ').trim();
   final runes = flat.runes.toList(growable: false);
   if (runes.length <= chatPromptPreviewMax) return flat;
-  final head = String.fromCharCodes(
-    runes.take(chatPromptPreviewMax - 1),
-  ).trimRight();
+  final head = String.fromCharCodes(runes.take(chatPromptPreviewMax - 1))
+      .trimRight();
   return '$head…';
+}
+
+/// True when [message] is a user row with text: the rows that open a turn and
+/// appear in the prompt list.
+bool isChatPromptMessage(Map<String, dynamic> message) {
+  if (message['role'] != 'user') return false;
+  final content = message['content'];
+  return content is String && content.trim().isNotEmpty;
+}
+
+/// Índice, en [newestFirst], del prompt que abrió el turno al que pertenece la
+/// fila [topIndex] (la que cruza el borde superior del viewport). El prompt es
+/// la fila de usuario más próxima hacia atrás en el tiempo; recorre solo la
+/// longitud de ese turno.
+int? stickyPromptIndex(List<Map<String, dynamic>> newestFirst, int topIndex) {
+  if (topIndex < 0 || topIndex >= newestFirst.length) return null;
+  for (var i = topIndex; i < newestFirst.length; i++) {
+    if (isChatPromptMessage(newestFirst[i])) return i;
+  }
+  return null;
 }
 
 /// Entradas de [newestFirst] (el orden de la transcripción del chat), más
@@ -44,14 +63,12 @@ List<ChatPromptEntry> deriveChatPromptEntries(
   final entries = <ChatPromptEntry>[];
   for (var i = 0; i < newestFirst.length; i++) {
     final message = newestFirst[i];
-    if (message['role'] != 'user') continue;
-    final content = message['content'];
-    if (content is! String || content.trim().isEmpty) continue;
+    if (!isChatPromptMessage(message)) continue;
     entries.add(
       ChatPromptEntry(
         message: message,
         messageIndex: i,
-        preview: chatPromptPreview(content),
+        preview: chatPromptPreview(message['content'] as String),
       ),
     );
   }
