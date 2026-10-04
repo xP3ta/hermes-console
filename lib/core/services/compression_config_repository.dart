@@ -136,6 +136,22 @@ final class CompressionConfigRepository {
           CompressionConfigFailureCode.rejected,
         );
       }
+      // El exito lo decide la re-lectura, no la respuesta del PUT.
+      final Map<String, dynamic> reread;
+      try {
+        reread = await _dashboard.getServerConfig(profile: _profile);
+      } catch (_) {
+        throw const CompressionConfigException(
+          CompressionConfigFailureCode.unconfirmed,
+        );
+      }
+      final held = _compressionOf(reread);
+      final sent = configuration.toDashboardPatch();
+      if (held == null || sent.entries.any((e) => held[e.key] != e.value)) {
+        throw const CompressionConfigException(
+          CompressionConfigFailureCode.notSaved,
+        );
+      }
       return CompressionConfigSnapshot.supported(
         profile: _profile,
         configuration: configuration,
@@ -200,6 +216,17 @@ final class CompressionConfigRepository {
       );
     }
   }
+}
+
+/// El bloque `compression` de una lectura de /api/config, plana o envuelta.
+Map<String, dynamic>? _compressionOf(Map<String, dynamic> response) {
+  final record = response['compression'] is Map
+      ? response
+      : response['config'] is Map
+      ? Map<String, dynamic>.from(response['config'] as Map)
+      : response;
+  final block = record['compression'];
+  return block is Map ? Map<String, dynamic>.from(block) : null;
 }
 
 String? _normalizeProfile(String? raw) {

@@ -60,6 +60,17 @@ Future<CompressionConfigException> _failure(Future<Object?> future) async {
   throw TestFailure('Expected CompressionConfigException');
 }
 
+/// Applies the `compression` block of a PUT to [config], so the re-read after
+/// saving sees what the server kept.
+void _keepWrite(Map<String, dynamic> config, http.Request request) {
+  final sent =
+      (jsonDecode(request.body) as Map<String, dynamic>)['config']
+          as Map<String, dynamic>;
+  (config['compression'] as Map<String, dynamic>).addAll(
+    sent['compression'] as Map<String, dynamic>,
+  );
+}
+
 final class _TrackingClient extends http.BaseClient {
   final MockClient delegate;
   bool closed = false;
@@ -423,10 +434,9 @@ void main() {
         expect(serverCompression['future_native_sibling'], {'preserve': true});
         expect(saved.configuration, changed);
         expect(saved.profile, 'synthetic-profile');
-        expect(requests.last.method, 'PUT');
-        expect(requests.last.url.queryParameters, {
-          'profile': 'synthetic-profile',
-        });
+        final put = requests.lastWhere((r) => r.method == 'PUT');
+        expect(put.url.queryParameters, {'profile': 'synthetic-profile'});
+        expect(requests.last.method, 'GET', reason: 'the re-read is last');
       },
     );
 
@@ -449,6 +459,7 @@ void main() {
               );
             }
             sent = jsonDecode(request.body) as Map<String, dynamic>;
+            _keepWrite(config, request);
             return http.Response('{"ok":true}', 200);
           }),
         );
@@ -615,18 +626,18 @@ void main() {
 
     test('acepta exactamente los limites inferior y superior', () async {
       final fixture = _fixture();
+      final config = _cloneMap(fixture['config']!);
       var putCount = 0;
       final dashboard = _dashboard(
         MockClient((request) async {
           if (request.method == 'PUT') {
             putCount += 1;
+            _keepWrite(config, request);
             return http.Response('{"ok":true}', 200);
           }
           return http.Response(
             jsonEncode(
-              request.url.path == '/api/config'
-                  ? fixture['config']
-                  : fixture['schema'],
+              request.url.path == '/api/config' ? config : fixture['schema'],
             ),
             200,
           );
@@ -967,18 +978,18 @@ void main() {
       'close espera un PUT ya iniciado antes de cerrar su cliente',
       () async {
         final fixture = _fixture();
+        final config = _cloneMap(fixture['config']!);
         final putStarted = Completer<void>();
         final putResult = Completer<http.Response>();
         final tracking = _TrackingClient((request) async {
           if (request.method == 'PUT') {
             if (!putStarted.isCompleted) putStarted.complete();
+            _keepWrite(config, request);
             return putResult.future;
           }
           return http.Response(
             jsonEncode(
-              request.url.path == '/api/config'
-                  ? fixture['config']
-                  : fixture['schema'],
+              request.url.path == '/api/config' ? config : fixture['schema'],
             ),
             200,
           );
@@ -1054,7 +1065,10 @@ void main() {
         expect(repository.isClosed, isTrue);
         expect(tracking.closed, isTrue);
         putResult.complete(http.Response('{"ok":true}', 200));
-        expect((await saving).configuration, changed);
+        // The client is fenced: the write that was already out cannot be
+        // confirmed by a re-read, so it is not reported as saved.
+        final failure = await _failure(saving);
+        expect(failure.code, CompressionConfigFailureCode.unconfirmed);
       },
     );
 
