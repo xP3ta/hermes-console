@@ -71,6 +71,9 @@ class _ServerDiagnosticsScreenState extends State<ServerDiagnosticsScreen>
         readOnly: widget.connection.readOnly,
       ),
       profile: profile,
+      // Every Diagnostics screen of this server and profile shares one launch
+      // order for doctor and the audit.
+      launchScope: '${widget.connection.id}|$profile',
     );
   }
 

@@ -383,10 +383,18 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
   }) async {
     final feature = _opsFeature(action);
     if (shouldStop?.call() ?? false) return null;
-    final current = await opsStatus(action);
-    onProgress?.call(current);
-    if (!current.running) {
-      if (shouldStop?.call() ?? false) return null;
+    // The read of the state and the launch are one step for every launcher in
+    // this app that shares the scope: a second one waits for the first launch
+    // to land, then reads `running` and attaches instead of launching again.
+    var stopped = false;
+    await _exclusiveLaunch(action, () async {
+      final current = await opsStatus(action);
+      onProgress?.call(current);
+      if (current.running) return;
+      if (shouldStop?.call() ?? false) {
+        stopped = true;
+        return;
+      }
       final started = await _call(
         feature,
         () => rest.post(_withProfile(action.endpoint)),
@@ -394,7 +402,8 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
       if (started['ok'] != true) {
         throw const CapabilityFailure(CapabilityFailureKind.invalidResponse);
       }
-    }
+    });
+    if (stopped) return null;
     return _followAction(
       feature,
       action.actionName,
@@ -402,6 +411,30 @@ class CapabilitiesRepository implements HermesMcpProvisioningGateway {
       shouldStop,
       throwOnFailure: false,
     );
+  }
+
+  /// Launches of one action on one server, in this process, one at a time.
+  /// Another device or client cannot be ordered from here: the server has no
+  /// guard of its own.
+  static final Map<String, Future<void>> _launches = {};
+
+  Future<void> _exclusiveLaunch(
+    OpsAction action,
+    Future<void> Function() step,
+  ) async {
+    final key =
+        '${launchScope ?? 'rest-${identityHashCode(rest)}'}|${action.actionName}';
+    final previous = _launches[key];
+    final done = Completer<void>();
+    final mine = done.future;
+    _launches[key] = mine;
+    try {
+      if (previous != null) await previous;
+      await step();
+    } finally {
+      done.complete();
+      if (identical(_launches[key], mine)) _launches.remove(key);
+    }
   }
 
   /// Re-attaches to doctor / the audit after the screen was left: reads the

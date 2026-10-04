@@ -845,7 +845,7 @@ void main() {
 }
 
 /// A Dashboard whose launches are held until [releasePost]; once launched the
-/// action reads as running and finishes after one more read.
+/// action reads as running for a few reads, then finishes.
 final class _RacingRest implements CapabilitiesRest {
   final Map<String, Completer<void>> _gates = {};
   final Set<String> _running = {};
@@ -868,11 +868,11 @@ final class _RacingRest implements CapabilitiesRest {
     final name = endpoint.split('?').first.split('/')[1];
     if (_running.contains(name)) {
       final reads = _reads[name] = (_reads[name] ?? 0) + 1;
-      if (reads > 1) _running.remove(name);
+      if (reads > 100) _running.remove(name);
       return {
         'name': name,
-        'running': reads <= 1,
-        'exit_code': reads <= 1 ? null : 0,
+        'running': reads <= 100,
+        'exit_code': reads <= 100 ? null : 0,
         'lines': <String>[],
       };
     }
