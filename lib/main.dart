@@ -298,8 +298,11 @@ Future<Widget> bootstrapHermesApp() async {
   final sshManager = SshManager(SecureStorage(), connManager);
   final notifications = NotificationService(prefs);
   // A chat read on another device (or opened here) retracts this phone's
-  // notification on the next session list read the app already makes.
-  SessionArchive.listReadObserver = notifications.enableChatReadSync();
+  // notification on the next session list read the app already makes; never
+  // while App Lock is locked.
+  SessionArchive.listReadObserver = notifications.enableChatReadSync(
+    locked: appLock.locked,
+  );
   final sftpTransfers = SftpTransferService(sshManager, notifications);
   final sshSessions = SshSessionService(sshManager);
   final activeChats = ActiveChatService(

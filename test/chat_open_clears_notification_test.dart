@@ -1,7 +1,6 @@
 // Opening a chat on the phone clears the reply notifications it already
 // has in the tray; a chat seen only while the app is in the background
 // keeps them until the user comes back.
-import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
+import 'package:hermes_android/core/screens/lock_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
@@ -20,7 +20,6 @@ import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
-import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/main.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -125,15 +124,18 @@ void main() {
   });
 
   Future<(ActiveChatService, NotificationService)> pumpApp(
-    WidgetTester tester,
-  ) async {
+    WidgetTester tester, {
+    AppLockService? lock,
+  }) async {
     // The real target: cancels reach the Android plugin channel.
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     AndroidFlutterLocalNotificationsPlugin.registerWith();
     final prefs = await SharedPreferences.getInstance();
     final manager = await ConnectionManager.create(prefs);
     final secure = SecureStorage();
-    final notifications = NotificationService(prefs)..enableChatReadSync();
+    final appLock = lock ?? AppLockService(prefs);
+    final notifications = NotificationService(prefs)
+      ..enableChatReadSync(locked: appLock.locked);
     final ledger = notifications.chatReadSync!;
     ledger.record(
       id: 6100,
@@ -164,7 +166,7 @@ void main() {
     await tester.pumpWidget(
       HermesApp(
         connManager: manager,
-        appLock: AppLockService(prefs),
+        appLock: appLock,
         approvalPolicy: ApprovalPolicyService(prefs),
         fontSize: FontSizeService(prefs),
         bridgeManager: BridgeManager(secure, manager),
@@ -254,6 +256,71 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(_cancelled(notificationCalls), [6100]);
+    await teardown(tester, chats);
+  });
+
+  testWidgets('under App Lock a resumed chat clears nothing until unlock, '
+      'then once, and spares a reply posted while locked', (tester) async {
+    final lock = AppLockService(await SharedPreferences.getInstance());
+    final (chats, notifications) = await pumpApp(tester, lock: lock);
+    openChat(tester);
+    await tester.pump();
+    await tester.pump();
+    expect(_cancelled(notificationCalls), [6100]);
+    for (final state in const [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    await tester.pump();
+    notificationCalls.clear();
+    final ledger = notifications.chatReadSync!;
+    // A reply and an activity notice land while the phone is in the pocket.
+    ledger.record(
+      id: 6100,
+      connId: _connection.id,
+      profile: null,
+      sessionId: _session.id,
+    );
+    ledger.record(
+      id: 6104,
+      connId: _connection.id,
+      profile: null,
+      sessionId: _session.id,
+    );
+    // App Lock engages as the app comes back.
+    lock.locked.value = true;
+    for (final state in const [
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byType(LockScreen), findsOneWidget);
+    expect(_cancelled(notificationCalls), isEmpty);
+    // Another reply lands on the lock screen, at the same address.
+    ledger.record(
+      id: 6100,
+      connId: _connection.id,
+      profile: null,
+      sessionId: _session.id,
+    );
+    lock.unlock();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byType(LockScreen), findsNothing);
+    expect(_cancelled(notificationCalls), [6104]);
+    // Once: another lock and unlock without leaving the app clears nothing.
+    lock.locked.value = true;
+    await tester.pump(const Duration(seconds: 1));
+    lock.unlock();
+    await tester.pump(const Duration(seconds: 1));
+    expect(_cancelled(notificationCalls), [6104]);
     await teardown(tester, chats);
   });
 }

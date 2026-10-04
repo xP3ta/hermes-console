@@ -1471,6 +1471,16 @@ class _ChatScreenState extends State<ChatScreen>
   bool _messageRefreshReanchorScheduled = false;
   ForegroundConversationReader? _passiveConversationReader;
   bool _chatRouteVisible = false;
+
+  /// The chat was on top when the App Lock screen covered it: it is what the
+  /// user sees once they unlock.
+  bool _coveredByAppLock = false;
+
+  /// The chat (connection|session) this stretch in front already asked to
+  /// clear. Covering it with the lock screen does not end the stretch: what
+  /// the user had seen is cleared after unlock, and the screen coming back
+  /// from under the lock does not clear again.
+  String? _ownNotificationsClearedFor;
   late bool _appInForeground;
   // Relative delays place the follow-up checks at +1.5s and +4s.
   static const _postControlRepairDelays = [
@@ -5127,6 +5137,7 @@ class _ChatScreenState extends State<ChatScreen>
       _markedNotificationSessionId = durableId;
       _clearOwnChatNotifications();
     } else {
+      if (!_coveredByAppLock) _ownNotificationsClearedFor = null;
       final marked = _markedNotificationSessionId;
       if (marked != null && notif.visibleSessionId == marked) {
         notif.visibleSessionId = null;
@@ -5138,16 +5149,30 @@ class _ChatScreenState extends State<ChatScreen>
   /// The user sees this chat (on top, app in front): the reply
   /// notifications it already has in the tray are read. A reply posted while
   /// the app is in the background stays until the user comes back to it.
-  void _clearOwnChatNotifications() {
-    if (!_chatBound || !_appInForeground || !_chatRouteVisible) return;
+  /// Under App Lock nothing is cleared until unlock, and only if this chat
+  /// is then in front (see [ChatNotificationReadSync]).
+  void _clearOwnChatNotifications({bool resumed = false}) {
+    if (!_chatBound || !_appInForeground) return;
+    if (!_chatRouteVisible && !_coveredByAppLock) return;
     final notif = _chatService.notifications;
-    final sessionId = _chat.serverSessionId;
+    final chat = _chat;
+    final sessionId = chat.serverSessionId;
     if (notif == null || sessionId.isEmpty) return;
+    final key = '${chat.connection.id}|$sessionId';
+    if (_ownNotificationsClearedFor == key && !resumed) return;
+    _ownNotificationsClearedFor = key;
     unawaited(
       notif.clearChatNotifications(
-        connId: _chat.connection.id,
-        profile: _chat.sessionProfile,
+        connId: chat.connection.id,
+        profile: chat.sessionProfile,
         sessionId: sessionId,
+        stillWanted: () =>
+            mounted &&
+            !_disposed &&
+            _chatBound &&
+            identical(_chat, chat) &&
+            _appInForeground &&
+            (ModalRoute.of(context)?.isCurrent ?? false),
       ),
     );
   }
@@ -5557,6 +5582,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void didPopNext() {
+    _coveredByAppLock = false;
     _markChatVisible(true); // volvió al frente (pop de la de encima)
     unawaited(_ensureDesktopRuntimeAndBootstrapContext());
     _syncPassiveTranscriptRefresh(refreshNow: true);
@@ -5604,6 +5630,14 @@ class _ChatScreenState extends State<ChatScreen>
   @override
   void didPushNext() {
     _invalidateOwnedNativeVoicePreparation();
+    // The App Lock gate pushes its screen only once `locked` is set.
+    _coveredByAppLock =
+        context
+            .findAncestorStateOfType<HermesAppState>()
+            ?.appLock
+            .locked
+            .value ??
+        false;
     _markChatVisible(false); // la tapó otra pantalla
   }
 
@@ -7054,7 +7088,9 @@ class _ChatScreenState extends State<ChatScreen>
     final wasInForeground = _appInForeground;
     _appInForeground = state == AppLifecycleState.resumed;
     if (_chatBound) _syncTransportVisibility();
-    if (!wasInForeground && _appInForeground) _clearOwnChatNotifications();
+    if (!wasInForeground && _appInForeground) {
+      _clearOwnChatNotifications(resumed: true);
+    }
     if (wasInForeground != _appInForeground) {
       _viewerAttachGeneration += 1;
       _cancelSessionContextBootstrapRetry();

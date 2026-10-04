@@ -539,11 +539,14 @@ class NotificationService
   /// isolate never writes a stale copy of the ledger.
   ChatNotificationReadSync? get chatReadSync => _chatReadSync;
 
-  ChatNotificationReadSync enableChatReadSync() =>
-      _chatReadSync ??= ChatNotificationReadSync(
-        _prefs,
-        cancel: (id, tag) => _cancelChatNotification(id, tag, 'chat read'),
-      );
+  /// [locked] is App Lock's state: nothing is cleared while it is true.
+  ChatNotificationReadSync enableChatReadSync({
+    ValueListenable<bool>? locked,
+  }) => _chatReadSync ??= ChatNotificationReadSync(
+    _prefs,
+    cancel: (id, tag) => _cancelChatNotification(id, tag, 'chat read'),
+    locked: locked,
+  );
 
   /// The ledger's own cancel: unlike [cancelById] it leaves the ledger
   /// alone, which drops the entry only once this succeeds.
@@ -559,15 +562,18 @@ class NotificationService
 
   /// The user is looking at [sessionId] on this phone: its chat
   /// notifications posted so far are seen.
+  /// Under App Lock it waits for unlock and runs only if [stillWanted].
   Future<void> clearChatNotifications({
     required String connId,
     String? profile,
     required String sessionId,
+    bool Function()? stillWanted,
   }) async {
     await _chatReadSync?.clearSession(
       connId: connId,
       profile: profile,
       sessionId: sessionId,
+      stillWanted: stillWanted,
     );
   }
 

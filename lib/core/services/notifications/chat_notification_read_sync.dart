@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/session.dart';
@@ -34,9 +35,19 @@ import '../session_archive.dart';
 /// before it goes out and is skipped while a post to that address is on its
 /// way ([beginPost]), and a post waits for a cancel already sent there. So a
 /// late cancel can never take down a newer notification at the same address.
+///
+/// App Lock: nothing is cancelled while [locked] is true. A read or an open
+/// that would clear something waits, with the fence it had then, and runs
+/// once after unlock against the ledger as it is at that moment, so a
+/// notification posted while locked is never taken by it.
 class ChatNotificationReadSync implements SessionListReadObserver {
-  ChatNotificationReadSync(this._prefs, {required this.cancel}) {
+  ChatNotificationReadSync(
+    this._prefs, {
+    required this.cancel,
+    ValueListenable<bool>? locked,
+  }) : _locked = locked {
     _load();
+    locked?.addListener(_lockChanged);
   }
 
   static const prefsKey = 'notif_chat_read_sync_v1';
@@ -58,6 +69,39 @@ class ChatNotificationReadSync implements SessionListReadObserver {
 
   /// Posts started and not finished yet, per address.
   final Map<String, int> _posting = {};
+
+  /// App Lock state; null means never locked.
+  final ValueListenable<bool>? _locked;
+  bool get _isLocked => _locked?.value ?? false;
+
+  /// Clears held back by App Lock, in arrival order, keyed so that each one
+  /// runs once.
+  final Map<String, Future<int> Function()> _afterUnlock = {};
+  int _heldReads = 0;
+
+  /// Runs [clear] now, or once after unlock when App Lock is on. [clear]
+  /// keeps the fence it was built with.
+  Future<int> _whenUnlocked(String key, Future<int> Function() clear) {
+    if (!_isLocked) return clear();
+    _afterUnlock.putIfAbsent(key, () => clear);
+    while (_afterUnlock.length > maxEntries) {
+      _afterUnlock.remove(_afterUnlock.keys.first);
+    }
+    return Future.value(0);
+  }
+
+  void _lockChanged() {
+    if (_isLocked || _afterUnlock.isEmpty) return;
+    // After every listener of the lock ran: the lock screen is gone by then.
+    scheduleMicrotask(() {
+      if (_isLocked) return;
+      final held = _afterUnlock.values.toList();
+      _afterUnlock.clear();
+      for (final clear in held) {
+        unawaited(clear());
+      }
+    });
+  }
 
   static String _address(int id, String? tag) => '$id|${tag ?? ''}';
 
@@ -154,32 +198,40 @@ class ChatNotificationReadSync implements SessionListReadObserver {
       read.putIfAbsent(_profile(published), () => {}).addAll(row.identityIds);
     }
     if (read.isEmpty) return Future.value(0);
-    return _cancelWhere(
-      (entry) =>
-          entry.seq <= fence &&
-          entry.connId == connId &&
-          (read[entry.profile]?.contains(entry.sessionId) ?? false),
+    return _whenUnlocked(
+      'read|${_heldReads++}',
+      () => _cancelWhere(
+        (entry) =>
+            entry.seq <= fence &&
+            entry.connId == connId &&
+            (read[entry.profile]?.contains(entry.sessionId) ?? false),
+      ),
     );
   }
 
   /// The user is looking at [sessionId] on this phone: whatever was posted
-  /// for it so far is seen.
+  /// for it so far is seen. Under App Lock it waits for unlock and then runs
+  /// only if [stillWanted] (the chat is still the one in front) says so.
   Future<int> clearSession({
     required String connId,
     String? profile,
     required String sessionId,
+    bool Function()? stillWanted,
   }) {
     final fence = _seq;
     final owner = _profile(profile);
     final sid = sessionId.trim();
     if (sid.isEmpty) return Future.value(0);
-    return _cancelWhere(
-      (entry) =>
-          entry.seq <= fence &&
-          entry.connId == connId &&
-          entry.profile == owner &&
-          entry.sessionId == sid,
-    );
+    return _whenUnlocked('open|$connId|$owner|$sid', () {
+      if (!(stillWanted?.call() ?? true)) return Future.value(0);
+      return _cancelWhere(
+        (entry) =>
+            entry.seq <= fence &&
+            entry.connId == connId &&
+            entry.profile == owner &&
+            entry.sessionId == sid,
+      );
+    });
   }
 
   Future<int> _cancelWhere(bool Function(_Entry entry) test) async {
@@ -189,7 +241,15 @@ class ChatNotificationReadSync implements SessionListReadObserver {
     ];
     var cancelled = 0;
     for (final (address, entry) in due) {
-      if (await _cancelEntry(address, entry)) cancelled++;
+      if (await _cancelEntry(address, entry)) {
+        cancelled++;
+      } else if (_isLocked) {
+        // App Lock engaged mid-clear: the rest waits for unlock, same test.
+        unawaited(
+          _whenUnlocked('rest|${_heldReads++}', () => _cancelWhere(test)),
+        );
+        break;
+      }
     }
     return cancelled;
   }
@@ -199,7 +259,9 @@ class ChatNotificationReadSync implements SessionListReadObserver {
   Future<bool> _cancelEntry(String address, _Entry entry) async {
     if (_cancelling.containsKey(address)) await _cancelSettled(address);
     // Nothing may run between this check and the cancel going out.
-    if (!identical(_entries[address], entry) || _posting.containsKey(address)) {
+    if (_isLocked ||
+        !identical(_entries[address], entry) ||
+        _posting.containsKey(address)) {
       return false;
     }
     final settled = Completer<void>();

@@ -182,6 +182,101 @@ void main() {
       expect(cancels.ids, [6100]);
     });
 
+    test('App Lock holds a read until unlock, then runs it once', () async {
+      final locked = ValueNotifier(true);
+      final gated = ChatNotificationReadSync(
+        prefs,
+        cancel: cancels.call,
+        locked: locked,
+      );
+      SessionArchive.listReadObserver = gated;
+      gated.record(id: 6100, connId: 'c1', profile: 'default', sessionId: 's1');
+      gated.record(id: 6102, connId: 'c1', profile: 'default', sessionId: 's3');
+      final archive = await SessionArchive.load(prefs, 'c1');
+      archive.beginListRead().end(rows: [_row('s1'), _row('s3')]);
+      await settle();
+      expect(cancels.calls, isEmpty);
+      // A new reply for s1 lands while the phone is still locked.
+      gated.record(id: 6100, connId: 'c1', profile: 'default', sessionId: 's1');
+      locked.value = false;
+      await settle();
+      expect(cancels.ids, [6102]);
+      // Once: locking and unlocking again replays nothing.
+      locked.value = true;
+      locked.value = false;
+      await settle();
+      expect(cancels.ids, [6102]);
+    });
+
+    test('App Lock holds an open until unlock and rechecks it then', () async {
+      final locked = ValueNotifier(true);
+      final gated = ChatNotificationReadSync(
+        prefs,
+        cancel: cancels.call,
+        locked: locked,
+      );
+      gated.record(id: 6100, connId: 'c1', profile: 'default', sessionId: 's1');
+      gated.record(id: 6101, connId: 'c1', profile: 'default', sessionId: 's2');
+      var s2InFront = false;
+      await gated.clearSession(connId: 'c1', sessionId: 's1');
+      await gated.clearSession(
+        connId: 'c1',
+        sessionId: 's2',
+        stillWanted: () => s2InFront,
+      );
+      // Posted while locked, after the open: not part of what was seen.
+      gated.record(id: 6103, connId: 'c1', profile: 'default', sessionId: 's1');
+      // Opened again while still locked: the first fence stands.
+      await gated.clearSession(connId: 'c1', sessionId: 's1');
+      await settle();
+      expect(cancels.calls, isEmpty);
+      locked.value = false;
+      await settle();
+      // s2 left the front before unlock.
+      expect(cancels.ids, [6100]);
+      s2InFront = true;
+      locked.value = true;
+      locked.value = false;
+      await settle();
+      expect(cancels.ids, [6100]);
+    });
+
+    test('App Lock engaging mid-clear holds the rest until unlock', () async {
+      final locked = ValueNotifier(false);
+      final gate = <Completer<void>>[];
+      final gated = ChatNotificationReadSync(
+        prefs,
+        cancel: (id, tag) {
+          cancels.calls.add((id, tag));
+          final done = Completer<void>();
+          gate.add(done);
+          return done.future;
+        },
+        locked: locked,
+      );
+      SessionArchive.listReadObserver = gated;
+      gated.record(id: 6100, connId: 'c1', profile: 'default', sessionId: 's1');
+      gated.record(id: 6102, connId: 'c1', profile: 'default', sessionId: 's3');
+      gated.record(id: 6105, connId: 'c1', profile: 'default', sessionId: 's5');
+      final archive = await SessionArchive.load(prefs, 'c1');
+      archive.beginListRead().end(rows: [_row('s1'), _row('s3'), _row('s5')]);
+      await settle();
+      expect(cancels.ids, [6100]);
+      // The phone locks while the first cancel is on its way.
+      locked.value = true;
+      gate.single.complete();
+      await settle();
+      expect(cancels.ids, [6100]);
+      // A new reply for s3 lands on the lock screen: not part of that read.
+      gated.record(id: 6102, connId: 'c1', profile: 'default', sessionId: 's3');
+      locked.value = false;
+      await settle();
+      expect(cancels.ids, [6100, 6105]);
+      gate.last.complete();
+      await settle();
+      expect(cancels.ids, [6100, 6105]);
+    });
+
     test('a cancel that fails keeps the entry for the next read', () async {
       var fail = true;
       final tried = <int>[];
