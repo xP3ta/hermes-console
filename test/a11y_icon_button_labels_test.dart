@@ -368,7 +368,7 @@ List<String> _unlabelledIconButtons(String path, String source) {
       continue;
     }
     final invocation = source.substring(open + 1, close);
-    if (!RegExp(r'\btooltip\s*:').hasMatch(invocation) &&
+    if (!_hasDirectArgument(invocation, const {'tooltip'}) &&
         !_hasLabelledWrapper(source, match.start, close)) {
       missing.add('$path:${_lineAt(source, match.start)}');
     }
@@ -388,9 +388,55 @@ bool _hasLabelledWrapper(String source, int buttonStart, int buttonEnd) {
     final close = _matchingParen(source, open);
     if (close == null || close < buttonEnd) continue;
     final invocation = source.substring(open + 1, close);
-    if (RegExp(r'\b(?:label|message)\s*:').hasMatch(invocation)) return true;
+    if (_hasDirectArgument(invocation, const {'label', 'message'})) {
+      return true;
+    }
   }
   return false;
+}
+
+/// True when [invocation] (the text between an argument list's parentheses)
+/// passes one of [names] as a direct named argument. Names inside nested
+/// calls, closures, collections or string literals do not count.
+bool _hasDirectArgument(String invocation, Set<String> names) {
+  var depth = 0;
+  String? quote;
+  var escaped = false;
+  var segment = StringBuffer();
+
+  bool matches() {
+    final text = segment.toString().trimLeft();
+    segment = StringBuffer();
+    return names.any((name) => RegExp('^$name\\s*:').hasMatch(text));
+  }
+
+  for (var index = 0; index < invocation.length; index++) {
+    final char = invocation[index];
+    if (quote != null) {
+      segment.write(depth == 0 ? char : ' ');
+      if (escaped) {
+        escaped = false;
+      } else if (char == '\\') {
+        escaped = true;
+      } else if (char == quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char == "'" || char == '"') {
+      quote = char;
+      segment.write(depth == 0 ? char : ' ');
+      continue;
+    }
+    if (char == '(' || char == '[' || char == '{') depth++;
+    if (char == ')' || char == ']' || char == '}') depth--;
+    if (char == ',' && depth == 0) {
+      if (matches()) return true;
+      continue;
+    }
+    segment.write(depth == 0 ? char : ' ');
+  }
+  return matches();
 }
 
 int? _matchingParen(String source, int open) {
