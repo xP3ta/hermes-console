@@ -140,7 +140,10 @@ void main() {
       final fields = serverConfigFieldsOf(
         ServerConfigPage.main,
         _schema({
-          'agent.service_tier': {'type': 'select', 'options': ['fast', 'auto']},
+          'agent.service_tier': {
+            'type': 'select',
+            'options': ['fast', 'auto'],
+          },
           'display.personality': {'type': 'string'},
           'agent.reasoning_effort': {
             'type': 'select',
