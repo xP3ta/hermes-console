@@ -188,6 +188,9 @@ void main() {
           'http 405 method not allowed',
         ),
         Exception('http 404'),
+        // A typed HTTP status is a transient failure too, never an absence.
+        const DashboardHttpException(404),
+        const DashboardHttpException(405),
       ]) {
         final wire = _Wire()..activeList = () => Future.error(failure);
         final repository = wire.repository();
