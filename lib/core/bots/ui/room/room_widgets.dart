@@ -59,6 +59,20 @@ String roomAgo(Strings s, Duration value) {
   return s.roomAgoDays(value.inDays);
 }
 
+/// Time until [roomAgo] of an age of [elapsed] shows another label: the
+/// next whole minute under an hour, the next hour under a day, else the
+/// next day.
+Duration roomAgoNextChange(Duration elapsed) {
+  if (elapsed.isNegative) return const Duration(minutes: 1) - elapsed;
+  final unit = elapsed < const Duration(hours: 1)
+      ? const Duration(minutes: 1)
+      : elapsed < const Duration(days: 1)
+      ? const Duration(hours: 1)
+      : const Duration(days: 1);
+  return unit -
+      Duration(microseconds: elapsed.inMicroseconds % unit.inMicroseconds);
+}
+
 /// Face of a room member (real Bot face when local, neutral otherwise).
 class RoomMemberFace extends StatelessWidget {
   final HostedGroupMember? member;
