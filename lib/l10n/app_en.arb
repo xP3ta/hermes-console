@@ -8509,5 +8509,13 @@
   "rpl1215ReplySummarize": "Summarize it",
   "rpl1215SmartSuggest": "Suggest replies with AI",
   "rpl1215SettingTitle": "Quick replies",
-  "rpl1215SettingSubtitle": "Reply ideas after each turn. ✨ only asks the model when you tap it."
+  "rpl1215SettingSubtitle": "Reply ideas after each turn. ✨ only asks the model when you tap it.",
+  "mc1215WrapLines": "Wrap long lines",
+  "mc1215NoWrapLines": "Scroll long lines",
+  "mc1215FontSmaller": "Smaller code",
+  "mc1215FontLarger": "Larger code",
+  "mc1215OpenInViewer": "Open in viewer",
+  "mc1215CodeTitle": "Code · {language}",
+  "@mc1215CodeTitle": {"placeholders": {"language": {"type": "String"}}},
+  "mc1215ViewerActions": "Viewer actions"
 }

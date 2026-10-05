@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:highlight/highlight.dart' show highlight, Node;
+import 'package:share_plus/share_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../../l10n/app_localizations.dart';
@@ -16,6 +18,7 @@ import '../chat/chat_markdown_body.dart';
 import '../hermes_app_bar.dart';
 import '../hermes_notice.dart';
 import 'artifact_html_policy.dart';
+import 'code_view_prefs.dart';
 
 /// Bytes rendered before the viewer asks the user to "Mostrar todo".
 const int artifactViewerInitialRenderBytes = 1024 * 1024;
@@ -76,6 +79,7 @@ class ArtifactViewerScreen extends StatefulWidget {
     this.onEdit,
     this.launchExternalLink,
     this.webViewSettingsFor = defaultArtifactWebViewSettings,
+    this.highlightLanguage,
   });
 
   final String name;
@@ -97,6 +101,10 @@ class ArtifactViewerScreen extends StatefulWidget {
   final Future<bool> Function(Uri uri)? launchExternalLink;
   final ArtifactWebViewSettingsFactory webViewSettingsFor;
 
+  /// `highlight` language for text whose name carries no extension (a chat
+  /// code block); null derives it from [name]/[mimeType].
+  final String? highlightLanguage;
+
   @override
   State<ArtifactViewerScreen> createState() => _ArtifactViewerScreenState();
 }
@@ -110,6 +118,18 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
       anchorKey: _menuAnchor,
       surfaceKey: const ValueKey('artifact-viewer-menu-surface'),
       actions: [
+        if (_showsTextView && !_compact) ...[
+          HermesAction(
+            value: 'font-up',
+            icon: Icons.text_increase_rounded,
+            label: strings.mc1215FontLarger,
+          ),
+          HermesAction(
+            value: 'font-down',
+            icon: Icons.text_decrease_rounded,
+            label: strings.mc1215FontSmaller,
+          ),
+        ],
         if (_isTextual)
           HermesAction(
             value: 'copy',
@@ -138,6 +158,10 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
     );
     if (!mounted) return;
     switch (action) {
+      case 'font-up':
+        unawaited(CodeViewPrefs.shared.stepFont(1));
+      case 'font-down':
+        unawaited(CodeViewPrefs.shared.stepFont(-1));
       case 'copy':
         unawaited(_copy());
       case 'share':
@@ -172,6 +196,23 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
   String _decode(Uint8List bytes) =>
       _decoded ??= utf8.decode(bytes, allowMalformed: true);
 
+  /// Phones get the thumb-reachable bottom bar instead of app-bar actions.
+  bool get _compact =>
+      MediaQuery.sizeOf(context).width < CodeViewPrefs.phoneMaxWidth;
+
+  /// The caller's share (the file itself) or, for text the app only holds
+  /// in memory (a chat code block), the text through the system sheet.
+  Future<void> _share() async {
+    final share = widget.onShare;
+    if (share != null) return share();
+    final text = _decode(await _bytes);
+    try {
+      await Share.share(text, subject: widget.name);
+    } catch (_) {
+      // No share target: copying stays available.
+    }
+  }
+
   Future<void> _copy() async {
     final bytes = await _bytes;
     await Clipboard.setData(ClipboardData(text: _decode(bytes)));
@@ -189,13 +230,15 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
       appBar: HermesAppBar(
         title: Text(widget.name, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
-          if (_showsTextView)
+          if (_showsTextView && !_compact) ...[
             IconButton(
               key: const ValueKey('artifact-viewer-search'),
               tooltip: strings.vw1215Search,
               icon: const Icon(Icons.search_rounded),
               onPressed: () => _textKey.currentState?.openSearch(),
             ),
+            const CodeWrapButton(),
+          ],
           if (_isTextual && _kind != ArtifactViewerKind.text)
             IconButton(
               key: const ValueKey('artifact-viewer-source-toggle'),
@@ -258,11 +301,15 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
         text: _decode(bytes),
         totalBytes: bytes.length,
         language: _kind == ArtifactViewerKind.text
-            ? artifactHighlightLanguage(
-                name: widget.name,
-                mimeType: widget.mimeType,
-              )
+            ? widget.highlightLanguage ??
+                  artifactHighlightLanguage(
+                    name: widget.name,
+                    mimeType: widget.mimeType,
+                  )
             : (_kind == ArtifactViewerKind.markdown ? 'markdown' : 'xml'),
+        compact: _compact,
+        onCopy: () => unawaited(_copy()),
+        onShare: () => unawaited(_share()),
       );
     }
     switch (_kind) {
@@ -632,17 +679,81 @@ class _SearchMatch {
   final int start;
 }
 
+/// Toggles [CodeViewPrefs.setWrap] for this device; shows the action the
+/// tap performs.
+class CodeWrapButton extends StatelessWidget {
+  const CodeWrapButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final prefs = CodeViewPrefs.shared;
+    return ListenableBuilder(
+      listenable: prefs,
+      builder: (context, _) {
+        final strings = Strings.of(context);
+        final wrap = prefs.wrapFor(MediaQuery.sizeOf(context).width);
+        return IconButton(
+          key: const ValueKey('artifact-viewer-wrap'),
+          tooltip: wrap ? strings.mc1215NoWrapLines : strings.mc1215WrapLines,
+          isSelected: wrap,
+          icon: const Icon(Icons.wrap_text_rounded),
+          onPressed: () => unawaited(prefs.setWrap(!wrap)),
+        );
+      },
+    );
+  }
+}
+
+/// Start offsets of the rows [line] occupies when wrapped at [cols]
+/// monospace columns. Breaks after the last space in the second half of a
+/// row, otherwise mid-word; never inside a surrogate pair. The rows
+/// concatenate back to [line] exactly.
+@visibleForTesting
+List<int> codeWrapStarts(String line, int cols) {
+  final width = math.max(1, cols);
+  final starts = <int>[0];
+  var start = 0;
+  while (line.length - start > width) {
+    var next = start + width;
+    for (var j = next; j > start + width ~/ 2; j--) {
+      final unit = line.codeUnitAt(j - 1);
+      if (unit == 0x20 || unit == 0x09) {
+        next = j;
+        break;
+      }
+    }
+    if (next < line.length && _isLowSurrogate(line.codeUnitAt(next))) {
+      next = next - 1 > start ? next - 1 : next + 1;
+    }
+    starts.add(next);
+    start = next;
+  }
+  return starts;
+}
+
+bool _isLowSurrogate(int unit) => unit >= 0xDC00 && unit <= 0xDFFF;
+
+typedef _Segment = ({String text, TextStyle? style});
+
 class _TextArtifactView extends StatefulWidget {
   const _TextArtifactView({
     super.key,
     required this.text,
     required this.totalBytes,
     this.language,
+    this.compact = false,
+    this.onCopy,
+    this.onShare,
   });
 
   final String text;
   final int totalBytes;
   final String? language;
+
+  /// Phone layout: actions and search live in a bottom bar.
+  final bool compact;
+  final VoidCallback? onCopy;
+  final VoidCallback? onShare;
 
   @override
   State<_TextArtifactView> createState() => _TextArtifactViewState();
@@ -652,6 +763,7 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
   final ScrollController _vertical = ScrollController();
   final TextEditingController _query = TextEditingController();
   final FocusNode _queryFocus = FocusNode();
+  final CodeViewPrefs _prefs = CodeViewPrefs.shared;
   bool _showAll = false;
   bool _searching = false;
   late List<String> _lines;
@@ -660,12 +772,22 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
   List<_SearchMatch> _matches = const [];
   int _current = 0;
 
+  // Wrapped layout: rows per line as a prefix sum, for [_wrapCols] columns.
+  int _wrapCols = 0;
+  Int32List? _rowStart;
+  final Map<int, List<int>> _startsCache = {};
+
+  // Layout of the last frame, to keep the reading position across toggles.
+  bool _builtWrap = false;
+  double _builtExtent = 0;
+
   bool get _capped =>
       !_showAll && widget.totalBytes > artifactViewerInitialRenderBytes;
 
   @override
   void initState() {
     super.initState();
+    _prefs.addListener(_onPrefsChanged);
     _prepare();
   }
 
@@ -685,7 +807,38 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
     _highlighted = text.length <= artifactViewerHighlightBytes
         ? _highlightLines(text, widget.language)
         : null;
+    _resetWrap();
     _recomputeMatches();
+  }
+
+  void _resetWrap() {
+    _wrapCols = 0;
+    _rowStart = null;
+    _startsCache.clear();
+  }
+
+  /// Keeps the first visible logical line on screen when wrap or the font
+  /// size changes; only the visible window is laid out again.
+  void _onPrefsChanged() {
+    if (!mounted) return;
+    final anchor = _vertical.hasClients ? _lineAtOffset(_vertical.offset) : 0;
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_vertical.hasClients) return;
+      final position = _vertical.position;
+      position.jumpTo(
+        (_rowOf(anchor, 0) * _builtExtent).clamp(0.0, position.maxScrollExtent),
+      );
+    });
+  }
+
+  int _lineAtOffset(double offset) {
+    if (_builtExtent <= 0) return 0;
+    final row = (offset / _builtExtent).floor();
+    if (!_builtWrap || _rowStart == null) {
+      return row.clamp(0, _lines.length - 1);
+    }
+    return _lineOfRow(row);
   }
 
   void openSearch() {
@@ -742,17 +895,95 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
     _revealCurrent();
   }
 
-  double _lineExtent(BuildContext context) =>
-      (MediaQuery.textScalerOf(context).scale(13) * 1.45).ceilToDouble();
+  // ── Layout metrics ──────────────────────────────────────────────────────
+
+  static const double _baseFontSize = 13;
+  static const double _lineHeight = 1.45;
+  static const double _gutterGap = 12;
+  static const double _hPadding = 16;
+  static const StrutStyle _lineStrut = StrutStyle(
+    fontSize: _baseFontSize,
+    height: _lineHeight,
+    forceStrutHeight: true,
+  );
+
+  /// System text scale times the viewer's own zoom, within bounds.
+  TextScaler _scaler(BuildContext context) => TextScaler.linear(
+    CodeViewPrefs.effectiveScale(
+      system:
+          MediaQuery.textScalerOf(context).scale(_baseFontSize) / _baseFontSize,
+      user: _prefs.fontScale,
+    ),
+  );
+
+  double _lineExtent(TextScaler scaler) =>
+      (scaler.scale(_baseFontSize) * _lineHeight).ceilToDouble();
+
+  bool _wrapOn(BuildContext context) =>
+      _prefs.wrapFor(MediaQuery.sizeOf(context).width);
+
+  // ── Wrapped rows ────────────────────────────────────────────────────────
+
+  /// Prefix sum of rows per line for [cols] columns: plain arithmetic over
+  /// the lines, no text layout, recomputed only when the columns change.
+  void _ensureRows(int cols) {
+    if (_rowStart != null && _wrapCols == cols) return;
+    _wrapCols = cols;
+    _startsCache.clear();
+    final starts = Int32List(_lines.length + 1);
+    var total = 0;
+    for (var i = 0; i < _lines.length; i++) {
+      starts[i] = total;
+      final length = _lines[i].length;
+      total += length <= cols ? 1 : codeWrapStarts(_lines[i], cols).length;
+    }
+    starts[_lines.length] = total;
+    _rowStart = starts;
+  }
+
+  List<int> _startsOf(int line) {
+    final cached = _startsCache[line];
+    if (cached != null) return cached;
+    if (_startsCache.length > 512) _startsCache.clear();
+    return _startsCache[line] = codeWrapStarts(_lines[line], _wrapCols);
+  }
+
+  int _lineOfRow(int row) {
+    final starts = _rowStart!;
+    var lo = 0;
+    var hi = _lines.length - 1;
+    while (lo < hi) {
+      final mid = (lo + hi + 1) >> 1;
+      if (starts[mid] <= row) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return lo;
+  }
+
+  /// Row index (wrapped or not) that shows [offset] of [line].
+  int _rowOf(int line, int offset) {
+    final starts = _rowStart;
+    if (!_builtWrap || starts == null) return line;
+    final rowStarts = _startsOf(line);
+    var chunk = 0;
+    while (chunk + 1 < rowStarts.length && rowStarts[chunk + 1] <= offset) {
+      chunk++;
+    }
+    return starts[line] + chunk;
+  }
 
   void _revealCurrent() {
     if (_matches.isEmpty) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_vertical.hasClients) return;
-      final extent = _lineExtent(context);
+      final match = _matches[_current];
       final position = _vertical.position;
       final target =
-          (_matches[_current].line * extent - position.viewportDimension / 3)
+          (_rowOf(match.line, match.start) * _builtExtent -
+                  position.viewportDimension / 3)
               .clamp(0.0, position.maxScrollExtent);
       _vertical.jumpTo(target);
     });
@@ -760,6 +991,7 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
 
   @override
   void dispose() {
+    _prefs.removeListener(_onPrefsChanged);
     _vertical.dispose();
     _query.dispose();
     _queryFocus.dispose();
@@ -769,23 +1001,127 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final strings = Strings.of(context);
-    final extent = _lineExtent(context);
+    final scaler = _scaler(context);
+    final extent = _lineExtent(scaler);
+    final wrap = _wrapOn(context);
     final style = TextStyle(
       color: colors.textPrimary,
       fontFamily: 'monospace',
-      fontSize: 13,
-      height: 1.45,
+      fontSize: _baseFontSize,
+      height: _lineHeight,
     );
-    final longest = _lines.fold<int>(0, (m, l) => math.max(m, l.length));
-    final charWidth = _charAdvance(context, style);
-    final contentWidth = math.min(longest * charWidth + 32, 20000.0);
+    final charWidth = _charAdvance(context, style, scaler);
     final currentMatch = _matches.isEmpty ? null : _matches[_current];
     // Line-number gutter: fixed width from the digit count of the last line
     // (no extra pass over the text), muted and outside the selection, so
     // copying never picks the numbers up.
     final gutterStyle = style.copyWith(color: colors.textDisabled);
-    final gutterWidth = _gutterWidth(context, gutterStyle);
+    final gutterWidth = _gutterWidth(context, gutterStyle, scaler);
+    _builtWrap = wrap;
+    _builtExtent = extent;
+
+    Widget numberCell(int index, {required bool numbered}) =>
+        SelectionContainer.disabled(
+          child: ExcludeSemantics(
+            child: SizedBox(
+              width: gutterWidth,
+              child: numbered
+                  ? Text(
+                      '${index + 1}',
+                      key: ValueKey('artifact-viewer-gutter-$index'),
+                      style: gutterStyle,
+                      textAlign: TextAlign.right,
+                      maxLines: 1,
+                      softWrap: false,
+                      strutStyle: _lineStrut,
+                      textScaler: scaler,
+                    )
+                  : null,
+            ),
+          ),
+        );
+
+    Widget row(int index, {int chunk = 0, int? start, int? end}) => Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        numberCell(index, numbered: chunk == 0),
+        const SizedBox(width: _gutterGap),
+        Expanded(
+          child: Text.rich(
+            _lineSpan(index, currentMatch, colors, start: start, end: end),
+            key: ValueKey(
+              chunk == 0
+                  ? 'artifact-viewer-line-$index'
+                  : 'artifact-viewer-line-$index-$chunk',
+            ),
+            style: style,
+            maxLines: 1,
+            softWrap: false,
+            strutStyle: _lineStrut,
+            textScaler: scaler,
+          ),
+        ),
+      ],
+    );
+
+    const padding = EdgeInsets.symmetric(horizontal: _hPadding, vertical: 12);
+    final Widget text = LayoutBuilder(
+      builder: (context, constraints) {
+        if (wrap) {
+          final textWidth =
+              constraints.maxWidth - 2 * _hPadding - gutterWidth - _gutterGap;
+          final cols = math.max(8, (textWidth / charWidth).floor());
+          _ensureRows(cols);
+          final rows = _rowStart!;
+          return SelectionArea(
+            child: ListView.builder(
+              key: const ValueKey('artifact-viewer-text'),
+              controller: _vertical,
+              padding: padding,
+              itemExtent: extent,
+              itemCount: rows[_lines.length],
+              itemBuilder: (context, r) {
+                final index = _lineOfRow(r);
+                final chunk = r - rows[index];
+                if (rows[index + 1] - rows[index] == 1) return row(index);
+                final starts = _startsOf(index);
+                return row(
+                  index,
+                  chunk: chunk,
+                  start: starts[chunk],
+                  end: chunk + 1 < starts.length
+                      ? starts[chunk + 1]
+                      : _lines[index].length,
+                );
+              },
+            ),
+          );
+        }
+        final longest = _lines.fold<int>(0, (m, l) => math.max(m, l.length));
+        final contentWidth = math.min(longest * charWidth + 32, 20000.0);
+        return SelectionArea(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: math.max(
+                constraints.maxWidth,
+                contentWidth + gutterWidth + _gutterGap,
+              ),
+              child: ListView.builder(
+                key: const ValueKey('artifact-viewer-text'),
+                controller: _vertical,
+                padding: padding,
+                itemExtent: extent,
+                itemCount: _lines.length,
+                itemBuilder: (context, index) => row(index),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    final compact = widget.compact;
     return Column(
       children: [
         if (_capped)
@@ -797,131 +1133,132 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
               _prepare();
             }),
           ),
-        if (_searching)
-          Container(
-            color: colors.surfaceVariant,
-            padding: const EdgeInsets.fromLTRB(12, 2, 4, 2),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    key: const ValueKey('artifact-viewer-search-field'),
-                    controller: _query,
-                    focusNode: _queryFocus,
-                    onChanged: _onQueryChanged,
-                    onSubmitted: (_) => _step(1),
-                    textInputAction: TextInputAction.search,
-                    decoration: InputDecoration(
-                      isDense: true,
-                      border: InputBorder.none,
-                      hintText: strings.vw1215Search,
-                    ),
-                  ),
-                ),
-                Text(
-                  _query.text.isEmpty
-                      ? ''
-                      : _matches.isEmpty
-                      ? strings.vw1215NoMatches
-                      : strings.vw1215SearchCount(
-                          _current + 1,
-                          _matches.length,
-                        ),
-                  key: const ValueKey('artifact-viewer-search-count'),
-                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
-                ),
-                IconButton(
-                  key: const ValueKey('artifact-viewer-search-prev'),
-                  tooltip: strings.vw1215PreviousMatch,
-                  onPressed: _matches.isEmpty ? null : () => _step(-1),
-                  icon: const Icon(Icons.keyboard_arrow_up_rounded),
-                ),
-                IconButton(
-                  key: const ValueKey('artifact-viewer-search-next'),
-                  tooltip: strings.vw1215NextMatch,
-                  onPressed: _matches.isEmpty ? null : () => _step(1),
-                  icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                ),
-                IconButton(
-                  tooltip: strings.vw1215CloseSearch,
-                  onPressed: _closeSearch,
-                  icon: const Icon(Icons.close_rounded),
-                ),
-              ],
-            ),
-          ),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) => SelectionArea(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SizedBox(
-                  width: math.max(
-                    constraints.maxWidth,
-                    contentWidth + gutterWidth + _gutterGap,
-                  ),
-                  child: ListView.builder(
-                    key: const ValueKey('artifact-viewer-text'),
-                    controller: _vertical,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    itemExtent: extent,
-                    itemCount: _lines.length,
-                    itemBuilder: (context, index) => Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SelectionContainer.disabled(
-                          child: ExcludeSemantics(
-                            child: SizedBox(
-                              width: gutterWidth,
-                              child: Text(
-                                '${index + 1}',
-                                key: ValueKey('artifact-viewer-gutter-$index'),
-                                style: gutterStyle,
-                                textAlign: TextAlign.right,
-                                maxLines: 1,
-                                softWrap: false,
-                                strutStyle: _lineStrut,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: _gutterGap),
-                        Expanded(
-                          child: Text.rich(
-                            _lineSpan(index, currentMatch, colors),
-                            key: ValueKey('artifact-viewer-line-$index'),
-                            style: style,
-                            maxLines: 1,
-                            softWrap: false,
-                            strutStyle: _lineStrut,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
+        if (_searching && !compact) _searchBar(context),
+        Expanded(child: text),
+        if (compact) _searching ? _searchBar(context) : _actionBar(context),
       ],
     );
   }
 
-  static const double _gutterGap = 12;
-  static const StrutStyle _lineStrut = StrutStyle(
-    fontSize: 13,
-    height: 1.45,
-    forceStrutHeight: true,
-  );
+  Widget _searchBar(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    return Container(
+      key: const ValueKey('artifact-viewer-search-bar'),
+      color: colors.surfaceVariant,
+      padding: const EdgeInsets.fromLTRB(12, 2, 4, 2),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              key: const ValueKey('artifact-viewer-search-field'),
+              controller: _query,
+              focusNode: _queryFocus,
+              onChanged: _onQueryChanged,
+              onSubmitted: (_) => _step(1),
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                isDense: true,
+                border: InputBorder.none,
+                hintText: strings.vw1215Search,
+              ),
+            ),
+          ),
+          Text(
+            _query.text.isEmpty
+                ? ''
+                : _matches.isEmpty
+                ? strings.vw1215NoMatches
+                : strings.vw1215SearchCount(_current + 1, _matches.length),
+            key: const ValueKey('artifact-viewer-search-count'),
+            style: TextStyle(color: colors.textSecondary, fontSize: 12),
+          ),
+          IconButton(
+            key: const ValueKey('artifact-viewer-search-prev'),
+            tooltip: strings.vw1215PreviousMatch,
+            onPressed: _matches.isEmpty ? null : () => _step(-1),
+            icon: const Icon(Icons.keyboard_arrow_up_rounded),
+          ),
+          IconButton(
+            key: const ValueKey('artifact-viewer-search-next'),
+            tooltip: strings.vw1215NextMatch,
+            onPressed: _matches.isEmpty ? null : () => _step(1),
+            icon: const Icon(Icons.keyboard_arrow_down_rounded),
+          ),
+          IconButton(
+            tooltip: strings.vw1215CloseSearch,
+            onPressed: _closeSearch,
+            icon: const Icon(Icons.close_rounded),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Thumb-reachable actions for phones: search, wrap, code size, copy and
+  /// share, in one row above the system navigation area.
+  Widget _actionBar(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    return Semantics(
+      container: true,
+      label: strings.mc1215ViewerActions,
+      child: Material(
+        key: const ValueKey('artifact-viewer-actions'),
+        color: colors.surfaceVariant,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            IconButton(
+              key: const ValueKey('artifact-viewer-search'),
+              tooltip: strings.vw1215Search,
+              icon: const Icon(Icons.search_rounded),
+              onPressed: openSearch,
+            ),
+            const CodeWrapButton(),
+            IconButton(
+              key: const ValueKey('artifact-viewer-font-down'),
+              tooltip: strings.mc1215FontSmaller,
+              icon: const Icon(Icons.text_decrease_rounded),
+              onPressed: _prefs.canShrink
+                  ? () => unawaited(_prefs.stepFont(-1))
+                  : null,
+            ),
+            IconButton(
+              key: const ValueKey('artifact-viewer-font-up'),
+              tooltip: strings.mc1215FontLarger,
+              icon: const Icon(Icons.text_increase_rounded),
+              onPressed: _prefs.canGrow
+                  ? () => unawaited(_prefs.stepFont(1))
+                  : null,
+            ),
+            IconButton(
+              key: const ValueKey('artifact-viewer-copy'),
+              tooltip: strings.commonCopy,
+              icon: const Icon(Icons.copy_rounded),
+              onPressed: widget.onCopy,
+            ),
+            if (widget.onShare != null)
+              IconButton(
+                key: const ValueKey('artifact-viewer-share'),
+                tooltip: strings.commonShare,
+                icon: const Icon(Icons.share_outlined),
+                onPressed: widget.onShare,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 
   /// Width of the widest line number, measured once on a run of zeros with
   /// the same effective style the gutter [Text] inherits (theme letter
   /// spacing included), so the last number is never clipped.
-  double _gutterWidth(BuildContext context, TextStyle style) {
+  double _gutterWidth(
+    BuildContext context,
+    TextStyle style,
+    TextScaler scaler,
+  ) {
     final digits = _lines.length.toString().length;
     final painter = TextPainter(
       text: TextSpan(
@@ -929,7 +1266,7 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
         style: DefaultTextStyle.of(context).style.merge(style),
       ),
       textDirection: TextDirection.ltr,
-      textScaler: MediaQuery.textScalerOf(context),
+      textScaler: scaler,
       strutStyle: _lineStrut,
       maxLines: 1,
     )..layout();
@@ -941,7 +1278,11 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
   /// Advance of one monospace character in the effective line style (theme
   /// letter spacing and text scale included), measured on a short run so the
   /// horizontal range always reaches the end of the longest line.
-  double _charAdvance(BuildContext context, TextStyle style) {
+  double _charAdvance(
+    BuildContext context,
+    TextStyle style,
+    TextScaler scaler,
+  ) {
     const sample = 64;
     final painter = TextPainter(
       text: TextSpan(
@@ -949,7 +1290,7 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
         style: DefaultTextStyle.of(context).style.merge(style),
       ),
       textDirection: TextDirection.ltr,
-      textScaler: MediaQuery.textScalerOf(context),
+      textScaler: scaler,
       strutStyle: _lineStrut,
       maxLines: 1,
     )..layout();
@@ -958,7 +1299,43 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
     return advance;
   }
 
+  /// Line [index] (or its `[start, end)` row when wrapped) with search
+  /// matches or syntax colours.
   TextSpan _lineSpan(
+    int index,
+    _SearchMatch? currentMatch,
+    HermesThemeColors colors, {
+    int? start,
+    int? end,
+  }) {
+    final segments = _lineSegments(index, currentMatch, colors);
+    if (start == null || end == null) {
+      if (segments.length == 1 && segments.single.style == null) {
+        return TextSpan(text: segments.single.text);
+      }
+      return TextSpan(
+        children: [
+          for (final s in segments) TextSpan(text: s.text, style: s.style),
+        ],
+      );
+    }
+    final children = <TextSpan>[];
+    var at = 0;
+    for (final s in segments) {
+      final from = math.max(start, at);
+      final to = math.min(end, at + s.text.length);
+      if (from < to) {
+        children.add(
+          TextSpan(text: s.text.substring(from - at, to - at), style: s.style),
+        );
+      }
+      at += s.text.length;
+      if (at >= end) break;
+    }
+    return TextSpan(children: children);
+  }
+
+  List<_Segment> _lineSegments(
     int index,
     _SearchMatch? currentMatch,
     HermesThemeColors colors,
@@ -968,43 +1345,45 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
     if (query.isNotEmpty && line.toLowerCase().contains(query.toLowerCase())) {
       final lower = line.toLowerCase();
       final q = query.toLowerCase();
-      final spans = <TextSpan>[];
+      final segments = <_Segment>[];
       var from = 0;
       while (true) {
         final at = lower.indexOf(q, from);
         if (at < 0) break;
-        if (at > from) spans.add(TextSpan(text: line.substring(from, at)));
+        if (at > from) {
+          segments.add((text: line.substring(from, at), style: null));
+        }
         final isCurrent =
             currentMatch != null &&
             currentMatch.line == index &&
             currentMatch.start == at;
-        spans.add(
-          TextSpan(
-            text: line.substring(at, at + q.length),
-            style: TextStyle(
-              backgroundColor: isCurrent
-                  ? colors.accent
-                  : colors.accent.withValues(alpha: 0.3),
-              color: isCurrent ? colors.onAccent : null,
-            ),
+        segments.add((
+          text: line.substring(at, at + q.length),
+          style: TextStyle(
+            backgroundColor: isCurrent
+                ? colors.accent
+                : colors.accent.withValues(alpha: 0.3),
+            color: isCurrent ? colors.onAccent : null,
           ),
-        );
+        ));
         from = at + q.length;
       }
-      if (from < line.length) spans.add(TextSpan(text: line.substring(from)));
-      return TextSpan(children: spans);
+      if (from < line.length) {
+        segments.add((text: line.substring(from), style: null));
+      }
+      return segments;
     }
     final runs = _highlighted;
-    if (runs == null || index >= runs.length) return TextSpan(text: line);
-    return TextSpan(
-      children: [
-        for (final run in runs[index])
-          TextSpan(
-            text: run.text,
-            style: run.color == null ? null : TextStyle(color: run.color),
-          ),
-      ],
-    );
+    if (runs == null || index >= runs.length) {
+      return [(text: line, style: null)];
+    }
+    return [
+      for (final run in runs[index])
+        (
+          text: run.text,
+          style: run.color == null ? null : TextStyle(color: run.color),
+        ),
+    ];
   }
 }
 
