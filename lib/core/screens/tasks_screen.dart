@@ -8,6 +8,7 @@
 // Sin dependencias nuevas — drag & drop con LongPressDraggable + DragTarget;
 // tiempo real con dart:io WebSocket dentro de KanbanClient.
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
@@ -20,19 +21,23 @@ import '../models/agent_profile.dart';
 import '../models/connection.dart';
 import '../models/dock_config.dart' show DockItemId;
 import '../models/kanban.dart';
+import '../models/kanban_orchestration.dart';
 import '../services/kanban_client.dart';
 import '../services/kanban_watch_board.dart';
 import '../services/connection_manager.dart'
     show ConnectionManager, DashboardHttpException;
 import '../services/dock_preferences_store.dart';
-import '../design/content.dart' show HermesLogPage;
+import '../design/content.dart' show HermesLogPage, HermesToggleRow;
 import '../design/modal.dart'
     show
+        HermesAction,
         HermesDialogAction,
         HermesDialogActionStyle,
         HermesModelChoice,
         HermesModelGroup,
+        hermesOriginOf,
         showHermesDialog,
+        showHermesMenu,
         showHermesModelPicker;
 import '../theme/app_theme.dart';
 import '../utils/relative_time.dart';
@@ -544,6 +549,8 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
     String? body,
     String? priority,
     String? assignee,
+    _KanbanModelChoice? model,
+    String? reasoningEffort,
   ) async {
     try {
       await _client.createTask(
@@ -552,6 +559,9 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
         priority: priority,
         assignee: assignee,
         board: _selectedBoard,
+        modelOverride: model?.model,
+        providerOverride: model?.provider,
+        reasoningEffort: reasoningEffort,
       );
       if (!mounted) return;
       _scheduleRefresh();
@@ -889,6 +899,19 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
   Future<void> _showHelp() async {
     final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
+    KanbanOrchestration? orchestration;
+    List<AgentProfile> profiles = _profiles;
+    try {
+      orchestration = await _client.getOrchestration();
+    } catch (_) {
+      orchestration = null;
+    }
+    try {
+      profiles = await _client.getProfilesAuthoritative();
+    } catch (_) {
+      // Keep the already loaded roster; help itself remains available.
+    }
+    if (!mounted) return;
     await showHermesFloatingSurface<void>(
       context: context,
       surfaceKey: const ValueKey('kanban-help-surface'),
@@ -926,10 +949,378 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                 color: colors.textSecondary,
               ),
             ),
+            if (orchestration != null) ...[
+              const SizedBox(height: 14),
+              HermesListRow(
+                key: const ValueKey('kanban-orchestration-row'),
+                icon: Icons.account_tree_outlined,
+                title: s.kanbanOrchestrationTitle,
+                subtitle: s.kanbanOrchestrationSubtitle,
+                onTap: () =>
+                    unawaited(_showOrchestration(orchestration!, profiles)),
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _showOrchestration(
+    KanbanOrchestration initial,
+    List<AgentProfile> profiles,
+  ) async {
+    final s = Strings.of(context);
+    final readOnly = widget.connection.readOnly;
+    var state = initial;
+    final baselines = {
+      for (final profile in profiles) profile.name: profile.description.trim(),
+    };
+    final controllers = {
+      for (final profile in profiles)
+        profile.name: TextEditingController(text: profile.description),
+    };
+    final busy = <String>{};
+    // Every PUT answers with the whole orchestration, so writes to different
+    // fields run one at a time: an older reply landing after a newer one
+    // would otherwise revert the newer field on screen.
+    Future<void> writes = Future<void>.value();
+
+    await showHermesFloatingSurface<void>(
+      context: context,
+      surfaceKey: const ValueKey('kanban-orchestration-surface'),
+      maxWidth: 620,
+      maxHeightFactor: 0.9,
+      builder: (sheetCtx) => DisposeControllersOnUnmount(
+        controllers: controllers.values.toList(growable: false),
+        child: StatefulBuilder(
+          builder: (sheetCtx, setSheet) {
+            Future<void> runWrite(
+              String field,
+              Future<KanbanOrchestration> Function() write,
+            ) async {
+              try {
+                final next = await write();
+                if (sheetCtx.mounted) setSheet(() => state = next);
+              } on DashboardHttpException catch (error) {
+                if (!sheetCtx.mounted) return;
+                _snack(_dashboardDetail(error));
+                if (error.statusCode == 400) {
+                  final refreshed = await _client.getOrchestration();
+                  if (sheetCtx.mounted && refreshed != null) {
+                    setSheet(() => state = refreshed);
+                  }
+                }
+              } catch (error) {
+                if (sheetCtx.mounted) _snack(_humanError(error));
+              } finally {
+                if (sheetCtx.mounted) setSheet(() => busy.remove(field));
+              }
+            }
+
+            Future<void> updateState(
+              String field,
+              Future<KanbanOrchestration> Function() write,
+            ) {
+              if (busy.contains(field)) return Future<void>.value();
+              setSheet(() => busy.add(field));
+              final run = writes.then((_) => runWrite(field, write));
+              // A failed write must not stall the ones queued behind it, nor
+              // escape to the unawaited tap handlers; runWrite has already
+              // reported it.
+              writes = run.then((_) {}, onError: (_) {});
+              return writes;
+            }
+
+            Future<void> pickProfile({required bool orchestrator}) async {
+              final field = orchestrator ? 'orchestrator' : 'assignee';
+              if (busy.contains(field) || readOnly) return;
+              final current = orchestrator
+                  ? state.orchestratorProfile ?? ''
+                  : state.defaultAssignee ?? '';
+              final picked = await _pickOption(
+                title: orchestrator
+                    ? s.kanbanOrchestratorProfile
+                    : s.kanbanDefaultAssignee,
+                current: current,
+                options: [
+                  (value: '', label: s.kanbanOrchestrationDefault),
+                  for (final profile in profiles)
+                    (value: profile.name, label: profile.name),
+                ],
+              );
+              if (picked == null || !sheetCtx.mounted) return;
+              await updateState(
+                field,
+                () => orchestrator
+                    ? _client.setOrchestration(orchestratorProfile: picked)
+                    : _client.setOrchestration(defaultAssignee: picked),
+              );
+            }
+
+            return SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    s.kanbanOrchestrationTitle,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Theme.of(sheetCtx).hermes.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  HermesListRow(
+                    key: const ValueKey('kanban-orchestrator-profile'),
+                    icon: Icons.account_tree_outlined,
+                    title: s.kanbanOrchestratorProfile,
+                    subtitle:
+                        state.orchestratorProfile ??
+                        s.kanbanOrchestrationDefault,
+                    onTap: readOnly || busy.contains('orchestrator')
+                        ? null
+                        : () => unawaited(pickProfile(orchestrator: true)),
+                  ),
+                  HermesListRow(
+                    key: const ValueKey('kanban-default-assignee'),
+                    icon: Icons.person_outline_rounded,
+                    title: s.kanbanDefaultAssignee,
+                    subtitle:
+                        state.defaultAssignee ?? s.kanbanOrchestrationDefault,
+                    onTap: readOnly || busy.contains('assignee')
+                        ? null
+                        : () => unawaited(pickProfile(orchestrator: false)),
+                  ),
+                  HermesToggleRow(
+                    key: const ValueKey('kanban-auto-decompose'),
+                    icon: Icons.call_split_rounded,
+                    title: s.kanbanAutoDecompose,
+                    subtitle: s.kanbanAutoDecomposeSubtitle,
+                    value: state.autoDecompose,
+                    onChanged: readOnly || busy.contains('auto_decompose')
+                        ? null
+                        : (value) => unawaited(
+                            updateState(
+                              'auto_decompose',
+                              () => _client.setOrchestration(
+                                autoDecompose: value,
+                              ),
+                            ),
+                          ),
+                  ),
+                  if (profiles.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    Text(
+                      s.kanbanProfileDescriptions,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: Theme.of(sheetCtx).hermes.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    for (final profile in profiles)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                key: ValueKey(
+                                  'kanban-profile-description-${profile.name}',
+                                ),
+                                controller: controllers[profile.name],
+                                enabled: !readOnly,
+                                minLines: 1,
+                                maxLines: 3,
+                                onChanged: (_) => setSheet(() {}),
+                                decoration: InputDecoration(
+                                  labelText: profile.name,
+                                  helperText: [
+                                    profile.provider,
+                                    profile.model,
+                                  ].where((v) => v.isNotEmpty).join(' · '),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            if (!readOnly) ...[
+                              TextButton(
+                                key: ValueKey(
+                                  'kanban-profile-description-save-${profile.name}',
+                                ),
+                                onPressed:
+                                    busy.contains(
+                                          'description-${profile.name}',
+                                        ) ||
+                                        controllers[profile.name]!.text
+                                                .trim() ==
+                                            baselines[profile.name]
+                                    ? null
+                                    : () => unawaited(
+                                        _saveProfileDescription(
+                                          sheetCtx,
+                                          setSheet,
+                                          profile.name,
+                                          controllers[profile.name]!,
+                                          baselines,
+                                          busy,
+                                        ),
+                                      ),
+                                child: Text(s.kanbanDescriptionSave),
+                              ),
+                              Builder(
+                                builder: (anchorContext) => IconButton(
+                                  key: ValueKey(
+                                    'kanban-profile-description-menu-${profile.name}',
+                                  ),
+                                  tooltip: s.kanbanDescriptionAuto,
+                                  onPressed:
+                                      busy.contains(
+                                        'description-${profile.name}',
+                                      )
+                                      ? null
+                                      : () async {
+                                          final action =
+                                              await showHermesMenu<String>(
+                                                context: sheetCtx,
+                                                originRect: hermesOriginOf(
+                                                  anchorContext,
+                                                ),
+                                                surfaceKey: ValueKey(
+                                                  'kanban-profile-description-menu-surface-${profile.name}',
+                                                ),
+                                                actions: [
+                                                  HermesAction(
+                                                    value: 'auto',
+                                                    icon: Icons.auto_awesome,
+                                                    label:
+                                                        s.kanbanDescriptionAuto,
+                                                  ),
+                                                ],
+                                              );
+                                          if (action != 'auto' ||
+                                              !sheetCtx.mounted) {
+                                            return;
+                                          }
+                                          unawaited(
+                                            _autoDescribeProfile(
+                                              sheetCtx,
+                                              setSheet,
+                                              profile.name,
+                                              controllers[profile.name]!,
+                                              baselines,
+                                              busy,
+                                            ),
+                                          );
+                                        },
+                                  icon: const Icon(Icons.more_vert_rounded),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveProfileDescription(
+    BuildContext sheetContext,
+    StateSetter setSheet,
+    String profile,
+    TextEditingController controller,
+    Map<String, String> baselines,
+    Set<String> busy,
+  ) async {
+    final field = 'description-$profile';
+    if (busy.contains(field)) return;
+    setSheet(() => busy.add(field));
+    try {
+      final result = await _client.setProfileDescription(
+        profile,
+        controller.text,
+      );
+      if (!sheetContext.mounted) return;
+      setSheet(() {
+        controller.text = result.description;
+        baselines[profile] = result.description.trim();
+      });
+    } on DashboardHttpException catch (error) {
+      if (sheetContext.mounted) _snack(_dashboardDetail(error));
+    } catch (error) {
+      if (sheetContext.mounted) _snack(_humanError(error));
+    } finally {
+      if (sheetContext.mounted) setSheet(() => busy.remove(field));
+    }
+  }
+
+  Future<void> _autoDescribeProfile(
+    BuildContext sheetContext,
+    StateSetter setSheet,
+    String profile,
+    TextEditingController controller,
+    Map<String, String> baselines,
+    Set<String> busy,
+  ) async {
+    final s = Strings.of(sheetContext);
+    final confirmed = await showHermesConfirmDialog(
+      context: sheetContext,
+      title: s.kanbanDescriptionAutoConfirmTitle,
+      message: s.kanbanDescriptionAutoConfirmBody(profile),
+      confirmLabel: s.kanbanDescriptionAuto,
+      cancelLabel: s.roomCancel,
+    );
+    if (!confirmed || !sheetContext.mounted) return;
+    final field = 'description-$profile';
+    if (busy.contains(field)) return;
+    setSheet(() => busy.add(field));
+    try {
+      final result = await _client.autoDescribeProfile(profile);
+      if (!sheetContext.mounted) return;
+      if (!result.ok) {
+        HermesNotice.of(sheetContext).showSnackBar(
+          SnackBar(
+            content: Text(result.reason ?? s.kanbanDescriptionAutoFailed),
+          ),
+          kind: HermesNoticeKind.warning,
+        );
+        return;
+      }
+      setSheet(() {
+        controller.text = result.description;
+        baselines[profile] = result.description.trim();
+      });
+    } on DashboardHttpException catch (error) {
+      if (sheetContext.mounted) _snack(_dashboardDetail(error));
+    } catch (error) {
+      if (sheetContext.mounted) _snack(_humanError(error));
+    } finally {
+      if (sheetContext.mounted) setSheet(() => busy.remove(field));
+    }
+  }
+
+  String _dashboardDetail(DashboardHttpException error) {
+    try {
+      final decoded = jsonDecode(error.body);
+      if (decoded is Map && decoded['detail'] is String) {
+        final detail = (decoded['detail'] as String).trim();
+        if (detail.isNotEmpty) return detail;
+      }
+    } catch (_) {
+      // Fall through to the stable status text.
+    }
+    return error.toString();
   }
 
   Widget _buildBody(HermesThemeColors colors) {
@@ -1338,7 +1729,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
               final title = titleCtrl.text.trim();
               if (title.isEmpty) return;
               Navigator.of(popoverContext).pop();
-              _create(title, null, priority, _defaultAssignee());
+              _create(title, null, priority, _defaultAssignee(), null, null);
             }
 
             return Padding(
@@ -1431,6 +1822,11 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
     // assignee = perfil que EJECUTA la tarea. Al crear se sugiere el activo
     // para que la tarea se trabaje sola; '' = sin asignar (sólo anotación).
     String assignee = existing?.assignee ?? _defaultAssignee();
+    _KanbanModelChoice? createModel;
+    String createEffort = '';
+    KanbanModelOptions? createModelOptions;
+    var modelOptionsSupported = true;
+    var modelOptionsLoading = false;
 
     void applyTemplate(String title, String body) {
       titleCtrl.text = title;
@@ -1559,6 +1955,84 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                   ),
                   const SizedBox(height: 8),
                   _assigneeHint(colors, s, assignee.isNotEmpty),
+                  if (!editing && modelOptionsSupported) ...[
+                    const SizedBox(height: 12),
+                    HermesListRow(
+                      key: const ValueKey('kanban-create-model'),
+                      icon: Icons.memory_rounded,
+                      title: s.kanbanCreateModel,
+                      subtitle: createModel?.model.isNotEmpty == true
+                          ? '${createModel!.provider}: ${createModel!.model}'
+                          : s.kanbanProfileDefault,
+                      onTap: modelOptionsLoading
+                          ? null
+                          : () async {
+                              setSheet(() => modelOptionsLoading = true);
+                              try {
+                                createModelOptions ??= await _client
+                                    .getModelOptions();
+                              } on DashboardHttpException catch (error) {
+                                if (error.statusCode == 404 ||
+                                    error.statusCode == 405) {
+                                  if (sheetCtx.mounted) {
+                                    setSheet(
+                                      () => modelOptionsSupported = false,
+                                    );
+                                  }
+                                  return;
+                                }
+                                rethrow;
+                              } finally {
+                                if (sheetCtx.mounted) {
+                                  setSheet(() => modelOptionsLoading = false);
+                                }
+                              }
+                              if (!sheetCtx.mounted) return;
+                              final options = createModelOptions!;
+                              final picked = await showHermesModelPicker(
+                                context: sheetCtx,
+                                surfaceKey: const ValueKey(
+                                  'kanban-create-model-options-surface',
+                                ),
+                                keyPrefix: 'kanban-create-model',
+                                title: s.kanbanCreateModel,
+                                defaultLabel: s.kanbanProfileDefault,
+                                current: createModel == null
+                                    ? const HermesModelChoice.defaultModel()
+                                    : HermesModelChoice(
+                                        createModel!.provider,
+                                        createModel!.model,
+                                      ),
+                                groups: [
+                                  for (final provider in options.providers)
+                                    HermesModelGroup(
+                                      slug: provider.slug,
+                                      name: provider.label,
+                                      models: provider.models,
+                                    ),
+                                ],
+                              );
+                              if (picked == null || !sheetCtx.mounted) return;
+                              final effort = await _pickOption(
+                                title: s.kanbanCreateReasoning,
+                                current: createEffort,
+                                options: [
+                                  (value: '', label: s.kanbanProfileDefault),
+                                  for (final value in kKanbanReasoningEfforts)
+                                    (value: value, label: value),
+                                ],
+                              );
+                              if (effort == null || !sheetCtx.mounted) return;
+                              setSheet(() {
+                                createModel = _KanbanModelChoice(
+                                  provider: picked.provider,
+                                  model: picked.model,
+                                );
+                                createEffort = effort;
+                              });
+                            },
+                    ),
+                  ],
                   const SizedBox(height: 18),
                   FilledButton(
                     style: FilledButton.styleFrom(
@@ -1574,7 +2048,14 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                       if (editing) {
                         _update(existing.id, title, body, priority, assignee);
                       } else {
-                        _create(title, body, priority, assignee);
+                        _create(
+                          title,
+                          body,
+                          priority,
+                          assignee,
+                          createModel,
+                          createEffort.isEmpty ? null : createEffort,
+                        );
                       }
                     },
                     child: Text(

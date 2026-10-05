@@ -791,6 +791,29 @@
   "commonSave2": "Save",
   "lockUnlockShort": "Unlock",
   "kanbanTitle": "KANBAN",
+  "kanbanOrchestrationTitle": "Orchestration",
+  "kanbanOrchestrationSubtitle": "Profiles, assignment and task decomposition",
+  "kanbanOrchestratorProfile": "Orchestrator profile",
+  "kanbanDefaultAssignee": "Default assignee",
+  "kanbanOrchestrationDefault": "(default)",
+  "kanbanAutoDecompose": "Auto-decompose",
+  "kanbanAutoDecomposeSubtitle": "Split suitable tasks into child tasks automatically",
+  "kanbanProfileDescriptions": "Profile descriptions",
+  "kanbanDescriptionSave": "Save",
+  "kanbanDescriptionAuto": "Auto",
+  "kanbanDescriptionAutoConfirmTitle": "Generate a profile description?",
+  "kanbanDescriptionAutoConfirmBody": "Hermes will call a model to describe {profile}.",
+  "@kanbanDescriptionAutoConfirmBody": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "kanbanDescriptionAutoFailed": "Hermes could not generate a description.",
+  "kanbanCreateModel": "Model",
+  "kanbanProfileDefault": "Profile default",
+  "kanbanCreateReasoning": "Reasoning effort",
   "kanbanColBacklog": "Backlog",
   "kanbanColInProgress": "In progress",
   "kanbanColDone": "Done",
@@ -6799,6 +6822,38 @@
   "roomSettingsName": "Name",
   "roomSettingsPicture": "Picture",
   "roomSettingsPictureReadOnly": "Change it in Hermes Desktop",
+  "roomCompressHistory": "Compress history",
+  "roomCompressHistorySubtitle": "Summarize one member's older room turns",
+  "roomCompressPickMember": "Choose a member",
+  "roomCompressConfirmTitle": "Compress @{handle}'s room history?",
+  "@roomCompressConfirmTitle": {
+    "placeholders": {
+      "handle": {
+        "type": "String"
+      }
+    }
+  },
+  "roomCompressConfirmBody": "The summary replaces older turns.",
+  "roomCompressConfirm": "Compress",
+  "roomCompressing": "Compressing…",
+  "roomCompressPending": "Still compressing in the background",
+  "roomCompressNothing": "Nothing to compress",
+  "roomCompressSuccess": "Compressed: {detail}",
+  "@roomCompressSuccess": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "roomCompressBusy": "@{handle} is busy — try when the room is idle",
+  "@roomCompressBusy": {
+    "placeholders": {
+      "handle": {
+        "type": "String"
+      }
+    }
+  },
   "roomRename": "Rename",
   "roomSave": "Save",
   "roomCancel": "Cancel",
@@ -6827,6 +6882,15 @@
   "roomFileSaved": "File saved",
   "roomFileFailed": "Could not get the file",
   "roomComposerHint": "Message",
+  "roomUnknownMention": "No member is called @{handle} — everyone will answer.",
+  "@roomUnknownMention": {
+    "placeholders": {
+      "handle": {
+        "type": "String"
+      }
+    }
+  },
+  "roomSlashUnsupported": "Rooms don't run commands. Remove the leading /…",
   "roomDesktopReadOnly": "Desktop room · read-only",
   "roomDesktopReadOnlyBody": "Hermes Desktop runs this room on its own; you see its latest messages here.",
   "roomDesktopOmitted": "{count, plural, =1{1 earlier message not shown} other{{count} earlier messages not shown}}",

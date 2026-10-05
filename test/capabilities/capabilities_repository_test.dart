@@ -121,17 +121,33 @@ void main() {
   test('profile scope rides every REST call', () async {
     final rest = FakeRest()
       ..gets['skills'] = <Object>[]
-      ..puts['skills/toggle'] = {'ok': true};
+      ..gets['mcp/servers'] = {'servers': <Object>[]}
+      ..gets['actions/install-coder/status'] = {
+        'name': 'install-coder',
+        'running': false,
+        'exit_code': 0,
+      }
+      ..puts['skills/toggle'] = {'ok': true}
+      ..posts['skills/hub/install'] = {'ok': true, 'name': 'install-coder'};
     final repo = CapabilitiesRepository(rest: rest, profile: 'coder');
     await repo.installedSkills();
     await repo.setSkillEnabled('arxiv', false);
+    await repo.installSkill('official/research/arxiv');
+    await repo.mcpServers();
     expect(rest.calls, [
       'GET skills?profile=coder',
       'PUT skills/toggle?profile=coder',
+      'POST skills/hub/install?profile=coder',
+      'GET actions/install-coder/status?lines=200',
+      'GET mcp/servers?profile=coder',
     ]);
-    expect(rest.bodies.last, {
+    expect(rest.bodies.first, {
       'name': 'arxiv',
       'enabled': false,
+      'profile': 'coder',
+    });
+    expect(rest.bodies.last, {
+      'identifier': 'official/research/arxiv',
       'profile': 'coder',
     });
   });

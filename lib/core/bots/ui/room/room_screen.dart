@@ -23,6 +23,7 @@ import '../../../widgets/mission_profile_avatar.dart';
 import '../../data/room_log_cursor.dart';
 import 'room_dictation.dart';
 import 'room_gateway.dart';
+import 'room_mentions.dart';
 import 'room_models.dart';
 import 'room_prefs.dart';
 import 'room_sheets.dart';
@@ -136,6 +137,7 @@ class RoomScreen extends StatefulWidget {
   /// Reads and answers prompts open in members' own sessions (clarify,
   /// approvals the room driver does not report). Null: not available.
   final RoomMemberPromptSource? memberPrompts;
+  final GatewayRoomMemberCompressor? memberCompressor;
 
   /// Opens a member's room session as a chat ([storedSessionId] is its
   /// durable id), where the full request UI is available.
@@ -164,6 +166,7 @@ class RoomScreen extends StatefulWidget {
     this.roomAvatar,
     this.onOpenMember,
     this.memberPrompts,
+    this.memberCompressor,
     this.onOpenMemberChat,
     this.pollTimer,
     this.clock,
@@ -220,6 +223,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   bool _stallProbing = false;
   bool _stallAgain = false;
   bool _resuming = false;
+  bool _compressing = false;
   final Set<String> _retrying = {};
   Animation<double>? _coverAnimation;
   bool _stopping = false;
@@ -1148,6 +1152,13 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     if ((text.isEmpty && drafts.isEmpty) || !widget.capabilities.canSend) {
       return;
     }
+    if (RegExp(r'^/[a-z][\w-]*(?:\s|$)', caseSensitive: false).hasMatch(text)) {
+      _notice(
+        Strings.of(context).roomSlashUnsupported,
+        kind: HermesNoticeKind.warning,
+      );
+      return;
+    }
     final thread = _threadId;
     final message = _OutgoingMessage(
       attempt: HostedGroupSendAttempt.forClientEvent(
@@ -1369,6 +1380,28 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     if (threadId != null && focus) _focus.requestFocus();
   }
 
+  void _replyInThread(RoomMessageEntry entry) {
+    final member = entry.member;
+    if (!entry.isUser &&
+        member != null &&
+        _room.members.any((current) => current.memberId == member.memberId)) {
+      final handle = member.handle;
+      final duplicate = RegExp(
+        '(^|[^A-Za-z0-9._:-])@${RegExp.escape(handle)}'
+        r'(?=$|[^A-Za-z0-9._:-])',
+        caseSensitive: false,
+      ).hasMatch(_composer.text);
+      if (!duplicate) {
+        final prefix = '@$handle ';
+        _composer.value = TextEditingValue(
+          text: '$prefix${_composer.text}',
+          selection: TextSelection.collapsed(offset: prefix.length),
+        );
+      }
+    }
+    _setThread(entry.event.threadId, focus: true);
+  }
+
   void _insertMention(String handle) {
     final value = _composer.value;
     final text = value.text;
@@ -1424,6 +1457,54 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     avatarCache: widget.avatarCache,
     onOpenMember: widget.onOpenMember,
   );
+
+  Future<void> _compressMemberHistory(HostedGroupMember member) async {
+    final compressor = widget.memberCompressor;
+    if (compressor == null ||
+        !widget.capabilities.canCompressMembers ||
+        _compressing ||
+        (_driver?.working ?? false) ||
+        (_driver?.running ?? false)) {
+      return;
+    }
+    setState(() => _compressing = true);
+    try {
+      final result = await compressor.compress(_room, member);
+      if (!mounted) return;
+      final s = Strings.of(context);
+      switch (result.kind) {
+        case RoomMemberCompressionKind.pending:
+          _notice(s.roomCompressPending, kind: HermesNoticeKind.info);
+        case RoomMemberCompressionKind.nothing:
+          _notice(
+            result.detail ?? s.roomCompressNothing,
+            kind: HermesNoticeKind.info,
+          );
+        case RoomMemberCompressionKind.compressed:
+          _notice(
+            s.roomCompressSuccess(result.detail ?? ''),
+            kind: HermesNoticeKind.success,
+          );
+      }
+    } on TuiGatewayRpcError catch (error) {
+      if (!mounted) return;
+      final s = Strings.of(context);
+      if (error.code == 4009) {
+        _notice(
+          s.roomCompressBusy(member.handle),
+          kind: HermesNoticeKind.warning,
+        );
+      } else if (error.code == 4007) {
+        _notice(s.roomCompressNothing, kind: HermesNoticeKind.info);
+      } else {
+        _notice(s.roomActionFailed);
+      }
+    } catch (_) {
+      if (mounted) _notice(Strings.of(context).roomActionFailed);
+    } finally {
+      if (mounted) setState(() => _compressing = false);
+    }
+  }
 
   Future<void> _openThread(String threadId) => Navigator.of(context).push<void>(
     MaterialPageRoute(
@@ -1489,6 +1570,22 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           context,
           name: _room.name,
           canRename: widget.capabilities.canRename,
+          room: _room,
+          localMembers: [
+            for (final member in _room.members)
+              if (member.owner.connectionId == _room.authorityGatewayId) member,
+          ],
+          profileFor: widget.profileFor,
+          avatarCache: widget.avatarCache,
+          onCompress:
+              widget.memberCompressor == null ||
+                  !widget.capabilities.canCompressMembers
+              ? null
+              : _compressMemberHistory,
+          compressDisabled:
+              _compressing ||
+              (_driver?.working ?? false) ||
+              (_driver?.running ?? false),
         );
         if (name != null && mounted) {
           try {
@@ -1871,10 +1968,25 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     final dictation = widget.dictation;
     final hasContent =
         _composer.text.trim().isNotEmpty || _attachments.isNotEmpty;
+    final unknownMention = firstUnknownRoomMention(_composer.text, [
+      for (final member in _room.members) member.handle,
+    ]);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         if (_threadId != null) _threadBanner(s),
+        if (unknownMention != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 2, 24, 4),
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(
+                s.roomUnknownMention(unknownMention),
+                key: const ValueKey('room-unknown-mention'),
+                style: TextStyle(fontSize: 11, color: colors.textSecondary),
+              ),
+            ),
+          ),
         if (block == RoomAttachBlock.crossGateway ||
             block == RoomAttachBlock.noUploader)
           const SizedBox.shrink(),
@@ -2208,7 +2320,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         attachmentActions: widget.attachmentActions,
         onReplyInThread:
             widget.capabilities.canSend && entry.event.threadId != null
-            ? () => _setThread(entry.event.threadId)
+            ? () => _replyInThread(entry)
             : null,
         onOpenThread: entry.thread == null
             ? null

@@ -183,7 +183,7 @@ void main() {
   });
 
   group('reply in thread', () {
-    testWidgets('the inline reply icon sets the thread without the keyboard', (
+    testWidgets('the inline reply icon sets the thread and focuses composer', (
       tester,
     ) async {
       await _pump(tester, _longRoom(EventSeq()));
@@ -191,15 +191,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('room-reply-user-29')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('room-thread-banner')), findsOneWidget);
-      expect(_composerFocused(tester), isFalse);
-      expect(tester.testTextInput.isVisible, isFalse);
-
-      // The user opens the keyboard by tapping the composer.
-      await tester.tap(_field);
-      await tester.pump();
       expect(_composerFocused(tester), isTrue);
       expect(tester.testTextInput.isVisible, isTrue);
-      expect(find.byKey(const ValueKey('room-thread-banner')), findsOneWidget);
     });
 
     testWidgets(

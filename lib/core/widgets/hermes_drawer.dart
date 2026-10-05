@@ -72,19 +72,33 @@ CapabilitiesHub buildCapabilitiesHub({
   required SavedConnection connection,
   required ConnectionManager connManager,
   required CapabilityMatrix capabilities,
-}) => CapabilitiesHub(
-  connection: connection,
-  profile: connManager.activeProfileFor(connection.id),
-  advancedBuilder: (_) => OwnedResourceHost<TuiGatewayClient>(
-    create: () => TuiGatewayClient(connection),
-    release: (gateway) => gateway.close(),
-    builder: (_, gateway) =>
-        ExtensionsCenterScreen(gateway: gateway, readOnly: connection.readOnly),
-  ),
-  classicSkillsBuilder: capabilities.skillsRead.isNo
-      ? null
-      : (_) => SkillsScreen(connection: connection),
-);
+  String? profileOverride,
+}) {
+  final fixedProfile = profileOverride?.trim();
+  final scoped = fixedProfile != null && fixedProfile.isNotEmpty;
+  return CapabilitiesHub(
+    connection: connection,
+    profile: scoped
+        ? fixedProfile
+        : connManager.activeProfileFor(connection.id),
+    advancedBuilder: scoped
+        ? null
+        : (_) => OwnedResourceHost<TuiGatewayClient>(
+            create: () => TuiGatewayClient(connection),
+            release: (gateway) => gateway.close(),
+            builder: (_, gateway) => ExtensionsCenterScreen(
+              gateway: gateway,
+              readOnly: connection.readOnly,
+            ),
+          ),
+    classicSkillsBuilder: capabilities.skillsRead.isNo
+        ? null
+        : (_) => SkillsScreen(
+            connection: connection,
+            profileOverride: scoped ? fixedProfile : null,
+          ),
+  );
+}
 
 /// Shared navigation drawer. Used by the top-level screens (home dashboard,
 /// session list); deeper screens keep plain back navigation.
