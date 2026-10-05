@@ -126,6 +126,83 @@ Widget build() => Semantics(
         ['fixture.dart:6'],
       );
     });
+
+    test('rejects a tooltip token inside a line comment', () {
+      expect(
+        _unlabelledIconButtons('fixture.dart', '''
+Widget build() => IconButton(
+  icon: const Icon(Icons.add),
+  // sentinel, tooltip: fake,
+  onPressed: () {},
+);
+'''),
+        ['fixture.dart:1'],
+      );
+    });
+
+    test('rejects a tooltip token inside a doc comment', () {
+      expect(
+        _unlabelledIconButtons('fixture.dart', '''
+Widget build() => IconButton(
+  icon: const Icon(Icons.add),
+  /// sentinel, tooltip: fake,
+  onPressed: () {},
+);
+'''),
+        ['fixture.dart:1'],
+      );
+    });
+
+    test('rejects a tooltip token inside a block comment', () {
+      expect(
+        _unlabelledIconButtons('fixture.dart', '''
+Widget build() => IconButton(
+  icon: const Icon(Icons.add), /* sentinel,
+  tooltip: fake, /* nested */ still comment, tooltip: x */
+  onPressed: () {},
+);
+'''),
+        ['fixture.dart:1'],
+      );
+    });
+
+    test('rejects a Semantics label that only appears in a comment', () {
+      expect(
+        _unlabelledIconButtons('fixture.dart', '''
+Widget build() => Semantics(
+  // sentinel, label: 'Add',
+  child: IconButton(icon: const Icon(Icons.add), onPressed: () {}),
+);
+'''),
+        ['fixture.dart:3'],
+      );
+    });
+
+    test('rejects a tooltip token inside a string with comment markers', () {
+      expect(
+        _unlabelledIconButtons('fixture.dart', '''
+Widget build() => IconButton(
+  icon: const Icon(Icons.add),
+  onPressed: () => log('// tooltip: none, /*'),
+);
+'''),
+        ['fixture.dart:1'],
+      );
+    });
+
+    test('accepts a real tooltip next to comments', () {
+      expect(
+        _unlabelledIconButtons('fixture.dart', '''
+Widget build() => IconButton(
+  // Keep the label short (fits the tooltip).
+  icon: const Icon(Icons.add), /* ) */
+  tooltip: label, // tooltip: comment
+  onPressed: () => open('https://example.test/path'),
+);
+'''),
+        isEmpty,
+      );
+    });
   });
 
   testWidgets('sample screen controls expose localized semantics labels', (
@@ -355,7 +432,8 @@ final class _FakeAudioPlayback implements GeneratedAudioPlayback {
   Future<void> seek(Duration position) async {}
 }
 
-List<String> _unlabelledIconButtons(String path, String source) {
+List<String> _unlabelledIconButtons(String path, String rawSource) {
+  final source = _blankComments(rawSource);
   final missing = <String>[];
   for (final match in RegExp(
     r'\bIconButton(?:\.[A-Za-z]+)?\s*\(',
@@ -437,6 +515,73 @@ bool _hasDirectArgument(String invocation, Set<String> names) {
     segment.write(depth == 0 ? char : ' ');
   }
   return matches();
+}
+
+/// Returns [source] with every `//`, `///` and (nested) `/* */` comment
+/// replaced by spaces, keeping newlines so offsets and line numbers stay put.
+/// String literals (including raw and triple-quoted ones) are left intact,
+/// so comment markers inside them are not treated as comments.
+String _blankComments(String source) {
+  final out = StringBuffer();
+  var index = 0;
+  while (index < source.length) {
+    final char = source[index];
+    final next = index + 1 < source.length ? source[index + 1] : '';
+    if (char == '/' && next == '/') {
+      while (index < source.length && source[index] != '\n') {
+        out.write(' ');
+        index++;
+      }
+      continue;
+    }
+    if (char == '/' && next == '*') {
+      var depth = 0;
+      while (index < source.length) {
+        final pair = source.startsWith('/*', index)
+            ? '/*'
+            : source.startsWith('*/', index)
+            ? '*/'
+            : null;
+        if (pair != null) {
+          depth += pair == '/*' ? 1 : -1;
+          out.write('  ');
+          index += 2;
+          if (depth == 0) break;
+          continue;
+        }
+        out.write(source[index] == '\n' ? '\n' : ' ');
+        index++;
+      }
+      continue;
+    }
+    if (char == "'" || char == '"') {
+      final raw =
+          index > 0 &&
+          source[index - 1] == 'r' &&
+          (index < 2 || !RegExp(r'[A-Za-z0-9_$]').hasMatch(source[index - 2]));
+      final delimiter = source.startsWith(char * 3, index) ? char * 3 : char;
+      out.write(delimiter);
+      index += delimiter.length;
+      while (index < source.length) {
+        if (!raw && source[index] == '\\' && index + 1 < source.length) {
+          out.write(source.substring(index, index + 2));
+          index += 2;
+          continue;
+        }
+        if (source.startsWith(delimiter, index)) {
+          out.write(delimiter);
+          index += delimiter.length;
+          break;
+        }
+        out.write(source[index]);
+        index++;
+      }
+      continue;
+    }
+    out.write(char);
+    index++;
+  }
+  return out.toString();
 }
 
 int? _matchingParen(String source, int open) {
