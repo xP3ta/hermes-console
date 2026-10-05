@@ -13223,22 +13223,34 @@ class _ChatScreenState extends State<ChatScreen>
                                           onTap: () => unawaited(
                                             _revealStickyPrompt(prompt),
                                           ),
-                                          child: ClipRect(
-                                            child: ConstrainedBox(
-                                              constraints:
-                                                  const BoxConstraints(
-                                                    maxHeight: 96,
-                                                  ),
-                                              child: SingleChildScrollView(
-                                                physics:
-                                                    const NeverScrollableScrollPhysics(),
-                                                child: IgnorePointer(
-                                                  child: ExcludeSemantics(
-                                                    child: _UserMessage(
-                                                      content:
-                                                          prompt['content']
-                                                              as String,
-                                                      compact: true,
+                                          // The user bubble is translucent
+                                          // by design; pinned over the reply
+                                          // it showed the text underneath.
+                                          // Like Desktop's sticky prompt,
+                                          // the reply is hidden behind it:
+                                          // an opaque field of the screen
+                                          // background.
+                                          child: ColoredBox(
+                                            color: Theme.of(
+                                              context,
+                                            ).scaffoldBackgroundColor,
+                                            child: ClipRect(
+                                              child: ConstrainedBox(
+                                                constraints:
+                                                    const BoxConstraints(
+                                                      maxHeight: 96,
+                                                    ),
+                                                child: SingleChildScrollView(
+                                                  physics:
+                                                      const NeverScrollableScrollPhysics(),
+                                                  child: IgnorePointer(
+                                                    child: ExcludeSemantics(
+                                                      child: _UserMessage(
+                                                        content:
+                                                            prompt['content']
+                                                                as String,
+                                                        compact: true,
+                                                      ),
                                                     ),
                                                   ),
                                                 ),
