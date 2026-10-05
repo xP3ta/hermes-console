@@ -3,6 +3,8 @@
 // through `POST /api/fs/write-text`, `llm.oneshot` idea), "Open folder…"
 // (upsert: a covered folder enters its project) and "Add folder"
 // (`projects.add_folder`). Folders always come from the SERVER picker.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_control_center.dart';
@@ -181,6 +183,7 @@ void main() {
       WidgetTester tester,
       void Function(Pc1215CreatingProjectsGateway gateway) setUp, {
       Locale locale = const Locale('es'),
+      void Function(Pc1215CreatingProjectsGateway gateway)? beforeSubmit,
     }) async {
       final gateway = Pc1215CreatingProjectsGateway.sample()
         ..treeAfterCreate = _treeWithNew();
@@ -193,6 +196,7 @@ void main() {
         'Plan the beds',
       );
       await tester.pumpAndSettle();
+      beforeSubmit?.call(gateway);
       await _tap(tester, 'pc1215-create-submit');
       return gateway;
     }
@@ -261,6 +265,65 @@ void main() {
       );
       expect(gateway.calls, contains('projects.project_sessions:p_new'));
     });
+
+    const existingIdea = [
+      ProjectFsEntry(
+        name: 'IDEA.md',
+        path: '/srv/garden/IDEA.md',
+        isDirectory: false,
+      ),
+    ];
+    const unverifiedNotice =
+        'No se pudo comprobar si la carpeta ya tiene IDEA.md; '
+        'no se ha escrito.';
+
+    testWidgets('a listing that throws never lets IDEA.md be replaced', (
+      tester,
+    ) async {
+      final gateway = await createWithIdea(tester, (gateway) {
+        gateway.folders['/srv/garden'] = existingIdea;
+        gateway.folderFailures['/srv/garden'] = TimeoutException('list');
+      });
+      expect(gateway.calls, contains('GET /api/fs/list:/srv/garden'));
+      expect(_calls(gateway, 'POST /api/fs/write-text'), isEmpty);
+      expect(_calls(gateway, 'projects.create'), hasLength(1));
+      expect(find.text(unverifiedNotice), findsOneWidget);
+      expect(gateway.calls, contains('projects.project_sessions:p_new'));
+    });
+
+    testWidgets('a server whose file routes are unsupported is not written', (
+      tester,
+    ) async {
+      final gateway = await createWithIdea(
+        tester,
+        (gateway) => gateway.folders['/srv/garden'] = existingIdea,
+        beforeSubmit: (gateway) => gateway.filesUnsupported = true,
+      );
+      expect(_calls(gateway, 'POST /api/fs/write-text'), isEmpty);
+      expect(_calls(gateway, 'projects.create'), hasLength(1));
+      expect(find.text(unverifiedNotice), findsOneWidget);
+      expect(gateway.calls, contains('projects.project_sessions:p_new'));
+    });
+
+    for (final name in ['idea.md', 'Idea.MD']) {
+      testWidgets('an existing $name blocks the write too', (tester) async {
+        final gateway = await createWithIdea(tester, (gateway) {
+          gateway.folders['/srv/garden'] = [
+            ProjectFsEntry(
+              name: name,
+              path: '/srv/garden/$name',
+              isDirectory: false,
+            ),
+          ];
+        });
+        expect(_calls(gateway, 'POST /api/fs/write-text'), isEmpty);
+        expect(
+          find.text('Ya existe IDEA.md en la carpeta; no se ha sobrescrito.'),
+          findsOneWidget,
+        );
+        expect(gateway.calls, contains('projects.project_sessions:p_new'));
+      });
+    }
 
     testWidgets('a similarly named file does not block IDEA.md', (
       tester,

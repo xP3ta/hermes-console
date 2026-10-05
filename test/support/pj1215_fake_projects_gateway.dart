@@ -353,6 +353,9 @@ class Pc1215CreatingProjectsGateway extends Pj1215FakeProjectsGateway
   /// Server errno code `GET /api/fs/list` answers for a path (200 + error).
   final Map<String, String> folderErrors = {};
 
+  /// Failure `GET /api/fs/list` throws for a path (timeout, 5xx, dropped).
+  final Map<String, Object> folderFailures = {};
+
   /// Tree served after a successful create (the server's next answer).
   ProjectTreeSnapshot? treeAfterCreate;
 
@@ -414,6 +417,8 @@ class Pc1215CreatingProjectsGateway extends Pj1215FakeProjectsGateway
   @override
   Future<ProjectDirectoryListing> listProjectDirectory(String path) async {
     calls.add('GET /api/fs/list:$path');
+    final failure = folderFailures[path];
+    if (failure != null) throw failure;
     return ProjectDirectoryListing(
       entries: folders[path] ?? const [],
       error: folderErrors[path],
