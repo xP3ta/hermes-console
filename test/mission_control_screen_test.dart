@@ -633,7 +633,7 @@ void main() {
     expect(opened?.profile, 'infra');
   });
 
-  testWidgets('working bot row prioritizes its task over chat preview', (
+  testWidgets('a running Kanban task alone does not light the Bot Chat row', (
     tester,
   ) async {
     final manager = await _manager();
@@ -664,13 +664,18 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // The avatar opens the Bot Chat, so the row speaks for that chat only:
+    // the task shows in Tasks and the bot profile, not as the row's aura.
     final row = find.byKey(const ValueKey('mission-bot-infra'));
     expect(
       find.descendant(of: row, matching: find.textContaining('Desplegar')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
-      find.descendant(of: row, matching: find.text('Recent work')),
+      find.descendant(
+        of: row,
+        matching: find.byKey(const ValueKey('living-face-ring-working')),
+      ),
       findsNothing,
     );
   });
@@ -2462,7 +2467,11 @@ void main() {
         activeChats: chats,
         snapshot: _snapshot(
           profiles: const [
-            AgentProfile(name: 'infra'),
+            // The approval waits in infra's canonical Bot Chat.
+            AgentProfile(
+              name: 'infra',
+              canonicalSession: AgentProfileSessionSummary(id: 's-approval'),
+            ),
             AgentProfile(name: 'qa'),
           ],
           sessions: [session, _session('s-qa', 'qa')],
