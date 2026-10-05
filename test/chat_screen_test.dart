@@ -35392,6 +35392,31 @@ void main() {
       },
     );
 
+    testWidgets('rpl1215 ask about this is not offered on a read-only chat', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-qr-ask-ro').copyWith(readOnly: true),
+        messages: const [
+          {
+            'role': 'assistant',
+            'id': 'a-ask-ro',
+            'content': 'Analizador listo.',
+          },
+          {'role': 'user', 'id': 'u-ask-ro', 'content': 'Revisa'},
+        ],
+      );
+      await selectWord(tester, 'Analizador');
+      // The selection menu itself still opens (Copy works read-only).
+      expect(find.text('Copiar'), findsOneWidget);
+      expect(find.text('Preguntar sobre esto'), findsNothing);
+      expect(gateway.submissions, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('rpl1215 ask about this is not offered on the user message', (
       tester,
     ) async {
