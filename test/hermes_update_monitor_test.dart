@@ -43,20 +43,42 @@ void main() {
       );
     });
 
-    test('REGRESIÓN: el marcador propio NO es éxito (faltan reinicios)', () {
-      // hermes update imprime el marcador ANTES de reiniciar gateway y
-      // Dashboard y de verificar la flota.
-      for (final running in [true, false]) {
-        expect(
-          classify({
-            'running': running,
-            'action_id': ownId,
-            'lines': ['=== hermes-update completed $ownId ==='],
-            'receipt': ourReceipt('running', finished: false),
-          }).phase,
-          HermesUpdateActionPhase.restartingServices,
-        );
+    test('own marker while the updater still runs: restarting services', () {
+      // hermes update prints the marker before restarting the gateway and
+      // the Dashboard; while its process lives the run is not over.
+      expect(
+        classify({
+          'running': true,
+          'action_id': ownId,
+          'lines': ['=== hermes-update completed $ownId ==='],
+          'receipt': ourReceipt('running', finished: false),
+        }).phase,
+        HermesUpdateActionPhase.restartingServices,
+      );
+    });
+
+    test('own marker with the updater gone is success at once (Desktop '
+        'completedAfterRestart), even without a closed receipt', () {
+      for (final exitCode in [null, 0]) {
+        final obs = classify({
+          'running': false,
+          'exit_code': exitCode,
+          'action_id': ownId,
+          'lines': ['=== hermes-update completed $ownId ==='],
+          'receipt': ourReceipt('running', finished: false),
+        });
+        expect(obs.phase, HermesUpdateActionPhase.succeeded);
+        expect(obs.ownMarker, isTrue);
       }
+      // Marker only in the log tail (no durable action_id echoed).
+      expect(
+        classify({
+          'running': false,
+          'exit_code': null,
+          'lines': ['=== hermes-update completed $ownId ==='],
+        }).phase,
+        HermesUpdateActionPhase.succeeded,
+      );
     });
 
     test('solo el recibo propio cerrado da el resultado', () {
@@ -203,8 +225,10 @@ void main() {
       );
       expect(result.outcome, HermesUpdateOutcome.confirmed);
       expect(result.version, '0.21.5');
-      expect(polls, script.length);
-      // /api/status solo se consulta tras el recibo cerrado.
+      // The marker with the updater gone settles it; the closed receipt is
+      // not needed (Desktop parity).
+      expect(polls, script.length - 1);
+      // /api/status is only read once the run has a result.
       expect(statusCalls, 1);
       expect(HermesUpdateGuard.isActive('a'), isFalse);
     });
@@ -241,19 +265,17 @@ void main() {
         HermesUpdateProbes(
           actionStatus: () async {
             polls++;
+            // Before the POST answer the marker cannot be attributed.
             if (polls == 2) session.actionId = ownId;
-            return {
-              'running': false,
-              'action_id': ownId,
-              'exit_code': polls > 2 ? 1 : null,
-            };
+            return {'running': false, 'action_id': ownId, 'exit_code': null};
           },
           serverStatus: () async => {'gateway_running': true},
           updateStillAvailable: () async => null,
         ),
         pollInterval: Duration.zero,
       );
-      expect((await future).outcome, HermesUpdateOutcome.failed);
+      expect((await future).outcome, HermesUpdateOutcome.confirmed);
+      expect(polls, 2);
     });
 
     test('recibo partial se comunica como parcial, no como éxito', () async {

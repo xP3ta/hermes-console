@@ -12,18 +12,15 @@ import 'package:flutter/foundation.dart';
 /// resultado: ni el marcador, ni "el Dashboard responde", ni "el gateway está
 /// running". En el incidente del 25/09 el gateway viejo seguía running y la
 /// app anunció éxito a los 3 s de una actualización de ~11 min.
+///
+/// Like Desktop, our marker with the updater process gone also settles the
+/// run; whether the gateway came back is checked afterwards.
 
 /// Tiempo máximo que Console acompaña una actualización. El drenaje del
 /// gateway puede esperar hasta ~30 min a turnos en curso (cap de Hermes), así
 /// que la ventana debe cubrirlo; pasado este tiempo el resultado se declara
 /// "no verificado", nunca éxito.
 const Duration hermesUpdateMaxDuration = Duration(minutes: 45);
-
-/// Con nuestro marcador visto, sin proceso vivo y sin recibo cerrado durante
-/// este tiempo, el updater murió tras actualizar el código (p. ej. unidad
-/// antigua del Dashboard sin `KillMode=process`). Se pasa a verificar por
-/// versión en vez de esperar al límite.
-const Duration hermesUpdateReceiptGrace = Duration(minutes: 5);
 
 /// Margen para relojes de móvil y servidor desfasados al decidir si un
 /// recibo pertenece a esta ejecución.
@@ -85,7 +82,8 @@ final RegExp _completedMarker = RegExp(
 ///     (`finished_at`): su `outcome` es el resultado.
 ///  2. Proceso vivo en este Dashboard: en curso. Nunca éxito.
 ///  3. Salida no-cero del proceso lanzado por este Dashboard: fallo.
-///  4. Marcador propio sin recibo cerrado: reiniciando servicios.
+///  4. Own marker with the updater gone: success (Desktop parity); the
+///     gateway is confirmed afterwards as a separate, bounded step.
 ///  5. Servidor antiguo (sin `action_id` ni recibos): la salida 0 del proceso.
 ///  6. Todo lo demás (id de otra ejecución, `exit_code` derivado de un recibo
 ///     antiguo, Dashboard recién reiniciado sin datos): sin resultado.
@@ -164,9 +162,12 @@ HermesUpdateActionObservation classifyHermesUpdateAction(
     );
   }
 
+  // Our marker with the updater gone settles the run, like Desktop's
+  // `completedAfterRestart`: the gateway check that follows is separate.
   if (ownMarker) {
-    return const HermesUpdateActionObservation(
-      HermesUpdateActionPhase.restartingServices,
+    return HermesUpdateActionObservation(
+      HermesUpdateActionPhase.succeeded,
+      detail: detail,
       ownMarker: true,
     );
   }
@@ -331,7 +332,6 @@ class HermesUpdateSession {
     HermesUpdateProbes probes, {
     Duration pollInterval = const Duration(seconds: 4),
     Duration maxDuration = hermesUpdateMaxDuration,
-    Duration receiptGrace = hermesUpdateReceiptGrace,
     Duration legacyGrace = const Duration(seconds: 45),
     DateTime Function()? clock,
   }) {
@@ -341,7 +341,6 @@ class HermesUpdateSession {
         probes,
         pollInterval: pollInterval,
         maxDuration: maxDuration,
-        receiptGrace: receiptGrace,
         legacyGrace: legacyGrace,
         clock: clock ?? DateTime.now,
       ).then(
@@ -358,7 +357,6 @@ class HermesUpdateSession {
     HermesUpdateProbes probes, {
     required Duration pollInterval,
     required Duration maxDuration,
-    required Duration receiptGrace,
     required Duration legacyGrace,
     required DateTime Function() clock,
   }) async {
@@ -366,7 +364,6 @@ class HermesUpdateSession {
     var missingEndpoint = 0;
     // Sin recibo utilizable: verificación por versión y `update_available`.
     DateTime? versionCheckSince;
-    DateTime? markerWithoutProcessSince;
     step.value = HermesUpdateSessionStep.applying;
 
     while (clock().isBefore(deadline)) {
@@ -401,18 +398,8 @@ class HermesUpdateSession {
             receiptOutcome = HermesUpdateOutcome.partial;
           case HermesUpdateActionPhase.restartingServices:
             step.value = HermesUpdateSessionStep.restarting;
-            if (!obs!.processRunning) {
-              markerWithoutProcessSince ??= clock();
-              if (clock().difference(markerWithoutProcessSince) >=
-                  receiptGrace) {
-                versionCheckSince = clock();
-              }
-            } else {
-              markerWithoutProcessSince = null;
-            }
           case HermesUpdateActionPhase.running:
             step.value = HermesUpdateSessionStep.applying;
-            markerWithoutProcessSince = null;
           case HermesUpdateActionPhase.unknown:
           case null:
             break;
