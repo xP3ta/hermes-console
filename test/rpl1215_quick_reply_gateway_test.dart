@@ -118,6 +118,33 @@ void main() {
     },
   );
 
+  test('llm.oneshot sends the end of long messages, not the start', () async {
+    final requests = <Map<String, dynamic>>[];
+    final client = await _client(
+      requests,
+      (frame) => {
+        'jsonrpc': '2.0',
+        'id': frame['id'],
+        'result': {'text': '- Sí'},
+      },
+    );
+
+    final filler = List.filled(800, 'relleno').join(' ');
+    await client.suggestQuickReplies(
+      lastAssistant: 'ASSISTANT-START $filler ASSISTANT-END?',
+      lastUser: 'USER-START $filler USER-END',
+    );
+
+    expect(requests, hasLength(1));
+    final input =
+        (requests.single['params'] as Map<String, dynamic>)['input'] as String;
+    expect(input, contains('ASSISTANT-END?'));
+    expect(input, contains('USER-END'));
+    expect(input, isNot(contains('ASSISTANT-START')));
+    expect(input, isNot(contains('USER-START')));
+    expect(input.length, lessThan(2 * filler.length));
+  });
+
   test('a read-only connection never spends a model call', () async {
     final requests = <Map<String, dynamic>>[];
     final client = await _client(
