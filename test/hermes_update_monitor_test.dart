@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/hermes_update_monitor.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Seguimiento honesto de `hermes update` lanzado desde Console.
 ///
@@ -189,7 +190,105 @@ void main() {
   });
 
   group('HermesUpdateSession', () {
-    setUp(HermesUpdateSession.debugReset);
+    setUp(() {
+      SharedPreferences.setMockInitialValues({});
+      HermesUpdateSession.debugReset();
+    });
+
+    test('resume after the process was killed: the persisted session '
+        'continues and finishes', () async {
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt.add(const Duration(minutes: 3)),
+      )!..actionId = ownId;
+      session.adoptServerTime(requestedAt);
+      await HermesUpdateSession.debugFlushStore();
+
+      // Android kills the process: only SharedPreferences survive.
+      HermesUpdateSession.debugReset();
+      expect(HermesUpdateGuard.isActive('a'), isFalse);
+      expect(await HermesUpdateSession.persistedConnectionIds(), ['a']);
+
+      final resumeAt = requestedAt.add(const Duration(minutes: 10));
+      final resumed = await HermesUpdateSession.resumePersisted(
+        'a',
+        now: resumeAt,
+      );
+      expect(resumed, isNotNull);
+      expect(resumed!.actionId, ownId);
+      expect(resumed.requestedAt, requestedAt);
+      expect(resumed.previousVersion, '0.21.4');
+      expect(HermesUpdateGuard.isActive('a'), isTrue);
+      // A second resume (foreground + unlock) attaches to the same one.
+      expect(
+        identical(
+          await HermesUpdateSession.resumePersisted('a', now: resumeAt),
+          resumed,
+        ),
+        isTrue,
+      );
+
+      final result = await resumed.track(
+        HermesUpdateProbes(
+          actionStatus: () async => {
+            'running': false,
+            'receipt': ourReceipt('success'),
+          },
+          serverStatus: () async => {
+            'gateway_running': true,
+            'version': '0.21.5',
+          },
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+      );
+      expect(result.outcome, HermesUpdateOutcome.confirmed);
+      await HermesUpdateSession.debugFlushStore();
+      // A terminal result clears the record.
+      expect(await HermesUpdateSession.persistedConnectionIds(), isEmpty);
+      HermesUpdateSession.debugReset();
+      expect(
+        await HermesUpdateSession.resumePersisted('a', now: resumeAt),
+        isNull,
+      );
+    });
+
+    test('a record older than any update run is dropped', () async {
+      HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!.actionId = ownId;
+      await HermesUpdateSession.debugFlushStore();
+      HermesUpdateSession.debugReset();
+      expect(
+        await HermesUpdateSession.resumePersisted(
+          'a',
+          now: requestedAt.add(const Duration(days: 1)),
+        ),
+        isNull,
+      );
+      expect(await HermesUpdateSession.persistedConnectionIds(), isEmpty);
+    });
+
+    test('a request that failed to start leaves nothing to resume', () async {
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+      )!;
+      session.abandon(const HermesUpdateResult(HermesUpdateOutcome.failed));
+      await HermesUpdateSession.debugFlushStore();
+      expect(await HermesUpdateSession.persistedConnectionIds(), isEmpty);
+    });
+
+    test('a malformed persisted record is dropped, not resumed', () async {
+      SharedPreferences.setMockInitialValues({
+        'hermes_update_session_v1.a': '{not json',
+      });
+      expect(await HermesUpdateSession.resumePersisted('a'), isNull);
+      expect(await HermesUpdateSession.persistedConnectionIds(), isEmpty);
+    });
 
     test('reserva única por instancia y liberación al abandonar', () async {
       final a = HermesUpdateSession.reserve('a', previousVersion: '0.21.4');
@@ -726,6 +825,37 @@ void main() {
   });
 
   group('cableado (fuente)', () {
+    test('persisted updates resume on cold start, foreground and unlock, '
+        'never while App Lock is closed', () {
+      final main = File('lib/main.dart').readAsStringSync();
+      final resume = main.substring(
+        main.indexOf('void _resumeHermesUpdates()'),
+        main.indexOf('void _restoreColdStartTailsAfterUnlock()'),
+      );
+      expect(resume, contains('if (widget.appLock.locked.value) return;'));
+      expect(resume, contains('resumePersistedHermesUpdates('));
+      expect(
+        main,
+        contains('widget.appLock.locked.addListener(_resumeHermesUpdates);'),
+      );
+      final lifecycle = main.substring(
+        main.indexOf('void didChangeAppLifecycleState('),
+      );
+      expect(
+        lifecycle.substring(0, lifecycle.indexOf('_resumeHermesUpdates();')),
+        contains('if (state == AppLifecycleState.resumed) {'),
+      );
+      final settings = File(
+        'lib/core/screens/settings_screen.dart',
+      ).readAsStringSync();
+      expect(settings, contains('HermesUpdateSession.resumePersisted('));
+      final manager = File(
+        'lib/core/services/connection_manager.dart',
+      ).readAsStringSync();
+      // Deleting a connection drops its persisted update.
+      expect(manager, contains("'${HermesUpdateSession.prefsPrefix}'"));
+    });
+
     final settings = File(
       'lib/core/screens/settings_screen.dart',
     ).readAsStringSync();
@@ -750,7 +880,10 @@ void main() {
         apply.indexOf('attachedToRunningUpdate = applyResult.alreadyRunning'),
         allOf(greaterThan(post), lessThan(track)),
       );
-      expect(settings, contains('client.getUpdateActionStatus()'));
+      expect(
+        File('lib/core/services/hermes_update_probes.dart').readAsStringSync(),
+        contains('client.getUpdateActionStatus()'),
+      );
     });
 
     test('el bridge solo se mantiene tras confirmar la actualización', () {

@@ -987,6 +987,8 @@ class ConnectionManager {
   // huérfanas de borrados antiguos al arrancar (evita basura tras updates del
   // APK, que conservan los datos a propósito).
   static const List<String> _connScopedPrefixes = [
+    // HermesUpdateSession.prefsPrefix (a running server update).
+    'hermes_update_session_v1.',
     'capabilities_',
     'active_profile_',
     'runs_',

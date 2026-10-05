@@ -54,6 +54,7 @@ import 'core/services/notifications/background_listener.dart';
 import 'core/services/notifications/notification_service.dart';
 import 'core/services/performance_trace.dart';
 import 'core/bots/data/gateway_socket_meter.dart';
+import 'core/services/hermes_update_probes.dart';
 import 'core/services/shared_gateway_pool.dart';
 import 'core/services/new_session_launch_coordinator.dart';
 import 'core/services/profile_pet_service.dart';
@@ -1336,6 +1337,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     widget.appLock.locked.addListener(_retryPendingNewSessionLaunch);
     widget.appLock.locked.addListener(_onAppLockNoticeGateChanged);
     widget.appLock.locked.addListener(_restoreColdStartTailsAfterUnlock);
+    widget.appLock.locked.addListener(_resumeHermesUpdates);
+    _resumeHermesUpdates();
     widget.appLock.locked.addListener(_openCatalogLinks);
     widget.connManager.activeConnectionId.addListener(_openCatalogLinks);
     unawaited(_initNewSessionLaunchInbox());
@@ -1447,6 +1450,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         }
       });
       widget.activeChats.reconcileAfterResume();
+      _resumeHermesUpdates();
       // Volver a primer plano no deshace una pausa explícita; el usuario puede
       // continuar con el orbe o desde la notificación.
       if (kVoiceRuntimeEnabled) {
@@ -2062,6 +2066,16 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
 
   /// Removes the remembered-route unlock listener while it is waiting.
   VoidCallback? _releaseColdStartUnlockWait;
+
+  /// A server update persisted before Android killed the app keeps being
+  /// followed on cold start and on return to foreground; not before App
+  /// Lock opens.
+  void _resumeHermesUpdates() {
+    if (widget.appLock.locked.value) return;
+    unawaited(
+      resumePersistedHermesUpdates(widget.connManager.getConnections()),
+    );
+  }
 
   /// App Lock policy: cold-start tails are decrypted only after unlock. The
   /// restore runs once per process (`coldStartTailsReady` is memoized), so
@@ -2736,6 +2750,7 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     widget.appLock.locked.removeListener(_retryPendingNewSessionLaunch);
     widget.appLock.locked.removeListener(_onAppLockNoticeGateChanged);
     widget.appLock.locked.removeListener(_restoreColdStartTailsAfterUnlock);
+    widget.appLock.locked.removeListener(_resumeHermesUpdates);
     _releaseColdStartUnlockWait?.call();
     _releaseColdStartUnlockWait = null;
     _newSessionLaunchSub?.cancel();

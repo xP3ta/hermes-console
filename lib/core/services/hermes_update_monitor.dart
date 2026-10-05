@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Seguimiento de `hermes update` lanzado desde Console vía Dashboard.
 ///
@@ -318,6 +320,14 @@ class HermesUpdateSession {
     required this.previousVersion,
   }) : _requestedAt = requestedAt.toUtc();
 
+  /// SharedPreferences key prefix of the persisted session of a connection
+  /// (`<prefix><connectionId>`). Holds no chat data: ids, times, version.
+  static const String prefsPrefix = 'hermes_update_session_v1.';
+
+  /// A persisted record older than this is not resumed: no update runs for
+  /// hours, so it can only be a leftover.
+  static const Duration _resumeHorizon = Duration(hours: 6);
+
   static final Map<String, HermesUpdateSession> _sessions = {};
 
   final String connectionId;
@@ -331,13 +341,20 @@ class HermesUpdateSession {
 
   /// The POST answered `already_running`: this session follows a run that
   /// started before our request.
-  bool attachedToRunningUpdate = false;
+  bool get attachedToRunningUpdate => _attachedToRunningUpdate;
+  set attachedToRunningUpdate(bool value) {
+    _attachedToRunningUpdate = value;
+    _persist();
+  }
+
+  bool _attachedToRunningUpdate = false;
 
   /// Anchors [requestedAt] on the server clock of the POST answer, so a
   /// phone clock running ahead does not disown our own receipt.
   void adoptServerTime(DateTime? serverDate) {
     if (serverDate == null) return;
     _requestedAt = serverDate.toUtc();
+    _persist();
   }
 
   /// Attached to a run already in progress: its own receipt, open while the
@@ -349,11 +366,18 @@ class HermesUpdateSession {
     final started = DateTime.tryParse((receipt['started_at'] ?? '').toString());
     if (started == null || !started.isBefore(_requestedAt)) return;
     _requestedAt = started.toUtc();
+    _persist();
   }
 
   /// `action_id` de Hermes; llega con la respuesta del POST. Se relee en
   /// cada sondeo, así que puede fijarse después de arrancar [track].
-  String? actionId;
+  String? get actionId => _actionId;
+  set actionId(String? value) {
+    _actionId = value;
+    _persist();
+  }
+
+  String? _actionId;
 
   /// El POST llegó a responder (false si el socket se cortó / timeout).
   bool responseConfirmed = true;
@@ -391,6 +415,7 @@ class HermesUpdateSession {
       previousVersion: previousVersion,
     );
     _sessions[connectionId] = session;
+    session._persist();
     return session;
   }
 
@@ -401,6 +426,64 @@ class HermesUpdateSession {
     if (!_result.isCompleted) _result.complete(result);
     if (identical(_sessions[connectionId], this)) {
       _sessions.remove(connectionId);
+      _store((prefs) => prefs.remove('$prefsPrefix$connectionId'));
+    }
+  }
+
+  // ── Persistence: survive Android killing the process ───────────────────
+
+  static Future<void> _storeTail = Future<void>.value();
+
+  /// Serializes every write so a late save never lands after the clear.
+  static Future<void> _store(
+    Future<Object?> Function(SharedPreferences prefs) write,
+  ) {
+    final next = _storeTail.then((_) async {
+      try {
+        await write(await SharedPreferences.getInstance());
+      } catch (error) {
+        debugPrint('[hermes-update] store failed (${error.runtimeType})');
+      }
+    });
+    _storeTail = next;
+    return next;
+  }
+
+  void _persist() {
+    if (isFinished || !identical(_sessions[connectionId], this)) return;
+    final record = jsonEncode({
+      'connectionId': connectionId,
+      'actionId': _actionId,
+      'requestedAt': _requestedAt.toIso8601String(),
+      'previousVersion': previousVersion,
+      'attached': _attachedToRunningUpdate,
+    });
+    _store((prefs) => prefs.setString('$prefsPrefix$connectionId', record));
+  }
+
+  static HermesUpdateSession? _decode(String connectionId, String? raw) {
+    if (raw == null) return null;
+    try {
+      final data = jsonDecode(raw);
+      if (data is! Map || data['connectionId'] != connectionId) return null;
+      final requestedAt = DateTime.tryParse('${data['requestedAt']}');
+      final previousVersion = data['previousVersion'];
+      final actionId = data['actionId'];
+      if (requestedAt == null || previousVersion is! String) return null;
+      if (actionId != null &&
+          (actionId is! String ||
+              !RegExp(r'^[0-9a-f]{32}$').hasMatch(actionId))) {
+        return null;
+      }
+      return HermesUpdateSession._(
+          connectionId: connectionId,
+          requestedAt: requestedAt,
+          previousVersion: previousVersion,
+        )
+        .._actionId = actionId as String?
+        .._attachedToRunningUpdate = data['attached'] == true;
+    } on FormatException {
+      return null;
     }
   }
 
@@ -552,7 +635,7 @@ class HermesUpdateSession {
           version: version,
         );
       }
-      if (clock().difference(versionCheckSince!) >= legacyGrace) {
+      if (clock().difference(versionCheckSince) >= legacyGrace) {
         return HermesUpdateResult(
           HermesUpdateOutcome.unverified,
           version: version,
@@ -619,6 +702,50 @@ class HermesUpdateSession {
       (status['gateway_running'] == true ||
           status['gateway_state'] == 'running');
 
+  /// Connections with a persisted, unfinished update.
+  static Future<List<String>> persistedConnectionIds() async {
+    await _storeTail;
+    final prefs = await SharedPreferences.getInstance();
+    return [
+      for (final key in prefs.getKeys())
+        if (key.startsWith(prefsPrefix)) key.substring(prefsPrefix.length),
+    ];
+  }
+
+  /// Rebuilds the session of [connectionId] persisted before the process
+  /// died, or returns the live one. Null when there is nothing to resume; an
+  /// unreadable or stale record is dropped. The caller starts [track].
+  static Future<HermesUpdateSession?> resumePersisted(
+    String connectionId, {
+    DateTime? now,
+  }) async {
+    final live = of(connectionId);
+    if (live != null) return live;
+    await _storeTail;
+    final prefs = await SharedPreferences.getInstance();
+    final key = '$prefsPrefix$connectionId';
+    final restored = _decode(connectionId, prefs.getString(key));
+    final raced = of(connectionId);
+    if (raced != null) return raced;
+    if (restored == null ||
+        (now ?? DateTime.now()).toUtc().difference(restored.requestedAt) >
+            _resumeHorizon) {
+      if (prefs.containsKey(key)) await _store((p) => p.remove(key));
+      return null;
+    }
+    restored.step.value = HermesUpdateSessionStep.applying;
+    _sessions[connectionId] = restored;
+    return restored;
+  }
+
+  /// Drops a persisted record without resuming it (connection deleted).
+  static Future<void> discardPersisted(String connectionId) =>
+      _store((prefs) => prefs.remove('$prefsPrefix$connectionId'));
+
+  @visibleForTesting
+  static Future<void> debugFlushStore() => _storeTail;
+
+  /// Forgets the in-memory sessions only (a killed process).
   @visibleForTesting
   static void debugReset() => _sessions.clear();
 }

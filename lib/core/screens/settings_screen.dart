@@ -34,6 +34,7 @@ import '../utils/transport_privacy.dart';
 
 import '../services/bridge_update_service.dart';
 import '../services/hermes_update_monitor.dart';
+import '../services/hermes_update_probes.dart';
 import '../../main.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_notice.dart';
@@ -2423,7 +2424,19 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_presentHermesUpdate(pending));
       });
+    } else {
+      unawaited(_resumePersistedUpdate());
     }
+  }
+
+  /// An update persisted before Android killed the app resumes here too, so
+  /// Settings shows its progress instead of offering another one.
+  Future<void> _resumePersistedUpdate() async {
+    final session = await HermesUpdateSession.resumePersisted(_connection.id);
+    if (session == null) return;
+    // Tracked even if this screen is gone: the session releases itself.
+    unawaited(session.track(hermesUpdateProbesFor(_connection, session)));
+    if (mounted) unawaited(_presentHermesUpdate(session));
   }
 
   @override
@@ -2647,51 +2660,6 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
 
   bool _hermesAutoTriggered = false;
 
-  /// Fuentes de datos para seguir la actualización. Usan un cliente propio
-  /// (no el de la pantalla) porque la sesión sobrevive a este widget.
-  HermesUpdateProbes _updateProbes(HermesUpdateSession session) {
-    final connection = _connection;
-    final client = DashboardClient.lazy(connection);
-    session.result.whenComplete(client.close);
-    Future<Map<String, dynamic>?> publicStatus() async {
-      try {
-        final base = connection.effectiveDashboardUrl.replaceAll(
-          RegExp(r'/+$'),
-          '',
-        );
-        final res = await http
-            .get(Uri.parse(TransportPrivacy.requireAllowed('$base/api/status')))
-            .timeout(const Duration(seconds: 8));
-        if (res.statusCode != 200) return null;
-        final data = jsonDecode(res.body);
-        return data is Map<String, dynamic> ? data : null;
-      } catch (_) {
-        return null;
-      }
-    }
-
-    return HermesUpdateProbes(
-      actionStatus: () async {
-        try {
-          return await client.getUpdateActionStatus();
-        } on DashboardHttpException catch (e) {
-          if (e.statusCode == 404) throw const HermesUpdateEndpointMissing();
-          rethrow;
-        }
-      },
-      serverStatus: publicStatus,
-      updateStillAvailable: () async {
-        try {
-          final check = await client.checkUpdate(force: true);
-          final available = check['update_available'];
-          return available is bool ? available : null;
-        } catch (_) {
-          return null;
-        }
-      },
-    );
-  }
-
   /// Si el toggle de auto-actualización de Hermes está activo y hay una versión
   /// nueva, la aplica automáticamente (una vez por carga de pantalla). No aplica
   /// al agente local.
@@ -2836,7 +2804,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
             : Strings.of(context).setUpdateStarted,
       );
     }
-    unawaited(session.track(_updateProbes(session)));
+    unawaited(session.track(hermesUpdateProbesFor(_connection, session)));
   }
 
   /// Muestra el progreso de una sesión de actualización (recién lanzada o
