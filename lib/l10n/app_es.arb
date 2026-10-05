@@ -5308,6 +5308,8 @@
   "extActiveModel": "Modelo activo: {model}",
   "extUrlRequired": "Introduce la URL del proveedor.",
   "extNoModels": "El servidor responde pero no devuelve modelos.",
+  "extManualModelLabel": "Nombre del modelo",
+  "extManualModelHint": "El endpoint no lista modelos. Escribe el id del modelo que sirve, p. ej. command-r-plus",
   "extBridgeUnavailable": "Bridge no disponible.",
   "extApplyRejected": "El servidor rechazó el cambio de modelo.",
   "extVenvUnavailable": "El entorno del agente local no está disponible. Usa Reparar agente desde el panel de control local.",

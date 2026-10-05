@@ -195,6 +195,11 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
   final _keyCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
 
+  /// Desktop #122920: a reachable endpoint that lists no models gets a
+  /// manual model name instead of a dead end.
+  final _manualModelCtrl = TextEditingController();
+  bool _needsManualModel = false;
+
   bool _testing = false;
   List<String> _models = [];
   String? _testError;
@@ -258,6 +263,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
     _urlCtrl.dispose();
     _keyCtrl.dispose();
     _nameCtrl.dispose();
+    _manualModelCtrl.dispose();
     super.dispose();
   }
 
@@ -279,7 +285,9 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
         id: _editingEndpoint?.id ?? '',
         name: _nameCtrl.text,
         baseUrl: _urlCtrl.text,
-        model: _activeModel ?? _editingEndpoint?.model ?? '',
+        model: _needsManualModel
+            ? _manualModelCtrl.text.trim()
+            : _activeModel ?? _editingEndpoint?.model ?? '',
         apiKey: _keyCtrl.text,
         apiMode: _editingEndpoint?.apiMode ?? '',
         contextLength: _editingEndpoint?.contextLength,
@@ -328,6 +336,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
       _testError = null;
       _testMessage = null;
       _models = [];
+      _needsManualModel = false;
     });
     try {
       final inputBase = normalizeExternalProviderUrl(rawUrl);
@@ -342,6 +351,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
           if (resolved.isNotEmpty) _urlCtrl.text = resolved;
           _models = validation.models;
           _modelDetails = validation.modelDetails;
+          _needsManualModel = validation.ok && validation.models.isEmpty;
           _testedInputBaseUrl = inputBase;
           _resolvedBaseUrl = resolved.isEmpty ? inputBase : resolved;
           _testMessage = validation.message;
@@ -707,10 +717,27 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
               ),
             ),
           ],
+          if (_needsManualModel) ...[
+            const SizedBox(height: 20),
+            HermesField(
+              key: const ValueKey('ext-manual-model'),
+              controller: _manualModelCtrl,
+              autocorrect: false,
+              enableSuggestions: false,
+              label: s.extManualModelLabel,
+              hint: s.extManualModelHint,
+              onChanged: (_) => setState(() {}),
+            ),
+          ],
           if (_savedEndpointsSupported == true) ...[
             const SizedBox(height: 20),
             FilledButton.icon(
-              onPressed: _setting ? null : _saveEndpoint,
+              onPressed:
+                  _setting ||
+                      (_needsManualModel &&
+                          _manualModelCtrl.text.trim().isEmpty)
+                  ? null
+                  : _saveEndpoint,
               icon: _setting
                   ? SizedBox(
                       width: 16,

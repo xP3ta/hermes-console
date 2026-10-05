@@ -4294,6 +4294,8 @@
   "extActiveModel": "Active model: {model}",
   "extUrlRequired": "Enter the provider URL.",
   "extNoModels": "The server responded but returned no models.",
+  "extManualModelLabel": "Model name",
+  "extManualModelHint": "The endpoint lists no models. Type the model id it serves, e.g. command-r-plus",
   "extBridgeUnavailable": "Bridge unavailable.",
   "extApplyRejected": "The server rejected the model change.",
   "extVenvUnavailable": "The local agent environment is unavailable. Use Repair agent from the local control panel.",
