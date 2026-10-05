@@ -9877,5 +9877,7 @@
   "@pc1215FolderAdded": {"placeholders": {"name": {"type": "String"}}},
   "pc1215OpenFolderFailed": "No se pudo crear el proyecto; se abre la carpeta igualmente.",
   "pc1215PickFolderTitle": "Elegir carpeta del servidor",
-  "pc1215PickFolderUse": "Usar esta carpeta"
+  "pc1215PickFolderUse": "Usar esta carpeta",
+  "pc1215IdeaExists": "Ya existe IDEA.md en la carpeta; no se ha sobrescrito.",
+  "pc1215IdeaUnverified": "No se pudo comprobar si la carpeta ya tiene IDEA.md; no se ha escrito."
 }

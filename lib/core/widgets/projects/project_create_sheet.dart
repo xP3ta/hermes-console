@@ -4,6 +4,7 @@ import '../../../l10n/app_localizations.dart';
 import '../../design/modal.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 import '../../models/desktop_control_center.dart';
+import '../../models/project_files.dart';
 import '../../services/desktop_control_gateway.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/short_server_path.dart';
@@ -22,11 +23,54 @@ sealed class ProjectCreateOutcome {
   const ProjectCreateOutcome();
 }
 
-/// `projects.create` succeeded.
+/// Why the typed idea was not saved to IDEA.md.
+enum ProjectIdeaNotWritten {
+  /// The primary folder already has an IDEA.md; it is never overwritten.
+  exists,
+
+  /// The folder listing failed or was incomplete, so an existing IDEA.md
+  /// could not be ruled out; nothing was written.
+  unverified,
+}
+
+/// `projects.create` succeeded. [ideaNotWritten] is set when an idea was
+/// typed but IDEA.md was deliberately left alone.
 final class ProjectCreatedOutcome extends ProjectCreateOutcome {
   final ProjectCreated project;
-  const ProjectCreatedOutcome(this.project);
+  final ProjectIdeaNotWritten? ideaNotWritten;
+  const ProjectCreatedOutcome(this.project, {this.ideaNotWritten});
 }
+
+/// Whether [folder] on the Hermes host already holds `IDEA.md`, from the
+/// same `GET /api/fs/list` the file browser uses. Returns
+/// [ProjectIdeaNotWritten.exists] when it does, `unverified` when the
+/// listing failed, reported an error or hit the row cap, and null only when
+/// a complete listing shows no IDEA.md.
+Future<ProjectIdeaNotWritten?> projectIdeaBlocker(
+  HermesProjectFilesGateway? files,
+  String folder,
+) async {
+  if (files == null || files.projectFilesKnownUnsupported) {
+    return ProjectIdeaNotWritten.unverified;
+  }
+  final ProjectDirectoryListing listing;
+  try {
+    listing = await files.listProjectDirectory(folder);
+  } catch (_) {
+    return ProjectIdeaNotWritten.unverified;
+  }
+  if (listing.entries.any((entry) => entry.name == projectIdeaFileName)) {
+    return ProjectIdeaNotWritten.exists;
+  }
+  if (listing.error != null ||
+      listing.entries.length >= projectFsListingLimit) {
+    return ProjectIdeaNotWritten.unverified;
+  }
+  return null;
+}
+
+/// File Desktop saves the project idea to, in the primary folder.
+const String projectIdeaFileName = 'IDEA.md';
 
 /// The user chose to open the project that already covers a picked folder.
 final class ProjectOpenExistingOutcome extends ProjectCreateOutcome {
@@ -138,6 +182,7 @@ Future<ProjectCreateOutcome?> showProjectCreateSheet(
   required ProjectFolderOwner ownerOf,
   required String Function(Object failure) failureText,
   HermesProjectFileWritesGateway? ideaWriter,
+  HermesProjectFilesGateway? ideaFolderReader,
 }) => showHermesFloatingSurface<ProjectCreateOutcome>(
   context: context,
   builder: (_) => _ProjectCreateSheet(
@@ -146,6 +191,7 @@ Future<ProjectCreateOutcome?> showProjectCreateSheet(
     ownerOf: ownerOf,
     failureText: failureText,
     ideaWriter: ideaWriter,
+    ideaFolderReader: ideaFolderReader,
   ),
 );
 
@@ -155,6 +201,7 @@ class _ProjectCreateSheet extends StatefulWidget {
   final ProjectFolderOwner ownerOf;
   final String Function(Object failure) failureText;
   final HermesProjectFileWritesGateway? ideaWriter;
+  final HermesProjectFilesGateway? ideaFolderReader;
 
   const _ProjectCreateSheet({
     required this.creation,
@@ -162,6 +209,7 @@ class _ProjectCreateSheet extends StatefulWidget {
     required this.ownerOf,
     required this.failureText,
     required this.ideaWriter,
+    required this.ideaFolderReader,
   });
 
   @override
@@ -258,18 +306,31 @@ class _ProjectCreateSheetState extends State<_ProjectCreateSheet> {
       final primary = normalizeServerFolder(
         created.primaryPath.isEmpty ? _folders.first : created.primaryPath,
       );
+      ProjectIdeaNotWritten? ideaNotWritten;
       if (idea.isNotEmpty && _ideaSupported && writer != null) {
-        try {
-          await writer.writeProjectFileText(
-            '${primary == '/' ? '' : primary}/IDEA.md',
-            idea.endsWith('\n') ? idea : '$idea\n',
-          );
-        } catch (_) {
-          // Best effort, like Desktop: the project exists either way.
+        // Desktop (`writeProjectIdea`) writes blindly and the server's
+        // write-text replaces an existing file; the phone never overwrites
+        // an IDEA.md the folder already has, and skips the write when it
+        // cannot tell.
+        ideaNotWritten = await projectIdeaBlocker(
+          widget.ideaFolderReader,
+          primary,
+        );
+        if (ideaNotWritten == null) {
+          try {
+            await writer.writeProjectFileText(
+              '${primary == '/' ? '' : primary}/$projectIdeaFileName',
+              idea.endsWith('\n') ? idea : '$idea\n',
+            );
+          } catch (_) {
+            // Best effort, like Desktop: the project exists either way.
+          }
         }
       }
       if (!mounted) return;
-      Navigator.of(context).pop(ProjectCreatedOutcome(created));
+      Navigator.of(
+        context,
+      ).pop(ProjectCreatedOutcome(created, ideaNotWritten: ideaNotWritten));
     } catch (error) {
       if (!mounted) return;
       setState(() {

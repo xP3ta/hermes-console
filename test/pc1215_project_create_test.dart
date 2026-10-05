@@ -158,6 +158,8 @@ void main() {
           },
         ],
       ]);
+      // The folder is listed first: IDEA.md is only written when absent.
+      expect(gateway.calls, contains('GET /api/fs/list:/srv/garden'));
       expect(_calls(gateway, 'POST /api/fs/write-text'), [
         [
           'POST /api/fs/write-text',
@@ -165,6 +167,7 @@ void main() {
         ],
       ]);
       expect(find.byKey(const ValueKey('pc1215-create-sheet')), findsNothing);
+      expect(find.textContaining('IDEA.md'), findsNothing);
       expect(
         gateway.calls.where((c) => c == 'projects.tree').length,
         greaterThan(treeReads),
@@ -172,6 +175,110 @@ void main() {
       // Desktop enters the created project.
       expect(gateway.calls, contains('projects.project_sessions:p_new'));
       expect(harness.launched, isEmpty);
+    });
+
+    Future<Pc1215CreatingProjectsGateway> createWithIdea(
+      WidgetTester tester,
+      void Function(Pc1215CreatingProjectsGateway gateway) setUp, {
+      Locale locale = const Locale('es'),
+    }) async {
+      final gateway = Pc1215CreatingProjectsGateway.sample()
+        ..treeAfterCreate = _treeWithNew();
+      setUp(gateway);
+      await _pump(tester, gateway, picks: ['/srv/garden'], locale: locale);
+      await _openCreate(tester);
+      await _tap(tester, 'pc1215-create-add-folder');
+      await tester.enterText(
+        find.byKey(const ValueKey('pc1215-create-idea')),
+        'Plan the beds',
+      );
+      await tester.pumpAndSettle();
+      await _tap(tester, 'pc1215-create-submit');
+      return gateway;
+    }
+
+    testWidgets('an existing IDEA.md is never overwritten; the user is told '
+        'and the project is still created and entered', (tester) async {
+      final gateway = await createWithIdea(tester, (gateway) {
+        gateway.folders['/srv/garden'] = const [
+          ProjectFsEntry(
+            name: 'src',
+            path: '/srv/garden/src',
+            isDirectory: true,
+          ),
+          ProjectFsEntry(
+            name: 'IDEA.md',
+            path: '/srv/garden/IDEA.md',
+            isDirectory: false,
+          ),
+        ];
+      });
+      expect(gateway.calls, contains('GET /api/fs/list:/srv/garden'));
+      expect(_calls(gateway, 'POST /api/fs/write-text'), isEmpty);
+      expect(_calls(gateway, 'projects.create'), hasLength(1));
+      expect(
+        find.text('Ya existe IDEA.md en la carpeta; no se ha sobrescrito.'),
+        findsOneWidget,
+      );
+      expect(gateway.calls, contains('projects.project_sessions:p_new'));
+    });
+
+    testWidgets('English: an existing IDEA.md is reported in English', (
+      tester,
+    ) async {
+      final gateway = await createWithIdea(tester, (gateway) {
+        gateway.folders['/srv/garden'] = const [
+          ProjectFsEntry(
+            name: 'IDEA.md',
+            path: '/srv/garden/IDEA.md',
+            isDirectory: false,
+          ),
+        ];
+      }, locale: const Locale('en'));
+      expect(_calls(gateway, 'POST /api/fs/write-text'), isEmpty);
+      expect(
+        find.text(
+          "IDEA.md already exists in the folder; it wasn't overwritten.",
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a folder whose listing fails is not written either', (
+      tester,
+    ) async {
+      final gateway = await createWithIdea(tester, (gateway) {
+        gateway.folderErrors['/srv/garden'] = 'EACCES';
+      });
+      expect(gateway.calls, contains('GET /api/fs/list:/srv/garden'));
+      expect(_calls(gateway, 'POST /api/fs/write-text'), isEmpty);
+      expect(
+        find.text(
+          'No se pudo comprobar si la carpeta ya tiene IDEA.md; '
+          'no se ha escrito.',
+        ),
+        findsOneWidget,
+      );
+      expect(gateway.calls, contains('projects.project_sessions:p_new'));
+    });
+
+    testWidgets('a similarly named file does not block IDEA.md', (
+      tester,
+    ) async {
+      final gateway = await createWithIdea(tester, (gateway) {
+        gateway.folders['/srv/garden'] = const [
+          ProjectFsEntry(
+            name: 'IDEA.md.bak',
+            path: '/srv/garden/IDEA.md.bak',
+            isDirectory: false,
+          ),
+        ];
+      });
+      expect(_calls(gateway, 'POST /api/fs/write-text').single[1], {
+        'path': '/srv/garden/IDEA.md',
+        'content': 'Plan the beds\n',
+      });
+      expect(find.textContaining('no se ha'), findsNothing);
     });
 
     testWidgets('several folders: the first is primary; no idea, no IDEA.md', (
@@ -547,6 +654,34 @@ void main() {
         expect(projectOwningFolder(order, '/srv/application'), isNull);
       }
     });
+  });
+
+  group('IDEA.md guard', () {
+    test(
+      'a capped listing or a missing listing never allows the write',
+      () async {
+        final gateway = Pc1215CreatingProjectsGateway()
+          ..folders['/big'] = [
+            for (var i = 0; i < projectFsListingLimit; i++)
+              ProjectFsEntry(name: 'f$i', path: '/big/f$i', isDirectory: false),
+          ]
+          ..folders['/small'] = const [];
+        expect(
+          await projectIdeaBlocker(gateway, '/big'),
+          ProjectIdeaNotWritten.unverified,
+        );
+        expect(await projectIdeaBlocker(gateway, '/small'), isNull);
+        expect(
+          await projectIdeaBlocker(null, '/small'),
+          ProjectIdeaNotWritten.unverified,
+        );
+        gateway.filesUnsupported = true;
+        expect(
+          await projectIdeaBlocker(gateway, '/small'),
+          ProjectIdeaNotWritten.unverified,
+        );
+      },
+    );
   });
 
   group('capability gating', () {

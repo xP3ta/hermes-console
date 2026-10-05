@@ -333,12 +333,21 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
       ownerOf: _ownerOf,
       failureText: (error) => projectFailureText(error, strings),
       ideaWriter: _writes.fileWrites,
+      ideaFolderReader: _writes.files,
     );
     if (!mounted || outcome == null) return;
     switch (outcome) {
       case ProjectOpenExistingOutcome(:final project):
         await _enter(project.id);
-      case ProjectCreatedOutcome(:final project):
+      case ProjectCreatedOutcome(:final project, :final ideaNotWritten):
+        switch (ideaNotWritten) {
+          case ProjectIdeaNotWritten.exists:
+            _toast(strings.pc1215IdeaExists);
+          case ProjectIdeaNotWritten.unverified:
+            _toast(strings.pc1215IdeaUnverified);
+          case null:
+            break;
+        }
         await _load();
         if (!mounted) return;
         await _enter(project.id);

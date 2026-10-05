@@ -350,6 +350,9 @@ class Pc1215CreatingProjectsGateway extends Pj1215FakeProjectsGateway
   String? defaultFolder = '/home/demo';
   final Map<String, List<ProjectFsEntry>> folders = {};
 
+  /// Server errno code `GET /api/fs/list` answers for a path (200 + error).
+  final Map<String, String> folderErrors = {};
+
   /// Tree served after a successful create (the server's next answer).
   ProjectTreeSnapshot? treeAfterCreate;
 
@@ -411,7 +414,10 @@ class Pc1215CreatingProjectsGateway extends Pj1215FakeProjectsGateway
   @override
   Future<ProjectDirectoryListing> listProjectDirectory(String path) async {
     calls.add('GET /api/fs/list:$path');
-    return ProjectDirectoryListing(entries: folders[path] ?? const []);
+    return ProjectDirectoryListing(
+      entries: folders[path] ?? const [],
+      error: folderErrors[path],
+    );
   }
 
   @override
