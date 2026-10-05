@@ -113,6 +113,12 @@ class HomeDashboardScreen extends StatefulWidget {
   /// App Lock (defaults to the app's).
   final AppLockService? appLockOverride;
 
+  /// Home screen widget writer (defaults to the app's publisher).
+  final Future<void> Function(
+    HermesHomeWidgetSnapshot Function(HermesHomeWidgetSnapshot current),
+  )?
+  homeWidgetUpdateOverride;
+
   const HomeDashboardScreen({
     required this.connManager,
     this.clientFactory,
@@ -126,6 +132,7 @@ class HomeDashboardScreen extends StatefulWidget {
     @visibleForTesting this.missionPrewarm,
     @visibleForTesting this.sessionStateWriterFactory,
     @visibleForTesting this.appLockOverride,
+    @visibleForTesting this.homeWidgetUpdateOverride,
     super.key,
   });
 
@@ -1179,6 +1186,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         ? null
         : ActiveProfileScope.of(widget.connManager, conn.id).capture();
     final app = context.findAncestorStateOfType<HermesAppState>();
+    final updateHomeWidget =
+        widget.homeWidgetUpdateOverride ?? app?.updateHomeWidget;
     if (conn == null) {
       if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
       setState(() {
@@ -1190,7 +1199,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         _recentListFailed = false;
       });
       unawaited(
-        app?.updateHomeWidget(
+        updateHomeWidget?.call(
           (current) => _isCurrentStatusRefresh(refreshEpoch, connectionId)
               ? const HermesHomeWidgetSnapshot(
                   configured: false,
@@ -1212,21 +1221,26 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
 
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     setState(() => _checking = true);
-    unawaited(
-      app?.updateHomeWidget(
-        (current) => _isCurrentStatusRefresh(refreshEpoch, connectionId)
-            ? mergeHomeWidgetBaseSnapshot(
-                current: current,
-                configured: true,
-                instanceId: conn.id,
-                instanceLabel: conn.label,
-                connectionState: HomeWidgetConnectionState.connecting,
-                agentState: HomeWidgetAgentState.idle,
-                theme: current.theme,
-              )
-            : current,
-      ),
-    );
+    // The launcher widget follows the status line: a re-check of a
+    // connection already proven online keeps it online and writes nothing
+    // until the result lands, so the widget neither blinks nor redraws.
+    if (_statusChecking) {
+      unawaited(
+        updateHomeWidget?.call(
+          (current) => _isCurrentStatusRefresh(refreshEpoch, connectionId)
+              ? mergeHomeWidgetBaseSnapshot(
+                  current: current,
+                  configured: true,
+                  instanceId: conn.id,
+                  instanceLabel: conn.label,
+                  connectionState: HomeWidgetConnectionState.connecting,
+                  agentState: HomeWidgetAgentState.idle,
+                  theme: current.theme,
+                )
+              : current,
+        ),
+      );
+    }
     final archive = await SessionArchive.load(
       widget.connManager.prefs,
       conn.id,
@@ -1439,7 +1453,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     await _refreshRemoteActivity(conn, ownerProfile);
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     unawaited(
-      app?.updateHomeWidget(
+      updateHomeWidget?.call(
         (current) => _isCurrentStatusRefresh(refreshEpoch, connectionId)
             ? current.copyWith(
                 configured: true,
