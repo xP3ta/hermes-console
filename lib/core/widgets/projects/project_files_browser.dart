@@ -24,6 +24,7 @@ import '../../theme/app_theme.dart';
 import '../artifact_viewer/artifact_viewer_screen.dart';
 import '../hermes_notice.dart';
 import '../hermes_ui.dart' show HermesPanel;
+import 'project_file_icons.dart';
 import 'project_text_editor_screen.dart';
 
 /// Server cap of the Dashboard upload routes (`_MANAGED_FILE_MAX_BYTES`).
@@ -857,7 +858,7 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
                 leading: Icon(
                   entry.isDirectory
                       ? Icons.folder_rounded
-                      : Icons.insert_drive_file_outlined,
+                      : projectFileIcon(entry.name),
                   size: 20,
                   color: entry.isDirectory
                       ? colors.accent

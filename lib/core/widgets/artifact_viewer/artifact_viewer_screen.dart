@@ -778,9 +778,14 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
       height: 1.45,
     );
     final longest = _lines.fold<int>(0, (m, l) => math.max(m, l.length));
-    final charWidth = MediaQuery.textScalerOf(context).scale(13) * 0.62;
+    final charWidth = _charAdvance(context, style);
     final contentWidth = math.min(longest * charWidth + 32, 20000.0);
     final currentMatch = _matches.isEmpty ? null : _matches[_current];
+    // Line-number gutter: fixed width from the digit count of the last line
+    // (no extra pass over the text), muted and outside the selection, so
+    // copying never picks the numbers up.
+    final gutterStyle = style.copyWith(color: colors.textDisabled);
+    final gutterWidth = _gutterWidth(context, gutterStyle);
     return Column(
       children: [
         if (_capped)
@@ -851,7 +856,10 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: SizedBox(
-                  width: math.max(constraints.maxWidth, contentWidth),
+                  width: math.max(
+                    constraints.maxWidth,
+                    contentWidth + gutterWidth + _gutterGap,
+                  ),
                   child: ListView.builder(
                     key: const ValueKey('artifact-viewer-text'),
                     controller: _vertical,
@@ -861,17 +869,37 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
                     ),
                     itemExtent: extent,
                     itemCount: _lines.length,
-                    itemBuilder: (context, index) => Text.rich(
-                      _lineSpan(index, currentMatch, colors),
-                      key: ValueKey('artifact-viewer-line-$index'),
-                      style: style,
-                      maxLines: 1,
-                      softWrap: false,
-                      strutStyle: const StrutStyle(
-                        fontSize: 13,
-                        height: 1.45,
-                        forceStrutHeight: true,
-                      ),
+                    itemBuilder: (context, index) => Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SelectionContainer.disabled(
+                          child: ExcludeSemantics(
+                            child: SizedBox(
+                              width: gutterWidth,
+                              child: Text(
+                                '${index + 1}',
+                                key: ValueKey('artifact-viewer-gutter-$index'),
+                                style: gutterStyle,
+                                textAlign: TextAlign.right,
+                                maxLines: 1,
+                                softWrap: false,
+                                strutStyle: _lineStrut,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: _gutterGap),
+                        Expanded(
+                          child: Text.rich(
+                            _lineSpan(index, currentMatch, colors),
+                            key: ValueKey('artifact-viewer-line-$index'),
+                            style: style,
+                            maxLines: 1,
+                            softWrap: false,
+                            strutStyle: _lineStrut,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -881,6 +909,53 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
         ),
       ],
     );
+  }
+
+  static const double _gutterGap = 12;
+  static const StrutStyle _lineStrut = StrutStyle(
+    fontSize: 13,
+    height: 1.45,
+    forceStrutHeight: true,
+  );
+
+  /// Width of the widest line number, measured once on a run of zeros with
+  /// the same effective style the gutter [Text] inherits (theme letter
+  /// spacing included), so the last number is never clipped.
+  double _gutterWidth(BuildContext context, TextStyle style) {
+    final digits = _lines.length.toString().length;
+    final painter = TextPainter(
+      text: TextSpan(
+        text: '0' * digits,
+        style: DefaultTextStyle.of(context).style.merge(style),
+      ),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+      strutStyle: _lineStrut,
+      maxLines: 1,
+    )..layout();
+    final width = painter.width.ceilToDouble();
+    painter.dispose();
+    return width;
+  }
+
+  /// Advance of one monospace character in the effective line style (theme
+  /// letter spacing and text scale included), measured on a short run so the
+  /// horizontal range always reaches the end of the longest line.
+  double _charAdvance(BuildContext context, TextStyle style) {
+    const sample = 64;
+    final painter = TextPainter(
+      text: TextSpan(
+        text: '0' * sample,
+        style: DefaultTextStyle.of(context).style.merge(style),
+      ),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+      strutStyle: _lineStrut,
+      maxLines: 1,
+    )..layout();
+    final advance = painter.width / sample;
+    painter.dispose();
+    return advance;
   }
 
   TextSpan _lineSpan(
