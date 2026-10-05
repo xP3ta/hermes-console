@@ -14,6 +14,7 @@ import '../../theme/app_theme.dart';
 import '../attachment_card.dart';
 import '../attachment_source_sheet.dart';
 import '../hermes_premium_ui.dart';
+import 'composer_pasted_image.dart';
 
 /// Dictado del composer. El host conserva el motor de voz; aquí solo se pinta
 /// el estado y se enrutan las acciones (mic, detener, cancelar, enviar).
@@ -500,12 +501,7 @@ class ConsoleComposer extends StatelessWidget {
       contentInsertionConfiguration: onContentInserted == null
           ? null
           : ContentInsertionConfiguration(
-              allowedMimeTypes: const [
-                'image/png',
-                'image/jpeg',
-                'image/gif',
-                'image/webp',
-              ],
+              allowedMimeTypes: kComposerInsertableImageMimeTypes,
               onContentInserted: onContentInserted,
             ),
       textInputAction: TextInputAction.newline,

@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/data/desktop_projection_rooms.dart';
 import 'package:hermes_android/core/bots/ui/room/desktop_projection_room_screen.dart';
@@ -17,6 +19,7 @@ import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/artifact_export_service.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/core/widgets/chat/chat_message_selection_area.dart';
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/core/widgets/markdown_table.dart';
@@ -265,6 +268,74 @@ Set<String> _linkTexts(WidgetTester tester) {
     });
   }
   return out;
+}
+
+final class _RecordingUploader implements RoomAttachmentUploader {
+  final List<AttachmentDraft> uploaded = [];
+  @override
+  Future<String?> upload(draft) async {
+    uploaded.add(draft);
+    return '/srv/uploads/${draft.name}';
+  }
+}
+
+final _pastedPng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+  'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+);
+
+/// Private app-support dir for the materialized draft copy.
+void _mockPathProvider() {
+  final temp = Directory.systemTemp.createTempSync('room-ime-paste-');
+  addTearDown(() {
+    if (temp.existsSync()) temp.deleteSync(recursive: true);
+  });
+  const channel = MethodChannel('plugins.flutter.io/path_provider');
+  TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(channel, (call) async => temp.path);
+  addTearDown(
+    () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null),
+  );
+}
+
+TextField _roomField(WidgetTester tester) => tester.widget<TextField>(
+  find.descendant(
+    of: find.byType(ConsoleComposer),
+    matching: find.byType(TextField),
+  ),
+);
+
+List<AttachmentCard> _roomComposerCards(WidgetTester tester) => tester
+    .widgetList<AttachmentCard>(find.byType(AttachmentCard))
+    .where((card) => card.onRemove != null)
+    .toList();
+
+/// Lets the real file I/O behind the paste finish, then paints it.
+Future<void> _settlePaste(WidgetTester tester, {bool Function()? until}) async {
+  for (var i = 0; i < 100 && !(until?.call() ?? false); i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump();
+  }
+}
+
+Future<void> _insertFromKeyboard(
+  WidgetTester tester, {
+  String mimeType = 'image/png',
+  Uint8List? data,
+}) async {
+  final config = _roomField(tester).contentInsertionConfiguration;
+  expect(config, isNotNull, reason: 'room composer must accept IME content');
+  config!.onContentInserted(
+    KeyboardInsertedContent(
+      mimeType: mimeType,
+      uri: 'content://keyboard/pasted',
+      data: data ?? _pastedPng,
+    ),
+  );
+  await _settlePaste(tester);
 }
 
 void main() {
@@ -1431,5 +1502,103 @@ void main() {
         expect(find.textContaining('?'), findsNothing);
       });
     }
+  });
+
+  group('keyboard paste into the room composer', () {
+    testWidgets('a pasted image becomes a chip and is uploaded on send', (
+      tester,
+    ) async {
+      _mockPathProvider();
+      final uploader = _RecordingUploader();
+      final gateway = await _pump(tester, events: const [], uploader: uploader);
+      await _insertFromKeyboard(tester);
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+
+      final cards = _roomComposerCards(tester);
+      expect(cards, hasLength(1));
+      expect(cards.single.name, 'pasted-image.png');
+
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(ConsoleComposer),
+          matching: find.byType(TextField),
+        ),
+        'look at this chart',
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('composer-primary-action-switcher')),
+      );
+      await _settlePaste(tester, until: () => uploader.uploaded.isNotEmpty);
+      await tester.pumpAndSettle();
+
+      expect(uploader.uploaded, hasLength(1));
+      expect(uploader.uploaded.single.type, AttachmentType.image);
+      expect(uploader.uploaded.single.mimeType, 'image/png');
+      expect(uploader.uploaded.single.sizeBytes, _pastedPng.length);
+      final sent = gateway.calls.where((c) => c.$1 == 'send').single.$2;
+      expect(sent['text'], contains('look at this chart'));
+      expect(sent['text'], contains('/srv/uploads/pasted-image.png'));
+      expect(_roomComposerCards(tester), isEmpty);
+    });
+
+    testWidgets('a non-image payload is refused with the attach notice', (
+      tester,
+    ) async {
+      _mockPathProvider();
+      final uploader = _RecordingUploader();
+      await _pump(tester, events: const [], uploader: uploader);
+      await _insertFromKeyboard(
+        tester,
+        mimeType: 'application/x-msdownload',
+        data: Uint8List.fromList([0x4d, 0x5a, 0x90, 0x00]),
+      );
+      expect(_roomComposerCards(tester), isEmpty);
+      expect(
+        find.text(
+          "One of the attachments couldn't be prepared. Select it again.",
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('cross-gateway rooms explain why the paste was not attached', (
+      tester,
+    ) async {
+      _mockPathProvider();
+      final uploader = _RecordingUploader();
+      await _pump(
+        tester,
+        events: const [],
+        uploader: uploader,
+        room: buildRoom(
+          members: [
+            memberJson('m-builder', 'builder'),
+            memberJson('m-peer', 'peerbot', peer: 'peer-1'),
+          ],
+        ),
+      );
+      await _insertFromKeyboard(tester);
+      expect(_roomComposerCards(tester), isEmpty);
+      expect(uploader.uploaded, isEmpty);
+      // The persistent reason under the composer plus the paste notice.
+      expect(find.textContaining('another connection'), findsNWidgets(2));
+    });
+
+    testWidgets('without an uploader the paste says uploads are unavailable', (
+      tester,
+    ) async {
+      _mockPathProvider();
+      await _pump(tester, events: const []);
+      await _insertFromKeyboard(tester);
+      expect(_roomComposerCards(tester), isEmpty);
+      expect(
+        find.text('This connection cannot upload files to the server.'),
+        findsNWidgets(2),
+      );
+    });
   });
 }
