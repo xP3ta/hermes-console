@@ -15,6 +15,7 @@ import '../models/desktop_active_session.dart';
 import '../models/desktop_control_center.dart';
 import '../models/session_live_status.dart';
 import '../navigation/chat_route.dart';
+import '../navigation/enclosing_route.dart';
 import '../services/active_profile_scope.dart';
 import '../services/active_chat_service.dart';
 import '../services/connection_manager.dart';
@@ -368,7 +369,13 @@ class _SessionListScreenState extends State<SessionListScreen>
     // return instead of rebuilding the hidden ListView each time.
     _activeIdsGate.bind(context, _activeChats?.activeIds);
     _liveStatusGate.bind(context, _activeChats?.liveStatusRevision);
-    final route = ModalRoute.of(context);
+  }
+
+  /// The route arrives through [EnclosingRoute] instead of
+  /// `ModalRoute.of(context)` here: that call made the whole list depend on
+  /// the route status and rebuild in the first frame of every push over it
+  /// and every pop back to it.
+  void _attachRoute(ModalRoute<Object?>? route) {
     if (route is PageRoute<dynamic> && !identical(route, _route)) {
       hermesRouteObserver.unsubscribe(this);
       _route = route;
@@ -385,7 +392,10 @@ class _SessionListScreenState extends State<SessionListScreen>
   @override
   void didPopNext() {
     unawaited(DrawerGestureExclusion.setEnabled(true));
-    unawaited(_fetchSessions(showLoader: false));
+    // After the back transition, not inside it (see [runWhenUncovered]).
+    runWhenUncovered(context, _route, () {
+      if (mounted) unawaited(_fetchSessions(showLoader: false));
+    });
   }
 
   @override
@@ -2548,7 +2558,10 @@ class _SessionListScreenState extends State<SessionListScreen>
   // ── Build ────────────────────────────────────────────────────────────────
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      EnclosingRoute(onRoute: _attachRoute, child: _buildScreen(context));
+
+  Widget _buildScreen(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
     return Scaffold(
