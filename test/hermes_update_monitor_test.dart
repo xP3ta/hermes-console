@@ -254,6 +254,74 @@ void main() {
       expect(status, 3);
     });
 
+    test('receipt success with the gateway down ends partial within the '
+        '2 min gateway check, never an endless spinner', () async {
+      final t0 = DateTime(2026, 9, 25, 10);
+      var now = t0;
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      var actionPolls = 0;
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async {
+            actionPolls++;
+            return {'running': false, 'receipt': ourReceipt('success')};
+          },
+          serverStatus: () async {
+            now = now.add(const Duration(seconds: 20));
+            return {'gateway_running': false};
+          },
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.partial);
+      expect(result.issue, HermesUpdateIssue.gatewayNotConfirmed);
+      expect(actionPolls, 1);
+      expect(
+        now.difference(t0),
+        lessThanOrEqualTo(
+          hermesUpdateGatewayConfirmWindow + const Duration(seconds: 20),
+        ),
+      );
+      expect(hermesUpdateGatewayConfirmWindow, const Duration(minutes: 2));
+      expect(HermesUpdateGuard.isActive('a'), isFalse);
+    });
+
+    test('own marker with the gateway down never polls the gateway past '
+        'its window', () async {
+      final t0 = DateTime(2026, 9, 25, 10);
+      var now = t0;
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async => {
+            'running': false,
+            'action_id': ownId,
+            'exit_code': 0,
+          },
+          serverStatus: () async {
+            now = now.add(const Duration(seconds: 30));
+            return null;
+          },
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.partial);
+      expect(result.issue, HermesUpdateIssue.gatewayNotConfirmed);
+      expect(now.difference(t0), lessThan(const Duration(minutes: 3)));
+    });
+
     test('el action_id fijado tras arrancar el seguimiento se usa', () async {
       final session = HermesUpdateSession.reserve(
         'a',

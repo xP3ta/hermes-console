@@ -22,6 +22,11 @@ import 'package:flutter/foundation.dart';
 /// "no verificado", nunca éxito.
 const Duration hermesUpdateMaxDuration = Duration(minutes: 45);
 
+/// Once the run has a result, how long Console waits for the gateway to
+/// report running again. Past it the result is "code updated, gateway not
+/// confirmed" ([HermesUpdateIssue.gatewayNotConfirmed]), never a spinner.
+const Duration hermesUpdateGatewayConfirmWindow = Duration(minutes: 2);
+
 /// Margen para relojes de móvil y servidor desfasados al decidir si un
 /// recibo pertenece a esta ejecución.
 const Duration _clockSkew = Duration(minutes: 2);
@@ -219,13 +224,26 @@ enum HermesUpdateOutcome {
   failed,
 }
 
+/// Why a result is not a plain success or failure.
+enum HermesUpdateIssue {
+  /// The update finished but the gateway was not seen running again within
+  /// [hermesUpdateGatewayConfirmWindow].
+  gatewayNotConfirmed,
+}
+
 @immutable
 class HermesUpdateResult {
   final HermesUpdateOutcome outcome;
   final String? detail;
   final String? version;
+  final HermesUpdateIssue? issue;
 
-  const HermesUpdateResult(this.outcome, {this.detail, this.version});
+  const HermesUpdateResult(
+    this.outcome, {
+    this.detail,
+    this.version,
+    this.issue,
+  });
 }
 
 /// El servidor no tiene `/api/actions/hermes-update/status` (404).
@@ -333,6 +351,7 @@ class HermesUpdateSession {
     Duration pollInterval = const Duration(seconds: 4),
     Duration maxDuration = hermesUpdateMaxDuration,
     Duration legacyGrace = const Duration(seconds: 45),
+    Duration gatewayConfirmWindow = hermesUpdateGatewayConfirmWindow,
     DateTime Function()? clock,
   }) {
     if (!_tracking && !isFinished) {
@@ -342,6 +361,7 @@ class HermesUpdateSession {
         pollInterval: pollInterval,
         maxDuration: maxDuration,
         legacyGrace: legacyGrace,
+        gatewayConfirmWindow: gatewayConfirmWindow,
         clock: clock ?? DateTime.now,
       ).then(
         _finish,
@@ -358,6 +378,7 @@ class HermesUpdateSession {
     required Duration pollInterval,
     required Duration maxDuration,
     required Duration legacyGrace,
+    required Duration gatewayConfirmWindow,
     required DateTime Function() clock,
   }) async {
     final deadline = clock().add(maxDuration);
@@ -369,8 +390,6 @@ class HermesUpdateSession {
     while (clock().isBefore(deadline)) {
       await Future<void>.delayed(pollInterval);
 
-      HermesUpdateOutcome? receiptOutcome;
-      String? detail;
       if (versionCheckSince == null) {
         HermesUpdateActionObservation? obs;
         try {
@@ -385,7 +404,6 @@ class HermesUpdateSession {
         } catch (_) {
           // Dashboard reiniciándose, 401 por sesión rotada, 502…: normal.
         }
-        detail = obs?.detail;
         switch (obs?.phase) {
           case HermesUpdateActionPhase.failed:
             return HermesUpdateResult(
@@ -393,9 +411,23 @@ class HermesUpdateSession {
               detail: obs?.detail,
             );
           case HermesUpdateActionPhase.succeeded:
-            receiptOutcome = HermesUpdateOutcome.confirmed;
+            return _confirmGateway(
+              probes,
+              HermesUpdateOutcome.confirmed,
+              detail: obs?.detail,
+              pollInterval: pollInterval,
+              window: gatewayConfirmWindow,
+              clock: clock,
+            );
           case HermesUpdateActionPhase.partial:
-            receiptOutcome = HermesUpdateOutcome.partial;
+            return _confirmGateway(
+              probes,
+              HermesUpdateOutcome.partial,
+              detail: obs?.detail,
+              pollInterval: pollInterval,
+              window: gatewayConfirmWindow,
+              clock: clock,
+            );
           case HermesUpdateActionPhase.restartingServices:
             step.value = HermesUpdateSessionStep.restarting;
           case HermesUpdateActionPhase.running:
@@ -404,28 +436,18 @@ class HermesUpdateSession {
           case null:
             break;
         }
-        if (receiptOutcome == null && versionCheckSince == null) continue;
+        if (versionCheckSince == null) continue;
       }
 
-      // Verificación final: gateway de vuelta.
+      // Legacy server: no receipt, prove the new version once the gateway
+      // is back.
       step.value = HermesUpdateSessionStep.verifying;
-      final status = await probes.serverStatus();
-      final gatewayRunning =
-          status != null &&
-          (status['gateway_running'] == true ||
-              status['gateway_state'] == 'running');
-      if (!gatewayRunning) {
+      final status = await _serverStatus(probes);
+      if (!_gatewayRunning(status)) {
         step.value = HermesUpdateSessionStep.restarting;
         continue;
       }
-      final version = (status['version'] ?? '').toString().trim();
-      if (receiptOutcome != null) {
-        return HermesUpdateResult(
-          receiptOutcome,
-          detail: detail,
-          version: version,
-        );
-      }
+      final version = (status!['version'] ?? '').toString().trim();
       final stillAvailable = await probes.updateStillAvailable();
       final versionChanged =
           previousVersion.isNotEmpty &&
@@ -447,6 +469,54 @@ class HermesUpdateSession {
     }
     return const HermesUpdateResult(HermesUpdateOutcome.unverified);
   }
+
+  /// The run is over ([outcome] comes from its receipt or marker); this only
+  /// waits, for at most [window], for the gateway to report running again.
+  /// If it does not, the code is updated but the gateway is unconfirmed:
+  /// a partial result the user can re-check, never an endless wait.
+  Future<HermesUpdateResult> _confirmGateway(
+    HermesUpdateProbes probes,
+    HermesUpdateOutcome outcome, {
+    required String? detail,
+    required Duration pollInterval,
+    required Duration window,
+    required DateTime Function() clock,
+  }) async {
+    step.value = HermesUpdateSessionStep.verifying;
+    final until = clock().add(window);
+    while (true) {
+      final status = await _serverStatus(probes);
+      if (_gatewayRunning(status)) {
+        return HermesUpdateResult(
+          outcome,
+          detail: detail,
+          version: (status!['version'] ?? '').toString().trim(),
+        );
+      }
+      if (!clock().isBefore(until)) break;
+      await Future<void>.delayed(pollInterval);
+    }
+    return HermesUpdateResult(
+      HermesUpdateOutcome.partial,
+      detail: detail,
+      issue: HermesUpdateIssue.gatewayNotConfirmed,
+    );
+  }
+
+  static Future<Map<String, dynamic>?> _serverStatus(
+    HermesUpdateProbes probes,
+  ) async {
+    try {
+      return await probes.serverStatus();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static bool _gatewayRunning(Map<String, dynamic>? status) =>
+      status != null &&
+      (status['gateway_running'] == true ||
+          status['gateway_state'] == 'running');
 
   @visibleForTesting
   static void debugReset() => _sessions.clear();
