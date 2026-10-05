@@ -10,6 +10,7 @@ import '../design/hermes_design.dart';
 import '../theme/app_theme.dart';
 import 'capabilities_repository.dart';
 import 'capability_models.dart';
+import 'mcp_runtime_status.dart';
 
 IconData capabilityKindIcon(CapabilityKind kind) => switch (kind) {
   CapabilityKind.skill => Icons.auto_awesome_outlined,
@@ -64,6 +65,38 @@ String capabilityTrustBody(Strings s, CapabilityTrust trust) => switch (trust) {
   }
   return (label: s.cphStatusInstalled, tone: HermesStatusTone.ok);
 }
+
+/// Live MCP state: connected is ok, failed is an error, everything else is
+/// neutral (connecting reads as busy through its label).
+({String label, HermesStatusTone tone}) mcpRuntimeStatusLabel(
+  Strings s,
+  McpRuntimeStatus status,
+) => switch (status) {
+  McpRuntimeStatus.connected => (
+    label: s.cphMcpStatusConnected,
+    tone: HermesStatusTone.ok,
+  ),
+  McpRuntimeStatus.failed => (
+    label: s.cphMcpStatusFailed,
+    tone: HermesStatusTone.error,
+  ),
+  McpRuntimeStatus.connecting => (
+    label: s.cphMcpStatusConnecting,
+    tone: HermesStatusTone.neutral,
+  ),
+  McpRuntimeStatus.disabled => (
+    label: s.cphStatusDisabled,
+    tone: HermesStatusTone.neutral,
+  ),
+  McpRuntimeStatus.lazy => (
+    label: s.cphMcpStatusLazy,
+    tone: HermesStatusTone.neutral,
+  ),
+  McpRuntimeStatus.configured => (
+    label: s.cphMcpStatusConfigured,
+    tone: HermesStatusTone.neutral,
+  ),
+};
 
 /// Detail status line (always present).
 ({String label, HermesStatusTone tone}) capabilityDetailStatus(

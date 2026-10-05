@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/capabilities/capabilities_repository.dart';
 import 'package:hermes_android/core/capabilities/capabilities_screen.dart';
 import 'package:hermes_android/core/capabilities/capability_detail_screen.dart';
+import 'package:hermes_android/core/capabilities/connector_detail_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart'
     show DashboardHttpException;
 import 'package:hermes_android/core/services/tui_gateway_client.dart'
@@ -17,12 +18,13 @@ Future<void> _pumpHub(
   bool readOnly = false,
   WidgetBuilder? advanced,
   WidgetBuilder? classic,
+  CapabilitiesRpc? rpc,
 }) async {
   await setPhone(tester);
   await tester.pumpWidget(
     spanishApp(
       CapabilitiesScreen(
-        repository: repoOf(rest),
+        repository: repoOf(rest, rpc: rpc),
         readOnly: readOnly,
         advancedBuilder: advanced,
         classicSkillsBuilder: classic,
@@ -130,6 +132,136 @@ void main() {
     );
     // The filter only applies to catalog/installed.
     expect(find.byTooltip('Filtrar'), findsNothing);
+  });
+
+  testWidgets('MCP rows show the runtime status and tool count, asked once', (
+    tester,
+  ) async {
+    final methods = <String>[];
+    await _pumpHub(
+      tester,
+      populatedServer(),
+      rpc: (method, params) async {
+        methods.add(method);
+        if (method == 'mcp.servers.status') {
+          return {
+            'servers': [
+              {
+                'name': 'docs',
+                'transport': 'http',
+                'tools': 4,
+                'connected': true,
+                'disabled': false,
+                'status': 'connected',
+                'source': 'config',
+              },
+            ],
+            'checked_at': 1,
+          };
+        }
+        throw TuiGatewayRpcError(method, 'nope', code: -32601);
+      },
+    );
+    await tester.tap(find.byKey(const ValueKey('cph-seg-connectors')));
+    await tester.pumpAndSettle();
+
+    final row = find.byKey(const ValueKey('cph-row-mcp:server:docs'));
+    expect(
+      find.descendant(of: row, matching: find.text('Conectado')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: row, matching: find.textContaining('4 herramientas')),
+      findsOneWidget,
+    );
+    expect(find.text('Activa'), findsNothing);
+    expect(methods.where((m) => m == 'mcp.servers.status'), hasLength(1));
+  });
+
+  testWidgets('a server without mcp.servers.status keeps the static row', (
+    tester,
+  ) async {
+    await _pumpHub(
+      tester,
+      populatedServer(),
+      rpc: (method, params) async =>
+          throw TuiGatewayRpcError(method, 'nope', code: -32601),
+    );
+    await tester.tap(find.byKey(const ValueKey('cph-seg-connectors')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Activa'), findsOneWidget);
+    expect(find.textContaining('herramientas'), findsNothing);
+  });
+
+  group('hosted connector rows', () {
+    Future<Map<String, dynamic>> hosted(
+      String method,
+      Map<String, dynamic> params, {
+      required bool policy,
+    }) async {
+      switch (method) {
+        case 'connectors.list':
+          return {
+            'available': true,
+            'connectors': [
+              {'connector': 'github', 'connected': true, 'enabled': true},
+            ],
+          };
+        case 'connectors.catalog':
+          return {
+            'connectors': [
+              {'slug': 'github', 'name': 'GitHub', 'description': 'Code'},
+            ],
+          };
+        case 'connectors.accounts':
+          return {'accounts': <Object>[]};
+        case 'connectors.policy.get':
+          if (policy) {
+            return {
+              'layers': [
+                {
+                  'kind': 'member',
+                  'revision': 'R1',
+                  'body': {'mode': 'unrestricted'},
+                },
+              ],
+            };
+          }
+      }
+      throw TuiGatewayRpcError(method, 'nope', code: -32601);
+    }
+
+    testWidgets('open the detail when the policy is readable', (tester) async {
+      await _pumpHub(
+        tester,
+        populatedServer(),
+        rpc: (m, p) => hosted(m, p, policy: true),
+      );
+      await tester.tap(find.byKey(const ValueKey('cph-seg-connectors')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('cph-account-github')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ConnectorDetailScreen), findsOneWidget);
+    });
+
+    testWidgets('stay read-only rows without connectors.policy.get', (
+      tester,
+    ) async {
+      await _pumpHub(
+        tester,
+        populatedServer(),
+        rpc: (m, p) => hosted(m, p, policy: false),
+      );
+      await tester.tap(find.byKey(const ValueKey('cph-seg-connectors')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('cph-account-github')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('cph-account-github')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ConnectorDetailScreen), findsNothing);
+    });
   });
 
   testWidgets('empty server: honest empty installed state', (tester) async {

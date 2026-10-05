@@ -164,12 +164,6 @@ Widget spanishApp(Widget home) => MaterialApp(
   home: home,
 );
 
-CapabilitiesRepository repoOf(ScriptedRest rest) => CapabilitiesRepository(
-  rest: rest,
-  sleep: (_) async {},
-  actionPollInterval: Duration.zero,
-);
-
 /// A Dashboard whose launches are held until [releasePost]; once launched the
 /// action reads as running for a few reads, then finishes.
 final class RacingOpsRest implements CapabilitiesRest {
@@ -235,3 +229,10 @@ final class RacingOpsRest implements CapabilitiesRest {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
+CapabilitiesRepository repoOf(ScriptedRest rest, {CapabilitiesRpc? rpc}) =>
+    CapabilitiesRepository(
+      rest: rest,
+      rpc: rpc,
+      sleep: (_) async {},
+      actionPollInterval: Duration.zero,
+    );

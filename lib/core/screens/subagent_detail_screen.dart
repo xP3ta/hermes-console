@@ -26,6 +26,8 @@ import '../models/subagent_activity.dart';
 import '../services/active_chat_service.dart'
     show ProfileTranscriptAccessRequired;
 import '../services/subagent_live_watch.dart';
+import '../services/delegation_control.dart';
+import '../services/tui_gateway_client.dart' show TuiGatewayRpcError;
 import '../theme/app_theme.dart';
 import '../utils/assistant_content.dart' show finalizedPublicAssistantText;
 import '../widgets/activity_pill.dart' show formatTurnElapsed;
@@ -222,6 +224,10 @@ class SubagentDetailScreen extends StatefulWidget {
   /// Live watch of the child's mirrored turn. While it is up the polled tail
   /// stays off; it is the fallback when the watch cannot be opened.
   final SubagentLiveWatchOpener? openLiveWatch;
+
+  /// Server-wide "pause new subagents" switch, offered in the overflow menu.
+  /// Null hides the menu.
+  final HermesDelegationGateway? delegationControl;
   final DateTime Function()? clock;
 
   /// Route observer used to know when this page is covered (tests inject one).
@@ -248,6 +254,7 @@ class SubagentDetailScreen extends StatefulWidget {
     this.acquirePresentation,
     this.scheduleTailPoll,
     this.openLiveWatch,
+    this.delegationControl,
     this.clock,
     this.routeObserver,
     this.hideGoal = false,
@@ -293,6 +300,9 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
   bool _steerUnsupported = false;
   bool _stopAwaiting = false;
   bool _technicalOpen = false;
+  final GlobalKey _moreKey = GlobalKey(debugLabel: 'subagent-detail-more');
+  bool _delegationUnsupported = false;
+  bool _delegationBusy = false;
   Timer? _clockTimer;
 
   @override
@@ -646,6 +656,58 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
 
   // ── Build ────────────────────────────────────────────────────────────────
 
+  /// One `delegation.status` read per menu open; the item states its scope
+  /// (the whole server; running subagents continue).
+  Future<void> _openDelegationMenu() async {
+    final control = widget.delegationControl;
+    if (control == null || _delegationBusy) return;
+    final s = Strings.of(context);
+    final notices = HermesNotice.of(context);
+    setState(() => _delegationBusy = true);
+    try {
+      final paused = await control.delegationPaused();
+      if (!mounted) return;
+      final chosen = await showHermesMenu<bool>(
+        context: context,
+        anchorKey: _moreKey,
+        title: s.subagentUiPauseScope,
+        actions: [
+          HermesAction(
+            key: const ValueKey('subagent-detail-pause'),
+            value: !paused,
+            label: paused ? s.subagentUiResumeNew : s.subagentUiPauseNew,
+            icon: paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+          ),
+        ],
+      );
+      if (chosen == null || !mounted) return;
+      final now = await control.setDelegationPaused(chosen);
+      if (!mounted) return;
+      notices.show(
+        message: now ? s.subagentUiPausedNotice : s.subagentUiResumedNotice,
+        kind: HermesNoticeKind.success,
+      );
+    } on TuiGatewayRpcError catch (error) {
+      if (!mounted) return;
+      if (error.code == -32601) {
+        setState(() => _delegationUnsupported = true);
+      } else {
+        notices.show(
+          message: s.subagentUiPauseFailed,
+          kind: HermesNoticeKind.error,
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      notices.show(
+        message: s.subagentUiPauseFailed,
+        kind: HermesNoticeKind.error,
+      );
+    } finally {
+      if (mounted) setState(() => _delegationBusy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
@@ -714,6 +776,15 @@ class _SubagentDetailScreenState extends State<SubagentDetailScreen>
         meta: elapsed == null ? null : formatTurnElapsed(elapsed),
       ),
       primaryAction: primary,
+      actions: [
+        if (widget.delegationControl != null && !_delegationUnsupported)
+          IconButton(
+            key: _moreKey,
+            tooltip: s.cphMore,
+            icon: const Icon(Icons.more_vert_rounded),
+            onPressed: _delegationBusy ? null : _openDelegationMenu,
+          ),
+      ],
       sections: [
         if (live && widget.onTail != null) ...[
           HermesSectionHeader(

@@ -6231,6 +6231,29 @@
   "memoryConfiguredCount": "{configured} / {total} configured",
   "memoryFilterHint": "Filter providers and files…",
   "memoryNoMatches": "No matches for \"{filter}\"",
+  "memStatusReady": "Ready",
+  "memStatusNeedsConfig": "Needs setup",
+  "memStatusUnavailable": "Unavailable",
+  "memStatusMissing": "Not installed",
+  "memResetFile": "Reset",
+  "memResetConfirmTitle": "Delete {file}?",
+  "@memResetConfirmTitle": {
+    "placeholders": {
+      "file": {
+        "type": "String"
+      }
+    }
+  },
+  "memResetConfirmBody": "This cannot be undone.",
+  "memResetDone": "Deleted: {files}",
+  "@memResetDone": {
+    "placeholders": {
+      "files": {
+        "type": "String"
+      }
+    }
+  },
+  "memResetFailed": "The memory could not be reset.",
   "memoryProviderNotConfigured": "Not configured",
   "bridgeLogTitle": "Bridge log",
   "bridgeViewLog": "View bridge log",
@@ -7440,6 +7463,54 @@
   },
   "cphFilterClear": "Clear",
   "cphStatusUpdateShort": "Update",
+  "cphMcpStatusConnected": "Connected",
+  "cphMcpStatusFailed": "Failed",
+  "cphMcpStatusConnecting": "Connecting",
+  "cphMcpStatusLazy": "On demand",
+  "cphMcpStatusConfigured": "Configured",
+  "cphMcpToolCount": "{count, plural, =1{1 tool} other{{count} tools}}",
+  "@cphMcpToolCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cphRowStatus": "Status",
+  "cphLogsTitle": "Logs",
+  "cphLogsSourceServer": "Server",
+  "cphLogsSourceAgent": "Agent",
+  "cphLogsEmpty": "No logs for this server.",
+  "cphLogsRefresh": "Refresh logs",
+  "cphConnectorEnabled": "Enabled",
+  "cphConnectorLockedByOrg": "Locked by your organization.",
+  "cphConnectorPolicyManaged": "Your organization manages these rules; they are view-only here.",
+  "cphConnectorPolicyForbidden": "You are not allowed to change these rules.",
+  "cphConnectorToolsFailed": "The tools could not be loaded.",
+  "cphToolFacetRead": "Read",
+  "cphToolFacetWrite": "Write",
+  "cphToolFacetDestructive": "Destructive",
+  "cphToolFacetUnclassified": "Unclassified",
+  "cphToolLockedByOrg": "Locked by your organization",
+  "cphConnectorSaved": "Changes saved",
+  "cphConnectorConflictTitle": "The rules changed",
+  "cphConnectorConflictBody": "They were modified elsewhere while you were editing. Your changes are still here.",
+  "cphConnectorConflictChanged": "Changed elsewhere: {names}",
+  "@cphConnectorConflictChanged": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "cphConnectorKeepMine": "Keep mine",
+  "cphConnectorDiscard": "Discard",
+  "subagentUiPauseNew": "Pause new subagents",
+  "subagentUiResumeNew": "Resume new subagents",
+  "subagentUiPauseScope": "Applies to the whole server. Running subagents continue.",
+  "subagentUiPausedNotice": "New subagents paused",
+  "subagentUiResumedNotice": "New subagents resumed",
+  "subagentUiPauseFailed": "The pause could not be changed.",
   "cphRowAuth": "Authentication",
   "v1215VoiceServerError": "Hermes server replied: {detail}",
   "@v1215VoiceServerError": {
@@ -8150,5 +8221,16 @@
         "type": "String"
       }
     }
-  }
+  },
+  "cxnTitle": "Connect your accounts",
+  "cxnOpen": "Open link",
+  "cxnSkip": "Not now",
+  "cxnContinue": "Continue",
+  "cxnStatePending": "Waiting",
+  "cxnStateInitiated": "In progress",
+  "cxnStateConnected": "Connected",
+  "cxnStateSkipped": "Skipped",
+  "cxnStateFailed": "Failed",
+  "cxnStateExpired": "Expired",
+  "cxnStateNotConnected": "Not connected"
 }

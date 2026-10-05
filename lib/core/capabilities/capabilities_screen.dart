@@ -21,6 +21,8 @@ import 'capabilities_repository.dart';
 import 'capability_detail_screen.dart';
 import 'capability_models.dart';
 import 'capability_ui.dart';
+import 'connector_detail_screen.dart';
+import 'mcp_runtime_status.dart';
 
 enum CapabilitiesSegment { catalog, installed, connectors }
 
@@ -31,7 +33,13 @@ final class CapabilitiesSnapshot {
   final List<CapabilityItem> catalog;
   final List<CapabilityItem> installed;
   final List<CapabilityItem> mcpServers;
+
+  /// Live MCP state by server name; empty when the server lacks it.
+  final Map<String, McpRuntimeRow> mcpRuntime;
   final HostedConnectorsSnapshot? connectors;
+
+  /// `connectors.policy.get` answered: hosted rows may open their detail.
+  final bool connectorPolicyReadable;
   final bool connectorsFailed;
   final bool partial;
   final bool skillsUpdatable;
@@ -40,7 +48,9 @@ final class CapabilitiesSnapshot {
     this.catalog = const [],
     this.installed = const [],
     this.mcpServers = const [],
+    this.mcpRuntime = const {},
     this.connectors,
+    this.connectorPolicyReadable = false,
     this.connectorsFailed = false,
     this.partial = false,
     this.skillsUpdatable = false,
@@ -80,10 +90,26 @@ final class CapabilitiesSnapshot {
     // On a named profile the REST flags describe the launch profile, so a
     // missing list means the installed state is unknown, not "as REST says".
     final pluginStateUnknown = pluginRows == null && !repo.usesDefaultProfile;
+    // Optional enrichment, asked once per load: any failure keeps the
+    // static rows and is not counted as a failed source.
+    var mcpRuntime = const <String, McpRuntimeRow>{};
+    if (lists[5].isNotEmpty) {
+      try {
+        mcpRuntime = await repo.mcpRuntimeStatus();
+      } catch (_) {}
+    }
     HostedConnectorsSnapshot? connectors;
     var connectorsFailed = false;
+    var connectorPolicyReadable = false;
     try {
       connectors = await repo.hostedConnectors();
+      if (connectors.availability == ConnectorAvailability.available &&
+          connectors.connectors.isNotEmpty) {
+        try {
+          await repo.connectorPolicy();
+          connectorPolicyReadable = true;
+        } catch (_) {}
+      }
     } catch (_) {
       connectorsFailed = true;
     }
@@ -119,7 +145,9 @@ final class CapabilitiesSnapshot {
       catalog: catalog,
       installed: installed,
       mcpServers: lists[5],
+      mcpRuntime: mcpRuntime,
       connectors: connectors,
+      connectorPolicyReadable: connectorPolicyReadable,
       connectorsFailed: connectorsFailed,
       partial: real.isNotEmpty || pluginStateUnknown,
       skillsUpdatable:
@@ -567,6 +595,21 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
     if (changed && mounted) unawaited(_load());
   }
 
+  Future<void> _openConnector(HostedConnector connector) async {
+    var changed = false;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ConnectorDetailScreen(
+          connector: connector,
+          repository: _repo,
+          readOnly: widget.readOnly,
+          onChanged: () => changed = true,
+        ),
+      ),
+    );
+    if (changed && mounted) unawaited(_load());
+  }
+
   // ── Building ────────────────────────────────────────────────────────────
 
   Widget _row(CapabilityItem item) {
@@ -729,42 +772,24 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         HermesListGroup(
           children: [
             for (final server in servers)
-              HermesListRow(
-                key: ValueKey('cph-row-${server.id}'),
-                icon: capabilityKindIcon(server.kind),
-                title: server.name,
-                subtitle: server.url.isNotEmpty
-                    ? server.url
-                    : server.command.isNotEmpty
-                    ? server.command
-                    : null,
-                onTap: () => _openDetail(server),
-                trailing: Padding(
-                  padding: const EdgeInsets.only(left: 10),
-                  child: HermesStatusText(
-                    label: server.enabled == false
-                        ? s.cphStatusDisabled
-                        : s.cphStatusEnabled,
-                    tone: server.enabled == false
-                        ? HermesStatusTone.neutral
-                        : HermesStatusTone.ok,
-                    maxLines: 1,
-                  ),
-                ),
-              ),
+              _mcpRow(server, snapshot.mcpRuntime[server.name]),
           ],
         ),
       HermesSectionHeader(s.cphConnectorsAccounts),
       if (accounts.isNotEmpty)
         HermesListGroup(
           children: [
-            // Read-only rows: connecting accounts is not wired in Console
-            // yet, so the rows carry state but no tap affordance.
+            // Rows open the policy detail only when the server answers
+            // `connectors.policy.get`; connecting accounts is not wired in
+            // Console yet, so otherwise they carry state without a tap.
             for (final connector in accounts)
               HermesListRow(
                 key: ValueKey('cph-account-${connector.slug}'),
                 icon: Icons.account_circle_outlined,
                 title: connector.name,
+                onTap: snapshot.connectorPolicyReadable
+                    ? () => _openConnector(connector)
+                    : null,
                 subtitle: connector.statusReason.isNotEmpty
                     ? connector.statusReason
                     : connector.description,
@@ -791,6 +816,48 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         ),
       ),
     ];
+  }
+
+  Widget _mcpRow(CapabilityItem server, McpRuntimeRow? runtime) {
+    final s = Strings.of(context);
+    final target = server.url.isNotEmpty
+        ? server.url
+        : server.command.isNotEmpty
+        ? server.command
+        : null;
+    final live = runtime == null
+        ? null
+        : mcpRuntimeStatusLabel(s, runtime.status);
+    final tools = runtime == null || runtime.tools == 0
+        ? null
+        : s.cphMcpToolCount(runtime.tools);
+    final status =
+        live ??
+        (
+          label: server.enabled == false
+              ? s.cphStatusDisabled
+              : s.cphStatusEnabled,
+          tone: server.enabled == false
+              ? HermesStatusTone.neutral
+              : HermesStatusTone.ok,
+        );
+    return HermesListRow(
+      key: ValueKey('cph-row-${server.id}'),
+      icon: capabilityKindIcon(server.kind),
+      title: server.name,
+      subtitle: [?target, ?tools].isEmpty
+          ? null
+          : [?target, ?tools].join(' · '),
+      onTap: () => _openDetail(server),
+      trailing: Padding(
+        padding: const EdgeInsets.only(left: 10),
+        child: HermesStatusText(
+          label: status.label,
+          tone: status.tone,
+          maxLines: 1,
+        ),
+      ),
+    );
   }
 
   String _errorBody(Strings s, Object error) =>

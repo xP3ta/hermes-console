@@ -16,6 +16,8 @@ import 'capabilities_repository.dart';
 import 'capability_env_sheet.dart';
 import 'capability_models.dart';
 import 'capability_ui.dart';
+import 'mcp_logs_screen.dart';
+import 'mcp_runtime_status.dart';
 
 enum CapabilityAction { install, update, enable, disable, remove, test, docs }
 
@@ -96,6 +98,7 @@ class CapabilityDetailScreen extends StatefulWidget {
 class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
     with WidgetsBindingObserver {
   late CapabilityItem _item = widget.item;
+  McpRuntimeRow? _runtime;
   final GlobalKey _moreKey = GlobalKey(debugLabel: 'cph-detail-more');
   final CapabilityActionToken _token = CapabilityActionToken();
   bool _busy = false;
@@ -106,6 +109,9 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (_item.kind == CapabilityKind.mcp && _item.installed) {
+      unawaited(_loadRuntime());
+    }
   }
 
   @override
@@ -129,6 +135,17 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
       case AppLifecycleState.inactive:
         break;
     }
+  }
+
+  /// One cached-state read when an MCP server opens; no refresh timer, and
+  /// any failure just leaves the static status.
+  Future<void> _loadRuntime() async {
+    try {
+      final all = await _repo.mcpRuntimeStatus();
+      if (!mounted) return;
+      final row = all[_item.name];
+      if (row != null) setState(() => _runtime = row);
+    } catch (_) {}
   }
 
   String _label(Strings s, CapabilityAction action) => switch (action) {
@@ -574,6 +591,20 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
     }
   }
 
+  Future<void> _openLogs() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => McpLogsScreen(
+          repository: _repo,
+          server: _item.name,
+          stdio: _item.transport == 'stdio',
+        ),
+      ),
+    );
+    // The route may have learned the server has no /api/logs.
+    if (mounted) setState(() {});
+  }
+
   Future<void> _openMore(List<CapabilityAction> secondary) async {
     final s = Strings.of(context);
     final chosen = await showHermesMenu<CapabilityAction>(
@@ -612,7 +643,10 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
       for (final action in actions)
         if (!hasPrimary || action != primary) action,
     ];
-    final status = capabilityDetailStatus(s, item);
+    final runtime = _runtime;
+    final status = runtime == null
+        ? capabilityDetailStatus(s, item)
+        : mcpRuntimeStatusLabel(s, runtime.status);
     final d = item.disclosure;
     // Catalog rows that are not installed show the whole disclosure text.
     final reading = !item.installed && item.installId.isNotEmpty;
@@ -822,6 +856,21 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
               ),
           ],
         ),
+        if (item.kind == CapabilityKind.mcp &&
+            item.installed &&
+            _repo.supports(CapabilityFeature.mcpLogs) != false) ...[
+          const SizedBox(height: HermesSpace.x4),
+          HermesListGroup(
+            children: [
+              HermesListRow(
+                key: const ValueKey('cph-logs-row'),
+                icon: Icons.article_outlined,
+                title: s.cphLogsTitle,
+                onTap: _openLogs,
+              ),
+            ],
+          ),
+        ],
         if (item.transport.isNotEmpty ||
             item.command.isNotEmpty ||
             item.url.isNotEmpty ||
@@ -832,6 +881,12 @@ class _CapabilityDetailScreenState extends State<CapabilityDetailScreen>
           HermesSectionHeader(s.cphSecTechnical),
           HermesListGroup(
             children: [
+              if (runtime != null && runtime.tools > 0)
+                HermesListRow(
+                  icon: Icons.build_outlined,
+                  title: s.cphRowTools,
+                  value: s.cphMcpToolCount(runtime.tools),
+                ),
               if (item.transport.isNotEmpty)
                 HermesListRow(
                   icon: Icons.swap_horiz_rounded,

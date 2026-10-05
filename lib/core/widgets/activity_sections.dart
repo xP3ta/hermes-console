@@ -720,6 +720,7 @@ class ActivityDoneSection extends StatelessWidget {
     this.muted = false,
     this.showTitle = true,
     this.trailingFor,
+    this.rowAttachments = const {},
     super.key,
   });
 
@@ -729,6 +730,7 @@ class ActivityDoneSection extends StatelessWidget {
   final bool dense;
   final bool muted;
   final bool showTitle;
+  final Map<String, Widget> rowAttachments;
 
   /// Optional card under a step's row (a file diff, terminal output). Only
   /// called while this section is built, i.e. while the trace is unfolded.
@@ -759,6 +761,11 @@ class ActivityDoneSection extends StatelessWidget {
             muted: muted,
           ),
           ?trailingFor?.call(step),
+          if (rowAttachments.containsKey(step.id))
+            KeyedSubtree(
+              key: ValueKey('activity-step-attachment-${step.id}'),
+              child: rowAttachments[step.id]!,
+            ),
         ],
         if (hidden > 0)
           Padding(

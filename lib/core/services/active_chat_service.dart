@@ -1,4 +1,6 @@
 import '../models/bot_mention.dart';
+import '../models/connection_request.dart';
+import 'connection_request_gateway.dart';
 import 'bot_mention_roster.dart';
 // Servicio singleton que posee el streaming SSE de los chats. Vive por encima
 // del Navigator (en HermesAppState), así que la respuesta/ejecución del agente
@@ -100,6 +102,7 @@ import 'subagent_live_watch.dart';
 import 'subagent_transcript_projection.dart';
 import 'terminal_transcript_authority.dart';
 import 'prompt_client_surface.dart';
+import 'delegation_control.dart';
 import 'tui_gateway_client.dart';
 import 'turn_outbox_store.dart';
 
@@ -6887,9 +6890,7 @@ class ActiveChat {
     final provisional = provisionalLiveStatus;
     if (provisional != null) return provisional;
     final activity = sessionActivity;
-    final steps = isStreaming
-        ? _liveTraceSteps()
-        : (label: null, detail: null);
+    final steps = isStreaming ? _liveTraceSteps() : (label: null, detail: null);
     // A live turn with no running tool reads as thinking (between steps,
     // after a resume, while reasoning): never «running tools» with none
     // listed. [sessionLiveStatusFromActivity] applies that precedence.
@@ -7464,6 +7465,14 @@ class ActiveChat {
   ) {
     final row = roster[activity.key];
     return row != null && !row.isTerminal;
+  }
+
+  /// Server-wide "pause new subagents" switch, for the subagent detail's
+  /// overflow only. Null when it cannot be changed from here.
+  HermesDelegationGateway? get delegationControl {
+    final gateway = _desktopGateway;
+    if (connection.readOnly || gateway is! HermesDelegationGateway) return null;
+    return gateway as HermesDelegationGateway;
   }
 
   bool canTailSubagent(SubagentActivity activity) =>
@@ -8463,6 +8472,125 @@ class ActiveChat {
     if (identical(_pendingApproval, value)) return;
     _pendingApproval = value;
     _approvalGeneration += 1;
+  }
+
+  ConnectionCardState _connectionCard = const ConnectionCardState();
+  bool _connectionLinkOpened = false;
+
+  /// The connector prompt waiting on this session, bound to its tool row by
+  /// `toolCallId`. Null when there is none.
+  ConnectionRequest? get connectionRequest => _connectionCard.request;
+
+  /// Only the session owner may answer, and never a read-only connection.
+  bool get canActOnConnection {
+    final request = _connectionCard.request;
+    return request != null &&
+        !request.settled &&
+        !_disposed &&
+        !connection.readOnly &&
+        _desktopRuntimeSessionId != null &&
+        _desktopGateway is HermesConnectionRequestGateway;
+  }
+
+  void _setConnectionCard(ConnectionCardState next) {
+    if (identical(next, _connectionCard)) return;
+    _connectionCard = next;
+    final request = next.request;
+    if (request == null || request.settled) {
+      _connectionLinkOpened = false;
+    } else {
+      _projectPendingConnectionRow(request);
+    }
+    _emit(ActiveChatEvent.toolProgress);
+  }
+
+  /// The card binds to the tool row named by `tool_call_id`. When that row
+  /// never arrived (tool.start missed, or only the resume snapshot knows the
+  /// pending call) the row is synthesized so the card still has a place.
+  /// `startsNew` adopts an id-less running placeholder (assigning the id) but
+  /// never reuses another call's row.
+  void _projectPendingConnectionRow(ConnectionRequest request) {
+    final present = _messages.any(
+      (message) =>
+          message['role'] == 'assistant' &&
+          normalizeAssistantActivityTrace(
+            message[assistantActivityTraceKey],
+          ).any((step) => step['id']?.toString() == request.toolCallId),
+    );
+    if (present) return;
+    _upsertAssistantToolActivity(
+      {'tool_call_id': request.toolCallId, 'name': 'manage_connections'},
+      running: true,
+      startsNew: true,
+    );
+  }
+
+  void _handleConnectionFrame(String type, Map<String, dynamic> payload) {
+    if (type == 'connection.request') {
+      final incoming = normalizeConnectionRequest(payload);
+      if (incoming == null) return;
+      _setConnectionCard(_connectionCard.onRequest(incoming));
+    } else {
+      _setConnectionCard(_connectionCard.onUpdate(payload));
+    }
+  }
+
+  Future<void> _respondToConnection(Map<String, dynamic> body) async {
+    if (!canActOnConnection) return;
+    final request = _connectionCard.request!;
+    final runtimeId = _desktopRuntimeSessionId!;
+    final gateway = _desktopGateway as HermesConnectionRequestGateway;
+    await gateway.respondToConnection(runtimeId, request.opId, body);
+  }
+
+  Future<void> skipConnectionTarget(String name) => _respondToConnection({
+    'targets': [
+      {'name': name, 'status': 'skipped'},
+    ],
+  });
+
+  Future<void> continueConnection() =>
+      _respondToConnection({'settled_by': 'continue'});
+
+  /// A typed message while the prompt is open answers it with Continue first.
+  /// Fire and forget: a failing Continue must not hold the message back.
+  void _continueConnectionBeforeSend() {
+    if (!canActOnConnection) return;
+    unawaited(continueConnection().catchError((Object _) {}));
+  }
+
+  void noteConnectionLinkOpened() {
+    if (canActOnConnection) _connectionLinkOpened = true;
+  }
+
+  /// The app came back to the foreground: if a link was opened for the open
+  /// card, ask the server to read the accounts now (once per link).
+  void connectionAppResumed() {
+    if (!canActOnConnection || !_connectionLinkOpened) return;
+    _connectionLinkOpened = false;
+    final request = _connectionCard.request!;
+    final gateway = _desktopGateway as HermesConnectionRequestGateway;
+    unawaited(
+      gateway
+          .wakeConnectionOperation(_desktopRuntimeSessionId!, request.opId)
+          .catchError((Object _) {}),
+    );
+  }
+
+  void _restorePendingConnection(
+    DesktopSessionSnapshot snapshot, {
+    required ConnectionRequest? heldAtResumeStart,
+  }) {
+    if (!snapshot.pendingConnectionProvided ||
+        snapshot.runtimeSessionId != _desktopRuntimeSessionId) {
+      return;
+    }
+    _setConnectionCard(
+      _connectionCard.onResume(
+        pending: snapshot.pendingConnection,
+        heldAtStart: heldAtResumeStart,
+      ),
+    );
   }
 
   // Batching de tokens: acumula y vuelca cada ~33ms para evitar reconstrucciones
@@ -10062,6 +10190,7 @@ class ActiveChat {
       // wait for the existing resume/activate to resolve its runtime identity.
       ({Object? error, SessionMessagesPage? value})?
       prefetchCompletedBeforeResume;
+      final connectionRequestAtResumeStart = _connectionCard.request;
       final prefetchContext = _captureSessionMessagesPageRead(
         consumer: _SessionMessagesPageConsumer.lifecyclePrefetch,
         loadEpoch: loadEpoch,
@@ -10489,7 +10618,10 @@ class ActiveChat {
         _adoptDesktopRuntime(snapshot.runtimeSessionId, info: snapshot.info);
         _hydrateAgentTasks(snapshot.todoState);
         _reconcileSubagentsFromTranscript();
-        _restorePendingClarify(snapshot);
+        _restorePendingClarify(
+          snapshot,
+          connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+        );
         _restorePendingApproval(
           snapshot,
           expectedGeneration: loadApprovalGeneration,
@@ -16013,6 +16145,7 @@ class ActiveChat {
         ? 'default'
         : previousProfile;
     final approvalGeneration = _approvalGeneration;
+    final connectionRequestAtResumeStart = _connectionCard.request;
     try {
       DesktopSessionSnapshot snapshot;
       var bindingOrigin = _DesktopRuntimeBindingOrigin.availabilityResumed;
@@ -16218,7 +16351,10 @@ class ActiveChat {
 
       // All destinations are fixed before callbacks. A callback can invalidate
       // admission, but can never be recaptured as authority for this operation.
-      _restorePendingClarify(snapshot);
+      _restorePendingClarify(
+        snapshot,
+        connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+      );
       _restorePendingApproval(snapshot, expectedGeneration: approvalGeneration);
       if (infoChanged || snapshot.info != const DesktopSessionRuntimeInfo()) {
         _emit(ActiveChatEvent.sessionInfo);
@@ -18621,6 +18757,7 @@ class ActiveChat {
         final draftSessionEpoch = _desktopSessionEpoch;
         final draftBindEpoch = _desktopBindEpoch;
         final draftWasUnbound = _desktopStoredSessionId == null;
+        final connectionRequestAtResumeStart = _connectionCard.request;
         final binding = await _bindDesktopSessionForFirstSubmit(
           gateway,
           profile: profile,
@@ -18670,6 +18807,10 @@ class ActiveChat {
         _desktopStoredSessionKnownMissing = false;
         _adoptDesktopRuntime(runtimeId, info: binding.info);
         _hydrateAgentTasks(binding.todoState);
+        _restorePendingConnection(
+          binding,
+          heldAtResumeStart: connectionRequestAtResumeStart,
+        );
         boundOrAvailabilityResumedForSubmit = true;
         if (binding.info != _desktopRuntimeInfo) {
           _desktopRuntimeInfo = binding.info;
@@ -19590,6 +19731,7 @@ class ActiveChat {
         if (!isCurrent()) return;
       }
       _publishTransportState(ChatTransportState.reconnecting);
+      final connectionRequestAtResumeStart = _connectionCard.request;
       try {
         DesktopRosterBoundRecovery? recovery;
         late final DesktopSessionSnapshot snapshot;
@@ -19653,7 +19795,10 @@ class ActiveChat {
             running: snapshot.running,
           );
           _usingDesktopGateway = true;
-          _restorePendingClarify(snapshot);
+          _restorePendingClarify(
+            snapshot,
+            connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+          );
           _restorePendingApproval(snapshot);
           _emit(ActiveChatEvent.sessionInfo);
           return;
@@ -19678,7 +19823,10 @@ class ActiveChat {
         _usingDesktopGateway = true;
         // The question the agent is waiting on survived the cut only on the
         // server: bring it back with the runtime.
-        _restorePendingClarify(snapshot);
+        _restorePendingClarify(
+          snapshot,
+          connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+        );
         _restorePendingApproval(snapshot);
         _emit(ActiveChatEvent.sessionInfo);
         return;
@@ -20023,6 +20171,7 @@ class ActiveChat {
           debugPrint('[active-chat] connected');
           debugPrint('[active-chat] resume start');
           final recoveryApprovalGeneration = _approvalGeneration;
+          final connectionRequestAtResumeStart = _connectionCard.request;
           final binding = await _desktopRecoveryOperationBeforeDeadline(
             _resumeDesktopSessionForRecovery(
               gateway,
@@ -20065,7 +20214,10 @@ class ActiveChat {
                 expectedGeneration: recoveryApprovalGeneration,
                 liveSnapshotAbsenceClears: true,
               );
-              _restorePendingClarify(binding);
+              _restorePendingClarify(
+                binding,
+                connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+              );
               _armActivityWatchdog();
               _emit(ActiveChatEvent.waiting);
               return;
@@ -20119,7 +20271,10 @@ class ActiveChat {
                 expectedGeneration: recoveryApprovalGeneration,
                 liveSnapshotAbsenceClears: true,
               );
-              _restorePendingClarify(binding);
+              _restorePendingClarify(
+                binding,
+                connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+              );
               _armActivityWatchdog();
               _emit(ActiveChatEvent.toolProgress);
               return;
@@ -20236,6 +20391,7 @@ class ActiveChat {
         );
         if (connected == null || !_canRecoverTurn(turnEpoch)) return;
         final storedSessionId = _desktopStoredSessionId ?? serverSessionId;
+        final connectionRequestAtResumeStart = _connectionCard.request;
         DesktopRosterBoundRecovery? rosterRecovery;
         DesktopSessionSnapshot? snapshot;
         if (gateway is HermesDesktopRosterBoundRecoveryGateway) {
@@ -20349,6 +20505,7 @@ class ActiveChat {
         _applyDesktopRecoverySnapshot(
           snapshot,
           turnEpoch,
+          connectionRequestAtResumeStart: connectionRequestAtResumeStart,
           ownedTurnStillOpen: ownedTurnStillOpen,
         );
         return;
@@ -20570,6 +20727,7 @@ class ActiveChat {
   void _applyDesktopRecoverySnapshot(
     DesktopSessionSnapshot snapshot,
     int turnEpoch, {
+    required ConnectionRequest? connectionRequestAtResumeStart,
     bool ownedTurnStillOpen = false,
   }) {
     if (!_canRecoverTurn(turnEpoch)) return;
@@ -20644,7 +20802,10 @@ class ActiveChat {
       _desktopStartedAt = snapshot.startedAt;
       _desktopTurnStartedAt = null;
       _replaceDesktopAcceptedQueue(snapshot.queued?.user);
-      _restorePendingClarify(snapshot);
+      _restorePendingClarify(
+        snapshot,
+        connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+      );
       _restorePendingApproval(snapshot);
       _usingDesktopGateway = true;
       _degradeLegacyTurnRecovery(
@@ -20770,7 +20931,10 @@ class ActiveChat {
         ? snapshot.resolvedTurnStartedAt
         : null;
     _replaceDesktopAcceptedQueue(projection.queuedUser);
-    _restorePendingClarify(snapshot);
+    _restorePendingClarify(
+      snapshot,
+      connectionRequestAtResumeStart: connectionRequestAtResumeStart,
+    );
 
     if (projection.failed) {
       _sealRecoveredLiveActivity(completed: false);
@@ -21924,6 +22088,8 @@ class ActiveChat {
         _handleApprovalRequest(payload);
       case 'approval.responded':
         _handleDesktopApprovalSettled(payload);
+      case 'connection.request' || 'connection.update':
+        _handleConnectionFrame(event.type, payload);
       case 'message.complete':
         _clearDesktopCompactingIndicator();
         final completeText = payload['text'] ?? payload['rendered'];
@@ -22422,9 +22588,16 @@ class ActiveChat {
     }
   }
 
-  void _restorePendingClarify(DesktopSessionSnapshot snapshot) {
+  void _restorePendingClarify(
+    DesktopSessionSnapshot snapshot, {
+    required ConnectionRequest? connectionRequestAtResumeStart,
+  }) {
     _reconcilePendingClarifySnapshot(snapshot, unlockResponding: false);
     _restoreOpenServerRequests(snapshot);
+    _restorePendingConnection(
+      snapshot,
+      heldAtResumeStart: connectionRequestAtResumeStart,
+    );
   }
 
   Future<void>? _openRequestRehydration;
@@ -24186,6 +24359,7 @@ class ActiveChat {
     final capturedAllowTransportFallback = isStreaming
         ? _turnSessionConfig.allowTransportFallback
         : (_queueAdmissionAllowTransportFallback ?? false);
+    _continueConnectionBeforeSend();
     if (_manualCompressionHoldsQueue) _queuedDuringManualCompression = true;
     final queueOrder = _nextQueueOrder++;
     _messageQueue.add(
@@ -24227,6 +24401,7 @@ class ActiveChat {
     if (_queueAdmissionFrozen || mutationsBlockedByOwnershipConflict) {
       return false;
     }
+    _continueConnectionBeforeSend();
     if (_manualCompressionHoldsQueue) _queuedDuringManualCompression = true;
     final id = delivery.current.clientTurnId;
     final existingOwner = _preparedTurnOwners[id];
@@ -27444,19 +27619,20 @@ class ActiveChat {
       return _TerminalTranscriptRead.tail(page, context);
     }
     final pageDecidesTurn = fences.every(
-      (fence) => [
-        (messageId: fence.userMessageId, rowId: fence.userRowId),
-        (messageId: fence.anchorMessageId, rowId: fence.anchorRowId),
-      ].any(
-        (coordinate) =>
-            _resolveTranscriptIdentity(
-              newestFirst,
-              messageId: coordinate.messageId,
-              rowId: coordinate.rowId,
-              accepts: (_) => true,
-            ).kind ==
-            _TranscriptIdentityResolutionKind.unique,
-      ),
+      (fence) =>
+          [
+            (messageId: fence.userMessageId, rowId: fence.userRowId),
+            (messageId: fence.anchorMessageId, rowId: fence.anchorRowId),
+          ].any(
+            (coordinate) =>
+                _resolveTranscriptIdentity(
+                  newestFirst,
+                  messageId: coordinate.messageId,
+                  rowId: coordinate.rowId,
+                  accepts: (_) => true,
+                ).kind ==
+                _TranscriptIdentityResolutionKind.unique,
+          ),
     );
     if (pageDecidesTurn) return const _TerminalTranscriptRead.pending();
     return _TerminalTranscriptRead.whole(await _loadStoredMessages(profile));
@@ -29970,6 +30146,7 @@ class ActiveChat {
     _restoredCompressionProbeTimer?.cancel();
     _restoredCompressionProbeTimer = null;
     _disposed = true;
+    _connectionCard = const ConnectionCardState();
     _messageLoadEpoch++;
     _storedMessagesRestFlights.clear();
     final stop = _stopTransition;

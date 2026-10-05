@@ -2039,6 +2039,9 @@ class ThinkingTraceCard extends StatefulWidget {
   final Widget Function(BuildContext context, Widget summary, Widget details)?
   headerBuilder;
 
+  /// Content owned by one exact tool row, keyed by [ChatTraceEvent.id].
+  final Map<String, Widget> rowAttachments;
+
   const ThinkingTraceCard({
     required this.events,
     required this.active,
@@ -2049,6 +2052,7 @@ class ThinkingTraceCard extends StatefulWidget {
     this.duration,
     this.liveInPill = false,
     this.headerBuilder,
+    this.rowAttachments = const {},
     super.key,
   });
 
@@ -2239,7 +2243,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
   /// ya informa del progreso en vivo); solo el toque del usuario la expande.
   /// U-01 (spec 028): el auto-expand/colapso durante la ejecución mareaba y
   /// violaba la regla del ThinkingCard (colapsado salvo petición explícita).
-  bool get _expanded => _userExpanded ?? false;
+  bool get _expanded => _userExpanded ?? widget.rowAttachments.isNotEmpty;
 
   /// Pasos que el usuario debe ver: sin las herramientas puente de Hermes.
   List<ChatTraceEvent> get _visibleEvents => widget.events
@@ -2492,6 +2496,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
                               child: card,
                             );
                     },
+              rowAttachments: widget.rowAttachments,
             ),
           const SizedBox(height: 6),
           Semantics(
@@ -2577,6 +2582,8 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (tools.isNotEmpty) toolsRow(),
+              if (widget.rowAttachments.isNotEmpty)
+                _buildTraceDetails(colors, tasks, muted: true),
               memorySavedMarkers(
                 _landedMemory,
                 padding: const EdgeInsets.only(left: 50, top: 2),

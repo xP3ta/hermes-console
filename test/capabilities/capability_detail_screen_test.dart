@@ -79,13 +79,14 @@ Future<void> _pump(
   bool readOnly = false,
   VoidCallback? onChanged,
   CapabilitiesRepository? repository,
+  CapabilitiesRpc? rpc,
 }) async {
   await setPhone(tester);
   await tester.pumpWidget(
     spanishApp(
       CapabilityDetailScreen(
         item: item,
-        repository: repository ?? repoOf(rest),
+        repository: repository ?? repoOf(rest, rpc: rpc),
         readOnly: readOnly,
         onChanged: onChanged,
       ),
@@ -627,6 +628,121 @@ void main() {
     );
     expect(official.detail, contains('Casa · work'));
     expect(official.detail, isNot(contains(s.cphThirdPartyWarning)));
+  });
+
+  testWidgets('MCP detail asks for the runtime status once and shows it', (
+    tester,
+  ) async {
+    final methods = <String>[];
+    await _pump(
+      tester,
+      CapabilityItem.mcpServer({'name': 'docs', 'transport': 'http'})!,
+      populatedServer(),
+      rpc: (method, params) async {
+        methods.add(method);
+        return {
+          'servers': [
+            {'name': 'docs', 'tools': 2, 'status': 'failed'},
+          ],
+        };
+      },
+    );
+
+    expect(methods, ['mcp.servers.status']);
+    expect(find.text('Con error'), findsOneWidget);
+    expect(find.text('2 herramientas'), findsOneWidget);
+  });
+
+  testWidgets('non-MCP detail never asks for the runtime status', (
+    tester,
+  ) async {
+    final methods = <String>[];
+    await _pump(
+      tester,
+      _weather,
+      populatedServer(),
+      rpc: (method, params) async {
+        methods.add(method);
+        return {};
+      },
+    );
+    expect(methods, isEmpty);
+  });
+
+  group('MCP logs', () {
+    final stdio = CapabilityItem.mcpServer({
+      'name': 'files',
+      'transport': 'stdio',
+      'command': 'npx',
+    })!;
+
+    ScriptedRest withLogs() => populatedServer()
+      ..gets['logs'] = {
+        'file': 'mcp',
+        'lines': [
+          "===== [10:00:05] starting MCP server 'git' =====",
+          'git: cloning',
+          "2026-10-04 10:01:00,000 ===== starting MCP server 'files' =====",
+          'files: ready',
+        ],
+      };
+
+    List<String> logReads(ScriptedRest rest) =>
+        rest.calls.where((c) => c.startsWith('GET logs')).toList();
+
+    testWidgets(
+      'open reads once, shows only this server, refresh reads again',
+      (tester) async {
+        final rest = withLogs();
+        await _pump(tester, stdio, rest);
+        expect(logReads(rest), isEmpty);
+
+        await tester.tap(find.byKey(const ValueKey('cph-logs-row')));
+        await tester.pumpAndSettle();
+        expect(logReads(rest), ['GET logs?file=mcp&lines=500']);
+        expect(find.textContaining('files: ready'), findsOneWidget);
+        expect(find.textContaining('git: cloning'), findsNothing);
+
+        await tester.tap(find.byKey(const ValueKey('cph-logs-refresh')));
+        await tester.pumpAndSettle();
+        expect(logReads(rest), hasLength(2));
+      },
+    );
+
+    testWidgets('the agent log is one tap away and searches by name', (
+      tester,
+    ) async {
+      final rest = withLogs()
+        ..gets['logs?file=agent&lines=300&search=files'] = {
+          'file': 'agent',
+          'lines': ['agent: files connected'],
+        };
+      await _pump(tester, stdio, rest);
+      await tester.tap(find.byKey(const ValueKey('cph-logs-row')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('cph-logs-seg-agent')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('agent: files connected'), findsOneWidget);
+      expect(logReads(rest).last, 'GET logs?file=agent&lines=300&search=files');
+    });
+
+    testWidgets('a server without /api/logs leaves and hides the row', (
+      tester,
+    ) async {
+      final rest = populatedServer();
+      await _pump(tester, stdio, rest);
+      await tester.tap(find.byKey(const ValueKey('cph-logs-row')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('cph-logs-row')), findsNothing);
+      expect(logReads(rest), hasLength(1));
+    });
+
+    testWidgets('only MCP servers have logs', (tester) async {
+      await _pump(tester, _weather, withLogs());
+      expect(find.byKey(const ValueKey('cph-logs-row')), findsNothing);
+    });
   });
 }
 

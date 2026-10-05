@@ -9,6 +9,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/connection_request.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
@@ -168,8 +169,41 @@ final _toolRunningEffect = _Effect((chat, _, emitted, label) {
   return _emits(emitted, ActiveChatEvent.toolProgress, label);
 });
 
+/// The gateway of the sample under test, for effects that need a prior frame.
+_FakeDesktopGateway? _sampleGateway;
+
+/// A request that can be bound to a tool row opens the card; one that cannot
+/// carries nothing to render.
+final _connectionRequestEffect = _Effect((chat, payload, emitted, label) {
+  if (normalizeConnectionRequest(payload) == null) return false;
+  expect(chat.connectionRequest, isNotNull, reason: label);
+  return _emits(emitted, ActiveChatEvent.toolProgress, label);
+});
+
+const _wireOp = 'op-wire';
+
+/// An update advances the open card it names (seeded by `prepare`).
+final _connectionUpdateEffect = _Effect(
+  prepare: (_) => _sampleGateway!.emit('connection.request', {
+    'op_id': _wireOp,
+    'seq': 1,
+    'deadline_at': 1790000000.0,
+    'tool_call_id': 'call-wire',
+    'targets': [
+      {'name': 'gmail', 'kind': 'connector', 'action': 'authorize'},
+    ],
+  }),
+  enrich: (sample) => {...sample, 'op_id': _wireOp, 'seq': 50},
+  (chat, payload, emitted, label) {
+    expect(chat.connectionRequest!.seq, 50, reason: label);
+    return _emits(emitted, ActiveChatEvent.toolProgress, label);
+  },
+);
+
 /// Events the live chat renders or acts on, with the effect each must show.
 final Map<String, _Effect> _handled = {
+  'connection.request': _connectionRequestEffect,
+  'connection.update': _connectionUpdateEffect,
   'message.start': _emitsAlways(ActiveChatEvent.waiting),
   'message.delta': _Effect(settle: const Duration(milliseconds: 150), (
     chat,
@@ -309,8 +343,6 @@ const Map<String, String> _ignored = {
   'projects.changed': 'no projects view in the chat',
   'platforms.changed': 'no platforms view in the chat',
   'pairing.changed': 'no pairing view in the chat',
-  'connection.request': 'connector OAuth runs on Desktop',
-  'connection.update': 'connector OAuth runs on Desktop',
   'bot_relay.outbox.pending': 'bot relay is a gateway-side queue',
   'message.reaction': 'reactions are not rendered by Console',
   'reaction': 'reactions are not rendered by Console',
@@ -389,6 +421,7 @@ void main() {
         // A fresh live turn per sample: one shape must not hide another.
         final gateway = _FakeDesktopGateway();
         final chat = await _liveChat(gateway);
+        _sampleGateway = gateway;
         await Future<void>.delayed(Duration.zero);
         effect?.prepare?.call(chat);
         final emitted = <ActiveChatEvent>[];
