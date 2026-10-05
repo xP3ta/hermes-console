@@ -215,6 +215,7 @@ void main() {
     _StreamingGateway gateway, {
     List<Map<String, dynamic>>? history,
     Map<String, Object> initialPrefs = const {},
+    int Function()? wallClockMs,
   }) async {
     tester.platformDispatcher.localesTestValue = [const Locale('es')];
     addTearDown(tester.platformDispatcher.clearLocalesTestValue);
@@ -235,6 +236,7 @@ void main() {
       api: _safeApi(),
       desktopGateway: gateway,
       disableForegroundKeepAlive: true,
+      wallClockMsForTesting: wallClockMs,
     );
     chat
       ..internalMessagesForTesting = history ?? _history()
@@ -1225,6 +1227,128 @@ void main() {
         ),
         findsOneWidget,
       );
+      await tearDownChat(tester, gateway);
+    });
+
+    // Owner report: with a terminal tool running, opening the activity pill
+    // left the pinned prompt as a see-through bubble over the reply text.
+    // Like Desktop (which clips the transcript behind its sticky prompt), the
+    // pinned prompt must sit on an opaque field of the screen background.
+    void expectOpaqueStickyBackdrop(WidgetTester tester) {
+      final stickyRect = tester.getRect(sticky());
+      final background = Theme.of(
+        tester.element(sticky()),
+      ).scaffoldBackgroundColor;
+      final covering = <Color>[];
+      for (final element
+          in find
+              .descendant(
+                of: sticky(),
+                matching: find.byWidgetPredicate(
+                  (w) => w is ColoredBox || w is DecoratedBox,
+                ),
+              )
+              .evaluate()) {
+        final widget = element.widget;
+        final color = widget is ColoredBox
+            ? widget.color
+            : ((widget as DecoratedBox).decoration as BoxDecoration?)?.color;
+        if (color == null) continue;
+        final box = element.renderObject! as RenderBox;
+        final rect = box.localToGlobal(Offset.zero) & box.size;
+        if (rect.left <= stickyRect.left + 0.5 &&
+            rect.right >= stickyRect.right - 0.5 &&
+            rect.top <= stickyRect.top + 0.5 &&
+            rect.bottom >= stickyRect.bottom - 0.5) {
+          covering.add(color);
+        }
+      }
+      expect(
+        covering.where((c) => c.a == 1.0),
+        isNotEmpty,
+        reason:
+            'the pinned prompt needs an opaque backdrop over its whole '
+            'area; found only $covering',
+      );
+      expect(covering.firstWhere((c) => c.a == 1.0), background);
+      for (final element
+          in find
+              .ancestor(of: sticky(), matching: find.byType(Opacity))
+              .evaluate()) {
+        expect((element.widget as Opacity).opacity, 1);
+      }
+    }
+
+    testWidgets('opening the activity pill keeps the pinned prompt opaque', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      var wallMs = DateTime(2026, 10, 5, 12).millisecondsSinceEpoch;
+      final chat = await pumpChat(
+        tester,
+        gateway,
+        wallClockMs: () => wallMs,
+        history: [
+          {'id': 'short-a', 'role': 'assistant', 'content': 'Respuesta corta'},
+          {'id': 'short-u', 'role': 'user', 'content': 'Pregunta corta'},
+        ],
+      );
+      await settle(tester);
+      expect(sticky(), findsNothing, reason: 'precondition: nothing pinned');
+      await chat.send(
+        fullText: 'Revisa el perfil de la oficina operativa',
+        model: 'hermes-agent',
+        history: chat.buildHistory(),
+      );
+      gateway.emit('message.start');
+      await tester.pump();
+      for (var delta = 0; delta < 12; delta++) {
+        gateway.emit('message.delta', {
+          'text':
+              '${List.filled(12, 'Voy a revisar el perfil paso a paso.').join(' ')}'
+              '\n\n',
+        });
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-pill-sticky',
+        'name': 'terminal',
+        'args': {'command': 'sleep 300'},
+      });
+      for (var frame = 0; frame < 120; frame++) {
+        wallMs += 33;
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      final pill = find.byKey(const ValueKey('activity-pill'));
+      expect(pill, findsOneWidget, reason: 'precondition: running tool pill');
+
+      await tester.tap(pill);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      expect(
+        sticky(),
+        findsOneWidget,
+        reason: 'precondition: the reply spans the top, its prompt is pinned',
+      );
+      expect(
+        find.descendant(
+          of: sticky(),
+          matching: find.textContaining('Revisa el perfil'),
+        ),
+        findsOneWidget,
+      );
+      expectOpaqueStickyBackdrop(tester);
+
+      gateway.emit('tool.complete', const {
+        'tool_id': 'call-pill-sticky',
+        'name': 'terminal',
+      });
+      gateway.emit('message.complete', {'text': chat.assistantContent});
+      await tester.pump();
+      await tester.pump(const Duration(minutes: 2));
       await tearDownChat(tester, gateway);
     });
 
