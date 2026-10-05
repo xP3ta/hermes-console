@@ -28,6 +28,7 @@ enum DesktopGatewayCapability {
   composerPathCompletion,
   turnSide,
   turnBranch,
+  llmOneshot,
 }
 
 enum DesktopGatewayCapabilityState { unknown, supported, unsupported, invalid }

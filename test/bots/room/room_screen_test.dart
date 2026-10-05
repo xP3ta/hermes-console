@@ -207,6 +207,7 @@ Future<FakeRoomGateway> _pump(
   void Function(HostedGroupMember member)? onOpenMember,
   RoomDictation? dictation,
   GatewayRoomMemberCompressor? memberCompressor,
+  Widget Function(Widget app)? wrap,
 }) async {
   tester.view.physicalSize = const Size(1080, 2400);
   tester.view.devicePixelRatio = 3;
@@ -214,26 +215,25 @@ Future<FakeRoomGateway> _pump(
   final log = buildLog(events);
   final resolvedRoom = room ?? buildRoom(latestSeq: log.latestSeq);
   final gateway = FakeRoomGateway(room: resolvedRoom, log: log, status: status);
-  await tester.pumpWidget(
-    _host(
-      RoomScreen(
-        room: resolvedRoom,
-        log: log,
-        driverStatus: status,
-        gateway: gateway,
-        capabilities: caps,
-        profileFor: profileFor ?? (_) => null,
-        onOpenMember: onOpenMember,
-        prefs: prefs ?? MemoryRoomPrefs(),
-        attachmentActions: actions,
-        uploader: uploader,
-        dictation: dictation,
-        memberCompressor: memberCompressor,
-        pollTimer: (_, _) => _FakeTimer(),
-        clock: () => DateTime.fromMillisecondsSinceEpoch(1790000400 * 1000),
-      ),
+  final app = _host(
+    RoomScreen(
+      room: resolvedRoom,
+      log: log,
+      driverStatus: status,
+      gateway: gateway,
+      capabilities: caps,
+      profileFor: profileFor ?? (_) => null,
+      onOpenMember: onOpenMember,
+      prefs: prefs ?? MemoryRoomPrefs(),
+      attachmentActions: actions,
+      uploader: uploader,
+      dictation: dictation,
+      memberCompressor: memberCompressor,
+      pollTimer: (_, _) => _FakeTimer(),
+      clock: () => DateTime.fromMillisecondsSinceEpoch(1790000400 * 1000),
     ),
   );
+  await tester.pumpWidget(wrap == null ? app : wrap(app));
   await tester.pumpAndSettle();
   return gateway;
 }
@@ -310,6 +310,41 @@ void main() {
     final border = (card.decoration! as BoxDecoration).border! as Border;
     expect(border.left.color, border.top.color);
     expect(find.text('Today'), findsOneWidget);
+  });
+
+  testWidgets('rpl1215 room selections never offer "Ask about this"', (
+    tester,
+  ) async {
+    final seq = EventSeq();
+    final u = seq.user('Roomquestion');
+    final m = seq.member(
+      'm-builder',
+      'builder',
+      'Roomanswer ready',
+      u['event_id'] as String,
+    );
+    final asked = <String>[];
+    // Even under an ask scope (as if a chat screen were above), room
+    // messages do not opt in: the room has no composer quote path.
+    await _pump(
+      tester,
+      events: [u, m],
+      wrap: (app) => ChatAskAboutScope(
+        label: 'Ask about this',
+        onAsk: asked.add,
+        child: app,
+      ),
+    );
+    for (final word in ['Roomanswer', 'Roomquestion']) {
+      final target = find.textContaining(word, findRichText: true).first;
+      await tester.longPressAt(tester.getTopLeft(target) + const Offset(8, 8));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Copy'), findsOneWidget, reason: word);
+      expect(find.text('Ask about this'), findsNothing, reason: word);
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+    expect(asked, isEmpty);
   });
 
   testWidgets(
