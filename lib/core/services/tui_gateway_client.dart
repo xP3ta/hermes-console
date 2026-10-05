@@ -54,6 +54,7 @@ import 'replay_batch_proof.dart';
 import 'replay_coordinator.dart';
 import 'server_restart_signal.dart';
 import 'subagent_live_watch.dart';
+import '../utils/chat_quick_replies.dart';
 import '../utils/transport_privacy.dart';
 
 class TuiGatewayRpcError implements Exception {
@@ -1486,6 +1487,7 @@ class TuiGatewayClient
         HermesDesktopSessionControlGateway,
         HermesTerminalGateway,
         HermesProjectManagementGateway,
+        HermesQuickReplySuggestionGateway,
         HermesPullRequestGateway,
         HermesForeignSessionGateway,
         HermesMessageReactionGateway,
@@ -5928,6 +5930,46 @@ class TuiGatewayClient
   void _requireWritableControlConnection() {
     if (_connection.readOnly) {
       throw const DesktopControlFailure(DesktopControlFailureKind.forbidden);
+    }
+  }
+
+  // ── Quick replies (composer chips, on tap only) ─────────────────────────
+
+  @override
+  bool get quickReplySuggestionsAvailable =>
+      !_connection.readOnly &&
+      _capabilityCache.canAttempt(DesktopGatewayCapability.llmOneshot);
+
+  @override
+  Future<List<String>> suggestQuickReplies({
+    required String lastAssistant,
+    required String lastUser,
+    String profile = '',
+  }) async {
+    if (!quickReplySuggestionsAvailable) return const [];
+    final owner = profile.trim();
+    try {
+      // No session_id: a live session would lend its main model, while the
+      // task backend Hermes resolves for one-shots is the cheap one.
+      final result = await _controlRequest(
+        'llm.oneshot',
+        {
+          'instructions': smartQuickReplyInstructions,
+          'input': smartQuickReplyInput(
+            lastAssistant: lastAssistant,
+            lastUser: lastUser,
+          ),
+          'max_tokens': 120,
+          'temperature': 0.4,
+          if (owner.isNotEmpty) 'profile': owner,
+        },
+        timeout: const Duration(seconds: 45),
+        capability: DesktopGatewayCapability.llmOneshot,
+      );
+      final text = result['text'];
+      return text is String ? parseSmartQuickReplies(text) : const [];
+    } catch (_) {
+      return const [];
     }
   }
 
