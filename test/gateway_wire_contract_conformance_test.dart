@@ -23,6 +23,7 @@ import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/models/session_workspace_move.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/models/turn_error_surface.dart';
+import 'package:hermes_android/core/models/free_tier_status.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/json_rpc_wire.dart';
@@ -283,6 +284,18 @@ final List<_Consumer> _consumers = [
       (c) => c.methodResultSchema(method),
       (s) => TuiGatewayClient.parseBranchResult(s) != null,
     ),
+  _Consumer(
+    'result',
+    'free_tier.status',
+    (c) => c.methodResultSchema('free_tier.status'),
+    (s) => FreeTierStatus.fromJson(s).label.isNotEmpty,
+  ),
+  _Consumer(
+    'result',
+    'free_tier.ack_notice',
+    (c) => c.methodResultSchema('free_tier.ack_notice'),
+    (s) => FreeTierAckNotice.fromJson(s).acked,
+  ),
   _Consumer(
     'result',
     'subagent.list',

@@ -112,6 +112,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/shared_gateway_pool.dart';
 import 'support/mk1215_scripted_gateway_channel.dart';
 import 'package:hermes_android/core/services/model_picker_loader.dart';
+import 'package:hermes_android/core/services/model_presets_store.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/services/voice/stt_engine.dart';
 import 'package:hermes_android/core/services/voice/stt_remote.dart';
@@ -1600,6 +1601,10 @@ class _SessionlessCatalogGateway extends _UiRewindGateway
           'authenticated': true,
           'is_current': true,
           'models': ['disk-model', 'other-model'],
+          'capabilities': {
+            'disk-model': {'reasoning': true, 'fast': true},
+            'other-model': {'reasoning': true, 'fast': true},
+          },
         },
       ],
     });
@@ -1684,7 +1689,11 @@ class _ModelConfigGateway extends _UiRewindGateway
 
   final List<DesktopModelSelection> modelSelections = [];
   final List<bool> modelConfirmationFlags = [];
+  final List<DesktopReasoningEffort> reasoningSelections = [];
+  final List<DesktopFastMode> fastSelections = [];
   Object? modelError;
+  Object? reasoningError;
+  Object? fastError;
   bool modelConfirmRequired = false;
   // ConfigSetResult types confirm_message as `str | null`: a guarded switch
   // may arrive without its own text.
@@ -1748,19 +1757,29 @@ class _ModelConfigGateway extends _UiRewindGateway
   Future<DesktopConfigSetResult> setSessionReasoning(
     String runtimeSessionId,
     DesktopReasoningEffort effort,
-  ) async => DesktopConfigSetResult(
-    key: DesktopSessionConfigKey.reasoning,
-    value: effort.wire,
-  );
+  ) async {
+    reasoningSelections.add(effort);
+    final error = reasoningError;
+    if (error != null) throw error;
+    return DesktopConfigSetResult(
+      key: DesktopSessionConfigKey.reasoning,
+      value: effort.wire,
+    );
+  }
 
   @override
   Future<DesktopConfigSetResult> setSessionFastMode(
     String runtimeSessionId,
     DesktopFastMode mode,
-  ) async => DesktopConfigSetResult(
-    key: DesktopSessionConfigKey.fast,
-    value: mode.wire,
-  );
+  ) async {
+    fastSelections.add(mode);
+    final error = fastError;
+    if (error != null) throw error;
+    return DesktopConfigSetResult(
+      key: DesktopSessionConfigKey.fast,
+      value: mode.wire,
+    );
+  }
 }
 
 class _UiReleaseOutbox implements TurnOutboxPersistence {
@@ -20221,6 +20240,169 @@ void main() {
       await tester.pump(const Duration(milliseconds: 240));
       expect(find.byKey(const ValueKey('chat-model-dialog')), findsNothing);
     }
+
+    Future<void> waitForModelSheetToClose(WidgetTester tester) async {
+      for (
+        var frame = 0;
+        find.byKey(const ValueKey('chat-model-dialog')).evaluate().isNotEmpty &&
+            frame < 10;
+        frame++
+      ) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.byKey(const ValueKey('chat-model-dialog')), findsNothing);
+    }
+
+    testWidgets(
+      'model selection applies a supported preset to the live session',
+      (tester) async {
+        const connectionId = 'conn-model-preset-live';
+        final gateway = _ModelConfigGateway()
+          ..catalogOverride = DesktopModelCatalog.fromJson(const {
+            'model': 'old-model',
+            'provider': 'provider-a',
+            'providers': [
+              {
+                'slug': 'provider-a',
+                'name': 'Provider A',
+                'is_current': true,
+                'models': ['old-model', 'new-model'],
+                'capabilities': {
+                  'old-model': {'reasoning': true, 'fast': true},
+                  'new-model': {'reasoning': true, 'fast': true},
+                },
+              },
+            ],
+          });
+        final chat = await pumpChat(
+          tester,
+          desktopGateway: gateway,
+          connection: _remoteConn(connectionId),
+          messagesLoaded: false,
+          initialPreferences: {
+            'model_presets_v1.$connectionId': jsonEncode({
+              'provider-a::new-model': {'effort': 'high', 'fast': 'fast'},
+            }),
+          },
+        );
+        for (var frame = 0; !chat.hasDesktopRuntime && frame < 10; frame++) {
+          await tester.pump(const Duration(milliseconds: 240));
+        }
+        gateway.emit('session.info', const {
+          'info': {'model': 'old-model', 'provider': 'provider-a'},
+        });
+        await tester.pump();
+
+        await openModelSheet(tester);
+        await tester.tap(find.text('new-model').first);
+        await tester.pump();
+        await waitForModelSheetToClose(tester);
+
+        expect(gateway.reasoningSelections, [DesktopReasoningEffort.high]);
+        expect(gateway.fastSelections, [DesktopFastMode.fast]);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'sessionless model selection stages its preset without config writes',
+      (tester) async {
+        const connectionId = 'conn-model-preset-draft';
+        final gateway = _SessionlessCatalogGateway()
+          ..resumeExistingError = const TuiGatewayRpcError(
+            'session.resume',
+            'not found',
+            code: 4007,
+          );
+        final chat = await pumpChat(
+          tester,
+          desktopGateway: gateway,
+          connection: _remoteConn(connectionId),
+          attachDesktopRuntimeOnLoad: false,
+          initialPreferences: {
+            'model_presets_v1.$connectionId': jsonEncode({
+              'provider-a::other-model': {'effort': 'high', 'fast': 'fast'},
+            }),
+          },
+        );
+        expect(chat.hasDesktopRuntime, isFalse);
+
+        await openModelSheet(tester);
+        await tester.tap(find.text('other-model').first);
+        await tester.pump();
+        await waitForModelSheetToClose(tester);
+        expect(chat.hasDesktopRuntime, isFalse);
+
+        expect(gateway, isNot(isA<HermesDesktopSessionConfigGateway>()));
+        final config = chat.stagedFirstSubmitConfigForTesting;
+        expect(config.model?.modelId, 'other-model');
+        expect(config.reasoningEffort, DesktopReasoningEffort.high);
+        expect(config.fastMode, DesktopFastMode.fast);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('a rejected reasoning write keeps the previous preset', (
+      tester,
+    ) async {
+      const connectionId = 'conn-model-preset-rollback';
+      final gateway = _ModelConfigGateway()
+        ..catalogOverride = DesktopModelCatalog.fromJson(const {
+          'model': 'old-model',
+          'provider': 'provider-a',
+          'providers': [
+            {
+              'slug': 'provider-a',
+              'name': 'Provider A',
+              'is_current': true,
+              'models': ['old-model'],
+              'capabilities': {
+                'old-model': {'reasoning': true, 'fast': true},
+              },
+            },
+          ],
+        })
+        ..reasoningError = const TuiGatewayRpcError(
+          'config.set',
+          'rejected',
+          code: 5001,
+        );
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn(connectionId),
+        messagesLoaded: false,
+        initialPreferences: {
+          'selected_model_${connectionId}_default_sess-test': 'old-model',
+          'selected_provider_${connectionId}_default_sess-test': 'provider-a',
+          'model_presets_v1.$connectionId': jsonEncode({
+            'provider-a::old-model': {'effort': 'low'},
+          }),
+        },
+      );
+      for (var frame = 0; !chat.hasDesktopRuntime && frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 240));
+      }
+      gateway.emit('session.info', const {
+        'info': {'model': 'old-model', 'provider': 'provider-a'},
+      });
+      await tester.pump();
+
+      await openModelSheet(tester);
+      await tester.tap(find.widgetWithText(ChoiceChip, 'high'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final prefs = await SharedPreferences.getInstance();
+      final preset = ModelPresetsStore(
+        prefs,
+        connectionId: connectionId,
+      ).read('provider-a', 'old-model');
+      expect(gateway.reasoningSelections, [DesktopReasoningEffort.high]);
+      expect(preset?.effort, DesktopReasoningEffort.low);
+      expect(tester.takeException(), isNull);
+      await closeModelSheet(tester);
+    });
 
     testWidgets(
       'md1215: el modelo elegido se pinta al instante, pendiente, y nunca el anterior',

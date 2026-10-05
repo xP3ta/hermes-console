@@ -23,6 +23,7 @@ enum DesktopGatewayCapability {
   projectFileDelete,
   profileAssets,
   profilePets,
+  freeTier,
   sessionControl,
   composerPathCompletion,
   turnSide,

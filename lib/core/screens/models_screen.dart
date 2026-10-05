@@ -22,9 +22,13 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/bridge_update_banner.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../models/desktop_model_catalog.dart';
+import '../models/free_tier_status.dart';
 import '../models/model_identity.dart';
 import 'chat_screen.dart' show friendlyModelName;
 import '../services/local_models_client.dart';
+import '../services/free_tier_status.dart';
+import '../services/shared_gateway_pool.dart';
+import '../services/tui_gateway_client.dart';
 import 'external_provider_screen.dart';
 import 'local_models_screen.dart';
 import 'moa_recipe_screen.dart';
@@ -42,6 +46,8 @@ class ModelsScreen extends StatefulWidget {
   final BridgeManagerContract? bridgeManagerForTesting;
   @visibleForTesting
   final DesktopModelCatalog? Function()? gatewayCatalogForTesting;
+  @visibleForTesting
+  final HermesDesktopFreeTierGateway? freeTierGatewayForTesting;
 
   /// Active profile source; defaults to the app's for [connection].
   final ActiveProfileScope? profileScope;
@@ -51,6 +57,7 @@ class ModelsScreen extends StatefulWidget {
     this.dashboardClientForTesting,
     this.bridgeManagerForTesting,
     this.gatewayCatalogForTesting,
+    this.freeTierGatewayForTesting,
     this.profileScope,
     super.key,
   });
@@ -83,6 +90,8 @@ class _ModelsScreenState extends State<ModelsScreen>
   // viable in-app o requiere CLI externo.
   Map<String, String> _oauthFlows = {};
   List<Map<String, dynamic>> _auxTasks = [];
+  FreeTierStatus? _freeTierStatus;
+  SharedGatewayLease? _freeTierLease;
   bool _loading = true;
   String? _error;
   // Si la API de gestión del Dashboard no está autenticada (p.ej. el dashboard
@@ -325,6 +334,7 @@ class _ModelsScreenState extends State<ModelsScreen>
     // A switch re-scopes the whole screen (behind the loader): model,
     // catalog, assignments and the local models entry.
     unawaited(_probeLocalModels());
+    unawaited(_loadFreeTierStatus());
     if (_bridgeProbed) unawaited(_load());
   }
 
@@ -334,7 +344,54 @@ class _ModelsScreenState extends State<ModelsScreen>
     if (!_bridgeProbed) {
       _bridgeProbed = true;
       _bootstrap();
+      unawaited(_loadFreeTierStatus());
     }
+  }
+
+  HermesDesktopFreeTierGateway? _freeTierGateway() {
+    final testing = widget.freeTierGatewayForTesting;
+    if (testing != null) return testing;
+    _freeTierLease ??= SharedGatewayPool.instance.acquireIfConnected(
+      widget.connection,
+    );
+    return _freeTierLease?.client;
+  }
+
+  Future<void> _loadFreeTierStatus() async {
+    final ticket = profileReadTicket();
+    final gateway = _freeTierGateway();
+    if (gateway == null) {
+      if (mounted && ticket.isCurrent) setState(() => _freeTierStatus = null);
+      return;
+    }
+    try {
+      final status = await FreeTierStatusReader(
+        gateway: gateway,
+        profile: ticket.name,
+      ).load();
+      if (mounted && ticket.isCurrent) {
+        setState(() => _freeTierStatus = status);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _ackFreeTierNotice() async {
+    final ticket = profileReadTicket();
+    final gateway = _freeTierGateway();
+    if (gateway == null) return;
+    final status = await FreeTierStatusReader(
+      gateway: gateway,
+      profile: ticket.name,
+    ).acknowledgeAndReload();
+    if (mounted && ticket.isCurrent) {
+      setState(() => _freeTierStatus = status);
+    }
+  }
+
+  Future<void> _signInFromFreeTierNotice() async {
+    await _ackFreeTierNotice();
+    if (!mounted) return;
+    await _startOAuthProvider('Nous', 'nous');
   }
 
   Future<void> _probeBridge() async {
@@ -364,6 +421,7 @@ class _ModelsScreenState extends State<ModelsScreen>
 
   @override
   void dispose() {
+    _freeTierLease?.release();
     _client.close();
     super.dispose();
   }
@@ -382,6 +440,7 @@ class _ModelsScreenState extends State<ModelsScreen>
     // El "activo" no se cachea: al volver la conexión ya no sería fiable.
     'is_current': false,
     'authenticated': p.authenticated,
+    'free_tier': p.freeTier,
     'auth_type': p.authType,
     'oauth_provider': p.oauthProviderId,
     'key_env': p.keyEnv,
@@ -1228,19 +1287,23 @@ class _ModelsScreenState extends State<ModelsScreen>
   /// Login OAuth (device_code: OpenAI Codex/ChatGPT, Nous, MiniMax). Inicia el
   /// flujo, abre la URL de verificación y sondea hasta completar.
   Future<void> _startOAuthLogin(ModelProvider provider) async {
+    await _startOAuthProvider(provider.name, _oauthProviderId(provider));
+  }
+
+  Future<void> _startOAuthProvider(
+    String providerName,
+    String oauthProviderId,
+  ) async {
     if (widget.connection.readOnly) {
       showReadOnlyNotice(context);
       return;
     }
     setState(() => _setting = true);
     Map<String, dynamic> start;
-    final oauthProviderId = _oauthProviderId(provider);
     try {
-      start = await _client.startOAuth(oauthProviderId);
+      start = await _client.startOAuth(oauthProviderId, profile: _profile);
       if (kDebugMode) {
-        debugPrint(
-          'OAuth start ${provider.slug}/$oauthProviderId: keys=${start.keys.toList()}',
-        );
+        debugPrint('OAuth start $oauthProviderId: keys=${start.keys.toList()}');
       }
     } catch (e) {
       if (mounted) {
@@ -1280,7 +1343,7 @@ class _ModelsScreenState extends State<ModelsScreen>
         HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              Strings.of(context).mdlOAuthNotAvailable(provider.name),
+              Strings.of(context).mdlOAuthNotAvailable(providerName),
             ),
           ),
           kind: HermesNoticeKind.warning,
@@ -1292,22 +1355,24 @@ class _ModelsScreenState extends State<ModelsScreen>
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (_) => ProviderOAuthLoginScreen(
-          providerName: provider.name,
+          providerName: providerName,
           providerSlug: oauthProviderId,
           url: url,
           code: code,
           expiresIn: (start['expires_in'] as num?)?.toInt() ?? 0,
-          poll: () => _client.pollOAuth(oauthProviderId, sessionId),
+          poll: () =>
+              _client.pollOAuth(oauthProviderId, sessionId, profile: _profile),
         ),
       ),
     );
     if (ok == true && mounted) {
       await _load();
+      await _loadFreeTierStatus();
       if (mounted) {
         HermesNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              Strings.of(context).mdlProviderConnected(provider.name),
+              Strings.of(context).mdlProviderConnected(providerName),
             ),
           ),
           kind: HermesNoticeKind.success,
@@ -1581,6 +1646,21 @@ class _ModelsScreenState extends State<ModelsScreen>
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
+          if (_freeTierStatus?.shouldShowNotice == true)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: HermesNoticeCard(
+                noticeKey: const ValueKey('models-free-tier-notice'),
+                message: s.mdlFreeTierNotice(_freeTierStatus!.label),
+                action: HermesNoticeAction(
+                  label: s.mdlFreeTierSignIn,
+                  onPressed: () => unawaited(_signInFromFreeTierNotice()),
+                ),
+                showDismiss: true,
+                dismissLabel: s.mdlFreeTierDismiss,
+                onDismissed: () => unawaited(_ackFreeTierNotice()),
+              ),
+            ),
           if (widget.connection.kind != InstanceKind.localhost)
             BridgeUpdateBanner(
               bridge: _bridge,
@@ -1721,8 +1801,10 @@ class _ModelsScreenState extends State<ModelsScreen>
             .push<bool>(
               MaterialPageRoute(
                 fullscreenDialog: true,
-                builder: (_) =>
-                    ExternalProviderScreen(connection: widget.connection),
+                builder: (_) => ExternalProviderScreen(
+                  connection: widget.connection,
+                  profile: _profile,
+                ),
               ),
             )
             .then((changed) {
@@ -2510,7 +2592,9 @@ class _ModelsScreenState extends State<ModelsScreen>
     //    openrouter/custom) → se configura en el servidor. Sin botón "login"
     //    (daría error, p.ej. el 400 de Bedrock).
     final String subtitle;
-    if (canLogin) {
+    if (provider.slug == 'nous' && _freeTierStatus?.available == true) {
+      subtitle = _freeTierStatus!.label;
+    } else if (canLogin) {
       subtitle = provider.warning.isNotEmpty
           ? provider.warning
           : s.mdlLoginOAuth;

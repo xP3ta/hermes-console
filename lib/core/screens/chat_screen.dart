@@ -124,6 +124,7 @@ import '../services/session_artifact_download_service.dart';
 import '../services/session_config_reducer.dart';
 import '../services/session_deletion.dart';
 import '../services/model_picker_loader.dart';
+import '../services/model_presets_store.dart';
 import '../services/shared_gateway_pool.dart';
 import '../services/subagent_live_watch.dart';
 import '../services/subagent_transcript_projection.dart';
@@ -4199,6 +4200,49 @@ class _ChatScreenState extends State<ChatScreen>
           !createsBotChat &&
           _newChatWorkspace == null,
       workspace: _newChatWorkspace,
+    );
+  }
+
+  Future<ModelPresetsStore> _modelPresetsStore() async => ModelPresetsStore(
+    await SharedPreferences.getInstance(),
+    connectionId: widget.connection.id,
+  );
+
+  Future<void> _rememberCurrentModelPreset({
+    DesktopReasoningEffort? effort,
+    DesktopFastMode? fast,
+  }) async {
+    final selection = _selectedModelPair;
+    if (selection == null) return;
+    final store = await _modelPresetsStore();
+    await store.merge(
+      selection.providerSlug,
+      selection.modelId,
+      effort: effort,
+      fast: fast,
+    );
+  }
+
+  Future<void> _applySelectedModelPreset(String provider, String model) async {
+    final store = await _modelPresetsStore();
+    final preset = store.read(provider, model);
+    if (preset == null) return;
+    final capabilities = _desktopModelCatalog
+        ?.optionFor(provider, model)
+        ?.capabilities;
+    await applyModelPresetForCapabilities(
+      preset: preset,
+      capabilities: capabilities,
+      applyEffort: (effort) => _applySessionReasoning(
+        effort,
+        acquireRuntime: false,
+        rememberPreset: false,
+      ),
+      applyFast: (fast) => _applySessionFastMode(
+        fast,
+        acquireRuntime: false,
+        rememberPreset: false,
+      ),
     );
   }
 
@@ -10630,6 +10674,7 @@ class _ChatScreenState extends State<ChatScreen>
         return false;
       }
       await _stageSessionModel(provider.slug, modelId);
+      await _applySelectedModelPreset(provider.slug, modelId);
       if (mounted) {
         HermesNotice.of(context).showSnackBar(
           SnackBar(
@@ -10755,6 +10800,7 @@ class _ChatScreenState extends State<ChatScreen>
       modelId,
       updateEffectiveDisplay: false,
     );
+    await _applySelectedModelPreset(provider.slug, modelId);
     if (mounted) {
       final name = friendlyModelName(modelId);
       HermesNotice.of(context).showSnackBar(
@@ -10770,9 +10816,13 @@ class _ChatScreenState extends State<ChatScreen>
     return true;
   }
 
-  Future<void> _applySessionReasoning(DesktopReasoningEffort effort) async {
+  Future<void> _applySessionReasoning(
+    DesktopReasoningEffort effort, {
+    bool acquireRuntime = true,
+    bool rememberPreset = true,
+  }) async {
     final str = Strings.of(context);
-    if (!_chat.hasDesktopRuntime) {
+    if (!_chat.hasDesktopRuntime && acquireRuntime) {
       try {
         await _chat.ensureDesktopRuntime(acquireForExplicitAction: true);
       } catch (error) {
@@ -10794,6 +10844,9 @@ class _ChatScreenState extends State<ChatScreen>
       if (!mounted) return;
       setState(() => _selectedReasoning = effort);
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
+      if (rememberPreset) {
+        await _rememberCurrentModelPreset(effort: effort);
+      }
       return;
     }
     if (!_chat.canConfigureDesktopSession) {
@@ -10827,11 +10880,18 @@ class _ChatScreenState extends State<ChatScreen>
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_sessionReasoningKey, effort.wire);
     if (mounted) setState(() => _selectedReasoning = effort);
+    if (rememberPreset) {
+      await _rememberCurrentModelPreset(effort: effort);
+    }
   }
 
-  Future<void> _applySessionFastMode(DesktopFastMode mode) async {
+  Future<void> _applySessionFastMode(
+    DesktopFastMode mode, {
+    bool acquireRuntime = true,
+    bool rememberPreset = true,
+  }) async {
     final str = Strings.of(context);
-    if (!_chat.hasDesktopRuntime) {
+    if (!_chat.hasDesktopRuntime && acquireRuntime) {
       try {
         await _chat.ensureDesktopRuntime(acquireForExplicitAction: true);
       } catch (error) {
@@ -10853,6 +10913,9 @@ class _ChatScreenState extends State<ChatScreen>
       if (!mounted) return;
       setState(() => _selectedFastMode = mode);
       _chat.stageFirstSubmitConfig(_firstSubmitConfig);
+      if (rememberPreset) {
+        await _rememberCurrentModelPreset(fast: mode);
+      }
       return;
     }
     if (!_chat.canConfigureDesktopSession) {
@@ -10886,6 +10949,9 @@ class _ChatScreenState extends State<ChatScreen>
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_sessionFastKey, mode.wire);
     if (mounted) setState(() => _selectedFastMode = mode);
+    if (rememberPreset) {
+      await _rememberCurrentModelPreset(fast: mode);
+    }
   }
 
   /// Aplica un modelo activo directamente (desde `/model <nombre>`), con la misma
