@@ -13536,25 +13536,12 @@ class _ChatScreenState extends State<ChatScreen>
                                             color: Theme.of(
                                               context,
                                             ).scaffoldBackgroundColor,
-                                            child: ClipRect(
-                                              child: ConstrainedBox(
-                                                constraints:
-                                                    const BoxConstraints(
-                                                      maxHeight: 96,
-                                                    ),
-                                                child: SingleChildScrollView(
-                                                  physics:
-                                                      const NeverScrollableScrollPhysics(),
-                                                  child: IgnorePointer(
-                                                    child: ExcludeSemantics(
-                                                      child: _UserMessage(
-                                                        content:
-                                                            prompt['content']
-                                                                as String,
-                                                        compact: true,
-                                                      ),
-                                                    ),
-                                                  ),
+                                            child: IgnorePointer(
+                                              child: ExcludeSemantics(
+                                                child: _PinnedUserPrompt(
+                                                  content:
+                                                      prompt['content']
+                                                          as String,
                                                 ),
                                               ),
                                             ),
@@ -13569,19 +13556,37 @@ class _ChatScreenState extends State<ChatScreen>
                                   left: 0,
                                   right: 0,
                                   height: 48,
-                                  child: _ChatTopButton(
-                                    controller: _scrollController,
-                                    hasEarlierMessages:
-                                        _chat.hasEarlierMessages,
-                                    loading: _loadingEarlierMessages,
-                                    contentChanges: _liveAssistantFrame,
-                                    transcriptOverlayExtent: () =>
-                                        _activityPillExtent.value +
-                                        _quickReplyExtent.value +
-                                        (_scrollToBottomVisibility.value
-                                            ? 48
-                                            : 0),
-                                    onLoadEarlier: _loadEarlierMessages,
+                                  // Over a pinned prompt the chevron moves to
+                                  // the free left gutter of the bubble so it
+                                  // never covers the prompt itself.
+                                  child: ListenableBuilder(
+                                    listenable: Listenable.merge([
+                                      _stickyPrompt,
+                                      _transcriptConcealed,
+                                    ]),
+                                    builder: (context, child) => Align(
+                                      alignment:
+                                          _stickyPrompt.value != null &&
+                                              !_findOpen &&
+                                              !_transcriptConcealed.value
+                                          ? Alignment.centerLeft
+                                          : Alignment.center,
+                                      child: child,
+                                    ),
+                                    child: _ChatTopButton(
+                                      controller: _scrollController,
+                                      hasEarlierMessages:
+                                          _chat.hasEarlierMessages,
+                                      loading: _loadingEarlierMessages,
+                                      contentChanges: _liveAssistantFrame,
+                                      transcriptOverlayExtent: () =>
+                                          _activityPillExtent.value +
+                                          _quickReplyExtent.value +
+                                          (_scrollToBottomVisibility.value
+                                              ? 48
+                                              : 0),
+                                      onLoadEarlier: _loadEarlierMessages,
+                                    ),
                                   ),
                                 ),
                                 // Bottom overlay of the transcript. The
@@ -20939,6 +20944,157 @@ class _RenderBubbleSizeReporter extends RenderProxyBox {
   }
 }
 
+/// The pinned (sticky) copy of a user prompt at the top of the transcript.
+///
+/// A short summary, like Desktop's sticky prompt (two-line clamp; attachments
+/// stay in the transcript): the text clamped to two lines, then the
+/// attachments as small chips. Every piece has a fixed size, so the pinned
+/// area never cuts a thumbnail or a line in half. The bubble starts after the
+/// same 56 dp left gutter as the transcript bubble; the load-earlier chevron
+/// sits there.
+class _PinnedUserPrompt extends StatelessWidget {
+  final String content;
+
+  const _PinnedUserPrompt({required this.content});
+
+  static const int _maxLines = 2;
+  static const int _maxChips = 2;
+  static const double _chipHeight = 24;
+  static const double _thumbSize = 20;
+
+  /// Bounds the pinned height (2 lines + one chip row ≈ 88 dp). Larger text
+  /// sizes apply when the prompt is opened in the transcript.
+  static const double _maxTextScale = 1.2;
+
+  Widget _chip(
+    BuildContext context,
+    HermesThemeColors colors,
+    _ParsedAttachment attachment,
+  ) {
+    final imgPath = attachment.imagePath;
+    final imgFile = imgPath != null && File(imgPath).existsSync()
+        ? File(imgPath)
+        : null;
+    final isImage = _parsedAttachmentIsImage(attachment);
+    return Container(
+      height: _chipHeight,
+      constraints: const BoxConstraints(maxWidth: 160),
+      padding: const EdgeInsets.only(left: 2, right: 8),
+      decoration: BoxDecoration(
+        color: colors.surface.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(_chipHeight / 2),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox.square(
+            dimension: _thumbSize,
+            child: imgFile != null
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(_thumbSize / 2),
+                    child: Image.file(
+                      imgFile,
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                      cacheWidth: 60,
+                    ),
+                  )
+                : Icon(
+                    isImage
+                        ? Icons.image_outlined
+                        : Icons.insert_drive_file_outlined,
+                    size: 14,
+                    color: colors.textSecondary,
+                  ),
+          ),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              attachment.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.2,
+                color: colors.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.hermes;
+    final parsed = _parseUserContent(content);
+    final text = parsed.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final attachments = parsed.attachments;
+    final hidden = attachments.length - _maxChips;
+    return MediaQuery.withClampedTextScaling(
+      maxScaleFactor: _maxTextScale,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 56, right: 12, top: 4, bottom: 2),
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: Container(
+            key: const ValueKey('chat-sticky-prompt-bubble'),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+            decoration: BoxDecoration(
+              color: colors.surfaceVariant.withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (text.isNotEmpty)
+                  Text(
+                    text,
+                    maxLines: _maxLines,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colors.textPrimary,
+                      fontSize: 14,
+                      height: 1.3,
+                    ),
+                  ),
+                if (attachments.isNotEmpty) ...[
+                  if (text.isNotEmpty) const SizedBox(height: 4),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final (index, attachment)
+                          in attachments.take(_maxChips).indexed) ...[
+                        if (index > 0) const SizedBox(width: 4),
+                        Flexible(child: _chip(context, colors, attachment)),
+                      ],
+                      if (hidden > 0) ...[
+                        const SizedBox(width: 4),
+                        Text(
+                          '+$hidden',
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _UserMessage extends StatelessWidget {
   final String content;
   final bool verbose;
@@ -23110,6 +23266,9 @@ class _ChatTopButtonState extends State<_ChatTopButton> {
 
   @override
   Widget build(BuildContext context) => Center(
+    // Its own width only: the parent decides where it sits (centred, or in
+    // the left gutter beside a pinned prompt).
+    widthFactor: 1,
     child: AnimatedSwitcher(
       duration: const Duration(milliseconds: 160),
       reverseDuration: const Duration(milliseconds: 120),
