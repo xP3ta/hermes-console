@@ -12,6 +12,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/utils/byte_bounded_lru_cache.dart';
+import 'package:hermes_android/core/widgets/projects/project_create_sheet.dart';
 import 'package:hermes_android/core/widgets/projects/project_files_browser.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -235,6 +236,63 @@ void main() {
       expect(_submitEnabled(tester), isFalse);
     });
 
+    testWidgets('picking the same folder twice keeps one entry and sends it '
+        'once', (tester) async {
+      final gateway = Pc1215CreatingProjectsGateway.sample();
+      await _pump(tester, gateway, picks: ['/srv/garden', '/srv/garden/']);
+      await _openCreate(tester);
+      await _tap(tester, 'pc1215-create-add-folder');
+      await _tap(tester, 'pc1215-create-add-folder');
+      expect(
+        find.byKey(const ValueKey('pc1215-create-folder-/srv/garden')),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.close_rounded), findsOneWidget);
+      await _tap(tester, 'pc1215-create-submit');
+      expect(_calls(gateway, 'projects.create').single[1], {
+        'name': 'garden',
+        'folders': ['/srv/garden'],
+        'use': true,
+      });
+    });
+
+    testWidgets('keyboard "done" with no folders or an empty name never '
+        'reaches the gateway', (tester) async {
+      final gateway = Pc1215CreatingProjectsGateway.sample();
+      await _pump(tester, gateway, picks: ['/srv/garden']);
+      await _openCreate(tester);
+      final name = find.byKey(const ValueKey('pc1215-create-name'));
+
+      // A name but no folder yet.
+      await tester.enterText(name, 'Huerto');
+      await tester.pumpAndSettle();
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(_calls(gateway, 'projects.create'), isEmpty);
+
+      // A folder but a blank name.
+      await _tap(tester, 'pc1215-create-add-folder');
+      await tester.enterText(name, '   ');
+      await tester.pumpAndSettle();
+      await tester.showKeyboard(name);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(_calls(gateway, 'projects.create'), isEmpty);
+      expect(find.byKey(const ValueKey('pc1215-create-sheet')), findsOneWidget);
+
+      // Control: with both, "done" submits through the same path.
+      await tester.enterText(name, 'Huerto');
+      await tester.pumpAndSettle();
+      await tester.showKeyboard(name);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(_calls(gateway, 'projects.create').single[1], {
+        'name': 'Huerto',
+        'folders': ['/srv/garden'],
+        'use': true,
+      });
+    });
+
     testWidgets('a folder already in a project offers to open it instead; '
         'nothing is created', (tester) async {
       final gateway = Pc1215CreatingProjectsGateway.sample();
@@ -438,12 +496,56 @@ void main() {
       expect(find.text('Carpeta añadida a «Notas de viaje»'), findsOneWidget);
     });
 
+    testWidgets('a picked folder with a trailing slash is sent without it', (
+      tester,
+    ) async {
+      final gateway = Pc1215CreatingProjectsGateway.sample();
+      await _pump(tester, gateway, picks: ['/home/demo/notes/photos/']);
+      await _tap(tester, 'pj1215-card-menu-p_notes');
+      await _tap(tester, 'pj1215-menu-add-folder');
+      expect(_calls(gateway, 'projects.add_folder'), [
+        [
+          'projects.add_folder',
+          {
+            'id': 'p_notes',
+            'path': '/home/demo/notes/photos',
+            'is_primary': false,
+          },
+        ],
+      ]);
+    });
+
     testWidgets('cancelling the picker sends nothing', (tester) async {
       final gateway = Pc1215CreatingProjectsGateway.sample();
       await _pump(tester, gateway);
       await _tap(tester, 'pj1215-card-menu-p_notes');
       await _tap(tester, 'pj1215-menu-add-folder');
       expect(_calls(gateway, 'projects.add_folder'), isEmpty);
+    });
+  });
+
+  group('folder owner (Desktop projectIdForCwd)', () {
+    ProjectNode node(String id, String path) => ProjectNode.tryParse({
+      'id': id,
+      'label': id,
+      'path': path,
+      'isAuto': false,
+      'sessionCount': 0,
+      'repos': [],
+    })!;
+
+    test('nested owners: the longest path wins in either order', () {
+      final app = node('p_app', '/srv/app');
+      final sub = node('p_sub', '/srv/app/sub');
+      for (final order in [
+        [app, sub],
+        [sub, app],
+      ]) {
+        expect(projectOwningFolder(order, '/srv/app/sub/src')?.id, 'p_sub');
+        expect(projectOwningFolder(order, '/srv/app/sub')?.id, 'p_sub');
+        expect(projectOwningFolder(order, '/srv/app/other')?.id, 'p_app');
+        expect(projectOwningFolder(order, '/srv/application'), isNull);
+      }
     });
   });
 
