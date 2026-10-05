@@ -2565,7 +2565,54 @@ class _ChatScreenState extends State<ChatScreen>
     _scrollController.addListener(_onScroll);
     _textController.addListener(_onComposerChanged);
     _textFocusNode.addListener(_onComposerFocusChanged);
+    _textFocusNode.onKeyEvent = _onComposerKeyEvent;
     unawaited(_restoreDraftAndRunInitialAction());
+  }
+
+  /// Physical keyboard: Arrow Up in an EMPTY composer brings back the last
+  /// message sent in this chat, caret at the end. With text, or while a
+  /// suggestion palette is open, the key keeps its normal behaviour. The
+  /// palette guards cover suggestions that arrive late, after a send already
+  /// cleared the text; an `@` mention always needs text, so the empty check
+  /// covers it.
+  KeyEventResult _onComposerKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        event.logicalKey != LogicalKeyboardKey.arrowUp) {
+      return KeyEventResult.ignored;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isShiftPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isAltPressed ||
+        keyboard.isMetaPressed) {
+      return KeyEventResult.ignored;
+    }
+    if (_textController.text.isNotEmpty ||
+        _slashPaletteVisible ||
+        _referencePaletteVisible ||
+        _isRecording ||
+        _transcribing) {
+      return KeyEventResult.ignored;
+    }
+    final recalled = _lastSentUserText();
+    if (recalled == null) return KeyEventResult.ignored;
+    _textController.value = TextEditingValue(
+      text: recalled,
+      selection: TextSelection.collapsed(offset: recalled.length),
+    );
+    return KeyEventResult.handled;
+  }
+
+  /// Text of the newest real user turn (rows are stored newest first).
+  String? _lastSentUserText() {
+    for (final message in _chat.messages) {
+      if (!isRealUserTurn(message)) continue;
+      final text = _parseUserContent(
+        (message['content'] ?? '').toString(),
+      ).text.trim();
+      if (text.isNotEmpty) return text;
+    }
+    return null;
   }
 
   void _onComposerFocusChanged() {
