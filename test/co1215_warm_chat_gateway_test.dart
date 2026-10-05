@@ -322,6 +322,32 @@ void main() {
     });
   });
 
+  test('transport recovery for one connection closes only its parked '
+      'clients', () {
+    fakeAsync((async) {
+      openConnected('a', 'chat-a');
+      async.flushMicrotasks();
+      openConnected('b', 'chat-b');
+      async.flushMicrotasks();
+      service.release('a', 'chat-a');
+      service.release('b', 'chat-b');
+      async.flushMicrotasks();
+      expect(service.warmGatewayCountForTesting, 2);
+
+      // The server of `a` was updated: its parked socket is stale.
+      service.requestTransportRecoveryForConnection('a');
+      async.flushMicrotasks();
+
+      expect(created[0].closeCalls, 1);
+      expect(created[1].closeCalls, 0);
+      expect(service.warmGatewayCountForTesting, 1);
+      attach('a', 'chat-a');
+      expect(created, hasLength(3), reason: 'a fresh socket for `a`');
+      attach('b', 'chat-b');
+      expect(created, hasLength(3), reason: '`b` reuses its parked client');
+    });
+  });
+
   test('an injected gateway stays owned by its caller and is not parked', () {
     fakeAsync((async) {
       final injected = _CountingGateway(-1);

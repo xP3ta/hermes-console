@@ -987,6 +987,8 @@ class ConnectionManager {
   // huérfanas de borrados antiguos al arrancar (evita basura tras updates del
   // APK, que conservan los datos a propósito).
   static const List<String> _connScopedPrefixes = [
+    // HermesUpdateSession.prefsPrefix (a running server update).
+    'hermes_update_session_v1.',
     'capabilities_',
     'active_profile_',
     'runs_',
@@ -2551,15 +2553,21 @@ class DashboardUpdateApplyResult {
   /// El servidor ya tenía una actualización en curso y devolvió esa.
   final bool alreadyRunning;
 
+  /// Server clock when it answered (`Date` header), so the run's receipt is
+  /// matched against the server's own time rather than the phone's.
+  final DateTime? serverDate;
+
   const DashboardUpdateApplyResult.confirmed({
     this.actionId,
     this.alreadyRunning = false,
+    this.serverDate,
   }) : responseConfirmed = true;
 
   const DashboardUpdateApplyResult.transportUncertain()
     : responseConfirmed = false,
       actionId = null,
-      alreadyRunning = false;
+      alreadyRunning = false,
+      serverDate = null;
 }
 
 /// Hermes rechazó la actualización (instalación gestionada externamente,
@@ -4075,9 +4083,19 @@ class DashboardClient {
       );
     }
     final rawId = (body['action_id'] ?? '').toString().trim();
+    DateTime? serverDate;
+    try {
+      final date = res.headers['date'];
+      if (date != null) serverDate = HttpDate.parse(date);
+    } on FormatException {
+      serverDate = null;
+    } on HttpException {
+      serverDate = null;
+    }
     return DashboardUpdateApplyResult.confirmed(
       actionId: RegExp(r'^[0-9a-f]{32}$').hasMatch(rawId) ? rawId : null,
       alreadyRunning: body['already_running'] == true,
+      serverDate: serverDate,
     );
   }
 

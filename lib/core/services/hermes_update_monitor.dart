@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Seguimiento de `hermes update` lanzado desde Console vía Dashboard.
 ///
@@ -12,6 +14,9 @@ import 'package:flutter/foundation.dart';
 /// resultado: ni el marcador, ni "el Dashboard responde", ni "el gateway está
 /// running". En el incidente del 25/09 el gateway viejo seguía running y la
 /// app anunció éxito a los 3 s de una actualización de ~11 min.
+///
+/// Like Desktop, our marker with the updater process gone also settles the
+/// run; whether the gateway came back is checked afterwards.
 
 /// Tiempo máximo que Console acompaña una actualización. El drenaje del
 /// gateway puede esperar hasta ~30 min a turnos en curso (cap de Hermes), así
@@ -19,15 +24,29 @@ import 'package:flutter/foundation.dart';
 /// "no verificado", nunca éxito.
 const Duration hermesUpdateMaxDuration = Duration(minutes: 45);
 
-/// Con nuestro marcador visto, sin proceso vivo y sin recibo cerrado durante
-/// este tiempo, el updater murió tras actualizar el código (p. ej. unidad
-/// antigua del Dashboard sin `KillMode=process`). Se pasa a verificar por
-/// versión en vez de esperar al límite.
-const Duration hermesUpdateReceiptGrace = Duration(minutes: 5);
+/// Status poll cadence (Desktop `BACKEND_ACTION_POLL_MS` is 1.5 s).
+const Duration hermesUpdatePollInterval = Duration(seconds: 2);
+
+/// Cap for a run with no attributable progress: the status answers but
+/// shows neither our updater running nor a result (Desktop
+/// `BACKEND_ACTION_MAX_MS`). While the server reports the updater running,
+/// or once its log shows a gateway drain, only [hermesUpdateMaxDuration]
+/// bounds the session, so [HermesUpdateGuard] holds for the whole run.
+const Duration hermesUpdateActionMaxDuration = Duration(minutes: 6);
+
+/// After the status endpoint stops answering (the Dashboard restarts), how
+/// long Console waits for it to come back (Desktop `BACKEND_RETURN_MAX_MS`).
+const Duration hermesUpdateRestartWindow = Duration(minutes: 4);
+
+/// Once the run has a result, how long Console waits for the gateway to
+/// report running again. Past it the result is "code updated, gateway not
+/// confirmed" ([HermesUpdateIssue.gatewayNotConfirmed]), never a spinner.
+const Duration hermesUpdateGatewayConfirmWindow = Duration(minutes: 2);
 
 /// Margen para relojes de móvil y servidor desfasados al decidir si un
-/// recibo pertenece a esta ejecución.
-const Duration _clockSkew = Duration(minutes: 2);
+/// recibo pertenece a esta ejecución (Desktop uses 60 s; [requestedAt] is the
+/// server's own clock when the POST answer carried a `Date` header).
+const Duration _clockSkew = Duration(seconds: 60);
 
 /// Fase observada de la acción `hermes-update`.
 enum HermesUpdateActionPhase {
@@ -85,7 +104,9 @@ final RegExp _completedMarker = RegExp(
 ///     (`finished_at`): su `outcome` es el resultado.
 ///  2. Proceso vivo en este Dashboard: en curso. Nunca éxito.
 ///  3. Salida no-cero del proceso lanzado por este Dashboard: fallo.
-///  4. Marcador propio sin recibo cerrado: reiniciando servicios.
+///  4. Own marker line with the updater gone: success (Desktop parity); the
+///     gateway is confirmed afterwards as a separate, bounded step. An
+///     echoed `action_id` without that line is not a marker.
 ///  5. Servidor antiguo (sin `action_id` ni recibos): la salida 0 del proceso.
 ///  6. Todo lo demás (id de otra ejecución, `exit_code` derivado de un recibo
 ///     antiguo, Dashboard recién reiniciado sin datos): sin resultado.
@@ -102,16 +123,16 @@ HermesUpdateActionObservation classifyHermesUpdateAction(
   final reportedId = (status['action_id'] ?? '').toString().trim();
   final running = status['running'] == true;
 
+  // Only the completion marker LINE of our run counts (Desktop
+  // `completedAfterRestart`): an echoed `action_id` alone does not prove
+  // that the run finished (e.g. a Dashboard restarted mid-update).
   var ownMarker = false;
   if (ownId.isNotEmpty) {
-    ownMarker = reportedId == ownId;
-    if (!ownMarker) {
-      for (final line in lines) {
-        final match = _completedMarker.firstMatch(line.trim());
-        if (match != null && match.group(1) == ownId) {
-          ownMarker = true;
-          break;
-        }
+    for (final line in lines) {
+      final match = _completedMarker.firstMatch(line.trim());
+      if (match != null && match.group(1) == ownId) {
+        ownMarker = true;
+        break;
       }
     }
   }
@@ -144,6 +165,7 @@ HermesUpdateActionObservation classifyHermesUpdateAction(
       ownMarker
           ? HermesUpdateActionPhase.restartingServices
           : HermesUpdateActionPhase.running,
+      detail: detail,
       ownMarker: ownMarker,
       processRunning: true,
     );
@@ -164,9 +186,12 @@ HermesUpdateActionObservation classifyHermesUpdateAction(
     );
   }
 
+  // Our marker with the updater gone settles the run, like Desktop's
+  // `completedAfterRestart`: the gateway check that follows is separate.
   if (ownMarker) {
-    return const HermesUpdateActionObservation(
-      HermesUpdateActionPhase.restartingServices,
+    return HermesUpdateActionObservation(
+      HermesUpdateActionPhase.succeeded,
+      detail: detail,
       ownMarker: true,
     );
   }
@@ -185,8 +210,21 @@ bool _receiptIsOurs(Map<dynamic, dynamic> receipt, DateTime requestedAt) {
   return !started.isBefore(requestedAt.toUtc().subtract(_clockSkew));
 }
 
+final RegExp _gatewayDrainLine = RegExp(r'\bdrain', caseSensitive: false);
+
+/// The updater is draining a gateway (`→ <label>: draining (up to Ns)...`),
+/// which may legitimately wait for running turns up to Hermes' drain cap.
+bool _logShowsGatewayDrain(Map<String, dynamic> status) {
+  for (final line in (status['lines'] as List<dynamic>? ?? const [])) {
+    final text = line.toString().trim();
+    if (text.startsWith('===')) continue;
+    if (_gatewayDrainLine.hasMatch(text)) return true;
+  }
+  return false;
+}
+
 /// Última línea con contenido del log, sin marcadores internos ni ruido de
-/// assets. Se usa solo para explicar un fallo.
+/// assets. Explains a failure and shows progress while the update runs.
 String? lastMeaningfulUpdateLine(List<String> lines) {
   for (final raw in lines.reversed) {
     final line = raw.trim();
@@ -218,13 +256,33 @@ enum HermesUpdateOutcome {
   failed,
 }
 
+/// Why a result is not a plain success or failure.
+enum HermesUpdateIssue {
+  /// The update finished but the gateway was not seen running again within
+  /// [hermesUpdateGatewayConfirmWindow].
+  gatewayNotConfirmed,
+
+  /// The status endpoint stopped answering and did not come back within
+  /// [hermesUpdateRestartWindow].
+  serverNoReturn,
+
+  /// Nothing attributable to this run before the deadline.
+  timedOut,
+}
+
 @immutable
 class HermesUpdateResult {
   final HermesUpdateOutcome outcome;
   final String? detail;
   final String? version;
+  final HermesUpdateIssue? issue;
 
-  const HermesUpdateResult(this.outcome, {this.detail, this.version});
+  const HermesUpdateResult(
+    this.outcome, {
+    this.detail,
+    this.version,
+    this.issue,
+  });
 }
 
 /// El servidor no tiene `/api/actions/hermes-update/status` (404).
@@ -263,19 +321,74 @@ class HermesUpdateProbes {
 class HermesUpdateSession {
   HermesUpdateSession._({
     required this.connectionId,
-    required this.requestedAt,
+    required DateTime requestedAt,
     required this.previousVersion,
-  });
+  }) : _requestedAt = requestedAt.toUtc();
+
+  /// SharedPreferences key prefix of the persisted session of a connection
+  /// (`<prefix><connectionId>`). Holds no chat data: ids, times, version.
+  static const String prefsPrefix = 'hermes_update_session_v1.';
+
+  /// A persisted record older than this is not resumed: no update runs for
+  /// hours, so it can only be a leftover.
+  static const Duration _resumeHorizon = Duration(hours: 6);
 
   static final Map<String, HermesUpdateSession> _sessions = {};
 
+  /// App-wide reconnect of the gateway sockets of a connection, set by the
+  /// app shell. Fired once when an update ends with updated code: the
+  /// restarted gateway strands the old sockets (often half-open over
+  /// tunnels), like Desktop's `reconnectGateway()` after a backend update.
+  static void Function(String connectionId)? reconnectGateway;
+
   final String connectionId;
-  final DateTime requestedAt;
   final String previousVersion;
+
+  /// When this run was requested, on the server clock when known (see
+  /// [adoptServerTime]). Receipts that started before it (minus a 60 s
+  /// margin) belong to an earlier run.
+  DateTime get requestedAt => _requestedAt;
+  DateTime _requestedAt;
+
+  /// The POST answered `already_running`: this session follows a run that
+  /// started before our request.
+  bool get attachedToRunningUpdate => _attachedToRunningUpdate;
+  set attachedToRunningUpdate(bool value) {
+    _attachedToRunningUpdate = value;
+    _persist();
+  }
+
+  bool _attachedToRunningUpdate = false;
+
+  /// Anchors [requestedAt] on the server clock of the POST answer, so a
+  /// phone clock running ahead does not disown our own receipt.
+  void adoptServerTime(DateTime? serverDate) {
+    if (serverDate == null) return;
+    _requestedAt = serverDate.toUtc();
+    _persist();
+  }
+
+  /// Attached to a run already in progress: its own receipt, open while the
+  /// updater lives, tells when it started; adopt that as the request time.
+  void _adoptAttachedRunStart(Map<String, dynamic> status) {
+    final receipt = status['receipt'];
+    if (status['running'] != true || receipt is! Map) return;
+    if ((receipt['finished_at'] ?? '').toString().trim().isNotEmpty) return;
+    final started = DateTime.tryParse((receipt['started_at'] ?? '').toString());
+    if (started == null || !started.isBefore(_requestedAt)) return;
+    _requestedAt = started.toUtc();
+    _persist();
+  }
 
   /// `action_id` de Hermes; llega con la respuesta del POST. Se relee en
   /// cada sondeo, así que puede fijarse después de arrancar [track].
-  String? actionId;
+  String? get actionId => _actionId;
+  set actionId(String? value) {
+    _actionId = value;
+    _persist();
+  }
+
+  String? _actionId;
 
   /// El POST llegó a responder (false si el socket se cortó / timeout).
   bool responseConfirmed = true;
@@ -283,6 +396,9 @@ class HermesUpdateSession {
   final ValueNotifier<HermesUpdateSessionStep> step = ValueNotifier(
     HermesUpdateSessionStep.requesting,
   );
+
+  /// Latest useful line of the update log (progress for the user).
+  final ValueNotifier<String?> progressLine = ValueNotifier(null);
   final DateTime _createdAt = DateTime.now();
   final Completer<HermesUpdateResult> _result = Completer();
   bool _tracking = false;
@@ -313,6 +429,7 @@ class HermesUpdateSession {
       previousVersion: previousVersion,
     );
     _sessions[connectionId] = session;
+    session._persist();
     return session;
   }
 
@@ -323,17 +440,78 @@ class HermesUpdateSession {
     if (!_result.isCompleted) _result.complete(result);
     if (identical(_sessions[connectionId], this)) {
       _sessions.remove(connectionId);
+      _store((prefs) => prefs.remove('$prefsPrefix$connectionId'));
+    }
+  }
+
+  // ── Persistence: survive Android killing the process ───────────────────
+
+  static Future<void> _storeTail = Future<void>.value();
+
+  /// Serializes every write so a late save never lands after the clear.
+  static Future<void> _store(
+    Future<Object?> Function(SharedPreferences prefs) write,
+  ) {
+    final next = _storeTail.then((_) async {
+      try {
+        await write(await SharedPreferences.getInstance());
+      } catch (error) {
+        debugPrint('[hermes-update] store failed (${error.runtimeType})');
+      }
+    });
+    _storeTail = next;
+    return next;
+  }
+
+  void _persist() {
+    if (isFinished || !identical(_sessions[connectionId], this)) return;
+    final record = jsonEncode({
+      'connectionId': connectionId,
+      'actionId': _actionId,
+      'requestedAt': _requestedAt.toIso8601String(),
+      'previousVersion': previousVersion,
+      'attached': _attachedToRunningUpdate,
+    });
+    _store((prefs) => prefs.setString('$prefsPrefix$connectionId', record));
+  }
+
+  static HermesUpdateSession? _decode(String connectionId, String? raw) {
+    if (raw == null) return null;
+    try {
+      final data = jsonDecode(raw);
+      if (data is! Map || data['connectionId'] != connectionId) return null;
+      final requestedAt = DateTime.tryParse('${data['requestedAt']}');
+      final previousVersion = data['previousVersion'];
+      final actionId = data['actionId'];
+      if (requestedAt == null || previousVersion is! String) return null;
+      if (actionId != null &&
+          (actionId is! String ||
+              !RegExp(r'^[0-9a-f]{32}$').hasMatch(actionId))) {
+        return null;
+      }
+      return HermesUpdateSession._(
+          connectionId: connectionId,
+          requestedAt: requestedAt,
+          previousVersion: previousVersion,
+        )
+        .._actionId = actionId as String?
+        .._attachedToRunningUpdate = data['attached'] == true;
+    } on FormatException {
+      return null;
     }
   }
 
   /// Arranca el seguimiento (idempotente) y devuelve el resultado final.
   Future<HermesUpdateResult> track(
     HermesUpdateProbes probes, {
-    Duration pollInterval = const Duration(seconds: 4),
+    Duration pollInterval = hermesUpdatePollInterval,
     Duration maxDuration = hermesUpdateMaxDuration,
-    Duration receiptGrace = hermesUpdateReceiptGrace,
+    Duration actionMaxDuration = hermesUpdateActionMaxDuration,
+    Duration restartWindow = hermesUpdateRestartWindow,
     Duration legacyGrace = const Duration(seconds: 45),
+    Duration gatewayConfirmWindow = hermesUpdateGatewayConfirmWindow,
     DateTime Function()? clock,
+    void Function(String connectionId)? reconnect,
   }) {
     if (!_tracking && !isFinished) {
       _tracking = true;
@@ -341,11 +519,26 @@ class HermesUpdateSession {
         probes,
         pollInterval: pollInterval,
         maxDuration: maxDuration,
-        receiptGrace: receiptGrace,
+        actionMaxDuration: actionMaxDuration,
+        restartWindow: restartWindow,
         legacyGrace: legacyGrace,
+        gatewayConfirmWindow: gatewayConfirmWindow,
         clock: clock ?? DateTime.now,
       ).then(
-        _finish,
+        (result) {
+          // Only the first track() runs this, so the reconnect fires once.
+          if (result.outcome == HermesUpdateOutcome.confirmed ||
+              result.outcome == HermesUpdateOutcome.partial) {
+            try {
+              (reconnect ?? reconnectGateway)?.call(connectionId);
+            } catch (error) {
+              debugPrint(
+                '[hermes-update] reconnect failed (${error.runtimeType})',
+              );
+            }
+          }
+          _finish(result);
+        },
         onError: (Object e) => _finish(
           HermesUpdateResult(HermesUpdateOutcome.unverified, detail: '$e'),
         ),
@@ -358,37 +551,63 @@ class HermesUpdateSession {
     HermesUpdateProbes probes, {
     required Duration pollInterval,
     required Duration maxDuration,
-    required Duration receiptGrace,
+    required Duration actionMaxDuration,
+    required Duration restartWindow,
     required Duration legacyGrace,
+    required Duration gatewayConfirmWindow,
     required DateTime Function() clock,
   }) async {
-    final deadline = clock().add(maxDuration);
+    // Deadlines: [actionMaxDuration] only while nothing attributable is
+    // seen; the long [maxDuration] while the last read says the updater
+    // runs or once its log shows a gateway drain (ending earlier would lift
+    // the guard mid-install); [restartWindow] from the first failed status
+    // read (the Dashboard restarting) until the updater is seen again.
+    final started = clock();
+    var drainSeen = false;
+    var updaterRunning = false;
+    DateTime? restartUntil;
+    var lastReadFailed = false;
+    DateTime deadline() =>
+        restartUntil ??
+        started.add(
+          drainSeen || updaterRunning ? maxDuration : actionMaxDuration,
+        );
     var missingEndpoint = 0;
     // Sin recibo utilizable: verificación por versión y `update_available`.
     DateTime? versionCheckSince;
-    DateTime? markerWithoutProcessSince;
     step.value = HermesUpdateSessionStep.applying;
 
-    while (clock().isBefore(deadline)) {
+    while (clock().isBefore(deadline())) {
       await Future<void>.delayed(pollInterval);
 
-      HermesUpdateOutcome? receiptOutcome;
-      String? detail;
       if (versionCheckSince == null) {
         HermesUpdateActionObservation? obs;
         try {
+          final raw = await probes.actionStatus();
+          lastReadFailed = false;
+          if (!drainSeen && _logShowsGatewayDrain(raw)) drainSeen = true;
+          if (attachedToRunningUpdate) _adoptAttachedRunStart(raw);
           obs = classifyHermesUpdateAction(
-            await probes.actionStatus(),
+            raw,
             actionId: actionId,
             requestedAt: requestedAt,
           );
           missingEndpoint = 0;
+          updaterRunning = obs.processRunning;
+          if (obs.detail case final line?) progressLine.value = line;
         } on HermesUpdateEndpointMissing {
+          lastReadFailed = false;
+          updaterRunning = false;
           if (++missingEndpoint >= 3) versionCheckSince = clock();
         } catch (_) {
-          // Dashboard reiniciándose, 401 por sesión rotada, 502…: normal.
+          // Dashboard reiniciándose, 401 por sesión rotada, 502…: normal,
+          // but only for [restartWindow].
+          lastReadFailed = true;
+          if (restartUntil == null) {
+            restartUntil = clock().add(restartWindow);
+            step.value = HermesUpdateSessionStep.restarting;
+          }
         }
-        detail = obs?.detail;
         switch (obs?.phase) {
           case HermesUpdateActionPhase.failed:
             return HermesUpdateResult(
@@ -396,49 +615,49 @@ class HermesUpdateSession {
               detail: obs?.detail,
             );
           case HermesUpdateActionPhase.succeeded:
-            receiptOutcome = HermesUpdateOutcome.confirmed;
+            return _confirmGateway(
+              probes,
+              HermesUpdateOutcome.confirmed,
+              detail: obs?.detail,
+              pollInterval: pollInterval,
+              window: gatewayConfirmWindow,
+              clock: clock,
+            );
           case HermesUpdateActionPhase.partial:
-            receiptOutcome = HermesUpdateOutcome.partial;
+            return _confirmGateway(
+              probes,
+              HermesUpdateOutcome.partial,
+              detail: obs?.detail,
+              pollInterval: pollInterval,
+              window: gatewayConfirmWindow,
+              clock: clock,
+            );
           case HermesUpdateActionPhase.restartingServices:
             step.value = HermesUpdateSessionStep.restarting;
-            if (!obs!.processRunning) {
-              markerWithoutProcessSince ??= clock();
-              if (clock().difference(markerWithoutProcessSince) >=
-                  receiptGrace) {
-                versionCheckSince = clock();
-              }
-            } else {
-              markerWithoutProcessSince = null;
-            }
+            restartUntil = null;
           case HermesUpdateActionPhase.running:
             step.value = HermesUpdateSessionStep.applying;
-            markerWithoutProcessSince = null;
+            restartUntil = null;
           case HermesUpdateActionPhase.unknown:
           case null:
             break;
         }
-        if (receiptOutcome == null && versionCheckSince == null) continue;
+        if (versionCheckSince == null) continue;
       }
 
-      // Verificación final: gateway de vuelta.
+      // Legacy server: no receipt, prove the new version once the gateway
+      // is back.
       step.value = HermesUpdateSessionStep.verifying;
-      final status = await probes.serverStatus();
-      final gatewayRunning =
-          status != null &&
-          (status['gateway_running'] == true ||
-              status['gateway_state'] == 'running');
-      if (!gatewayRunning) {
+      final status = await _serverStatus(probes);
+      if (!_gatewayRunning(status)) {
         step.value = HermesUpdateSessionStep.restarting;
+        lastReadFailed = status == null;
+        if (lastReadFailed) restartUntil ??= clock().add(restartWindow);
         continue;
       }
-      final version = (status['version'] ?? '').toString().trim();
-      if (receiptOutcome != null) {
-        return HermesUpdateResult(
-          receiptOutcome,
-          detail: detail,
-          version: version,
-        );
-      }
+      lastReadFailed = false;
+      restartUntil = null;
+      final version = (status!['version'] ?? '').toString().trim();
       final stillAvailable = await probes.updateStillAvailable();
       final versionChanged =
           previousVersion.isNotEmpty &&
@@ -451,16 +670,117 @@ class HermesUpdateSession {
           version: version,
         );
       }
-      if (clock().difference(versionCheckSince!) >= legacyGrace) {
+      if (clock().difference(versionCheckSince) >= legacyGrace) {
         return HermesUpdateResult(
           HermesUpdateOutcome.unverified,
           version: version,
         );
       }
     }
-    return const HermesUpdateResult(HermesUpdateOutcome.unverified);
+    if (lastReadFailed) {
+      return const HermesUpdateResult(
+        HermesUpdateOutcome.failed,
+        issue: HermesUpdateIssue.serverNoReturn,
+      );
+    }
+    return const HermesUpdateResult(
+      HermesUpdateOutcome.unverified,
+      issue: HermesUpdateIssue.timedOut,
+    );
   }
 
+  /// The run is over ([outcome] comes from its receipt or marker); this only
+  /// waits, for at most [window], for the gateway to report running again.
+  /// If it does not, the code is updated but the gateway is unconfirmed:
+  /// a partial result the user can re-check, never an endless wait.
+  Future<HermesUpdateResult> _confirmGateway(
+    HermesUpdateProbes probes,
+    HermesUpdateOutcome outcome, {
+    required String? detail,
+    required Duration pollInterval,
+    required Duration window,
+    required DateTime Function() clock,
+  }) async {
+    step.value = HermesUpdateSessionStep.verifying;
+    final until = clock().add(window);
+    while (true) {
+      final status = await _serverStatus(probes);
+      if (_gatewayRunning(status)) {
+        return HermesUpdateResult(
+          outcome,
+          detail: detail,
+          version: (status!['version'] ?? '').toString().trim(),
+        );
+      }
+      if (!clock().isBefore(until)) break;
+      await Future<void>.delayed(pollInterval);
+    }
+    return HermesUpdateResult(
+      HermesUpdateOutcome.partial,
+      detail: detail,
+      issue: HermesUpdateIssue.gatewayNotConfirmed,
+    );
+  }
+
+  static Future<Map<String, dynamic>?> _serverStatus(
+    HermesUpdateProbes probes,
+  ) async {
+    try {
+      return await probes.serverStatus();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static bool _gatewayRunning(Map<String, dynamic>? status) =>
+      status != null &&
+      (status['gateway_running'] == true ||
+          status['gateway_state'] == 'running');
+
+  /// Connections with a persisted, unfinished update.
+  static Future<List<String>> persistedConnectionIds() async {
+    await _storeTail;
+    final prefs = await SharedPreferences.getInstance();
+    return [
+      for (final key in prefs.getKeys())
+        if (key.startsWith(prefsPrefix)) key.substring(prefsPrefix.length),
+    ];
+  }
+
+  /// Rebuilds the session of [connectionId] persisted before the process
+  /// died, or returns the live one. Null when there is nothing to resume; an
+  /// unreadable or stale record is dropped. The caller starts [track].
+  static Future<HermesUpdateSession?> resumePersisted(
+    String connectionId, {
+    DateTime? now,
+  }) async {
+    final live = of(connectionId);
+    if (live != null) return live;
+    await _storeTail;
+    final prefs = await SharedPreferences.getInstance();
+    final key = '$prefsPrefix$connectionId';
+    final restored = _decode(connectionId, prefs.getString(key));
+    final raced = of(connectionId);
+    if (raced != null) return raced;
+    if (restored == null ||
+        (now ?? DateTime.now()).toUtc().difference(restored.requestedAt) >
+            _resumeHorizon) {
+      if (prefs.containsKey(key)) await _store((p) => p.remove(key));
+      return null;
+    }
+    restored.step.value = HermesUpdateSessionStep.applying;
+    _sessions[connectionId] = restored;
+    return restored;
+  }
+
+  /// Drops a persisted record without resuming it (connection deleted).
+  static Future<void> discardPersisted(String connectionId) =>
+      _store((prefs) => prefs.remove('$prefsPrefix$connectionId'));
+
+  @visibleForTesting
+  static Future<void> debugFlushStore() => _storeTail;
+
+  /// Forgets the in-memory sessions only (a killed process).
   @visibleForTesting
   static void debugReset() => _sessions.clear();
 }

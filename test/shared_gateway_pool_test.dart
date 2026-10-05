@@ -109,6 +109,41 @@ void main() {
   // Wi-Fi/cellular switch their clients sat on a stale 15 s backoff, so every
   // poll failed fast with "connection lost" until it ran out. The platform's
   // new-network signal clears it for every pooled client.
+  test('probeConnection clears the backoff of that connection only '
+      '(server update restarted its gateway)', () {
+    fakeAsync((async) {
+      final pool = SharedGatewayPool.forTesting(
+        factory: (connection) => TuiGatewayClient(
+          connection,
+          dashboard: _Ticket(() => false),
+          heartbeatInterval: Duration.zero,
+          now: () => DateTime(2026).add(async.elapsed),
+          reconnectBackoff: GatewayReconnectBackoff(random: () => 1),
+        ),
+      );
+      final updated = pool.acquire(_conn('upd-a'));
+      final other = pool.acquire(_conn('upd-b'));
+      for (var i = 0; i < 5; i++) {
+        for (final lease in [updated, other]) {
+          lease.client.connect().then((_) {}, onError: (Object _) {});
+        }
+        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 1));
+      }
+      expect(updated.client.isBackingOff, isTrue);
+      expect(other.client.isBackingOff, isTrue);
+
+      unawaited(pool.probeConnection('upd-a'));
+      async.flushMicrotasks();
+      expect(updated.client.isBackingOff, isFalse);
+      expect(other.client.isBackingOff, isTrue);
+      updated.release();
+      other.release();
+      pool.disconnectIdle();
+      async.elapse(const Duration(seconds: 2));
+    });
+  });
+
   test('rl1215 probeAll clears every pooled client stale backoff', () {
     fakeAsync((async) {
       var networkUp = false;
