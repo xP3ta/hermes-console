@@ -26,6 +26,7 @@ import '../hermes_file_tree.dart';
 import '../hermes_notice.dart';
 import '../markdown_table.dart';
 import 'chat_message_selection_area.dart';
+import 'tool_output_cards.dart' show FileDiffBody;
 import 'embeds/embed_card.dart';
 import 'embeds/embed_consent_store.dart';
 import 'embeds/embed_detector.dart';
@@ -752,10 +753,18 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
     super.dispose();
   }
 
+  /// ```diff / ```patch fences reuse the tool cards' diff renderer, so
+  /// removed lines read red instead of hljs's grey `deletion`.
+  bool get _isDiff {
+    final l = widget.lang?.toLowerCase().trim();
+    return l == 'diff' || l == 'patch';
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final spans = _highlightSpans();
+    final isDiff = _isDiff;
+    final spans = isDiff ? null : _highlightSpans();
     // Texto resaltado (tema oscuro) o plano: el plano conserva el look ámbar
     // actual; si el resaltado falla, NUNCA se rompe el render.
     final TextStyle baseStyle = TextStyle(
@@ -779,14 +788,16 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
         ? const Color(0xFF1E1E1E)
         : colors.surfaceVariant;
 
-    final Widget body = ColoredBox(
-      color: bodyColor,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-        child: codeText,
-      ),
-    );
+    final Widget body = isDiff
+        ? FileDiffBody(diff: widget.code)
+        : ColoredBox(
+            color: bodyColor,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+              child: codeText,
+            ),
+          );
 
     // Cabecera: etiqueta del lenguaje + botón copiar (estilo editor/terminal).
     final Widget header = Container(
