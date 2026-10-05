@@ -1555,6 +1555,12 @@ List<ToolRunSummaryItem> summarizeToolRun(
         if (!skill) name = label;
       }
     }
+    // QA 9489: a skill loaded as `hyperframes` and as
+    // `creative/hyperframes` is one skill; the category prefix is dropped.
+    if (skill) {
+      final bare = name.split('/').last.trim();
+      if (bare.isNotEmpty) name = bare;
+    }
     final key = '${skill ? 's' : 't'}:$name';
     if (!counts.containsKey(key)) order.add(key);
     counts[key] = (counts[key] ?? 0) + 1;
@@ -2269,22 +2275,34 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
   /// Only settled steps (done/failed) count: a call still without a result
   /// may belong to a turn another surface is running, and passive
   /// observation must not reconstruct its tools.
-  List<ToolRunSummaryItem> get _toolSummary => summarizeToolRun(
-    _visibleEvents
-        .where(
-          (event) =>
-              event.kind != ChatTraceEventKind.reasoning &&
-              (event.isDone || event.isFailed),
-        )
-        .map(
-          (event) => (
-            label: event.label,
-            skill: event.kind == ChatTraceEventKind.skill,
-            detail: event.detail,
-            running: false,
-          ),
-        ),
+  List<ToolRunSummaryItem> get _toolSummary =>
+      summarizeToolRun(_settledToolSteps.map(_summaryStep));
+
+  Iterable<ChatTraceEvent> get _settledToolSteps => _visibleEvents.where(
+    (event) =>
+        event.kind != ChatTraceEventKind.reasoning &&
+        (event.isDone || event.isFailed),
   );
+
+  static ({String label, bool skill, String? detail, bool running})
+  _summaryStep(ChatTraceEvent event) => (
+    label: event.label,
+    skill: event.kind == ChatTraceEventKind.skill,
+    detail: event.detail,
+    running: false,
+  );
+
+  /// QA 9489: while the turn runs, the line under «Trabajando…» names only
+  /// the latest settled step, replacing the previous one; it never piles up
+  /// the whole run. The full history stays in the activity panel and in the
+  /// finished turn's summary.
+  ({String id, ToolRunSummaryItem item})? get _currentStep {
+    for (final event in _settledToolSteps.toList().reversed) {
+      final items = summarizeToolRun([_summaryStep(event)]);
+      if (items.isNotEmpty) return (id: event.id, item: items.single);
+    }
+    return null;
+  }
 
   /// mp1215: memory writes of this block that the gateway confirmed.
   Iterable<MemoryWrite> get _landedMemory => _visibleEvents
@@ -2554,7 +2572,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
       // tp1216: qué herramientas y skills usó la tanda, en UNA línea a todo
       // el ancho bajo la cabecera (en la cabecera no caben junto a las
       // acciones). Plegada solo: desplegada, la lista ya lo dice todo.
-      Widget toolsRow({VoidCallback? onTap}) => Padding(
+      Widget toolsRow({VoidCallback? onTap, Widget? line}) => Padding(
         padding: const EdgeInsets.only(left: 50),
         child: Semantics(
           button: onTap != null,
@@ -2565,14 +2583,15 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
             onTap: onTap,
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 1),
-              child: ToolRunSummaryLine(items: tools, maxItems: 5),
+              child: line ?? ToolRunSummaryLine(items: tools, maxItems: 5),
             ),
           ),
         ),
       );
       if (widget.active) {
+        final current = _currentStep;
         // El estado vivo lo cuenta la pastilla de actividad (con la
-        // herramienta en curso); aquí, una palabra y lo ya hecho en la tanda.
+        // herramienta en curso); aquí, una palabra y el último paso hecho.
         return headerBuilder(
           context,
           Padding(
@@ -2590,7 +2609,22 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (tools.isNotEmpty) toolsRow(),
+              if (current != null)
+                toolsRow(
+                  line: AnimatedSwitcher(
+                    duration: reduceMotion
+                        ? Duration.zero
+                        : const Duration(milliseconds: 180),
+                    layoutBuilder: (currentChild, previousChildren) => Stack(
+                      alignment: Alignment.centerLeft,
+                      children: [...previousChildren, ?currentChild],
+                    ),
+                    child: KeyedSubtree(
+                      key: ValueKey('thinking-trace-step-${current.id}'),
+                      child: ToolRunSummaryLine(items: [current.item]),
+                    ),
+                  ),
+                ),
               if (widget.rowAttachments.isNotEmpty)
                 _buildTraceDetails(colors, tasks, muted: true),
               memorySavedMarkers(
