@@ -61,7 +61,11 @@ import 'server_config_page_screen.dart' show ServerConfigStoreFactory;
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/message_reaction_prefs.dart';
+import '../services/shared_gateway_pool.dart';
+import '../services/terminal_availability.dart';
 import '../widgets/hermes_app_bar.dart';
+import 'backup_restore_screen.dart';
+import 'terminal_pane_screen.dart';
 import '../widgets/diagnostic_bundle_tile.dart';
 import '../widgets/install_source_section.dart';
 import '../design/content.dart' show HermesToggleRow;
@@ -142,6 +146,81 @@ SettingsThemePresentation settingsThemePresentation(
         : ThemeProfileAdapter.colorsFromProfile(custom),
     total: AppTheme.presets.length + snapshot.customProfiles.length,
   );
+}
+
+/// The Terminal row of Settings. Hidden until the server has answered
+/// `shell.exec`; asks once when the section appears (an empty command the
+/// server refuses, nothing runs).
+class _TerminalEntry extends StatefulWidget {
+  const _TerminalEntry({required this.connection, required this.connManager});
+
+  final SavedConnection connection;
+  final ConnectionManager connManager;
+
+  @override
+  State<_TerminalEntry> createState() => _TerminalEntryState();
+}
+
+class _TerminalEntryState extends State<_TerminalEntry> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_confirm());
+  }
+
+  String get _profile => Session.profileOwner(
+    widget.connManager.activeProfileFor(widget.connection.id),
+  );
+
+  Future<void> _confirm() async {
+    final conn = widget.connection;
+    if (conn.readOnly) return;
+    final lease = SharedGatewayPool.instance.acquire(conn);
+    try {
+      await TerminalAvailability.confirm(conn, lease.client, profile: _profile);
+    } finally {
+      lease.release();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: TerminalAvailability.changes,
+      builder: (context, _, _) {
+        if (!TerminalAvailability.offered(widget.connection)) {
+          return const SizedBox.shrink();
+        }
+        return HermesGroup(
+          children: [
+            HermesNavRow(
+              key: const ValueKey('settings-terminal'),
+              icon: Icons.terminal_rounded,
+              title: Strings.of(context).termTitle,
+              subtitle: Strings.of(context).termSubtitle,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => TerminalPaneScreen(
+                    connection: widget.connection,
+                    profile: _profile,
+                    onOpenSecurity: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => SecurityInfoScreen(
+                          connManager: widget.connManager,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 class SettingsScreen extends StatelessWidget {
@@ -371,6 +450,7 @@ class SettingsScreen extends StatelessWidget {
                   ],
                 ),
               ),
+              _TerminalEntry(connection: conn, connManager: connManager),
               _SectionHeader(Strings.of(context).setSecBridge),
               SettingsDeepLinkTarget(
                 section: SettingsSection.bridge,
@@ -383,6 +463,32 @@ class SettingsScreen extends StatelessWidget {
                 section: SettingsSection.data,
                 child: HermesGroup(
                   children: [
+                    if (!conn.readOnly)
+                      HermesNavRow(
+                        key: const ValueKey('settings-backup'),
+                        icon: Icons.settings_backup_restore_rounded,
+                        title: Strings.of(context).backupTitle,
+                        subtitle: Strings.of(context).backupSubtitle,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => BackupRestoreScreen(
+                              connection: conn,
+                              profile: Session.profileOwner(
+                                connManager.activeProfileFor(conn.id),
+                              ),
+                              onOpenSecurity: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => SecurityInfoScreen(
+                                    connManager: connManager,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     DiagnosticBundleTile(
                       controller: DiagnosticBundleController(
                         manager: connManager,

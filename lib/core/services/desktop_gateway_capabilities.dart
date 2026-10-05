@@ -8,6 +8,7 @@ enum DesktopGatewayCapability {
   recoveryCenter,
   extensionsCenter,
   agentCenter,
+  shellExec,
   projectsCenter,
   projectManagement,
   projectWorktrees,

@@ -3,6 +3,7 @@ import '../models/connection_request.dart';
 import 'connection_request_gateway.dart';
 import '../models/message_reaction.dart';
 import 'message_reaction_prefs.dart';
+import '../models/terminal_exec.dart';
 import 'bot_mention_roster.dart';
 // Servicio singleton que posee el streaming SSE de los chats. Vive por encima
 // del Navigator (en HermesAppState), así que la respuesta/ejecución del agente
@@ -4721,6 +4722,23 @@ class ActiveChat {
       _reactions[rowId] = list;
     }
     _emit(ActiveChatEvent.reactionsChanged);
+  }
+
+  /// Receives `agent.terminal.output` / `terminal.close` while the terminal
+  /// page is open. Null otherwise: chunks are then dropped, never buffered.
+  void Function(String type, String processId, String chunk)?
+  _agentTerminalListener;
+
+  void setAgentTerminalListener(
+    void Function(String type, String processId, String chunk)? listener,
+  ) => _agentTerminalListener = listener;
+
+  /// The server terminal behind this chat's gateway, when it offers one.
+  HermesTerminalGateway? get terminalGateway {
+    final gateway = _desktopGateway;
+    return gateway is HermesTerminalGateway
+        ? gateway as HermesTerminalGateway
+        : null;
   }
 
   /// El usuario ya vio/descartó este resultado — lo quita del strip.
@@ -21968,6 +21986,13 @@ class ActiveChat {
     }
     if (event.type == 'agent.terminal.output' ||
         event.type == 'terminal.close') {
+      final listener = _agentTerminalListener;
+      final parsed = listener == null
+          ? null
+          : parseAgentTerminalEvent(payload);
+      if (listener != null && parsed != null) {
+        listener(event.type, parsed.processId, parsed.chunk);
+      }
       _signalAdaptiveRefresh(processes: true);
       _emit(ActiveChatEvent.subagentActivity);
       return;
@@ -30273,6 +30298,7 @@ class ActiveChat {
 
   void dispose() {
     if (_disposed) return;
+    _agentTerminalListener = null;
     suspendSubagentForegroundPresentation();
     _retainedActivityExpiryTimer?.cancel();
     _retainedActivityExpiryTimer = null;
