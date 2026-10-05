@@ -1,6 +1,8 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/provider_logo.dart';
@@ -193,6 +195,55 @@ void main() {
         );
         expect(find.text('Z'), findsOneWidget);
         expect(_paintedColor(tester), theme.hermes.textSecondary);
+      });
+    }
+
+    for (final (what, logo) in [
+      ('glyph', const ProviderLogo(provider: 'anthropic', size: 48)),
+      ('monogram', const ProviderLogo(providerName: 'Zeta box', size: 48)),
+    ]) {
+      testWidgets('every painted pixel of the $what is the theme tint', (
+        tester,
+      ) async {
+        final key = GlobalKey();
+        final theme = AppTheme.hermesRedLight;
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: theme,
+            home: Center(
+              child: RepaintBoundary(key: key, child: logo),
+            ),
+          ),
+        );
+        final tint = theme.hermes.textSecondary;
+        final bytes = await tester.runAsync(() async {
+          final boundary =
+              key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+          final image = await boundary.toImage();
+          return (await image.toByteData(
+            format: ui.ImageByteFormat.rawStraightRgba,
+          ))!;
+        });
+        var inked = 0;
+        int channel(double c) => (c * 255).round();
+        for (var i = 0; i < bytes!.lengthInBytes; i += 4) {
+          final a = bytes.getUint8(i + 3);
+          if (a < 128) continue;
+          inked++;
+          final got = [
+            bytes.getUint8(i),
+            bytes.getUint8(i + 1),
+            bytes.getUint8(i + 2),
+          ];
+          final want = [channel(tint.r), channel(tint.g), channel(tint.b)];
+          // Straight-alpha unpremultiplication may round by a unit or two.
+          for (var c = 0; c < 3; c++) {
+            if ((got[c] - want[c]).abs() > 3) {
+              fail('pixel ${i ~/ 4} is $got, not the tint $want');
+            }
+          }
+        }
+        expect(inked, greaterThan(100), reason: 'the $what painted nothing');
       });
     }
 
