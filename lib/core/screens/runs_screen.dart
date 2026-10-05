@@ -1596,21 +1596,30 @@ class _RunApprovalDecisionBlockState extends State<RunApprovalDecisionBlock> {
           label: Text(s.runsDeny),
         ),
         if (!widget.readOnly) ...[
-          TextButton.icon(
-            onPressed: widget.busy ? null : () => widget.onChoice('session'),
-            icon: const Icon(Icons.repeat_rounded, size: 17),
-            label: Text(s.runsApproveSession),
+          Tooltip(
+            message: s.apx1215ScopeSessionHint,
+            child: TextButton.icon(
+              onPressed: widget.busy ? null : () => widget.onChoice('session'),
+              icon: const Icon(Icons.repeat_rounded, size: 17),
+              label: Text(s.runsApproveSession),
+            ),
           ),
           if (showAlways)
-            TextButton.icon(
-              onPressed: widget.busy ? null : widget.onAlways,
-              icon: const Icon(Icons.all_inclusive_rounded, size: 17),
-              label: Text(s.runsAllowAlways),
+            Tooltip(
+              message: s.apx1215ScopeAlwaysHint,
+              child: TextButton.icon(
+                onPressed: widget.busy ? null : widget.onAlways,
+                icon: const Icon(Icons.all_inclusive_rounded, size: 17),
+                label: Text(s.runsAllowAlways),
+              ),
             ),
-          FilledButton.icon(
-            onPressed: widget.busy ? null : () => widget.onChoice('once'),
-            icon: const Icon(Icons.check_rounded, size: 18),
-            label: Text(s.runsApproveOnce),
+          Tooltip(
+            message: s.apx1215ScopeOnceHint,
+            child: FilledButton.icon(
+              onPressed: widget.busy ? null : () => widget.onChoice('once'),
+              icon: const Icon(Icons.check_rounded, size: 18),
+              label: Text(s.runsApproveOnce),
+            ),
           ),
         ],
       ],
