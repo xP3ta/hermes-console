@@ -331,7 +331,11 @@ class SettingsScreen extends StatelessWidget {
                 useDock: DockPreferencesController.instance.value.useDock,
               ),
             ),
-            children: [
+            // Built sections stay alive: at the bottom of this bouncing list a
+            // section on the cache edge was disposed and rebuilt over and over,
+            // re-running its async check and changing its height each time,
+            // and the screen never stopped drawing frames.
+            children: _keptAlive([
               // Orden de secciones: de lo esencial (a qué instancia hablas) a lo
               // avanzado, con voz y notificaciones como apartados propios en vez
               // de filas sueltas dentro de "chat" (spec 028 U-08).
@@ -525,11 +529,36 @@ class SettingsScreen extends StatelessWidget {
               const SizedBox(height: 10),
               const InstallSourceSection(),
               const SizedBox(height: 24),
-            ],
+            ]),
           ),
         ),
       ),
     );
+  }
+}
+
+List<Widget> _keptAlive(List<Widget> sections) => [
+  for (final section in sections) _KeptAliveSection(child: section),
+];
+
+class _KeptAliveSection extends StatefulWidget {
+  const _KeptAliveSection({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_KeptAliveSection> createState() => _KeptAliveSectionState();
+}
+
+class _KeptAliveSectionState extends State<_KeptAliveSection>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }
 
