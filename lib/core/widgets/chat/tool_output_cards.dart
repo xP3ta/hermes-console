@@ -10,7 +10,7 @@ import '../../utils/ansi_text.dart';
 import '../../utils/unified_diff.dart';
 
 /// Tool output cards for the chat transcript (Desktop parity:
-/// `tool/fallback.tsx` FileDiffPanel + AnsiText, `thread/changed-files-card`).
+/// `tool/fallback.tsx` FileDiffPanel + AnsiText, `thread/changed-files`).
 ///
 /// Every card is collapsed by default and builds its heavy body (parsed diff
 /// lines, ANSI spans) only once the user expands it, so a long transcript
@@ -578,63 +578,4 @@ DiffStats turnChangeTotals(List<FileDiff> files) {
     removed += file.stats.removed;
   }
   return DiffStats(added, removed);
-}
-
-/// «N files changed» closing out a turn; unfolds into per-file diff cards.
-class ChangedFilesCard extends StatefulWidget {
-  const ChangedFilesCard({required this.files, super.key});
-
-  final List<FileDiff> files;
-
-  @override
-  State<ChangedFilesCard> createState() => _ChangedFilesCardState();
-}
-
-class _ChangedFilesCardState extends State<ChangedFilesCard> {
-  bool _expanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    final files = widget.files;
-    if (files.isEmpty) return const SizedBox.shrink();
-    var added = 0;
-    var removed = 0;
-    for (final file in files) {
-      added += file.stats.added;
-      removed += file.stats.removed;
-    }
-    final label = s.tc1215FilesChanged(files.length);
-    return Container(
-      key: const ValueKey('changed-files-card'),
-      margin: const EdgeInsets.only(top: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _FoldRow(
-            rowKey: const ValueKey('changed-files-row'),
-            icon: Icons.edit_note_rounded,
-            label: label,
-            expanded: _expanded,
-            semanticsLabel: s.tc1215DiffSemantics(label, added, removed),
-            trailing: Text.rich(
-              _diffCountSpan(DiffStats(added, removed), colors),
-              maxLines: 1,
-            ),
-            onTap: () => setState(() => _expanded = !_expanded),
-          ),
-          if (_expanded)
-            for (final file in files)
-              FileDiffCard(key: ValueKey('changed-${file.path}'), file: file),
-        ],
-      ),
-    );
-  }
 }

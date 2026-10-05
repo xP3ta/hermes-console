@@ -123,6 +123,7 @@ import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/core/widgets/attachment_history_preview.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/chat/tool_output_cards.dart';
+import 'package:hermes_android/core/widgets/chat/turn_changes_sheet.dart';
 import 'package:hermes_android/core/widgets/compaction_dock.dart';
 import 'package:hermes_android/core/widgets/generated_image_card.dart';
 import 'package:hermes_android/core/widgets/activity_panel.dart';
@@ -24049,8 +24050,8 @@ void main() {
       tester,
     ) async {
       await pumpChat(tester, messages: patchTurn);
-      expect(find.byType(ChangedFilesCard), findsOneWidget);
-      expect(find.text('1 archivo cambiado'), findsOneWidget);
+      expect(find.byType(TurnChangesChip), findsOneWidget);
+      expect(find.text('Δ 1 archivo · +1 −1'), findsOneWidget);
     });
 
     testWidgets('pt1215: un turno anterior no repite el resumen', (
@@ -24070,7 +24071,7 @@ void main() {
         ],
       );
       expect(find.text('RG_LATER_ANSWER'), findsOneWidget);
-      expect(find.byType(ChangedFilesCard), findsNothing);
+      expect(find.byType(TurnChangesChip), findsNothing);
     });
 
     testWidgets('pt1215: un mensaje de texto plano no abre menú al mantener', (
@@ -24596,7 +24597,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.byType(FileDiffCard), findsNothing);
-      expect(find.byType(ChangedFilesCard), findsNothing);
+      expect(find.byType(TurnChangesChip), findsNothing);
       final rowsBefore = tester
           .widgetList(find.byType(ThinkingTraceCard))
           .length;
@@ -24619,7 +24620,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.byType(FileDiffCard), findsOneWidget);
       expect(find.text('+02 −01 · late.dart'), findsOneWidget);
-      expect(find.text('1 archivo cambiado'), findsOneWidget);
+      expect(find.text('Δ 1 archivo · +2 −1'), findsOneWidget);
       expect(
         tester.widgetList(find.byType(ThinkingTraceCard)).length,
         rowsBefore,
@@ -24701,7 +24702,7 @@ void main() {
       expect(chat.toolOutputs.revision, revisionBefore);
       expect(chat.messages.toString(), transcriptBefore);
       expect(find.byType(FileDiffCard), findsNothing);
-      expect(find.byType(ChangedFilesCard), findsNothing);
+      expect(find.byType(TurnChangesChip), findsNothing);
       expect(tester.takeException(), isNull);
     }
 
@@ -25012,30 +25013,46 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.textContaining('PUBLIC_CHANGED_PARTIAL'), findsNothing);
-      expect(find.byType(ChangedFilesCard), findsNothing);
+      expect(find.byType(TurnChangesChip), findsNothing);
       gateway.emit('message.delta', const {'text': 'PUBLIC_CHANGED_PARTIAL'});
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       // Still working (the reply is streaming): no summary yet.
       expect(find.textContaining('PUBLIC_CHANGED_PARTIAL'), findsWidgets);
-      expect(find.byType(ChangedFilesCard), findsNothing);
+      expect(find.byType(TurnChangesChip), findsNothing);
       gateway.emit('message.complete', const {'text': 'PUBLIC_CHANGED_DONE'});
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.byType(ChangedFilesCard), findsOneWidget);
-      expect(find.text('2 archivos cambiados'), findsOneWidget);
+      expect(find.byType(TurnChangesChip), findsOneWidget);
       // lib/a.dart +3 −2 across two edits, README.md +1 −1.
-      expect(find.text('+04 −03'), findsOneWidget);
+      expect(find.text('Δ 2 archivos · +4 −3'), findsOneWidget);
       expect(find.byType(FileDiffCard), findsNothing);
 
-      final row = find.byKey(const ValueKey('changed-files-row'));
-      await tester.ensureVisible(row);
+      final chip = find.byKey(const ValueKey('turn-changes-chip'));
+      await tester.ensureVisible(chip);
       await tester.pump();
-      await tester.tap(row);
+      await tester.tap(chip);
       await tester.pump();
-      expect(find.byType(FileDiffCard), findsNWidgets(2));
-      expect(find.text('+03 −02 · a.dart'), findsOneWidget);
-      expect(find.text('+01 −01 · README.md'), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('turn-changes-sheet')), findsOneWidget);
+      expect(find.text('2 archivos cambiados'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('turn-changes-file-0')),
+          matching: find.text('+3 −2'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('turn-changes-file-1')),
+          matching: find.text('README.md'),
+        ),
+        findsOneWidget,
+      );
+      // Both edits of lib/a.dart, in order, under their own line bands.
+      expect(find.text('Líneas 1–2'), findsOneWidget);
+      expect(find.text('Línea 5'), findsOneWidget);
       expect(find.byType(FileDiffBody), findsNothing);
       expect(tester.takeException(), isNull);
     },
