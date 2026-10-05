@@ -29595,16 +29595,31 @@ void main() {
     // the same private bytes line by line.
     expect(find.byType(ArtifactViewerScreen), findsOneWidget);
     expect(find.byType(AttachmentBytesPreviewScreen), findsNothing);
+    // Line numbers live in a separate gutter; the content lines keep the
+    // exact private bytes.
     final renderedText = [
       for (final line in tester.widgetList<Text>(
         find.descendant(
           of: find.byKey(const ValueKey('artifact-viewer-text')),
-          matching: find.byType(Text),
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is Text &&
+                widget.key is ValueKey<String> &&
+                (widget.key! as ValueKey<String>).value.startsWith(
+                  'artifact-viewer-line-',
+                ),
+          ),
         ),
       ))
         line.textSpan?.toPlainText() ?? line.data ?? '',
     ].join('\n');
     expect(renderedText, exactText);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('artifact-viewer-gutter-0')))
+          .data,
+      '1',
+    );
     expect(tester.takeException(), isNull);
   });
 
