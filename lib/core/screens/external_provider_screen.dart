@@ -257,11 +257,30 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
       setState(() {
         _savedEndpointsSupported = catalog != null;
         _savedEndpoints = catalog?.endpoints ?? const [];
+        _pruneMenuAnchors();
       });
     } catch (_) {
-      if (mounted) setState(() => _savedEndpointsSupported = false);
+      if (mounted) {
+        setState(() {
+          _savedEndpointsSupported = false;
+          _pruneMenuAnchors();
+        });
+      }
     }
   }
+
+  /// Drops the menu anchor keys of endpoints that are no longer listed, so a
+  /// long session of deletes and refreshes does not accumulate dead keys.
+  void _pruneMenuAnchors() {
+    final ids = {
+      if (_savedEndpointsSupported == true)
+        for (final endpoint in _savedEndpoints) endpoint.id,
+    };
+    _menuAnchors.removeWhere((id, _) => !ids.contains(id));
+  }
+
+  @visibleForTesting
+  Set<String> get debugMenuAnchorIds => {..._menuAnchors.keys};
 
   void _editSavedEndpoint(CustomEndpoint endpoint) {
     setState(() {

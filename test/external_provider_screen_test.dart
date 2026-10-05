@@ -446,5 +446,182 @@ void main() {
         );
       },
     );
+
+    group('saved endpoint menu and delete dialog', () {
+      Map<String, Object?> endpointJson(
+        String id,
+        String name, {
+        bool current = false,
+        String source = 'providers',
+      }) => {
+        'id': id,
+        'name': name,
+        'base_url': 'https://$name.example.test/v1'.toLowerCase(),
+        'model': '$name-model'.toLowerCase(),
+        'models': ['$name-model'.toLowerCase()],
+        'has_api_key': false,
+        'is_current': current,
+        'source': source,
+      };
+
+      late List<Map<String, Object?>> served;
+      late List<http.Request> calls;
+      late DashboardClient dashboard;
+
+      setUp(() {
+        served = [
+          endpointJson('edge/a', 'Edge'),
+          endpointJson('cur', 'Current', current: true),
+          endpointJson('direct', 'Direct', source: 'direct-config'),
+        ];
+        calls = [];
+        dashboard = DashboardClient(
+          host: 'hermes.example.test',
+          manualToken: 'test-token',
+          httpClientOverride: MockClient((request) async {
+            calls.add(request);
+            if (request.method == 'GET') {
+              return http.Response(jsonEncode({'endpoints': served}), 200);
+            }
+            if (request.method == 'DELETE') {
+              final id = Uri.decodeComponent(request.url.pathSegments.last);
+              served.removeWhere((endpoint) => endpoint['id'] == id);
+            }
+            return http.Response('{"ok":true}', 200);
+          }),
+        );
+      });
+
+      tearDown(() => dashboard.close());
+
+      Iterable<http.Request> deletes() =>
+          calls.where((request) => request.method == 'DELETE');
+
+      Finder menuButton(String id) => find.descendant(
+        of: find.byKey(ValueKey('saved-endpoint-$id')),
+        matching: find.byIcon(Icons.more_vert),
+      );
+
+      Finder inMenu(String label) => find.descendant(
+        of: find.byKey(const ValueKey('hermes-menu')),
+        matching: find.text(label),
+      );
+
+      Finder inDialog(String label) => find.descendant(
+        of: find.byKey(const ValueKey('hermes-dialog')),
+        matching: find.text(label),
+      );
+
+      Future<void> openMenu(WidgetTester tester, String id) async {
+        await tester.tap(menuButton(id));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('hermes-menu')), findsOneWidget);
+      }
+
+      Future<void> openDeleteDialog(WidgetTester tester) async {
+        await openMenu(tester, 'edge/a');
+        await tester.tap(inMenu('Delete'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('hermes-dialog')), findsOneWidget);
+        expect(find.text('Delete Edge?'), findsOneWidget);
+      }
+
+      void expectEdgeKept() {
+        expect(find.byKey(const ValueKey('hermes-dialog')), findsNothing);
+        expect(deletes(), isEmpty);
+        expect(
+          find.byKey(const ValueKey('saved-endpoint-edge/a')),
+          findsOneWidget,
+        );
+      }
+
+      testWidgets('Cancel keeps the endpoint and sends no delete', (
+        tester,
+      ) async {
+        await pumpScreen(tester, dashboard);
+        await openDeleteDialog(tester);
+
+        await tester.tap(inDialog('Cancel'));
+        await tester.pumpAndSettle();
+
+        expectEdgeKept();
+      });
+
+      testWidgets('tapping outside the dialog keeps the endpoint', (
+        tester,
+      ) async {
+        await pumpScreen(tester, dashboard);
+        await openDeleteDialog(tester);
+
+        await tester.tapAt(const Offset(4, 4));
+        await tester.pumpAndSettle();
+
+        expectEdgeKept();
+      });
+
+      testWidgets('system back on the dialog keeps the endpoint', (
+        tester,
+      ) async {
+        await pumpScreen(tester, dashboard);
+        await openDeleteDialog(tester);
+
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+
+        expectEdgeKept();
+        expect(find.byType(ExternalProviderScreen), findsOneWidget);
+      });
+
+      testWidgets('menu actions follow current and direct-config endpoints', (
+        tester,
+      ) async {
+        await pumpScreen(tester, dashboard);
+        expect(find.byIcon(Icons.more_vert), findsNWidgets(3));
+
+        await openMenu(tester, 'edge/a');
+        expect(inMenu('Activate'), findsOneWidget);
+        expect(inMenu('Delete'), findsOneWidget);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+
+        await openMenu(tester, 'cur');
+        expect(inMenu('Activate'), findsNothing);
+        expect(inMenu('Delete'), findsOneWidget);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+
+        await openMenu(tester, 'direct');
+        expect(inMenu('Activate'), findsOneWidget);
+        expect(inMenu('Delete'), findsNothing);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(const ValueKey('hermes-menu')), findsNothing);
+        expect(calls.where((request) => request.method != 'GET'), isEmpty);
+      });
+
+      testWidgets('confirmed delete prunes the menu anchor of the removed id', (
+        tester,
+      ) async {
+        await pumpScreen(tester, dashboard);
+        final state = tester.state(find.byType(ExternalProviderScreen));
+        expect((state as dynamic).debugMenuAnchorIds, {
+          'edge/a',
+          'cur',
+          'direct',
+        });
+
+        await openDeleteDialog(tester);
+        await tester.tap(inDialog('Delete'));
+        await tester.pumpAndSettle();
+
+        expect(deletes(), hasLength(1));
+        expect(
+          find.byKey(const ValueKey('saved-endpoint-edge/a')),
+          findsNothing,
+        );
+        expect((state as dynamic).debugMenuAnchorIds, {'cur', 'direct'});
+      });
+    });
   });
 }
