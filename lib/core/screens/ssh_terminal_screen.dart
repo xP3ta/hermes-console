@@ -449,6 +449,7 @@ class _CommandsEditorState extends State<_CommandsEditor> {
                           size: 18,
                           color: colors.error.withValues(alpha: 0.8),
                         ),
+                        tooltip: Strings.of(context).commonDelete,
                         onPressed: () => setState(() => _items.removeAt(i)),
                       ),
                     ),

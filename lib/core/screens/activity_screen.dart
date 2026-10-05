@@ -328,6 +328,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
               suffixIcon: _localFilter.isEmpty
                   ? null
                   : IconButton(
+                      tooltip: Strings.of(context).slClearSearch,
                       icon: Icon(
                         Icons.clear,
                         size: 15,

@@ -1195,6 +1195,9 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
               ),
               iconSize: 20,
               color: colors.textSecondary,
+              tooltip: _streamTokenObscured
+                  ? s.a11yShowSecret
+                  : s.a11yHideSecret,
               onPressed: () =>
                   setState(() => _streamTokenObscured = !_streamTokenObscured),
             ),
@@ -1291,6 +1294,9 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
               ),
               iconSize: 20,
               color: colors.textSecondary,
+              tooltip: _streamTokenObscured
+                  ? s.a11yShowSecret
+                  : s.a11yHideSecret,
               onPressed: () =>
                   setState(() => _streamTokenObscured = !_streamTokenObscured),
             ),
@@ -1395,6 +1401,9 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
               ),
               iconSize: 20,
               color: colors.textSecondary,
+              tooltip: _customSecretObscured
+                  ? s.a11yShowSecret
+                  : s.a11yHideSecret,
               onPressed: () => setState(
                 () => _customSecretObscured = !_customSecretObscured,
               ),
@@ -1567,6 +1576,9 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
                 ),
                 iconSize: 20,
                 color: colors.textSecondary,
+                tooltip: _keyObscured
+                    ? s.a11yShowSecret
+                    : s.a11yHideSecret,
                 onPressed: () => setState(() => _keyObscured = !_keyObscured),
               ),
               IconButton(
@@ -3402,6 +3414,9 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
                 size: 20,
                 color: colors.textSecondary,
               ),
+              tooltip: _serverTokenObscured
+                  ? Strings.of(context).a11yShowSecret
+                  : Strings.of(context).a11yHideSecret,
               onPressed: () =>
                   setState(() => _serverTokenObscured = !_serverTokenObscured),
             ),

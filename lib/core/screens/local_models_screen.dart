@@ -937,6 +937,7 @@ class _LocalModelsSearchScreenState extends State<LocalModelsSearchScreen> {
                 : IconButton(
                     key: const ValueKey('lm1215-search-go'),
                     icon: const Icon(Icons.arrow_forward_rounded),
+                    tooltip: s.designSearch,
                     onPressed: _search,
                   ),
           ),

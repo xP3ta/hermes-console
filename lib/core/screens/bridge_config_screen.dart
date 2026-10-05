@@ -82,7 +82,11 @@ class _BridgeConfigScreenState extends State<BridgeConfigScreen> {
     return Scaffold(
       appBar: HermesAppBar(
         title: Text(Strings.of(context).bridgeCfgTitle),
-        leading: IconButton(icon: const Icon(Icons.close), onPressed: _cancel),
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          tooltip: Strings.of(context).commonClose,
+          onPressed: _cancel,
+        ),
         actions: [
           TextButton(onPressed: _save, child: Text(Strings.of(context).commonSave)),
         ],

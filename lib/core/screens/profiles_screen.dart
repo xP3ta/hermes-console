@@ -586,6 +586,7 @@ class _NameEntryScreenState extends State<_NameEntryScreen> {
       appBar: HermesAppBar(
         leading: IconButton(
           icon: const Icon(Icons.close),
+          tooltip: str.commonClose,
           onPressed: () {
             _releaseFocus();
             Navigator.pop(context);

@@ -50,6 +50,28 @@
   "commonOk": "Got it",
   "commonSave": "Save",
   "commonOpen": "Open",
+  "a11yShowSecret": "Show secret",
+  "a11yHideSecret": "Hide secret",
+  "a11yShowAnswer": "Show answer",
+  "a11yHideAnswer": "Hide answer",
+  "a11yPlayAudio": "Play audio",
+  "a11yPauseAudio": "Pause audio",
+  "a11yDecreaseValue": "Decrease {label}",
+  "@a11yDecreaseValue": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "a11yIncreaseValue": "Increase {label}",
+  "@a11yIncreaseValue": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
   "homeStatusChecking": "checking · {label}",
   "homeStatusOnline": "agent online · {label}",
   "homeStatusOffline": "offline · {label}",

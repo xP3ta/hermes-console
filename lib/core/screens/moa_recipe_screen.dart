@@ -539,6 +539,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
               if (onRemove != null)
                 IconButton(
                   icon: Icon(Icons.close, size: 18, color: colors.textDisabled),
+                  tooltip: Strings.of(context).commonDelete,
                   onPressed: onRemove,
                 ),
               if (onEdit != null)
@@ -642,6 +643,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
+            tooltip: Strings.of(context).a11yDecreaseValue(label),
             icon: Icon(
               Icons.remove_circle_outline,
               size: 22,
@@ -663,6 +665,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
+            tooltip: Strings.of(context).a11yIncreaseValue(label),
             icon: Icon(
               Icons.add_circle_outline,
               size: 22,

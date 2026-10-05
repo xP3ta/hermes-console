@@ -399,6 +399,9 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
           size: 18,
           color: colors.textSecondary,
         ),
+        tooltip: _obscurePass
+            ? Strings.of(context).a11yShowSecret
+            : Strings.of(context).a11yHideSecret,
         onPressed: () => setState(() => _obscurePass = !_obscurePass),
       ),
     );

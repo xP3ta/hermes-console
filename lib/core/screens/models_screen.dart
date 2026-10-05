@@ -2847,6 +2847,7 @@ class _ProviderOAuthLoginScreenState extends State<ProviderOAuthLoginScreen> {
         title: Text(s.mdlOAuthTitle(widget.providerName)),
         leading: IconButton(
           icon: const Icon(Icons.close),
+          tooltip: s.commonClose,
           onPressed: () => Navigator.of(context).pop(false),
         ),
       ),
@@ -3013,6 +3014,7 @@ class _ProviderKeyScreenState extends State<_ProviderKeyScreen> {
         title: Text(widget.providerName),
         leading: IconButton(
           icon: const Icon(Icons.close),
+          tooltip: s.commonClose,
           onPressed: () {
             _release();
             Navigator.of(context).pop();

@@ -456,6 +456,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
         title: Text(widget.isEditing ? s.extEditTitle : s.extTitle),
         leading: IconButton(
           icon: const Icon(Icons.close),
+          tooltip: s.commonClose,
           onPressed: () => Navigator.of(context).pop(false),
         ),
       ),
