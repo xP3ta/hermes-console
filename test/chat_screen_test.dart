@@ -35101,6 +35101,75 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    Future<void> rebuildThroughComposer(WidgetTester tester) async {
+      final field = find.descendant(
+        of: find.byKey(const ValueKey('chat-composer-host')),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(field, 'x');
+      await tester.pump();
+      await tester.enterText(field, '');
+      await tester.pump(const Duration(milliseconds: 250));
+    }
+
+    testWidgets('rpl1215 hidden while a question is pending', (tester) async {
+      final gateway = _InteractiveUiGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-qr-question'),
+        messages: finishedTurn,
+        acquireDesktopRuntimeBeforeMount: true,
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(chipText(tester, 0), 'Sí');
+
+      gateway.emit('clarify.request', const {
+        'request_id': 'clarify-qr',
+        'question': '¿Qué rama uso?',
+        'choices': ['main', 'dev'],
+      });
+      await tester.pump();
+      // A parked question outlives the run state (resume, reconnect): only
+      // the open prompt itself must keep the chips away.
+      chat.state = ChatPipelineState.completed;
+      await rebuildThroughComposer(tester);
+      expect(chat.isStreaming, isFalse);
+      expect(chat.pendingInteractivePrompt, isNotNull);
+      expect(chip(0), findsNothing);
+      expect(smart, findsNothing);
+
+      // Once the question is closed the chips come back.
+      gateway.emit('clarify.expire', const {'request_id': 'clarify-qr'});
+      await tester.pump();
+      await rebuildThroughComposer(tester);
+      expect(chat.pendingInteractivePrompt, isNull);
+      expect(chipText(tester, 0), 'Sí');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('rpl1215 hidden while an approval is pending', (tester) async {
+      final gateway = _QuickReplyGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-qr-approval'),
+        messages: finishedTurn,
+      );
+      expect(chipText(tester, 0), 'Sí');
+
+      chat.pendingApproval = const {'request_id': 'approval-qr-2'};
+      await rebuildThroughComposer(tester);
+      expect(chip(0), findsNothing);
+      expect(smart, findsNothing);
+
+      chat.pendingApproval = null;
+      await rebuildThroughComposer(tester);
+      expect(chipText(tester, 0), 'Sí');
+      expect(gateway.calls, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('rpl1215 ✨ asks once on tap with only the last two messages', (
       tester,
     ) async {
