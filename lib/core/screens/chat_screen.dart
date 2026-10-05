@@ -1841,7 +1841,6 @@ class _ChatScreenState extends State<ChatScreen>
     if (_scrollToBottomVisibility.value == value) return;
     _recordTranscriptOverlayExtentChange(value ? 48 : -48);
     _scrollToBottomVisibility.value = value;
-    if (!value) _applyQuickReplyExtent();
     if (value) {
       _beginAwayFromBottom();
     } else {
@@ -2186,37 +2185,6 @@ class _ChatScreenState extends State<ChatScreen>
   // Alto medido del hueco de las pastillas de actividad. Notifier aparte por
   // la misma razón que la flecha: cambiar no reconstruye la pantalla.
   final ValueNotifier<double> _activityPillExtent = ValueNotifier(0);
-
-  /// Keyboard up, for the quick reply rail (a notifier: no screen rebuild).
-  final ValueNotifier<bool> _keyboardOpen = ValueNotifier(false);
-
-  /// Height the quick reply rail pads the transcript with. While the reader
-  /// is away from the latest message it stays frozen (the rail hides) and the
-  /// last measure is applied on return, so the padding never changes under
-  /// someone reading history.
-  final ValueNotifier<double> _quickReplyExtent = ValueNotifier(0);
-  double _quickReplyMeasured = 0;
-
-  void _setQuickReplyExtent(double value) {
-    _quickReplyMeasured = value;
-    if (_scrollToBottomVisibility.value || _keyboardInsetMoving) return;
-    _applyQuickReplyExtent();
-  }
-
-  /// The rail hides as soon as the keyboard starts moving, but the transcript
-  /// padding waits until the inset settles: changing it rebuilds every visible
-  /// row, and doing that in the middle of the IME animation is the jank the
-  /// inset watcher exists to avoid.
-  bool _keyboardInsetMoving = false;
-  double? _lastKeyboardInset;
-  Timer? _keyboardSettleTimer;
-
-  void _applyQuickReplyExtent() {
-    final value = _quickReplyMeasured;
-    if (_disposed || _quickReplyExtent.value == value) return;
-    _recordTranscriptOverlayExtentChange(value - _quickReplyExtent.value);
-    _quickReplyExtent.value = value;
-  }
 
   /// Compactación (automática o manual) de la sesión abierta: mide el tiempo,
   /// aprende la duración típica y conserva el resultado unos segundos. La
@@ -2673,6 +2641,11 @@ class _ChatScreenState extends State<ChatScreen>
       _slashCompletions.cancel();
       _closeReferencePalette();
     }
+    // Only the slash/reference palettes read composer focus in build. With
+    // both empty a focus flip changes nothing on screen, and a screen-wide
+    // setState here rebuilds every cached transcript row on the very frame
+    // the keyboard starts opening or closing.
+    if (_slashSuggestions.isEmpty && _referenceItems.isEmpty) return;
     if (mounted && !_disposed) setState(() {});
   }
 
@@ -3963,8 +3936,15 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// The finished turn quick replies answer, or null while anything else
   /// owns the conversation (streaming, a pending card, a queue, read-only).
-  ({Object turnKey, String answer, String lastUser})? _quickReplySource() {
+  ({
+    Map<String, dynamic> assistant,
+    Object turnKey,
+    String answer,
+    String lastUser,
+  })?
+  _quickReplySource() {
     if (!_chatBound ||
+        (kVoiceRuntimeEnabled && _voiceOverlayVisible) ||
         _isBotChatSurface ||
         widget.connection.readOnly ||
         _cronRunReadOnly ||
@@ -4017,29 +3997,29 @@ class _ChatScreenState extends State<ChatScreen>
     if (answer.isEmpty) return null;
     final id = assistant['id'] ?? assistant['message_id'] ?? '';
     return (
+      assistant: assistant,
       turnKey: '$id:${content.length}:${content.hashCode}',
       answer: answer,
       lastUser: lastUser,
     );
   }
 
-  Widget _buildQuickReplyBar({bool suppressed = false}) {
+  /// Contextual reply chips closing the latest finished answer [message],
+  /// in the same slot as the answer's own suggestions; null for any other
+  /// row or when nothing is due. They live inside the bubble, so showing or
+  /// hiding them never changes the transcript padding.
+  Widget? _inlineQuickRepliesFor(Map<String, dynamic> message) {
+    final source = _quickReplySource();
+    if (source == null || !identical(source.assistant, message)) return null;
     final strings = Strings.of(context);
-    final source = suppressed ? null : _quickReplySource();
     return ChatQuickReplyBar(
       key: const ValueKey('chat-quick-replies'),
-      turnKey: source?.turnKey,
-      replies: source == null
-          ? const []
-          : heuristicQuickReplies(source.answer, strings),
+      turnKey: source.turnKey,
+      replies: heuristicQuickReplies(source.answer, strings),
       composer: _textController,
-      awayFromLatest: _scrollToBottomVisibility,
-      keyboardOpen: _keyboardOpen,
       onFill: _fillComposerFromQuickReply,
       smartLabel: strings.rpl1215SmartSuggest,
-      loadSmart: source != null && _chat.canSuggestQuickReplies
-          ? _loadSmartQuickReplies
-          : null,
+      loadSmart: _chat.canSuggestQuickReplies ? _loadSmartQuickReplies : null,
     );
   }
 
@@ -5625,20 +5605,6 @@ class _ChatScreenState extends State<ChatScreen>
   /// reconstruía la pantalla completa (transcript incluido) solo para
   /// reprogramar este temporizador.
   void _onKeyboardBottomInset(double bottomInset) {
-    if (!_disposed) {
-      _keyboardOpen.value = bottomInset > 0;
-      final previous = _lastKeyboardInset;
-      _lastKeyboardInset = bottomInset;
-      if (previous != null && previous != bottomInset) {
-        _keyboardInsetMoving = true;
-        _keyboardSettleTimer?.cancel();
-        _keyboardSettleTimer = Timer(const Duration(milliseconds: 200), () {
-          _keyboardInsetMoving = false;
-          if (_disposed || _scrollToBottomVisibility.value) return;
-          _applyQuickReplyExtent();
-        });
-      }
-    }
     if (_disposed || !mounted || bottomInset <= 0 || _findOpen) return;
     // Si ya está al fondo, el resize del viewport mantiene visible el último
     // mensaje. No programes un scroll/setState durante la animación del IME.
@@ -7737,9 +7703,6 @@ class _ChatScreenState extends State<ChatScreen>
     _findStatus.dispose();
     _findActiveMessage.dispose();
     _activityPillExtent.dispose();
-    _keyboardSettleTimer?.cancel();
-    _keyboardOpen.dispose();
-    _quickReplyExtent.dispose();
     _compaction.dispose();
     _sessionContextMetrics.dispose();
     super.dispose();
@@ -13577,7 +13540,6 @@ class _ChatScreenState extends State<ChatScreen>
                                     contentChanges: _liveAssistantFrame,
                                     transcriptOverlayExtent: () =>
                                         _activityPillExtent.value +
-                                        _quickReplyExtent.value +
                                         (_scrollToBottomVisibility.value
                                             ? 48
                                             : 0),
@@ -13776,18 +13738,6 @@ class _ChatScreenState extends State<ChatScreen>
                                               ),
                                             ),
                                           ],
-                                        ),
-                                      ),
-                                      // Quick replies float under the pill,
-                                      // never in the bottom bars: their
-                                      // measured height pads the transcript
-                                      // (frozen while the reader is away), so
-                                      // they never move what is being read.
-                                      _BottomGapWhenVisible(
-                                        gap: 4,
-                                        onExtent: _setQuickReplyExtent,
-                                        child: _buildQuickReplyBar(
-                                          suppressed: showVoiceSurface,
                                         ),
                                       ),
                                     ],
@@ -16930,23 +16880,188 @@ class _ChatScreenState extends State<ChatScreen>
       _scheduleStickyPromptUpdate();
     }
 
+    // Overlay extents (activity pill, arrow) only change the list
+    // padding. Reusing the same delegate lets the sliver skip rebuilding
+    // every cached row when the ListenableBuilder below re-runs.
+    final rowDelegate = SliverChildBuilderDelegate(
+      (context, index) {
+        final entry = entries[index];
+        if (entry is _RetainedTerminalErrorChatListEntry) {
+          return _buildRetainedTerminalErrorEntry(entry);
+        }
+        final plan = entry.sourcePlan;
+        final assistantSlice = entry is _AssistantSliceChatListEntry
+            ? entry.slice
+            : null;
+        final sourceMessages = _sourceMessagesForRenderPlan(plan);
+        final reportsPreservedTurnInsertion = sourceMessages.any(
+          _readerPreservedTurnInsertions.contains,
+        );
+        final unit = _materializeRenderUnit(plan);
+        Widget child = _wrapFindHighlight(
+          _buildRenderUnit(unit, assistantSlice: assistantSlice),
+          unit: unit,
+          sourceMessages: sourceMessages,
+        );
+        child = _wrapReactions(
+          child,
+          unit: unit,
+          assistantSlice: assistantSlice,
+        );
+        if (_newSinceFirstUnread != null &&
+            (assistantSlice?.showHeader ?? true) &&
+            sourceMessages.any(_isNewSinceFirstUnread)) {
+          // Inside the row (not a list entry of its own): indices and
+          // the reader anchors keep their slots, and the landing jump
+          // aligns the divider with the top of the screen.
+          child = Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              RoomSeparator(
+                key: const ValueKey('chat-new-since-divider'),
+                label: Strings.of(context).sc1215NewSinceYouLeft,
+                highlight: true,
+              ),
+              child,
+            ],
+          );
+        }
+        final assistantMessage =
+            unit is Map<String, dynamic> &&
+                unit['role'] == 'assistant' &&
+                unit['_pipeline'] != true
+            ? unit
+            : null;
+        final ownsAnchor = assistantSlice?.showHeader ?? true;
+        Widget result = child;
+        if (ownsAnchor) {
+          result = ChatAnswerAnchor(
+            onLayout: (anchor) {
+              var added = false;
+              for (final message in sourceMessages) {
+                if (!identical(_messageAnchors[message], anchor)) {
+                  _messageAnchors[message] = anchor;
+                  added = true;
+                }
+              }
+              if (added) _scheduleStickyPromptUpdate();
+            },
+            onDetach: (anchor) {
+              for (final message in sourceMessages) {
+                if (identical(_messageAnchors[message], anchor)) {
+                  _messageAnchors.remove(message);
+                }
+              }
+            },
+            child: child,
+          );
+        } else if (sourceMessages.isNotEmpty) {
+          // A later slice of a long reply: it has no reader anchor of
+          // its own, but when it spans the viewport top the sticky
+          // prompt needs to know which reply it belongs to.
+          final replyMessage = sourceMessages.first;
+          result = ChatAnswerAnchor(
+            onLayout: (anchor) {
+              if (identical(_stickySliceAnchors[anchor], replyMessage)) {
+                return;
+              }
+              _stickySliceAnchors[anchor] = replyMessage;
+              _scheduleStickyPromptUpdate();
+            },
+            onDetach: (anchor) => _stickySliceAnchors.remove(anchor),
+            child: child,
+          );
+        }
+        if (assistantSlice != null && assistantMessage != null) {
+          result = KeyedSubtree(
+            key: ValueKey((assistantMessage, assistantSlice.index)),
+            child: result,
+          );
+        }
+        // Entrada suave del mensaje NUEVO: solo el más reciente (índice 0, la
+        // lista es reverse). El turno que esta superficie ya presentó queda
+        // fuera: su host crece por streaming y un translate adicional de 8 px
+        // se percibe como un pequeño tirón si el usuario empieza a leer o
+        // arrastrar. La guarda sobrevive al terminal para que cancelación,
+        // error o una reconciliación tardía tampoco animen de nuevo la fila.
+        // A response group grows at its newest row; its oldest row is
+        // the stable identity, so a joining row never replays the
+        // entrance nor remounts the bubble.
+        final groupStart =
+            plan is ChatMessageUnitPlan && sourceMessages.length > 1
+            ? sourceMessages.last
+            : null;
+        final key = _entranceKey(groupStart ?? unit);
+        final belongsToSurfaceTurn =
+            _surfaceTurnSerial == _assistantEntranceSerial &&
+            (_chat.isStreaming || _surfaceTurnTerminal);
+        if (index == 0 && key != null && !belongsToSurfaceTurn) {
+          result = MotionEntrance(key: ValueKey<Object>(key), child: result);
+        }
+        if (reportsPreservedTurnInsertion) {
+          result = _SurfaceTurnInitialExtentReporter(
+            onInitialExtent: _streamingViewportLock.record,
+            child: result,
+          );
+        }
+        // Cada mensaje repinta en su propia capa: el host vivo a 30 Hz (y el
+        // reveal gradual) no invalida la rasterización del historial visible.
+        // El host vivo/retenido queda fuera: su geometría la mide el lock del
+        // viewport y una capa intermedia rompe esa medición.
+        final keepsLiveHost =
+            assistantMessage != null && _messageKeepsLiveHost(assistantMessage);
+        final isLiveHead =
+            _chat.isStreaming &&
+            _messages.isNotEmpty &&
+            identical(unit, _messages.first);
+        if (!keepsLiveHost && !isLiveHead) {
+          result = RepaintBoundary(child: result);
+        }
+        final durableEntryIds =
+            (groupStart == null ? sourceMessages : [groupStart])
+                .map((message) {
+                  final messageId = canonicalTranscriptMessageId(message);
+                  if (messageId != null) return 'message:$messageId';
+                  final rowId = canonicalTranscriptRowId(message);
+                  return rowId == null ? null : 'row:$rowId';
+                })
+                .whereType<String>()
+                .toList(growable: false);
+        if (durableEntryIds.length ==
+            (groupStart == null ? sourceMessages.length : 1)) {
+          // This must remain the outermost list child. Sliver reconciliation
+          // can then retain the complete bubble subtree even when refresh
+          // replaces its source Map or runtime presentation wrappers change.
+          result = KeyedSubtree(
+            key: ValueKey<Object>((
+              'chat-render-entry',
+              durableEntryIds.join('\u0000'),
+              assistantSlice?.index,
+            )),
+            child: result,
+          );
+        }
+        return result;
+      },
+      childCount: entries.length,
+      addAutomaticKeepAlives: false,
+    );
     final transcript = ListenableBuilder(
       listenable: Listenable.merge([
         _activityPillExtent,
-        _quickReplyExtent,
         _scrollToBottomVisibility,
       ]),
       builder: (context, _) {
         final overlayExtent =
             _activityPillExtent.value +
-            _quickReplyExtent.value +
             (_scrollToBottomVisibility.value ? 48 : 0);
         return ChatScrollInteractionGuard(
           onPointerDown: _pauseStreamingFollow,
           onPointerMove: _trackStreamingScrollInteraction,
           onPointerUp: _finishStreamingScrollInteraction,
           onPointerCancel: _cancelStreamingScrollInteraction,
-          child: ListView.builder(
+          child: ListView.custom(
             controller: _scrollController,
             // En `reverse:true` el asistente vivo crece por debajo del contenido
             // que el lector está mirando. Conservar el mismo offset numérico hace
@@ -16967,180 +17082,16 @@ class _ChatScreenState extends State<ChatScreen>
             // Precarga ~1 pantalla extra fuera del viewport: al seguir el stream no
             // se materializan entradas frías en medio de un frame de scroll.
             scrollCacheExtent: const ScrollCacheExtent.pixels(1000),
-            itemCount: entries.length,
+            semanticChildCount: entries.length,
             // Una selección que sale del viewport no debe retener el RenderObject
             // (y con él todo un árbol Markdown) indefinidamente. Copiar el mensaje
             // completo sigue disponible en su cabecera y la selección visible se
             // mantiene dentro de cada bloque virtualizado.
-            addAutomaticKeepAlives: false,
             // No usar GlobalKey por índice: un rewind cambia los slots de golpe y
             // reparentar un árbol todavía dependiente del diálogo puede disparar
             // `_dependents.isEmpty` en Flutter. Las anclas de respuesta son
             // RenderObjects ligeros que no reutilizan el árbol Markdown.
-            itemBuilder: (context, index) {
-              final entry = entries[index];
-              if (entry is _RetainedTerminalErrorChatListEntry) {
-                return _buildRetainedTerminalErrorEntry(entry);
-              }
-              final plan = entry.sourcePlan;
-              final assistantSlice = entry is _AssistantSliceChatListEntry
-                  ? entry.slice
-                  : null;
-              final sourceMessages = _sourceMessagesForRenderPlan(plan);
-              final reportsPreservedTurnInsertion = sourceMessages.any(
-                _readerPreservedTurnInsertions.contains,
-              );
-              final unit = _materializeRenderUnit(plan);
-              Widget child = _wrapFindHighlight(
-                _buildRenderUnit(unit, assistantSlice: assistantSlice),
-                unit: unit,
-                sourceMessages: sourceMessages,
-              );
-              child = _wrapReactions(
-                child,
-                unit: unit,
-                assistantSlice: assistantSlice,
-              );
-              if (_newSinceFirstUnread != null &&
-                  (assistantSlice?.showHeader ?? true) &&
-                  sourceMessages.any(_isNewSinceFirstUnread)) {
-                // Inside the row (not a list entry of its own): indices and
-                // the reader anchors keep their slots, and the landing jump
-                // aligns the divider with the top of the screen.
-                child = Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    RoomSeparator(
-                      key: const ValueKey('chat-new-since-divider'),
-                      label: Strings.of(context).sc1215NewSinceYouLeft,
-                      highlight: true,
-                    ),
-                    child,
-                  ],
-                );
-              }
-              final assistantMessage =
-                  unit is Map<String, dynamic> &&
-                      unit['role'] == 'assistant' &&
-                      unit['_pipeline'] != true
-                  ? unit
-                  : null;
-              final ownsAnchor = assistantSlice?.showHeader ?? true;
-              Widget result = child;
-              if (ownsAnchor) {
-                result = ChatAnswerAnchor(
-                  onLayout: (anchor) {
-                    var added = false;
-                    for (final message in sourceMessages) {
-                      if (!identical(_messageAnchors[message], anchor)) {
-                        _messageAnchors[message] = anchor;
-                        added = true;
-                      }
-                    }
-                    if (added) _scheduleStickyPromptUpdate();
-                  },
-                  onDetach: (anchor) {
-                    for (final message in sourceMessages) {
-                      if (identical(_messageAnchors[message], anchor)) {
-                        _messageAnchors.remove(message);
-                      }
-                    }
-                  },
-                  child: child,
-                );
-              } else if (sourceMessages.isNotEmpty) {
-                // A later slice of a long reply: it has no reader anchor of
-                // its own, but when it spans the viewport top the sticky
-                // prompt needs to know which reply it belongs to.
-                final replyMessage = sourceMessages.first;
-                result = ChatAnswerAnchor(
-                  onLayout: (anchor) {
-                    if (identical(_stickySliceAnchors[anchor], replyMessage)) {
-                      return;
-                    }
-                    _stickySliceAnchors[anchor] = replyMessage;
-                    _scheduleStickyPromptUpdate();
-                  },
-                  onDetach: (anchor) => _stickySliceAnchors.remove(anchor),
-                  child: child,
-                );
-              }
-              if (assistantSlice != null && assistantMessage != null) {
-                result = KeyedSubtree(
-                  key: ValueKey((assistantMessage, assistantSlice.index)),
-                  child: result,
-                );
-              }
-              // Entrada suave del mensaje NUEVO: solo el más reciente (índice 0, la
-              // lista es reverse). El turno que esta superficie ya presentó queda
-              // fuera: su host crece por streaming y un translate adicional de 8 px
-              // se percibe como un pequeño tirón si el usuario empieza a leer o
-              // arrastrar. La guarda sobrevive al terminal para que cancelación,
-              // error o una reconciliación tardía tampoco animen de nuevo la fila.
-              // A response group grows at its newest row; its oldest row is
-              // the stable identity, so a joining row never replays the
-              // entrance nor remounts the bubble.
-              final groupStart =
-                  plan is ChatMessageUnitPlan && sourceMessages.length > 1
-                  ? sourceMessages.last
-                  : null;
-              final key = _entranceKey(groupStart ?? unit);
-              final belongsToSurfaceTurn =
-                  _surfaceTurnSerial == _assistantEntranceSerial &&
-                  (_chat.isStreaming || _surfaceTurnTerminal);
-              if (index == 0 && key != null && !belongsToSurfaceTurn) {
-                result = MotionEntrance(
-                  key: ValueKey<Object>(key),
-                  child: result,
-                );
-              }
-              if (reportsPreservedTurnInsertion) {
-                result = _SurfaceTurnInitialExtentReporter(
-                  onInitialExtent: _streamingViewportLock.record,
-                  child: result,
-                );
-              }
-              // Cada mensaje repinta en su propia capa: el host vivo a 30 Hz (y el
-              // reveal gradual) no invalida la rasterización del historial visible.
-              // El host vivo/retenido queda fuera: su geometría la mide el lock del
-              // viewport y una capa intermedia rompe esa medición.
-              final keepsLiveHost =
-                  assistantMessage != null &&
-                  _messageKeepsLiveHost(assistantMessage);
-              final isLiveHead =
-                  _chat.isStreaming &&
-                  _messages.isNotEmpty &&
-                  identical(unit, _messages.first);
-              if (!keepsLiveHost && !isLiveHead) {
-                result = RepaintBoundary(child: result);
-              }
-              final durableEntryIds =
-                  (groupStart == null ? sourceMessages : [groupStart])
-                      .map((message) {
-                        final messageId = canonicalTranscriptMessageId(message);
-                        if (messageId != null) return 'message:$messageId';
-                        final rowId = canonicalTranscriptRowId(message);
-                        return rowId == null ? null : 'row:$rowId';
-                      })
-                      .whereType<String>()
-                      .toList(growable: false);
-              if (durableEntryIds.length ==
-                  (groupStart == null ? sourceMessages.length : 1)) {
-                // This must remain the outermost list child. Sliver reconciliation
-                // can then retain the complete bubble subtree even when refresh
-                // replaces its source Map or runtime presentation wrappers change.
-                result = KeyedSubtree(
-                  key: ValueKey<Object>((
-                    'chat-render-entry',
-                    durableEntryIds.join('\u0000'),
-                    assistantSlice?.index,
-                  )),
-                  child: result,
-                );
-              }
-              return result;
-            },
+            childrenDelegate: rowDelegate,
           ),
         );
       },
@@ -17803,6 +17754,10 @@ class _ChatScreenState extends State<ChatScreen>
       onBranch: _branchFromHereFor(msg),
       onSuggestionSelected: suggestionsEnabled
           ? (suggestion) => _useAssistantSuggestion(msg, suggestion)
+          : null,
+      quickReplies:
+          role == 'assistant' && !isStreaming && !isCancelled && !isPipeline
+          ? _inlineQuickRepliesFor(msg)
           : null,
       connectionCard: role == 'assistant'
           ? _connectionCardFor(metadataMsg)
@@ -20050,6 +20005,9 @@ class _MessageBubble extends StatelessWidget {
   final ValueChanged<String>? onSaveEdit;
   final VoidCallback? onRegenerate;
   final AssistantSuggestionCallback? onSuggestionSelected;
+
+  /// Contextual quick reply chips closing the latest finished answer.
+  final Widget? quickReplies;
   final _ConnectionCardBinding? connectionCard;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
@@ -20088,6 +20046,7 @@ class _MessageBubble extends StatelessWidget {
     this.onSaveEdit,
     this.onRegenerate,
     this.onSuggestionSelected,
+    this.quickReplies,
     this.connectionCard,
     this.compact = false,
     this.performanceProbe,
@@ -20135,6 +20094,7 @@ class _MessageBubble extends StatelessWidget {
             onRegenerate: onRegenerate,
             onBranch: onBranch,
             onSuggestionSelected: onSuggestionSelected,
+            quickReplies: quickReplies,
             connectionCard: connectionCard,
             compact: compact,
             performanceProbe: performanceProbe,
@@ -21579,6 +21539,10 @@ class _AssistantMessage extends StatelessWidget {
   final VoidCallback? onRegenerate;
   final VoidCallback? onBranch;
   final AssistantSuggestionCallback? onSuggestionSelected;
+
+  /// Contextual quick reply chips, painted where the answer's own
+  /// suggestions go (never both: the chips stand aside for those).
+  final Widget? quickReplies;
   final _ConnectionCardBinding? connectionCard;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
@@ -21613,6 +21577,7 @@ class _AssistantMessage extends StatelessWidget {
     this.onRegenerate,
     this.onBranch,
     this.onSuggestionSelected,
+    this.quickReplies,
     this.connectionCard,
     this.compact = false,
     this.performanceProbe,
@@ -22034,7 +21999,9 @@ class _AssistantMessage extends StatelessWidget {
           HermesSuggestions(
             suggestions: suggestionProjection.suggestions,
             onSelected: onSuggestionSelected!,
-          ),
+          )
+        else if (showFooter && quickReplies != null)
+          quickReplies!,
         if (showFooter && metadata['show_link_preview'] == true)
           Builder(
             builder: (ctx) {

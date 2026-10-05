@@ -345,12 +345,10 @@ class ConsoleComposer extends StatelessWidget {
               children: [
                 ConsoleComposerPaletteOverlay(
                   palette: palette,
-                  child: HermesComposerSurface(
-                    focused: focusNode.hasFocus,
-                    unfocusedHorizontalInset: 12,
-                    padding: compactIme
-                        ? const EdgeInsets.symmetric(horizontal: 4)
-                        : EdgeInsets.zero,
+                  child: ListenableBuilder(
+                    // Focus styling listens to the node itself, so a focus
+                    // flip never needs a host (screen) rebuild.
+                    listenable: focusNode,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -450,6 +448,14 @@ class ConsoleComposer extends StatelessWidget {
                           ],
                         ),
                       ],
+                    ),
+                    builder: (context, child) => HermesComposerSurface(
+                      focused: focusNode.hasFocus,
+                      unfocusedHorizontalInset: 12,
+                      padding: compactIme
+                          ? const EdgeInsets.symmetric(horizontal: 4)
+                          : EdgeInsets.zero,
+                      child: child!,
                     ),
                   ),
                 ),

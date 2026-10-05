@@ -7,14 +7,16 @@ import '../../services/quick_reply_prefs.dart';
 import '../../theme/app_theme.dart';
 import '../hermes_suggestions.dart';
 
-/// Short reply chips above the composer after a finished turn.
+/// Contextual reply chips closing the latest finished answer.
 ///
-/// The [replies] are local and free. The ✨ chip ([loadSmart]) is the only
-/// path to a model call and runs solely on tap, once per [turnKey]: its ideas
-/// are cached until the turn changes. A tap on any chip only fills the
-/// composer through [onFill]; nothing is sent. The rail listens to the
-/// composer and the setting itself, so hiding or showing it never rebuilds
-/// the screen. It floats over the transcript bottom (opaque chips).
+/// The rail sits inside the assistant bubble, in the slot of the answer's
+/// own suggestions, with the same compact transparent chips. The [replies]
+/// are local and free; without them nothing is shown, not even ✨. The ✨
+/// chip ([loadSmart]) is the only path to a model call and runs solely on
+/// tap, once per [turnKey]: its ideas are cached until the turn changes. A
+/// tap on any chip only fills the composer through [onFill]; nothing is
+/// sent. The rail listens to the composer and the setting itself, so hiding
+/// or showing it never rebuilds the screen.
 class ChatQuickReplyBar extends StatefulWidget {
   const ChatQuickReplyBar({
     super.key,
@@ -24,8 +26,6 @@ class ChatQuickReplyBar extends StatefulWidget {
     required this.onFill,
     required this.smartLabel,
     this.loadSmart,
-    this.awayFromLatest,
-    this.keyboardOpen,
   });
 
   /// Identity of the finished assistant turn; null offers nothing.
@@ -38,15 +38,6 @@ class ChatQuickReplyBar extends StatefulWidget {
   /// Null hides the ✨ chip (read-only, no capability).
   final Future<List<String>> Function()? loadSmart;
 
-  /// The rail steps aside while the keyboard is open, the composer holds
-  /// text or the reader is away from the latest message (the screen keeps
-  /// the transcript padding unchanged meanwhile).
-  final ValueListenable<bool>? awayFromLatest;
-
-  /// The keyboard is up (read outside the Scaffold, whose body never sees
-  /// the inset).
-  final ValueListenable<bool>? keyboardOpen;
-
   @override
   State<ChatQuickReplyBar> createState() => _ChatQuickReplyBarState();
 }
@@ -56,9 +47,36 @@ class _ChatQuickReplyBarState extends State<ChatQuickReplyBar> {
   List<String>? _smart;
   Object? _loadingTurn;
 
+  /// Only emptiness matters: caret moves, selection on focus and further
+  /// keystrokes must not rebuild the chips (they sit in a transcript row).
+  late bool _composerEmpty = widget.composer.value.text.isEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.composer.addListener(_onComposerChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.composer.removeListener(_onComposerChanged);
+    super.dispose();
+  }
+
+  void _onComposerChanged() {
+    final empty = widget.composer.value.text.isEmpty;
+    if (empty == _composerEmpty) return;
+    setState(() => _composerEmpty = empty);
+  }
+
   @override
   void didUpdateWidget(ChatQuickReplyBar oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.composer, widget.composer)) {
+      oldWidget.composer.removeListener(_onComposerChanged);
+      widget.composer.addListener(_onComposerChanged);
+      _composerEmpty = widget.composer.value.text.isEmpty;
+    }
     if (oldWidget.turnKey != widget.turnKey) {
       _smart = null;
       _smartTurn = null;
@@ -93,26 +111,17 @@ class _ChatQuickReplyBarState extends State<ChatQuickReplyBar> {
   Widget build(BuildContext context) {
     final prefs = QuickReplyPrefs.shared;
     return ListenableBuilder(
-      listenable: Listenable.merge([
-        prefs,
-        widget.composer,
-        ?widget.awayFromLatest,
-        ?widget.keyboardOpen,
-      ]),
+      listenable: prefs,
       builder: (context, _) {
         final turn = widget.turnKey;
         if (!QuickReplyPrefs.shared.enabled ||
             turn == null ||
-            widget.composer.value.text.isNotEmpty ||
-            (widget.keyboardOpen?.value ?? false) ||
-            (widget.awayFromLatest?.value ?? false)) {
+            widget.replies.isEmpty ||
+            !_composerEmpty) {
           return const SizedBox.shrink();
         }
         final smart = _smartTurn == turn ? _smart : null;
         final chips = smart ?? widget.replies.take(3).toList(growable: false);
-        if (chips.isEmpty && widget.loadSmart == null) {
-          return const SizedBox.shrink();
-        }
         return _rail(context, chips, smartShown: smart != null);
       },
     );
@@ -128,14 +137,14 @@ class _ChatQuickReplyBarState extends State<ChatQuickReplyBar> {
     final loading = _loadingTurn != null && _loadingTurn == widget.turnKey;
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     return Padding(
-      padding: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.only(top: 8, bottom: 2),
       child: ScrollConfiguration(
         behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
         child: SingleChildScrollView(
           key: const ValueKey('quick-reply-rail'),
           scrollDirection: Axis.horizontal,
           primary: false,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+          padding: const EdgeInsets.only(right: 16),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -150,7 +159,6 @@ class _ChatQuickReplyBarState extends State<ChatQuickReplyBar> {
                     style: hermesSuggestionButtonStyle(
                       colors,
                       maxWidth: maxWidth,
-                      backgroundColor: colors.background,
                     ),
                     child: Text(
                       chips[index],
@@ -162,7 +170,7 @@ class _ChatQuickReplyBarState extends State<ChatQuickReplyBar> {
                 ),
               ],
               if (widget.loadSmart != null) ...[
-                if (chips.isNotEmpty) const SizedBox(width: 8),
+                const SizedBox(width: 8),
                 Semantics(
                   button: true,
                   label: widget.smartLabel,
@@ -177,7 +185,6 @@ class _ChatQuickReplyBarState extends State<ChatQuickReplyBar> {
                         colors,
                         maxWidth: maxWidth,
                         highlighted: smartShown || loading,
-                        backgroundColor: colors.background,
                       ),
                       child: loading && reduceMotion
                           ? Icon(

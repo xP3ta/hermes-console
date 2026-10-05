@@ -35216,6 +35216,9 @@ void main() {
         desktopGateway: gateway,
         connection: _remoteConn('conn-qr-turn'),
       );
+      double bottomPadding() =>
+          (tester.widget<ListView>(chatListFinder()).padding! as EdgeInsets)
+              .bottom;
       await tester.enterText(find.byType(TextField), 'Arregla el parser');
       await tester.pump(const Duration(milliseconds: 250));
       await tester.tap(find.byKey(const ValueKey('send')));
@@ -35224,11 +35227,21 @@ void main() {
       // While the turn runs there is nothing to answer yet.
       expect(chip(0), findsNothing);
       expect(smart, findsNothing);
+      final paddingWhileRunning = bottomPadding();
 
       gateway.emitComplete('Listo. ¿Quieres que lo aplique?');
       await tester.pump(const Duration(milliseconds: 400));
       expect(chat.isStreaming, isFalse);
       expect(chipText(tester, 0), 'Sí');
+      // The chips live inside the answer: finishing the turn never changes
+      // the transcript padding.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(bottomPadding(), paddingWhileRunning);
+      expect(
+        find.descendant(of: chatListFinder(), matching: chip(0)),
+        findsOneWidget,
+      );
       expect(chipText(tester, 1), 'No');
       expect(chipText(tester, 2), 'Explícamelo más');
       expect(smart, findsOneWidget);
@@ -35258,7 +35271,7 @@ void main() {
 
       expect(composer(tester).text, 'No');
       expect(gateway.submissions, isEmpty);
-      // The rail steps aside while the composer holds text.
+      // The chips step aside while the composer holds text.
       expect(chip(0), findsNothing);
       expect(gateway.calls, isEmpty);
       expect(tester.takeException(), isNull);
@@ -35501,37 +35514,6 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('rpl1215 scrolling away hides the chips without moving text', (
-      tester,
-    ) async {
-      final history = scrollableChatHistory('carril rápido');
-      await pumpChat(
-        tester,
-        desktopGateway: _QuickReplyGateway(),
-        connection: _remoteConn('conn-rpl-scroll'),
-        messages: history,
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(chip(0), findsOneWidget);
-      final controller = tester.widget<ListView>(chatListFinder()).controller!;
-      final marker = find.textContaining('carril rápido histórico 1.').first;
-      final before = tester.getTopLeft(marker).dy;
-
-      // Far enough for the scroll-to-bottom arrow, which hides the rail.
-      controller.jumpTo(120);
-      await tester.pump();
-      expect(chip(0), findsNothing);
-      expect(tester.getTopLeft(marker).dy - before, closeTo(120, 0.5));
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(tester.getTopLeft(marker).dy - before, closeTo(120, 0.5));
-
-      controller.jumpTo(0);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(chip(0), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
-
     testWidgets('rpl1215 hidden while a run streams over a finished answer', (
       tester,
     ) async {
@@ -35726,56 +35708,6 @@ void main() {
       expect(gateway.calls, hasLength(1));
       expect(gateway.calls.single.lastUser, 'Revisa el contrato');
       expect(gateway.calls.single.lastAssistant, contains('¿Lo resumo?'));
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 the transcript padding stays frozen while away', (
-      tester,
-    ) async {
-      final history = scrollableChatHistory('carril congelado');
-      await pumpChat(
-        tester,
-        desktopGateway: _QuickReplyGateway(),
-        connection: _remoteConn('conn-rpl-frozen'),
-        messages: history,
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(chip(0), findsOneWidget);
-      double bottomPadding() =>
-          (tester.widget<ListView>(chatListFinder()).padding! as EdgeInsets)
-              .bottom;
-      final controller = tester.widget<ListView>(chatListFinder()).controller!;
-      final withChips = bottomPadding();
-      // Base padding (12) plus the rail's measured height.
-      expect(withChips, greaterThan(12 + 20));
-
-      // Away from the latest message the rail hides but its padding stays:
-      // only the arrow adds its 48.
-      controller.jumpTo(120);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(chip(0), findsNothing);
-      expect(bottomPadding(), withChips + 48);
-
-      // The composer gets text while the reader is away: the chips are no
-      // longer due, yet the padding must not move under the reader.
-      composer(tester).text = 'Mi respuesta';
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(bottomPadding(), withChips + 48);
-
-      // Back at the latest message the pending measure (no rail) applies.
-      controller.jumpTo(0);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(chip(0), findsNothing);
-      expect(bottomPadding(), 12);
-
-      composer(tester).text = '';
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(chip(0), findsOneWidget);
-      expect(bottomPadding(), withChips);
       expect(tester.takeException(), isNull);
     });
   });
