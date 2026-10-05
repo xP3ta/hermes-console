@@ -101,8 +101,9 @@ final RegExp _completedMarker = RegExp(
 ///     (`finished_at`): su `outcome` es el resultado.
 ///  2. Proceso vivo en este Dashboard: en curso. Nunca éxito.
 ///  3. Salida no-cero del proceso lanzado por este Dashboard: fallo.
-///  4. Own marker with the updater gone: success (Desktop parity); the
-///     gateway is confirmed afterwards as a separate, bounded step.
+///  4. Own marker line with the updater gone: success (Desktop parity); the
+///     gateway is confirmed afterwards as a separate, bounded step. An
+///     echoed `action_id` without that line is not a marker.
 ///  5. Servidor antiguo (sin `action_id` ni recibos): la salida 0 del proceso.
 ///  6. Todo lo demás (id de otra ejecución, `exit_code` derivado de un recibo
 ///     antiguo, Dashboard recién reiniciado sin datos): sin resultado.
@@ -119,16 +120,16 @@ HermesUpdateActionObservation classifyHermesUpdateAction(
   final reportedId = (status['action_id'] ?? '').toString().trim();
   final running = status['running'] == true;
 
+  // Only the completion marker LINE of our run counts (Desktop
+  // `completedAfterRestart`): an echoed `action_id` alone does not prove
+  // that the run finished (e.g. a Dashboard restarted mid-update).
   var ownMarker = false;
   if (ownId.isNotEmpty) {
-    ownMarker = reportedId == ownId;
-    if (!ownMarker) {
-      for (final line in lines) {
-        final match = _completedMarker.firstMatch(line.trim());
-        if (match != null && match.group(1) == ownId) {
-          ownMarker = true;
-          break;
-        }
+    for (final line in lines) {
+      final match = _completedMarker.firstMatch(line.trim());
+      if (match != null && match.group(1) == ownId) {
+        ownMarker = true;
+        break;
       }
     }
   }

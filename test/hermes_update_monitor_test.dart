@@ -82,6 +82,38 @@ void main() {
       );
     });
 
+    test('our action_id echoed without the completion marker line is not '
+        'success: the Dashboard may have restarted mid-update', () {
+      // Updater gone, id still echoed, no marker and no exit code: nothing
+      // proves the run finished (the old gateway may still be draining).
+      final dead = classify({
+        'running': false,
+        'exit_code': null,
+        'action_id': ownId,
+        'lines': ['Updating code...'],
+      });
+      expect(dead.phase, HermesUpdateActionPhase.unknown);
+      expect(dead.ownMarker, isFalse);
+      // While the updater lives, an id echo alone is still "applying".
+      final alive = classify({
+        'running': true,
+        'action_id': ownId,
+        'lines': ['→ Installing dependencies…'],
+      });
+      expect(alive.phase, HermesUpdateActionPhase.running);
+      expect(alive.ownMarker, isFalse);
+      // A marker line naming another run does not count either.
+      expect(
+        classify({
+          'running': false,
+          'exit_code': null,
+          'action_id': ownId,
+          'lines': ['=== hermes-update completed $otherId ==='],
+        }).phase,
+        HermesUpdateActionPhase.unknown,
+      );
+    });
+
     test('solo el recibo propio cerrado da el resultado', () {
       expect(
         classify({
@@ -345,9 +377,9 @@ void main() {
       );
       expect(result.outcome, HermesUpdateOutcome.confirmed);
       expect(result.version, '0.21.5');
-      // The marker with the updater gone settles it; the closed receipt is
-      // not needed (Desktop parity).
-      expect(polls, script.length - 1);
+      // The Dashboard restarted: our id is echoed but the log holds no
+      // completion marker, so only the closed receipt settles the run.
+      expect(polls, script.length);
       // /api/status is only read once the run has a result.
       expect(statusCalls, 1);
       expect(HermesUpdateGuard.isActive('a'), isFalse);
@@ -427,6 +459,7 @@ void main() {
             'running': false,
             'action_id': ownId,
             'exit_code': 0,
+            'lines': ['=== hermes-update completed $ownId ==='],
           },
           serverStatus: () async {
             now = now.add(const Duration(seconds: 30));
@@ -569,7 +602,12 @@ void main() {
             polls++;
             // Before the POST answer the marker cannot be attributed.
             if (polls == 2) session.actionId = ownId;
-            return {'running': false, 'action_id': ownId, 'exit_code': null};
+            return {
+              'running': false,
+              'action_id': ownId,
+              'exit_code': null,
+              'lines': ['=== hermes-update completed $ownId ==='],
+            };
           },
           serverStatus: () async => {'gateway_running': true},
           updateStillAvailable: () async => null,
@@ -612,6 +650,7 @@ void main() {
             return {
               'running': false,
               'action_id': ownId,
+              'lines': ['=== hermes-update completed $ownId ==='],
               'receipt': ourReceipt('running', finished: false),
             };
           },
