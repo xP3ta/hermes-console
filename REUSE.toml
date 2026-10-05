@@ -92,3 +92,11 @@ path = "test/fixtures/contract/gateway-contract.openrpc.json"
 precedence = "override"
 SPDX-FileCopyrightText = "Copyright (c) 2025 Nous Research"
 SPDX-License-Identifier = "MIT"
+
+# Provider-logo path data copied unchanged from Simple Icons 16.1.0
+# (CC0-1.0); see ASSET_PROVENANCE.md. Brand marks remain their owners'.
+[[annotations]]
+path = "lib/core/widgets/provider_logo_glyphs.dart"
+precedence = "override"
+SPDX-FileCopyrightText = "Simple Icons contributors"
+SPDX-License-Identifier = "CC0-1.0"

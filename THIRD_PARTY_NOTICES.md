@@ -131,6 +131,13 @@ spritesheets locales se documentan en [`ASSET_PROVENANCE.md`](ASSET_PROVENANCE.m
 El texto legal completo CC0-1.0 aplicable a los companions está en
 [`assets/companions/CC0-1.0.txt`](assets/companions/CC0-1.0.txt).
 
+## Logos de proveedores (Simple Icons, CC0)
+
+Las marcas monocromas de proveedores del selector de modelos y de Modelos usan
+los trazados vectoriales de Simple Icons 16.1.0 (`CC0-1.0`), sin sus colores.
+Detalle por proveedor en [`ASSET_PROVENANCE.md`](ASSET_PROVENANCE.md). Las
+marcas pertenecen a sus titulares y solo identifican al proveedor del modelo.
+
 ## Componentes Android transitivos relevantes
 
 - **ZXing Core 3.5.2** — Apache License 2.0; decodifica los QR íntegramente en

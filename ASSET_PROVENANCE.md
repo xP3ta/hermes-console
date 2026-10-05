@@ -84,3 +84,42 @@ sha256sum assets/branding/hermes_logo.webp \
   assets/companions/*/pet.json \
   assets/companions/*/spritesheet.webp
 ```
+
+## Provider logos (model picker and Models)
+
+Models and providers are identified by a small monochrome mark. The path data
+in `lib/core/widgets/provider_logo_glyphs.dart` is copied unchanged from
+[Simple Icons](https://github.com/simple-icons/simple-icons) release 16.1.0
+(npm `simple-icons@16.1.0`, file `icons/<slug>.svg`), which is dedicated to
+the public domain under `CC0-1.0` (full text in
+[`LICENSES/CC0-1.0.txt`](LICENSES/CC0-1.0.txt)). Only the vector path is used;
+brand colours are not: the app tints every mark with its own theme colours.
+Hermes Desktop ships no provider logos (it uses Simple Icons only for MCP
+connector glyphs), so nothing is taken from it.
+
+| Provider | Simple Icons slug | License |
+|---|---|---|
+| Alibaba Cloud | `alibabacloud` | CC0-1.0 |
+| Anthropic | `anthropic` | CC0-1.0 |
+| Cloudflare | `cloudflare` | CC0-1.0 |
+| Google Gemini | `googlegemini` | CC0-1.0 |
+| GitHub Copilot | `githubcopilot` | CC0-1.0 |
+| Google | `google` | CC0-1.0 |
+| Hugging Face | `huggingface` | CC0-1.0 |
+| Meta | `meta` | CC0-1.0 |
+| MiniMax | `minimax` | CC0-1.0 |
+| Mistral AI | `mistralai` | CC0-1.0 |
+| NVIDIA | `nvidia` | CC0-1.0 |
+| Ollama | `ollama` | CC0-1.0 |
+| OpenRouter | `openrouter` | CC0-1.0 |
+| Perplexity | `perplexity` | CC0-1.0 |
+| Vercel | `vercel` | CC0-1.0 |
+
+Providers without a permissively licensed mark in Simple Icons (OpenAI,
+DeepSeek, xAI, Nous Research, Moonshot AI, Z.ai, Microsoft, LM Studio,
+llama.cpp, and any unknown or custom endpoint) are shown as a project-drawn
+monogram: the first letter of the provider name in a rounded square.
+
+The names and marks remain trademarks of their respective owners. They are
+used only to identify which company makes or serves a model; their use implies
+no affiliation or endorsement.
