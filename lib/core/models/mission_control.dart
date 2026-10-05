@@ -210,6 +210,10 @@ final class MissionLiveChat {
   /// When this chat last saw its own turn end (`ActiveChat.lastTerminalAt`).
   final DateTime? settledAt;
 
+  /// This open chat is the profile's Bot Chat (opened from Bots), even
+  /// before the server has registered it as `canonical_session`.
+  final bool botChat;
+
   const MissionLiveChat({
     required this.profileName,
     required this.sessionId,
@@ -219,6 +223,7 @@ final class MissionLiveChat {
     this.model,
     this.provider,
     this.settledAt,
+    this.botChat = false,
   });
 }
 
@@ -447,6 +452,13 @@ final class MissionAgent {
   /// Title of the chat behind [livePresence], for the «Working · chat» line.
   final String? livePresenceTitle;
 
+  /// State of the canonical Bot Chat alone: the one place the Bots avatar
+  /// opens, so its aura says nothing about the profile's other chats.
+  final BotPresence botChatPresence;
+
+  /// Title behind [botChatPresence], for the «Working · chat» line.
+  final String? botChatTitle;
+
   /// Shared by Bots and room presence; a gateway being online is not a turn.
   bool get activeNow => switch (status) {
     MissionAgentStatus.thinking ||
@@ -469,6 +481,8 @@ final class MissionAgent {
     this.provider,
     this.livePresence = BotPresence.idle,
     this.livePresenceTitle,
+    this.botChatPresence = BotPresence.idle,
+    this.botChatTitle,
   });
 }
 
@@ -623,6 +637,12 @@ abstract final class MissionProjector {
       // Only the row speaks here: a fresh worker already feeds `status`, and
       // its freshness is judged again whenever the roster is drawn.
       final livePresence = BotPresence.ofLiveStatus(liveRow?.status);
+      final botChat = _botChatPresence(
+        profile,
+        chats,
+        liveRows,
+        ambiguousSessionIds,
+      );
       final currentSession =
           _pinnedBotChat(profile) ??
           _sessionForChat(sessions, chat) ??
@@ -662,6 +682,8 @@ abstract final class MissionProjector {
           livePresenceTitle: liveRow == null
               ? null
               : _liveRowTitle(profile, liveRow),
+          botChatPresence: botChat.presence,
+          botChatTitle: botChat.title,
         ),
       );
     }
@@ -682,6 +704,43 @@ abstract final class MissionProjector {
       missingProfileCount: missing,
       unattributedSessionCount: unattributedSessionCount,
     );
+  }
+
+  /// The canonical Bot Chat's own state: its open Console chat, else its
+  /// `session.active_list` row (the chat speaks for a row of the same id).
+  static ({BotPresence presence, String? title}) _botChatPresence(
+    AgentProfile profile,
+    List<MissionLiveChat> chats,
+    List<DesktopActiveSession> liveRows,
+    Set<String> ambiguousSessionIds,
+  ) {
+    final ids = BotPresence.botChatIds(profile);
+    var best = BotPresence.idle;
+    String? title;
+    for (final row in liveRows) {
+      final presence = BotPresence.ofBotChat(profile, [
+        row,
+      ], ambiguousSessionIds: ambiguousSessionIds);
+      if (presence.priority > best.priority) {
+        best = presence;
+        title = _liveRowTitle(profile, row);
+      }
+    }
+    for (final chat in chats) {
+      if (!chat.botChat && !ids.contains(chat.sessionId)) continue;
+      final presence = switch (chat.phase) {
+        MissionLivePhase.approvalRequired => BotPresence.attention,
+        MissionLivePhase.working ||
+        MissionLivePhase.responding => BotPresence.working,
+        MissionLivePhase.thinking => BotPresence.thinking,
+        _ => BotPresence.idle,
+      };
+      if (presence.priority > best.priority) {
+        best = presence;
+        title = _firstNonEmpty([chat.title]);
+      }
+    }
+    return (presence: best, title: best == BotPresence.idle ? null : title);
   }
 
   /// The open chat of the same session speaks for it: a working chat always,
