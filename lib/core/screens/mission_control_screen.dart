@@ -16,6 +16,7 @@ import '../models/room_member_status.dart';
 import '../models/kanban.dart';
 import '../models/mission_control.dart';
 import '../navigation/chat_route.dart';
+import '../navigation/enclosing_route.dart';
 import '../services/active_chat_service.dart';
 import '../services/cold_start_store.dart';
 import '../services/chat_draft_store.dart';
@@ -397,7 +398,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _ownRoute = ModalRoute.of(context);
+    // `_ownRoute` arrives through [EnclosingRoute] (see `build`):
+    // `ModalRoute.of(context)` here made the whole screen rebuild in the
+    // first frame of every push over it and every pop back to it.
     final service =
         widget.activeChats ??
         context.findAncestorStateOfType<HermesAppState>()?.activeChats;
@@ -572,7 +575,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       !_disposed &&
       mounted &&
       !_lifecyclePaused &&
-      ModalRoute.of(context)?.isCurrent != false;
+      _ownRoute?.isCurrent != false;
 
   void _scheduleRosterRefresh() {
     _rosterTimer?.cancel();
@@ -1887,7 +1890,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   /// profile?"), with the same confirmation as Profiles and in place.
   Future<void> _deleteBot(String profile) async {
     if (widget.connection.readOnly || profile == 'default') return;
-    final missionRoute = ModalRoute.of(context);
+    final missionRoute = _ownRoute;
     final deleted = await deleteProfileFlow(
       context,
       connection: widget.connection,
@@ -2808,7 +2811,12 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => EnclosingRoute(
+    onRoute: (route) => _ownRoute = route,
+    child: _buildScreen(context),
+  );
+
+  Widget _buildScreen(BuildContext context) {
     _renderedLiveFingerprint = _liveFingerprint();
     final copy = MissionControlCopy.of(context);
     final snapshot = _snapshot;

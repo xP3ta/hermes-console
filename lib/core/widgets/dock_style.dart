@@ -64,8 +64,13 @@ bool dockItemIsAccent(DockItemId id) => id == DockItemId.create;
 /// absoluto (bug confirmado en dispositivo real en `GeneralDockShell`;
 /// compartido aquí para que `MissionControlScreen`/otras pantallas con dock
 /// no repitan el mismo criterio, o lo desincronicen).
+///
+/// Se lee con el aspecto `isFirst` y no con `ModalRoute.of(context)`: este
+/// último suscribe a TODO el estado de la ruta (`isCurrent` cambia justo al
+/// empujar otra pantalla encima o al volver) y reconstruía la pantalla entera
+/// en el primer frame de cada transición del dock.
 bool dockShowsBack(BuildContext context) =>
-    ModalRoute.of(context)?.isFirst != true;
+    ModalRoute.isFirstOf(context) != true;
 
 String dockItemLabel(Strings strings, DockItemId id) => switch (id) {
   DockItemId.bots => strings.missionBotsLabel,

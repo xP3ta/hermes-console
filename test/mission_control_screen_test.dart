@@ -3023,4 +3023,53 @@ void main() {
     // It was the active profile: the app is back on the default one.
     expect(manager.activeProfileFor(_connection.id), '');
   });
+
+  testWidgets('after deleting a bot, a screen pushed over Mission Control '
+      'and popped back does not rebuild it', (tester) async {
+    tester.view.physicalSize = const Size(800, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final manager = await _manager();
+    // A bot no earlier test deleted: the roster registry is shared.
+    await tester.pumpWidget(
+      _host(
+        manager: manager,
+        snapshot: _snapshot(profiles: const [AgentProfile(name: 'scout')]),
+        profileDeleteOverride: (_) async {},
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _openAgentDetail(tester, 'scout');
+    await tester.tap(find.byKey(const ValueKey('bot-profile-more')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('bot-profile-delete')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('profile-delete-confirm-yes')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('bot-profile')), findsNothing);
+
+    // The delete flow needs Mission Control's own route; reading it must not
+    // subscribe the whole screen to the route status.
+    var rebuilds = 0;
+    debugOnRebuildDirtyWidget = (element, _) {
+      if (element.widget is MissionControlScreen) rebuilds++;
+    };
+    addTearDown(() => debugOnRebuildDirtyWidget = null);
+    final navigator = Navigator.of(
+      tester.element(find.byType(MissionControlScreen)),
+    );
+    unawaited(
+      navigator.push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('destination')),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    navigator.pop();
+    await tester.pumpAndSettle();
+    debugOnRebuildDirtyWidget = null;
+
+    expect(rebuilds, 0);
+  });
 }
