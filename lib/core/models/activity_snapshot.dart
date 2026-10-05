@@ -51,8 +51,8 @@ final class ActivityStep {
   /// Duración medida, solo en pasos terminados.
   final Duration? duration;
 
-  /// Texto libre del paso (razonamiento): solo se pinta en el historial, bajo
-  /// la fila, y plegado.
+  /// Texto libre del paso (razonamiento). Mientras el paso sigue abierto, el
+  /// panel lo enseña en vivo bajo «Ahora» ([ActivitySnapshot.liveReasoning]).
   final String? text;
 
   bool get isRunning => status == ActivityStepStatus.running;
@@ -94,6 +94,9 @@ final class ActivityStep {
       duration = ended.difference(started);
     }
     final detail = step['detail']?.toString().trim();
+    final text = kind == ActivityStepKind.reasoning
+        ? step['text']?.toString().trim()
+        : null;
     return ActivityStep(
       id: step['id']?.toString() ?? 'step-$index',
       kind: kind,
@@ -102,9 +105,17 @@ final class ActivityStep {
       detail: detail == null || detail.isEmpty ? null : detail,
       startedAt: started,
       duration: duration,
+      text: text == null || text.isEmpty ? null : text,
     );
   }
 }
+
+/// Pasos de un trace: el vivo, los terminados y el razonamiento abierto.
+typedef ActivitySteps = ({
+  ActivityStep? current,
+  List<ActivityStep> done,
+  String? liveReasoning,
+});
 
 const int _maxDetailChars = 48;
 
@@ -407,6 +418,7 @@ final class ActivitySnapshot {
     this.subagents = const [],
     this.subagentGenericCount = 0,
     this.passiveRemote = false,
+    this.liveReasoning,
   });
 
   static const ActivitySnapshot idle = ActivitySnapshot();
@@ -450,6 +462,10 @@ final class ActivitySnapshot {
   /// Otra superficie (Desktop, otro cliente) tiene trabajo vivo en esta sesión
   /// del que solo se sabe que existe: sin conteo ni detalle.
   final bool passiveRemote;
+
+  /// lr1215: el razonamiento que el modelo está escribiendo AHORA (el paso de
+  /// razonamiento abierto del turno), como el desplegable vivo de Desktop.
+  final String? liveReasoning;
 
   bool get hasTasks => tasks != null && tasks!.isNotEmpty;
 
@@ -503,7 +519,8 @@ final class ActivitySnapshot {
           backgroundStartedAt == other.backgroundStartedAt &&
           _listEqualsBy(subagents, other.subagents, _subagentEquals) &&
           subagentGenericCount == other.subagentGenericCount &&
-          passiveRemote == other.passiveRemote;
+          passiveRemote == other.passiveRemote &&
+          liveReasoning == other.liveReasoning;
 
   @override
   int get hashCode => Object.hashAll([
@@ -525,6 +542,7 @@ final class ActivitySnapshot {
     _listHashBy(subagents, _subagentHash),
     subagentGenericCount,
     passiveRemote,
+    liveReasoning,
   ]);
 
   ActivitySnapshot withTasksActive(bool value) => ActivitySnapshot(
@@ -546,6 +564,7 @@ final class ActivitySnapshot {
     subagents: subagents,
     subagentGenericCount: subagentGenericCount,
     passiveRemote: passiveRemote,
+    liveReasoning: liveReasoning,
   );
 
   ActivitySnapshot copyWith({
@@ -576,18 +595,29 @@ final class ActivitySnapshot {
     subagents: subagents,
     subagentGenericCount: subagentGenericCount,
     passiveRemote: passiveRemote,
+    liveReasoning: liveReasoning,
+  );
+
+  static const ActivitySteps noSteps = (
+    current: null,
+    done: <ActivityStep>[],
+    liveReasoning: null,
   );
 
   /// Pasos de un trace normalizado: `(current, done)` sin razonamientos ni la
-  /// herramienta de tareas (que ya tiene su propia sección).
-  static ({ActivityStep? current, List<ActivityStep> done}) splitSteps(
-    Iterable<Map<String, dynamic>> trace,
-  ) {
+  /// herramienta de tareas (que ya tiene su propia sección), y el texto del
+  /// razonamiento abierto en [ActivitySteps.liveReasoning].
+  static ActivitySteps splitSteps(Iterable<Map<String, dynamic>> trace) {
     final steps = <ActivityStep>[];
+    String? liveReasoning;
     var index = 0;
     for (final raw in trace) {
       final step = ActivityStep.fromTrace(raw, index: index++);
-      if (step == null || step.kind == ActivityStepKind.reasoning) continue;
+      if (step == null) continue;
+      if (step.kind == ActivityStepKind.reasoning) {
+        if (step.isRunning && step.text != null) liveReasoning = step.text;
+        continue;
+      }
       final normalized = step.label.trim().toLowerCase();
       if (normalized == 'todo_list' || normalized == 'todo') continue;
       if (isInternalActivityLabel(step.label)) continue;
@@ -605,7 +635,7 @@ final class ActivitySnapshot {
         .toList(growable: false)
         .reversed
         .toList(growable: false);
-    return (current: current, done: done);
+    return (current: current, done: done, liveReasoning: liveReasoning);
   }
 }
 
