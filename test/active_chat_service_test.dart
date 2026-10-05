@@ -1990,6 +1990,50 @@ void main() {
     },
   );
 
+  // A server update restarts only that server's gateway: the recovery
+  // re-dials the chats of that connection and leaves the others alone.
+  test(
+    'transport recovery for one connection clears only its chats backoff',
+    () async {
+      final service = ActiveChatService(
+        compressionRestoreStore: testCompressionRestoreStore(),
+      );
+      addTearDown(service.dispose);
+      final clients = <String, TuiGatewayClient>{};
+      for (final id in ['conn-upd-a', 'conn-upd-b']) {
+        final connection = _conn(id: id);
+        final client = TuiGatewayClient(
+          connection,
+          dashboard: _OfflineWebSocketAuthDashboardClient(),
+          heartbeatInterval: Duration.zero,
+          reconnectBackoff: GatewayReconnectBackoff(random: () => 1),
+        );
+        addTearDown(client.close);
+        clients[id] = client;
+        service.attach(
+          connection: connection,
+          sessionId: 'session-$id',
+          sessionTitle: id,
+          desktopGateway: client,
+          disableForegroundKeepAlive: true,
+        );
+        for (var attempt = 0; attempt < 5; attempt++) {
+          await client.connect().then((_) {}, onError: (Object _) {});
+        }
+      }
+      expect(clients.values.every((client) => client.isBackingOff), isTrue);
+
+      service.requestTransportRecoveryForConnection('conn-upd-a');
+
+      expect(clients['conn-upd-a']!.isBackingOff, isFalse);
+      expect(
+        clients['conn-upd-b']!.isBackingOff,
+        isTrue,
+        reason: 'another server was not updated: its chats keep their state',
+      );
+    },
+  );
+
   test('REST silence has no client-side terminal timeout', () async {
     final api = _CapturingRunApi();
     final service = ActiveChatService(
