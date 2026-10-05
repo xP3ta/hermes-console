@@ -32061,6 +32061,19 @@ class ActiveChatService {
     }
   }
 
+  /// The server of [connectionId] restarted its gateway (a finished
+  /// `hermes update`): the network-change recovery, limited to the chats
+  /// and parked sockets of that connection.
+  void requestTransportRecoveryForConnection(String connectionId) {
+    _forgetWarmGateways(connectionId);
+    for (final chat in _chats.values) {
+      if (chat.connection.id != connectionId) continue;
+      chat._forgetReconnectBackoffAfterNetworkChange();
+      chat.probeTransportNow();
+      chat.requestImmediateTransportRecovery();
+    }
+  }
+
   /// Reconciliación global al volver de 2º plano: re-sincroniza cualquier chat
   /// cuyo stream pudiera haberse cortado mientras la app estaba suspendida.
   /// Es la única reconciliación que sondea el socket (resume del ciclo de

@@ -34,6 +34,7 @@ import '../utils/transport_privacy.dart';
 
 import '../services/bridge_update_service.dart';
 import '../services/hermes_update_monitor.dart';
+import '../services/hermes_update_probes.dart';
 import '../../main.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_notice.dart';
@@ -2340,7 +2341,14 @@ final class HermesUpdateProgress {
   final HermesUpdateStep step;
   final int elapsedSeconds;
 
-  const HermesUpdateProgress({required this.step, this.elapsedSeconds = 0});
+  /// Latest useful line of the server's update log, shown while running.
+  final String? detail;
+
+  const HermesUpdateProgress({
+    required this.step,
+    this.elapsedSeconds = 0,
+    this.detail,
+  });
 
   /// Pasos que se pintan como recorrido (los terminales no añaden un paso).
   static const List<HermesUpdateStep> track = <HermesUpdateStep>[
@@ -2418,6 +2426,31 @@ HermesUpdateVerdict classifyHermesUpdatePoll({
   return HermesUpdateVerdict.keepWaiting;
 }
 
+/// What the user is told when an update ends.
+@visibleForTesting
+String hermesUpdateResultMessage(Strings s, HermesUpdateResult result) {
+  switch (result.outcome) {
+    case HermesUpdateOutcome.failed:
+      final detail = result.issue == HermesUpdateIssue.serverNoReturn
+          ? s.setUpdateServerNoReturn
+          : result.detail;
+      return s.setUpdateError(
+        detail == null || detail.isEmpty ? s.setUpdateFailedNoDetail : detail,
+      );
+    case HermesUpdateOutcome.partial:
+      return result.issue == HermesUpdateIssue.gatewayNotConfirmed
+          ? s.setUpdateGatewayNotConfirmed
+          : s.setUpdatePartial;
+    case HermesUpdateOutcome.unverified:
+      return s.setUpdateUnconfirmed;
+    case HermesUpdateOutcome.confirmed:
+      final version = (result.version ?? '').trim();
+      return version.isEmpty
+          ? s.setHermesUpdated
+          : s.setHermesUpdatedTo(version);
+  }
+}
+
 /// Indicador de progreso real (barra + paso n/N), no un spinner: el usuario
 /// no tenía forma de saber si "Actualizar Hermes" estaba haciendo algo.
 @visibleForTesting
@@ -2484,6 +2517,16 @@ class HermesUpdateProgressPanel extends StatelessWidget {
                 ),
               ),
               if (!progress.finished) ...[
+                if (progress.detail case final detail?) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    detail,
+                    key: const ValueKey('hermes-update-progress-detail'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                ],
                 const SizedBox(height: 6),
                 Text(
                   '${progress.elapsedSeconds}s',
@@ -2555,7 +2598,19 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_presentHermesUpdate(pending));
       });
+    } else {
+      unawaited(_resumePersistedUpdate());
     }
+  }
+
+  /// An update persisted before Android killed the app resumes here too, so
+  /// Settings shows its progress instead of offering another one.
+  Future<void> _resumePersistedUpdate() async {
+    final session = await HermesUpdateSession.resumePersisted(_connection.id);
+    if (session == null) return;
+    // Tracked even if this screen is gone: the session releases itself.
+    unawaited(session.track(hermesUpdateProbesFor(_connection, session)));
+    if (mounted) unawaited(_presentHermesUpdate(session));
   }
 
   @override
@@ -2779,51 +2834,6 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
 
   bool _hermesAutoTriggered = false;
 
-  /// Fuentes de datos para seguir la actualización. Usan un cliente propio
-  /// (no el de la pantalla) porque la sesión sobrevive a este widget.
-  HermesUpdateProbes _updateProbes(HermesUpdateSession session) {
-    final connection = _connection;
-    final client = DashboardClient.lazy(connection);
-    session.result.whenComplete(client.close);
-    Future<Map<String, dynamic>?> publicStatus() async {
-      try {
-        final base = connection.effectiveDashboardUrl.replaceAll(
-          RegExp(r'/+$'),
-          '',
-        );
-        final res = await http
-            .get(Uri.parse(TransportPrivacy.requireAllowed('$base/api/status')))
-            .timeout(const Duration(seconds: 8));
-        if (res.statusCode != 200) return null;
-        final data = jsonDecode(res.body);
-        return data is Map<String, dynamic> ? data : null;
-      } catch (_) {
-        return null;
-      }
-    }
-
-    return HermesUpdateProbes(
-      actionStatus: () async {
-        try {
-          return await client.getUpdateActionStatus();
-        } on DashboardHttpException catch (e) {
-          if (e.statusCode == 404) throw const HermesUpdateEndpointMissing();
-          rethrow;
-        }
-      },
-      serverStatus: publicStatus,
-      updateStillAvailable: () async {
-        try {
-          final check = await client.checkUpdate(force: true);
-          final available = check['update_available'];
-          return available is bool ? available : null;
-        } catch (_) {
-          return null;
-        }
-      },
-    );
-  }
-
   /// Si el toggle de auto-actualización de Hermes está activo y hay una versión
   /// nueva, la aplica automáticamente (una vez por carga de pantalla). No aplica
   /// al agente local.
@@ -2958,7 +2968,9 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     }
     session
       ..actionId = applyResult.actionId
-      ..responseConfirmed = applyResult.responseConfirmed;
+      ..responseConfirmed = applyResult.responseConfirmed
+      ..attachedToRunningUpdate = applyResult.alreadyRunning
+      ..adoptServerTime(applyResult.serverDate);
     if (mounted) {
       _snack(
         applyResult.alreadyRunning
@@ -2966,7 +2978,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
             : Strings.of(context).setUpdateStarted,
       );
     }
-    unawaited(session.track(_updateProbes(session)));
+    unawaited(session.track(hermesUpdateProbesFor(_connection, session)));
   }
 
   /// Muestra el progreso de una sesión de actualización (recién lanzada o
@@ -2985,11 +2997,13 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
             HermesUpdateSessionStep.verifying => HermesUpdateStep.verifying,
           },
           elapsedSeconds: session.elapsedSeconds,
+          detail: session.progressLine.value,
         );
       });
     }
 
     session.step.addListener(publish);
+    session.progressLine.addListener(publish);
     // Refresca el contador de segundos aunque el paso no cambie.
     final ticker = Timer.periodic(const Duration(seconds: 1), (_) => publish());
     if (mounted) setState(() => _busy = true);
@@ -3000,23 +3014,26 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     } finally {
       ticker.cancel();
       session.step.removeListener(publish);
+      session.progressLine.removeListener(publish);
     }
     if (!mounted) return;
     setState(() => _busy = false);
     await _refresh(forceUpdate: true);
     if (!mounted) return;
     final s = Strings.of(context);
+    final message = hermesUpdateResultMessage(
+      s,
+      HermesUpdateResult(
+        result.outcome,
+        detail: result.detail,
+        issue: result.issue,
+        version: (result.version ?? _status?['version'] ?? '').toString(),
+      ),
+    );
     switch (result.outcome) {
       case HermesUpdateOutcome.failed:
         setState(() => _updateProgress = null);
-        final detail = result.detail;
-        _snack(
-          s.setUpdateError(
-            detail == null || detail.isEmpty
-                ? s.setUpdateFailedNoDetail
-                : detail,
-          ),
-        );
+        _snack(message);
         return;
       case HermesUpdateOutcome.partial:
         setState(
@@ -3024,30 +3041,43 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
             step: HermesUpdateStep.unverified,
           ),
         );
-        _snack(s.setUpdatePartial);
+        if (result.issue == HermesUpdateIssue.gatewayNotConfirmed) {
+          // Code updated, gateway unconfirmed: offer to check it again.
+          HermesNotice.of(context).showSnackBar(
+            SnackBar(
+              content: Text(message),
+              action: SnackBarAction(
+                label: s.setUpdateCheckGateway,
+                onPressed: () {
+                  if (mounted) unawaited(_waitForGatewayBack());
+                },
+              ),
+            ),
+          );
+        } else {
+          _snack(message);
+        }
       case HermesUpdateOutcome.unverified:
         setState(
           () => _updateProgress = const HermesUpdateProgress(
             step: HermesUpdateStep.unverified,
           ),
         );
-        _snack(s.setUpdateUnconfirmed);
+        _snack(message);
       case HermesUpdateOutcome.confirmed:
         setState(
           () => _updateProgress = const HermesUpdateProgress(
             step: HermesUpdateStep.done,
           ),
         );
-        final nv = (result.version ?? _status?['version'] ?? '')
-            .toString()
-            .trim();
-        _snack(nv.isEmpty ? s.setHermesUpdated : s.setHermesUpdatedTo(nv));
+        _snack(message);
         // Con la actualización cerrada se comprueba el bridge bajo la misma
         // preferencia.
         unawaited(
           BridgeUpdateService.maintainIfEnabled(widget.connection, force: true),
         );
     }
+
     // El panel terminal queda unos segundos y luego desaparece.
     await Future.delayed(const Duration(seconds: 6));
     if (mounted) setState(() => _updateProgress = null);

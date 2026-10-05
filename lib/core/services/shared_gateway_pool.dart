@@ -120,7 +120,7 @@ class SharedGatewayPool {
         connection,
       );
       if (chatLinger != null) client.enableSessionMultiplexing();
-      entry = _PoolEntry(client, linger: chatLinger);
+      entry = _PoolEntry(client, connection.id, linger: chatLinger);
       _entries[key] = entry;
     }
     entry.linger?.cancel();
@@ -208,14 +208,23 @@ class SharedGatewayPool {
   /// Sondea cada socket vivo del pool (cambio de red). Un socket medio
   /// abierto cae por la ruta normal y su dueño aplica el backoff. Los ya
   /// caídos olvidan el backoff de la red anterior (rl1215).
-  Future<void> probeAll() async {
-    for (final entry in _entries.values) {
+  Future<void> probeAll() => _probe(_entries.values.toList());
+
+  /// [probeAll] for the sockets of one connection only: its server just
+  /// restarted the gateway (a finished `hermes update`).
+  Future<void> probeConnection(String connectionId) => _probe([
+    for (final entry in _entries.values)
+      if (entry.connectionId == connectionId) entry,
+  ]);
+
+  Future<void> _probe(List<_PoolEntry> entries) async {
+    for (final entry in entries) {
       if (!entry.client.isClosed) {
         entry.client.resetReconnectBackoffForNetworkChange();
       }
     }
     await Future.wait([
-      for (final entry in _entries.values.toList())
+      for (final entry in entries)
         if (!entry.client.isClosed)
           entry.client.probeNow().then<void>((_) {}, onError: (Object _) {}),
     ]);
@@ -239,9 +248,11 @@ class SharedGatewayPool {
 }
 
 class _PoolEntry {
-  _PoolEntry(this.client, {Duration? linger}) : ownLinger = linger;
+  _PoolEntry(this.client, this.connectionId, {Duration? linger})
+    : ownLinger = linger;
 
   final TuiGatewayClient client;
+  final String connectionId;
 
   /// Linger of this entry after its last release (chat sockets); null uses
   /// the pool default.

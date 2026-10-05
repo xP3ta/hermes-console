@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/services/hermes_update_monitor.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Seguimiento honesto de `hermes update` lanzado desde Console.
 ///
@@ -43,20 +44,74 @@ void main() {
       );
     });
 
-    test('REGRESIÓN: el marcador propio NO es éxito (faltan reinicios)', () {
-      // hermes update imprime el marcador ANTES de reiniciar gateway y
-      // Dashboard y de verificar la flota.
-      for (final running in [true, false]) {
-        expect(
-          classify({
-            'running': running,
-            'action_id': ownId,
-            'lines': ['=== hermes-update completed $ownId ==='],
-            'receipt': ourReceipt('running', finished: false),
-          }).phase,
-          HermesUpdateActionPhase.restartingServices,
-        );
+    test('own marker while the updater still runs: restarting services', () {
+      // hermes update prints the marker before restarting the gateway and
+      // the Dashboard; while its process lives the run is not over.
+      expect(
+        classify({
+          'running': true,
+          'action_id': ownId,
+          'lines': ['=== hermes-update completed $ownId ==='],
+          'receipt': ourReceipt('running', finished: false),
+        }).phase,
+        HermesUpdateActionPhase.restartingServices,
+      );
+    });
+
+    test('own marker with the updater gone is success at once (Desktop '
+        'completedAfterRestart), even without a closed receipt', () {
+      for (final exitCode in [null, 0]) {
+        final obs = classify({
+          'running': false,
+          'exit_code': exitCode,
+          'action_id': ownId,
+          'lines': ['=== hermes-update completed $ownId ==='],
+          'receipt': ourReceipt('running', finished: false),
+        });
+        expect(obs.phase, HermesUpdateActionPhase.succeeded);
+        expect(obs.ownMarker, isTrue);
       }
+      // Marker only in the log tail (no durable action_id echoed).
+      expect(
+        classify({
+          'running': false,
+          'exit_code': null,
+          'lines': ['=== hermes-update completed $ownId ==='],
+        }).phase,
+        HermesUpdateActionPhase.succeeded,
+      );
+    });
+
+    test('our action_id echoed without the completion marker line is not '
+        'success: the Dashboard may have restarted mid-update', () {
+      // Updater gone, id still echoed, no marker and no exit code: nothing
+      // proves the run finished (the old gateway may still be draining).
+      final dead = classify({
+        'running': false,
+        'exit_code': null,
+        'action_id': ownId,
+        'lines': ['Updating code...'],
+      });
+      expect(dead.phase, HermesUpdateActionPhase.unknown);
+      expect(dead.ownMarker, isFalse);
+      // While the updater lives, an id echo alone is still "applying".
+      final alive = classify({
+        'running': true,
+        'action_id': ownId,
+        'lines': ['→ Installing dependencies…'],
+      });
+      expect(alive.phase, HermesUpdateActionPhase.running);
+      expect(alive.ownMarker, isFalse);
+      // A marker line naming another run does not count either.
+      expect(
+        classify({
+          'running': false,
+          'exit_code': null,
+          'action_id': ownId,
+          'lines': ['=== hermes-update completed $otherId ==='],
+        }).phase,
+        HermesUpdateActionPhase.unknown,
+      );
     });
 
     test('solo el recibo propio cerrado da el resultado', () {
@@ -115,6 +170,27 @@ void main() {
       );
     });
 
+    test('clock margin is 60 s (Desktop), not minutes', () {
+      Map<String, dynamic> receiptStartedBefore(Duration before) => {
+        'running': false,
+        'receipt': {
+          'outcome': 'success',
+          'started_at': requestedAt.subtract(before).toIso8601String(),
+          'finished_at': requestedAt
+              .add(const Duration(minutes: 9))
+              .toIso8601String(),
+        },
+      };
+      expect(
+        classify(receiptStartedBefore(const Duration(seconds: 50))).phase,
+        HermesUpdateActionPhase.succeeded,
+      );
+      expect(
+        classify(receiptStartedBefore(const Duration(seconds: 90))).phase,
+        HermesUpdateActionPhase.unknown,
+      );
+    });
+
     test('Dashboard recién reiniciado sin datos: desconocido', () {
       expect(
         classify({'running': false, 'exit_code': null}).phase,
@@ -146,7 +222,187 @@ void main() {
   });
 
   group('HermesUpdateSession', () {
-    setUp(HermesUpdateSession.debugReset);
+    setUp(() {
+      SharedPreferences.setMockInitialValues({});
+      HermesUpdateSession.debugReset();
+    });
+
+    test('resume after the process was killed: the persisted session '
+        'continues and finishes', () async {
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt.add(const Duration(minutes: 3)),
+      )!..actionId = ownId;
+      session.adoptServerTime(requestedAt);
+      await HermesUpdateSession.debugFlushStore();
+
+      // Android kills the process: only SharedPreferences survive.
+      HermesUpdateSession.debugReset();
+      expect(HermesUpdateGuard.isActive('a'), isFalse);
+      expect(await HermesUpdateSession.persistedConnectionIds(), ['a']);
+
+      final resumeAt = requestedAt.add(const Duration(minutes: 10));
+      final resumed = await HermesUpdateSession.resumePersisted(
+        'a',
+        now: resumeAt,
+      );
+      expect(resumed, isNotNull);
+      expect(resumed!.actionId, ownId);
+      expect(resumed.requestedAt, requestedAt);
+      expect(resumed.previousVersion, '0.21.4');
+      expect(HermesUpdateGuard.isActive('a'), isTrue);
+      // A second resume (foreground + unlock) attaches to the same one.
+      expect(
+        identical(
+          await HermesUpdateSession.resumePersisted('a', now: resumeAt),
+          resumed,
+        ),
+        isTrue,
+      );
+
+      final result = await resumed.track(
+        HermesUpdateProbes(
+          actionStatus: () async => {
+            'running': false,
+            'receipt': ourReceipt('success'),
+          },
+          serverStatus: () async => {
+            'gateway_running': true,
+            'version': '0.21.5',
+          },
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+      );
+      expect(result.outcome, HermesUpdateOutcome.confirmed);
+      await HermesUpdateSession.debugFlushStore();
+      // A terminal result clears the record.
+      expect(await HermesUpdateSession.persistedConnectionIds(), isEmpty);
+      HermesUpdateSession.debugReset();
+      expect(
+        await HermesUpdateSession.resumePersisted('a', now: resumeAt),
+        isNull,
+      );
+    });
+
+    test('a record older than any update run is dropped', () async {
+      HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!.actionId = ownId;
+      await HermesUpdateSession.debugFlushStore();
+      HermesUpdateSession.debugReset();
+      expect(
+        await HermesUpdateSession.resumePersisted(
+          'a',
+          now: requestedAt.add(const Duration(days: 1)),
+        ),
+        isNull,
+      );
+      expect(await HermesUpdateSession.persistedConnectionIds(), isEmpty);
+    });
+
+    test('a request that failed to start leaves nothing to resume', () async {
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+      )!;
+      session.abandon(const HermesUpdateResult(HermesUpdateOutcome.failed));
+      await HermesUpdateSession.debugFlushStore();
+      expect(await HermesUpdateSession.persistedConnectionIds(), isEmpty);
+    });
+
+    test('a late setter after the session ended never resurrects its '
+        'record', () async {
+      // Abandoned before the POST answer, then the late answer arrives.
+      final abandoned = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!;
+      abandoned.abandon(const HermesUpdateResult(HermesUpdateOutcome.failed));
+      abandoned.actionId = ownId;
+      abandoned.attachedToRunningUpdate = true;
+      abandoned.adoptServerTime(requestedAt);
+      await HermesUpdateSession.debugFlushStore();
+      expect(await HermesUpdateSession.persistedConnectionIds(), isEmpty);
+      HermesUpdateSession.debugReset();
+      expect(await HermesUpdateSession.resumePersisted('a'), isNull);
+
+      // A session with a terminal result, set again afterwards.
+      final finished = HermesUpdateSession.reserve(
+        'b',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      await finished.track(
+        HermesUpdateProbes(
+          actionStatus: () async => {
+            'running': false,
+            'receipt': ourReceipt('failed'),
+          },
+          serverStatus: () async => {'gateway_running': true},
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+      );
+      finished.actionId = ownId;
+      await HermesUpdateSession.debugFlushStore();
+      expect(await HermesUpdateSession.persistedConnectionIds(), isEmpty);
+
+      // A superseded session (a newer one owns the connection) cannot
+      // overwrite the newer record either.
+      final newer = HermesUpdateSession.reserve(
+        'b',
+        previousVersion: '0.21.5',
+        now: requestedAt,
+      )!;
+      finished.actionId = otherId;
+      await HermesUpdateSession.debugFlushStore();
+      HermesUpdateSession.debugReset();
+      final resumed = await HermesUpdateSession.resumePersisted(
+        'b',
+        now: requestedAt,
+      );
+      expect(resumed?.previousVersion, newer.previousVersion);
+      expect(resumed?.actionId, isNull);
+
+      // A stale, unfinished object from before a resume (no longer the
+      // registered session) cannot overwrite the resumed record.
+      final stale = HermesUpdateSession.reserve(
+        'c',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      await HermesUpdateSession.debugFlushStore();
+      HermesUpdateSession.debugReset();
+      final live = await HermesUpdateSession.resumePersisted(
+        'c',
+        now: requestedAt,
+      );
+      expect(live, isNotNull);
+      expect(stale.isFinished, isFalse);
+      stale.actionId = otherId;
+      await HermesUpdateSession.debugFlushStore();
+      HermesUpdateSession.debugReset();
+      expect(
+        (await HermesUpdateSession.resumePersisted(
+          'c',
+          now: requestedAt,
+        ))?.actionId,
+        ownId,
+      );
+    });
+
+    test('a malformed persisted record is dropped, not resumed', () async {
+      SharedPreferences.setMockInitialValues({
+        'hermes_update_session_v1.a': '{not json',
+      });
+      expect(await HermesUpdateSession.resumePersisted('a'), isNull);
+      expect(await HermesUpdateSession.persistedConnectionIds(), isEmpty);
+    });
 
     test('reserva única por instancia y liberación al abandonar', () async {
       final a = HermesUpdateSession.reserve('a', previousVersion: '0.21.4');
@@ -203,8 +459,10 @@ void main() {
       );
       expect(result.outcome, HermesUpdateOutcome.confirmed);
       expect(result.version, '0.21.5');
+      // The Dashboard restarted: our id is echoed but the log holds no
+      // completion marker, so only the closed receipt settles the run.
       expect(polls, script.length);
-      // /api/status solo se consulta tras el recibo cerrado.
+      // /api/status is only read once the run has a result.
       expect(statusCalls, 1);
       expect(HermesUpdateGuard.isActive('a'), isFalse);
     });
@@ -230,6 +488,189 @@ void main() {
       expect(status, 3);
     });
 
+    test('receipt success with the gateway down ends partial within the '
+        '2 min gateway check, never an endless spinner', () async {
+      final t0 = DateTime(2026, 9, 25, 10);
+      var now = t0;
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      var actionPolls = 0;
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async {
+            actionPolls++;
+            return {'running': false, 'receipt': ourReceipt('success')};
+          },
+          serverStatus: () async {
+            now = now.add(const Duration(seconds: 20));
+            return {'gateway_running': false};
+          },
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.partial);
+      expect(result.issue, HermesUpdateIssue.gatewayNotConfirmed);
+      expect(actionPolls, 1);
+      expect(
+        now.difference(t0),
+        lessThanOrEqualTo(
+          hermesUpdateGatewayConfirmWindow + const Duration(seconds: 20),
+        ),
+      );
+      expect(hermesUpdateGatewayConfirmWindow, const Duration(minutes: 2));
+      expect(HermesUpdateGuard.isActive('a'), isFalse);
+    });
+
+    test('own marker with the gateway down never polls the gateway past '
+        'its window', () async {
+      final t0 = DateTime(2026, 9, 25, 10);
+      var now = t0;
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async => {
+            'running': false,
+            'action_id': ownId,
+            'exit_code': 0,
+            'lines': ['=== hermes-update completed $ownId ==='],
+          },
+          serverStatus: () async {
+            now = now.add(const Duration(seconds: 30));
+            return null;
+          },
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.partial);
+      expect(result.issue, HermesUpdateIssue.gatewayNotConfirmed);
+      expect(now.difference(t0), lessThan(const Duration(minutes: 3)));
+    });
+
+    test('the gateway reconnect fires exactly once when the update ends '
+        'with updated code, never on failure', () async {
+      Future<List<String>> run({
+        required Map<String, dynamic> action,
+        required bool gatewayUp,
+      }) async {
+        HermesUpdateSession.debugReset();
+        final reconnects = <String>[];
+        var now = DateTime(2026, 9, 25, 10);
+        final session = HermesUpdateSession.reserve(
+          'a',
+          previousVersion: '0.21.4',
+          now: requestedAt,
+        )!..actionId = ownId;
+        await session.track(
+          HermesUpdateProbes(
+            actionStatus: () async => action,
+            serverStatus: () async {
+              now = now.add(const Duration(seconds: 30));
+              return {'gateway_running': gatewayUp, 'version': '0.21.5'};
+            },
+            updateStillAvailable: () async => null,
+          ),
+          pollInterval: Duration.zero,
+          clock: () => now,
+          reconnect: reconnects.add,
+        );
+        // Late callers (screen reopened) do not fire it again.
+        await session.track(
+          HermesUpdateProbes(
+            actionStatus: () async => action,
+            serverStatus: () async => null,
+            updateStillAvailable: () async => null,
+          ),
+          reconnect: reconnects.add,
+        );
+        return reconnects;
+      }
+
+      final success = {'running': false, 'receipt': ourReceipt('success')};
+      expect(await run(action: success, gatewayUp: true), ['a']);
+      expect(await run(action: success, gatewayUp: false), ['a']);
+      expect(
+        await run(
+          action: {'running': false, 'receipt': ourReceipt('failed')},
+          gatewayUp: true,
+        ),
+        isEmpty,
+      );
+    });
+
+    test(
+      'without an explicit callback the app-wide reconnect hook is used',
+      () async {
+        final reconnects = <String>[];
+        HermesUpdateSession.reconnectGateway = reconnects.add;
+        addTearDown(() => HermesUpdateSession.reconnectGateway = null);
+        final session = HermesUpdateSession.reserve(
+          'a',
+          previousVersion: '0.21.4',
+          now: requestedAt,
+        )!..actionId = ownId;
+        await session.track(
+          HermesUpdateProbes(
+            actionStatus: () async => {
+              'running': false,
+              'receipt': ourReceipt('success'),
+            },
+            serverStatus: () async => {'gateway_running': true},
+            updateStillAvailable: () async => null,
+          ),
+          pollInterval: Duration.zero,
+        );
+        expect(reconnects, ['a']);
+      },
+    );
+
+    test('the last useful log line is published as progress', () async {
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      final seen = <String?>[];
+      session.progressLine.addListener(
+        () => seen.add(session.progressLine.value),
+      );
+      final script = <Map<String, dynamic>>[
+        {
+          'running': true,
+          'lines': ['→ Fetching updates...'],
+        },
+        {
+          'running': true,
+          'lines': [
+            '→ Fetching updates...',
+            '→ Installing dependencies…',
+            '   web_dist/assets/index-abc.js',
+          ],
+        },
+        {'running': false, 'receipt': ourReceipt('success')},
+      ];
+      var polls = 0;
+      await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async => script[polls++],
+          serverStatus: () async => {'gateway_running': true},
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+      );
+      expect(seen, ['→ Fetching updates...', '→ Installing dependencies…']);
+    });
+
     test('el action_id fijado tras arrancar el seguimiento se usa', () async {
       final session = HermesUpdateSession.reserve(
         'a',
@@ -241,11 +682,13 @@ void main() {
         HermesUpdateProbes(
           actionStatus: () async {
             polls++;
+            // Before the POST answer the marker cannot be attributed.
             if (polls == 2) session.actionId = ownId;
             return {
               'running': false,
               'action_id': ownId,
-              'exit_code': polls > 2 ? 1 : null,
+              'exit_code': null,
+              'lines': ['=== hermes-update completed $ownId ==='],
             };
           },
           serverStatus: () async => {'gateway_running': true},
@@ -253,7 +696,8 @@ void main() {
         ),
         pollInterval: Duration.zero,
       );
-      expect((await future).outcome, HermesUpdateOutcome.failed);
+      expect((await future).outcome, HermesUpdateOutcome.confirmed);
+      expect(polls, 2);
     });
 
     test('recibo partial se comunica como parcial, no como éxito', () async {
@@ -288,6 +732,7 @@ void main() {
             return {
               'running': false,
               'action_id': ownId,
+              'lines': ['=== hermes-update completed $ownId ==='],
               'receipt': ourReceipt('running', finished: false),
             };
           },
@@ -354,6 +799,304 @@ void main() {
       },
     );
 
+    test('phone clock 3 min ahead: the server Date of the POST still '
+        'matches our own receipt', () async {
+      final phoneNow = requestedAt.add(const Duration(minutes: 3));
+      Future<HermesUpdateResult> run({required bool serverClock}) {
+        HermesUpdateSession.debugReset();
+        var now = DateTime(2026, 9, 25, 10);
+        final session = HermesUpdateSession.reserve(
+          'a',
+          previousVersion: '0.21.4',
+          now: phoneNow,
+        )!..actionId = ownId;
+        session.adoptServerTime(serverClock ? requestedAt : null);
+        return session.track(
+          HermesUpdateProbes(
+            actionStatus: () async {
+              now = now.add(const Duration(minutes: 1));
+              // Receipt only (no marker): the log rotated.
+              return {'running': false, 'receipt': ourReceipt('success')};
+            },
+            serverStatus: () async => {
+              'gateway_running': true,
+              'version': '0.21.5',
+            },
+            updateStillAvailable: () async => null,
+          ),
+          pollInterval: Duration.zero,
+          clock: () => now,
+        );
+      }
+
+      expect(
+        (await run(serverClock: true)).outcome,
+        HermesUpdateOutcome.confirmed,
+      );
+      // Without the server time only the 60 s margin is left.
+      expect(
+        (await run(serverClock: false)).outcome,
+        HermesUpdateOutcome.unverified,
+      );
+    });
+
+    test('already_running: attaches to the running action and reads its '
+        'receipt although it started before our request', () async {
+      final runStarted = requestedAt.subtract(const Duration(minutes: 5));
+      final receipt = {
+        'outcome': 'running',
+        'started_at': runStarted.toIso8601String(),
+        'finished_at': null,
+      };
+      var now = DateTime(2026, 9, 25, 10);
+      final session =
+          HermesUpdateSession.reserve(
+              'a',
+              previousVersion: '0.21.4',
+              now: requestedAt,
+            )!
+            ..actionId = ownId
+            ..attachedToRunningUpdate = true;
+      session.adoptServerTime(requestedAt);
+      var polls = 0;
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async {
+            now = now.add(const Duration(seconds: 30));
+            if (++polls < 3) {
+              return {'running': true, 'receipt': receipt, 'lines': <String>[]};
+            }
+            return {
+              'running': false,
+              'exit_code': 0,
+              'receipt': {
+                ...receipt,
+                'outcome': 'success',
+                'finished_at': requestedAt.toIso8601String(),
+              },
+            };
+          },
+          serverStatus: () async => {
+            'gateway_running': true,
+            'version': '0.21.5',
+          },
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.confirmed);
+      expect(polls, 3);
+      expect(session.requestedAt, runStarted);
+    });
+
+    test('Desktop cadence: polls every 1.5–2 s, 6 min cap while the '
+        'updater runs, 4 min restart window', () {
+      expect(
+        hermesUpdatePollInterval,
+        greaterThanOrEqualTo(const Duration(milliseconds: 1500)),
+      );
+      expect(
+        hermesUpdatePollInterval,
+        lessThanOrEqualTo(const Duration(seconds: 2)),
+      );
+      expect(hermesUpdateActionMaxDuration, const Duration(minutes: 6));
+      expect(hermesUpdateRestartWindow, const Duration(minutes: 4));
+    });
+
+    test('status probes failing for 4 min: restart window, then a '
+        '"server did not come back" failure', () async {
+      final t0 = DateTime(2026, 9, 25, 10);
+      var now = t0;
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      final steps = <HermesUpdateSessionStep>[];
+      session.step.addListener(() => steps.add(session.step.value));
+      var calls = 0;
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async {
+            now = now.add(const Duration(seconds: 30));
+            if (++calls == 1) return {'running': true, 'lines': <String>[]};
+            throw const SocketException('connection refused');
+          },
+          serverStatus: () async => null,
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.failed);
+      expect(result.issue, HermesUpdateIssue.serverNoReturn);
+      expect(steps, contains(HermesUpdateSessionStep.restarting));
+      // First failure at t0+60 s, then the 4 min window.
+      final elapsed = now.difference(t0);
+      expect(elapsed, greaterThanOrEqualTo(const Duration(minutes: 5)));
+      expect(elapsed, lessThan(const Duration(minutes: 6)));
+      expect(HermesUpdateGuard.isActive('a'), isFalse);
+    });
+
+    test('updater alive past 6 min without a drain: the session and its '
+        'guard last until the updater finishes', () async {
+      final t0 = DateTime(2026, 9, 25, 10);
+      var now = t0;
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      final guardWhileRunning = <bool>[];
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async {
+            now = now.add(const Duration(minutes: 1));
+            guardWhileRunning.add(HermesUpdateGuard.isActive('a'));
+            // A long dependency install: ~11 min like the 25/09 update.
+            if (now.difference(t0) < const Duration(minutes: 11)) {
+              return {
+                'running': true,
+                'lines': ['→ Installing dependencies…'],
+              };
+            }
+            return {'running': false, 'receipt': ourReceipt('success')};
+          },
+          serverStatus: () async => {
+            'gateway_running': true,
+            'version': '0.21.5',
+          },
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.confirmed);
+      expect(guardWhileRunning, hasLength(11));
+      expect(guardWhileRunning, everyElement(isTrue));
+      expect(HermesUpdateGuard.isActive('a'), isFalse);
+    });
+
+    test('an updater that never ends is bounded by the absolute cap and '
+        'keeps the guard until then', () async {
+      final t0 = DateTime(2026, 9, 25, 10);
+      var now = t0;
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      final guardWhileRunning = <bool>[];
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async {
+            now = now.add(const Duration(minutes: 1));
+            // Only reachable when nothing bounds a running updater.
+            if (now.difference(t0) > const Duration(minutes: 50)) {
+              return {'running': false, 'receipt': ourReceipt('success')};
+            }
+            guardWhileRunning.add(HermesUpdateGuard.isActive('a'));
+            return {
+              'running': true,
+              'lines': ['→ Installing dependencies…'],
+            };
+          },
+          serverStatus: () async => {'gateway_running': true},
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.unverified);
+      expect(result.issue, HermesUpdateIssue.timedOut);
+      expect(
+        now.difference(t0),
+        allOf(
+          greaterThanOrEqualTo(hermesUpdateMaxDuration),
+          lessThanOrEqualTo(
+            hermesUpdateMaxDuration + const Duration(minutes: 1),
+          ),
+        ),
+      );
+      expect(guardWhileRunning, everyElement(isTrue));
+      expect(guardWhileRunning.length, greaterThanOrEqualTo(44));
+    });
+
+    test(
+      'no attributable news: the 6 min cap still ends the session',
+      () async {
+        final t0 = DateTime(2026, 9, 25, 10);
+        var now = t0;
+        final session = HermesUpdateSession.reserve(
+          'a',
+          previousVersion: '0.21.4',
+          now: requestedAt,
+        )!..actionId = ownId;
+        final result = await session.track(
+          HermesUpdateProbes(
+            actionStatus: () async {
+              now = now.add(const Duration(minutes: 1));
+              return {'running': false, 'exit_code': null};
+            },
+            serverStatus: () async => {'gateway_running': true},
+            updateStillAvailable: () async => null,
+          ),
+          pollInterval: Duration.zero,
+          clock: () => now,
+        );
+        expect(result.outcome, HermesUpdateOutcome.unverified);
+        expect(result.issue, HermesUpdateIssue.timedOut);
+        expect(
+          now.difference(t0),
+          allOf(
+            greaterThanOrEqualTo(hermesUpdateActionMaxDuration),
+            lessThanOrEqualTo(const Duration(minutes: 7)),
+          ),
+        );
+        expect(HermesUpdateGuard.isActive('a'), isFalse);
+      },
+    );
+
+    test('a gateway drain in the log keeps the long window', () async {
+      final t0 = DateTime(2026, 9, 25, 10);
+      var now = t0;
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async {
+            now = now.add(const Duration(minutes: 1));
+            if (now.difference(t0) < const Duration(minutes: 20)) {
+              return {
+                'running': true,
+                'lines': [
+                  '→ Restarting gateways…',
+                  '  → hermes-gateway: draining (up to 1800s)...',
+                ],
+              };
+            }
+            return {'running': false, 'receipt': ourReceipt('success')};
+          },
+          serverStatus: () async => {
+            'gateway_running': true,
+            'version': '0.21.5',
+          },
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.confirmed);
+      expect(
+        now.difference(t0),
+        greaterThanOrEqualTo(const Duration(minutes: 20)),
+      );
+    });
+
     test('la ventana cubre el drenaje máximo del gateway (30 min)', () {
       expect(hermesUpdateMaxDuration, greaterThan(const Duration(minutes: 31)));
     });
@@ -402,6 +1145,47 @@ void main() {
   });
 
   group('cableado (fuente)', () {
+    test('the reconnect hook drives the recovery path of that connection', () {
+      final main = File('lib/main.dart').readAsStringSync();
+      final hook = main.substring(
+        main.indexOf('HermesUpdateSession.reconnectGateway = '),
+      );
+      final body = hook.substring(0, hook.indexOf('};'));
+      expect(body, contains('requestTransportRecoveryForConnection('));
+      expect(body, contains('SharedGatewayPool.instance.probeConnection('));
+    });
+
+    test('persisted updates resume on cold start, foreground and unlock, '
+        'never while App Lock is closed', () {
+      final main = File('lib/main.dart').readAsStringSync();
+      final resume = main.substring(
+        main.indexOf('void _resumeHermesUpdates()'),
+        main.indexOf('void _restoreColdStartTailsAfterUnlock()'),
+      );
+      expect(resume, contains('if (widget.appLock.locked.value) return;'));
+      expect(resume, contains('resumePersistedHermesUpdates('));
+      expect(
+        main,
+        contains('widget.appLock.locked.addListener(_resumeHermesUpdates);'),
+      );
+      final lifecycle = main.substring(
+        main.indexOf('void didChangeAppLifecycleState('),
+      );
+      expect(
+        lifecycle.substring(0, lifecycle.indexOf('_resumeHermesUpdates();')),
+        contains('if (state == AppLifecycleState.resumed) {'),
+      );
+      final settings = File(
+        'lib/core/screens/settings_screen.dart',
+      ).readAsStringSync();
+      expect(settings, contains('HermesUpdateSession.resumePersisted('));
+      final manager = File(
+        'lib/core/services/connection_manager.dart',
+      ).readAsStringSync();
+      // Deleting a connection drops its persisted update.
+      expect(manager, contains("'${HermesUpdateSession.prefsPrefix}'"));
+    });
+
     final settings = File(
       'lib/core/screens/settings_screen.dart',
     ).readAsStringSync();
@@ -416,7 +1200,20 @@ void main() {
       expect(reserve, greaterThan(0));
       expect(post, greaterThan(reserve));
       expect(apply, contains('session.track('));
-      expect(settings, contains('client.getUpdateActionStatus()'));
+      // Server clock and already_running reach the session before tracking.
+      final track = apply.indexOf('session.track(');
+      expect(
+        apply.indexOf('adoptServerTime(applyResult.serverDate)'),
+        allOf(greaterThan(post), lessThan(track)),
+      );
+      expect(
+        apply.indexOf('attachedToRunningUpdate = applyResult.alreadyRunning'),
+        allOf(greaterThan(post), lessThan(track)),
+      );
+      expect(
+        File('lib/core/services/hermes_update_probes.dart').readAsStringSync(),
+        contains('client.getUpdateActionStatus()'),
+      );
     });
 
     test('el bridge solo se mantiene tras confirmar la actualización', () {
