@@ -198,6 +198,41 @@ void main() {
     await _close(tester, chats);
   });
 
+  for (final viewOnly in [true, false]) {
+    testWidgets(
+      'rpl1215 ask about this on a ${viewOnly ? 'view-only' : 'writable'} '
+      'cron run',
+      (tester) async {
+        final server = _Server()..row = _row(schedulerOwned: !viewOnly);
+        final chats = await _openRun(
+          tester,
+          server,
+          Session.fromJson(_row(schedulerOwned: !viewOnly)),
+        );
+        // A writable connection: only the run verdict hides the action.
+        expect(_connection.readOnly, isFalse);
+        final answer = find
+            .textContaining('scheduled answer', findRichText: true)
+            .first;
+        await tester.longPressAt(
+          tester.getTopLeft(answer) + const Offset(8, 8),
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        final strings = _strings(tester);
+        final copy = MaterialLocalizations.of(
+          tester.element(find.byType(ChatScreen)),
+        ).copyButtonLabel;
+        // The selection menu itself opens either way.
+        expect(find.text(copy), findsOneWidget);
+        expect(
+          find.text(strings.rpl1215AskAboutThis),
+          viewOnly ? findsNothing : findsOneWidget,
+        );
+        await _close(tester, chats);
+      },
+    );
+  }
+
   testWidgets('the opened run row decides before any server read answers', (
     tester,
   ) async {
