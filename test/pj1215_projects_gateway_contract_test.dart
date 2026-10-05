@@ -500,6 +500,124 @@ void main() {
     });
 
     test(
+      'read-only connections send no llm.oneshot or discover_repos',
+      () async {
+        final h = _client(readOnly: true, respond: answer);
+        expect(await h.client.generateProjectIdea('garden'), '');
+        await h.client.scanProjectRepos();
+        expect(
+          h.requests.where(
+            (r) =>
+                r['method'] == 'llm.oneshot' ||
+                r['method'] == 'projects.discover_repos',
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    group('folders are validated before the wire', () {
+      final bad = <String, String>{
+        'a newline': '/srv/x\nrm -rf /',
+        'a tab': '/srv/a\tb',
+        'a bell': '/srv/\x07x',
+        'a blank folder': '   ',
+        'a 4097-char folder': '/${'a' * 4096}',
+      };
+
+      Iterable<Map<String, dynamic>> writes(List<Map<String, dynamic>> r) =>
+          r.where(
+            (f) =>
+                f['method'] == 'projects.create' ||
+                f['method'] == 'projects.add_folder',
+          );
+
+      bad.forEach((label, folder) {
+        test('$label never reaches projects.create or add_folder', () async {
+          final h = _client(respond: answer);
+          await expectLater(
+            h.client.createProjectFromFolders(name: 'x', folders: [folder]),
+            throwsA(isA<DesktopControlFailure>()),
+          );
+          await expectLater(
+            h.client.createProjectFromFolders(
+              name: 'x',
+              folders: ['/srv/ok', folder],
+            ),
+            throwsA(isA<DesktopControlFailure>()),
+          );
+          await expectLater(
+            h.client.createProjectFromFolders(
+              name: 'x',
+              folders: ['/srv/ok'],
+              primaryPath: folder,
+            ),
+            throwsA(isA<DesktopControlFailure>()),
+          );
+          await expectLater(
+            h.client.addProjectFolder('p_9', folder),
+            throwsA(isA<DesktopControlFailure>()),
+          );
+          expect(writes(h.requests), isEmpty);
+        });
+      });
+
+      test('4096 chars is still accepted', () async {
+        final h = _client(respond: answer);
+        final longest = '/${'a' * 4095}';
+        await h.client.addProjectFolder('p_9', longest);
+        expect(_params(h.requests, 'projects.add_folder')!['path'], longest);
+      });
+
+      test('folders are trimmed on the wire', () async {
+        final h = _client(respond: answer);
+        await h.client.createProjectFromFolders(
+          name: 'x',
+          folders: [' /srv/x ', '\t/srv/y\n'],
+          primaryPath: ' /srv/x ',
+        );
+        final params = _params(h.requests, 'projects.create')!;
+        expect(params['folders'], ['/srv/x', '/srv/y']);
+        expect(params['primary_path'], '/srv/x');
+        await h.client.addProjectFolder('p_9', ' /srv/x ');
+        expect(_params(h.requests, 'projects.add_folder')!['path'], '/srv/x');
+      });
+    });
+
+    group('primary path of the created project', () {
+      Object bare(Map<String, dynamic> frame) =>
+          frame['method'] == 'projects.create'
+          ? {
+              'project': {'id': 'p_7'},
+            }
+          : _defaultAnswer(frame);
+
+      test('defaults to the first folder when none is given', () async {
+        final h = _client(respond: bare);
+        final created = await h.client.createProjectFromFolders(
+          name: 'x',
+          folders: [' /srv/first ', '/srv/second'],
+        );
+        expect(created.id, 'p_7');
+        expect(created.primaryPath, '/srv/first');
+        expect(
+          _params(h.requests, 'projects.create')!.containsKey('primary_path'),
+          isFalse,
+        );
+      });
+
+      test('keeps the requested primary when the host echoes none', () async {
+        final h = _client(respond: bare);
+        final created = await h.client.createProjectFromFolders(
+          name: 'x',
+          folders: ['/srv/first', '/srv/second'],
+          primaryPath: ' /srv/second ',
+        );
+        expect(created.primaryPath, '/srv/second');
+      });
+    });
+
+    test(
       'method-not-found on projects.create marks creation unsupported',
       () async {
         final h = _client(

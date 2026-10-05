@@ -6752,15 +6752,14 @@ class TuiGatewayClient
   }) async {
     _requireWritableControlConnection();
     final paths = [
-      for (final folder in folders)
-        _validatedControlValue(folder, maxLength: 4096),
+      for (final folder in folders) _validatedProjectFolder(folder),
     ];
     if (paths.isEmpty) {
       throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
     }
     final primary = primaryPath == null
         ? null
-        : _validatedControlValue(primaryPath, maxLength: 4096);
+        : _validatedProjectFolder(primaryPath);
     final result = await _controlRequest('projects.create', {
       'name': _projectName(name),
       'folders': paths,
@@ -6785,12 +6784,23 @@ class TuiGatewayClient
     );
   }
 
+  /// A server folder for `projects.create` / `projects.add_folder`: trimmed,
+  /// non-blank, at most 4096 chars and free of every control character
+  /// (newlines and tabs included, which the generic check lets through).
+  String _validatedProjectFolder(String folder) {
+    final value = _validatedControlValue(folder, maxLength: 4096);
+    if (value.contains(RegExp(r'[\x00-\x1F\x7F]'))) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    return value;
+  }
+
   @override
   Future<void> addProjectFolder(String id, String path) async {
     _requireWritableControlConnection();
     final result = await _controlRequest('projects.add_folder', {
       'id': _savedProjectId(id),
-      'path': _validatedControlValue(path, maxLength: 4096),
+      'path': _validatedProjectFolder(path),
       'is_primary': false,
     }, capability: DesktopGatewayCapability.projectManagement);
     if (result['project'] is! Map) {
@@ -6803,6 +6813,8 @@ class TuiGatewayClient
   Future<String> generateProjectIdea(String name) async {
     final trimmed = name.trim();
     try {
+      // A read-only connection never spends a model call: '' like a failure.
+      _requireWritableControlConnection();
       final result = await _controlRequest('llm.oneshot', {
         'instructions':
             'You generate a single, concrete project idea as a short IDEA.md '
@@ -6836,6 +6848,8 @@ class TuiGatewayClient
   @override
   Future<void> scanProjectRepos() async {
     try {
+      // The scan rewrites host state, so a read-only connection skips it.
+      _requireWritableControlConnection();
       await _controlRequest('projects.discover_repos', {'scan': true});
     } catch (_) {
       // Best effort, like Desktop: the last known tree stays on screen.
