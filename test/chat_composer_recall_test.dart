@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:hermes_android/core/models/composer_reference.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
@@ -18,6 +19,8 @@ import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
+import 'package:hermes_android/core/utils/slash_commands.dart';
+import 'package:hermes_android/core/widgets/chat/composer_reference_palette.dart';
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/main.dart';
 
@@ -246,5 +249,200 @@ void main() {
     await tester.pump();
 
     expect(composer(tester).text, isEmpty);
+  });
+
+  /// Calls the screen's test hook that forces palette/dictation state.
+  Future<void> forceGuards(
+    WidgetTester tester, {
+    List<SlashCommand>? slashSuggestions,
+    List<PathCompletionItem>? referenceItems,
+    bool? recording,
+    bool? transcribing,
+  }) async {
+    final state = tester.state(find.byType(ChatScreen)) as dynamic;
+    state.setComposerKeyGuardsForTesting(
+      slashSuggestions: slashSuggestions,
+      referenceItems: referenceItems,
+      recording: recording,
+      transcribing: transcribing,
+    );
+    await tester.pump();
+  }
+
+  bool composerFocused(WidgetTester tester) =>
+      tester.widget<TextField>(composerField()).focusNode!.hasFocus;
+
+  for (final modifier in [
+    LogicalKeyboardKey.shiftLeft,
+    LogicalKeyboardKey.controlLeft,
+    LogicalKeyboardKey.altLeft,
+    LogicalKeyboardKey.metaLeft,
+  ]) {
+    testWidgets(
+      'arrow up with ${modifier.debugName} held does not recall in an empty '
+      'composer',
+      (tester) async {
+        await pumpChat(tester, history: history());
+        await focusComposer(tester);
+        expect(composer(tester).text, isEmpty);
+
+        await simulateKeyDownEvent(modifier);
+        await simulateKeyDownEvent(LogicalKeyboardKey.arrowUp);
+        await simulateKeyUpEvent(LogicalKeyboardKey.arrowUp);
+        await simulateKeyUpEvent(modifier);
+        await tester.pump();
+        expect(composer(tester).text, isEmpty);
+
+        // Released modifier: the same key now recalls (the guard, not the
+        // setup, kept it empty).
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+        await tester.pump();
+        expect(composer(tester).text, 'Segunda pregunta enviada');
+      },
+    );
+  }
+
+  testWidgets('arrow up leaves a late slash palette alone in an empty '
+      'composer', (tester) async {
+    await pumpChat(tester, history: history());
+    await focusComposer(tester);
+    await forceGuards(
+      tester,
+      slashSuggestions: const [
+        SlashCommand(
+          name: 'help',
+          description: 'Ayuda',
+          action: SlashAction.help,
+        ),
+      ],
+    );
+    expect(composer(tester).text, isEmpty);
+    expect(find.byKey(const ValueKey('chat-slash-palette')), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+
+    expect(composer(tester).text, isEmpty);
+    expect(find.byKey(const ValueKey('chat-slash-palette')), findsOneWidget);
+    expect(composerFocused(tester), isTrue);
+
+    await forceGuards(tester, slashSuggestions: const []);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(composer(tester).text, 'Segunda pregunta enviada');
+  });
+
+  testWidgets('arrow up leaves a reference palette alone in an empty '
+      'composer', (tester) async {
+    await pumpChat(tester, history: history());
+    await focusComposer(tester);
+    await forceGuards(
+      tester,
+      referenceItems: const [
+        PathCompletionItem(
+          kind: ComposerReferenceKind.file,
+          value: 'lib/main.dart',
+          display: 'main.dart',
+          meta: 'lib',
+        ),
+      ],
+    );
+    expect(composer(tester).text, isEmpty);
+    expect(find.byType(ComposerReferencePalette), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+
+    expect(composer(tester).text, isEmpty);
+    expect(find.byType(ComposerReferencePalette), findsOneWidget);
+
+    await forceGuards(tester, referenceItems: const []);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(composer(tester).text, 'Segunda pregunta enviada');
+  });
+
+  for (final transcribing in [false, true]) {
+    final label = transcribing ? 'transcribing' : 'recording';
+    testWidgets('arrow up does not recall while dictation is $label', (
+      tester,
+    ) async {
+      await pumpChat(tester, history: history());
+      await focusComposer(tester);
+      await forceGuards(
+        tester,
+        recording: !transcribing,
+        transcribing: transcribing,
+      );
+      expect(composer(tester).text, isEmpty);
+      expect(composerFocused(tester), isTrue);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+
+      expect(composer(tester).text, isEmpty);
+
+      await forceGuards(tester, recording: false, transcribing: false);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      expect(composer(tester).text, 'Segunda pregunta enviada');
+    });
+  }
+
+  testWidgets('only the key down recalls; key up and key repeat are ignored', (
+    tester,
+  ) async {
+    await pumpChat(tester, history: history());
+    await focusComposer(tester);
+    final controller = composer(tester);
+
+    // Key down while the composer has text: no recall. The text is then
+    // cleared while the key is still held, so the key up and the repeats
+    // reach the handler with an EMPTY composer.
+    await tester.enterText(composerField(), 'x');
+    await tester.pump();
+    await simulateKeyDownEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(controller.text, 'x');
+    controller.clear();
+    await tester.pump();
+    await simulateKeyRepeatEvent(LogicalKeyboardKey.arrowUp);
+    await simulateKeyRepeatEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(controller.text, isEmpty);
+    await simulateKeyUpEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(controller.text, isEmpty);
+
+    // A bare key down fills once; holding the key (repeats) does not refill
+    // after the user edits the recalled text away.
+    await simulateKeyDownEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(controller.text, 'Segunda pregunta enviada');
+    controller.clear();
+    await tester.pump();
+    await simulateKeyRepeatEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(controller.text, isEmpty);
+    await simulateKeyUpEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(controller.text, isEmpty);
+  });
+
+  testWidgets('recall leaves the caret collapsed at the end of the text', (
+    tester,
+  ) async {
+    await pumpChat(tester, history: history());
+    await focusComposer(tester);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+
+    const recalled = 'Segunda pregunta enviada';
+    final value = composer(tester).value;
+    expect(value.text, recalled);
+    expect(value.selection.isCollapsed, isTrue);
+    expect(value.selection.baseOffset, recalled.length);
+    expect(value.selection.extentOffset, recalled.length);
   });
 }

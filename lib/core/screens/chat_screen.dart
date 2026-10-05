@@ -2603,6 +2603,23 @@ class _ChatScreenState extends State<ChatScreen>
     return KeyEventResult.handled;
   }
 
+  /// Test hook: puts the composer in the states where Arrow Up must keep its
+  /// normal behaviour even with an empty text (late palette rows, dictation).
+  @visibleForTesting
+  void setComposerKeyGuardsForTesting({
+    List<SlashCommand>? slashSuggestions,
+    List<PathCompletionItem>? referenceItems,
+    bool? recording,
+    bool? transcribing,
+  }) {
+    setState(() {
+      if (slashSuggestions != null) _slashSuggestions = slashSuggestions;
+      if (referenceItems != null) _referenceItems = referenceItems;
+      if (recording != null) _isRecording = recording;
+      if (transcribing != null) _transcribing = transcribing;
+    });
+  }
+
   /// Text of the newest real user turn (rows are stored newest first).
   String? _lastSentUserText() {
     for (final message in _chat.messages) {
