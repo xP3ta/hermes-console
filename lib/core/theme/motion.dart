@@ -29,7 +29,7 @@ class Motion {
 
   /// True si el sistema pide reducir el movimiento (accesibilidad/ahorro).
   static bool reduced(BuildContext context) =>
-      MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+      MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 
   /// Duración efectiva: la nominal, o cero si hay que reducir el movimiento.
   static Duration duration(BuildContext context, Duration nominal) =>
