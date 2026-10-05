@@ -8509,5 +8509,15 @@
   "rpl1215ReplySummarize": "Summarize it",
   "rpl1215SmartSuggest": "Suggest replies with AI",
   "rpl1215SettingTitle": "Quick replies",
-  "rpl1215SettingSubtitle": "Reply ideas after each turn. ✨ only asks the model when you tap it."
+  "rpl1215SettingSubtitle": "Reply ideas after each turn. ✨ only asks the model when you tap it.",
+  "tc1215TurnChangesChip": "{count, plural, =1{1 file} other{{count} files}}",
+  "@tc1215TurnChangesChip": {"placeholders": {"count": {"type": "int"}}},
+  "tc1215DiffHunkLines": "Lines {start}–{end}",
+  "@tc1215DiffHunkLines": {"placeholders": {"start": {"type": "int"}, "end": {"type": "int"}}},
+  "tc1215DiffHunkLine": "Line {line}",
+  "@tc1215DiffHunkLine": {"placeholders": {"line": {"type": "int"}}},
+  "tc1215DiffViewed": "Viewed",
+  "tc1215DiffViewedSemantics": "Mark {name} as viewed",
+  "@tc1215DiffViewedSemantics": {"placeholders": {"name": {"type": "String"}}},
+  "tc1215TurnChangesDone": "Done"
 }
