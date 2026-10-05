@@ -237,4 +237,89 @@ void main() {
     expect(tester.getSize(gutter(1233)).width, firstWidth);
     expect(tester.takeException(), isNull);
   });
+
+  /// Painted width of [text] in the gutter's effective style.
+  double paintedWidth(WidgetTester tester, int i, String text) {
+    final paragraph = tester.renderObject<RenderParagraph>(gutter(i));
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: paragraph.text.style),
+      textDirection: paragraph.textDirection,
+      textScaler: paragraph.textScaler,
+      strutStyle: paragraph.strutStyle,
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
+  }
+
+  testWidgets('a 100,000-line gutter is as wide as the painted 100000', (
+    tester,
+  ) async {
+    final big = List.filled(100000, 'row').join('\n');
+    await tester.pumpWidget(host('huge.txt', big));
+    await settle(tester);
+
+    expect(
+      tester.getSize(gutter(0)).width,
+      greaterThanOrEqualTo(paintedWidth(tester, 0, '100000')),
+    );
+  });
+
+  testWidgets('the code text starts one gap right of the gutter', (
+    tester,
+  ) async {
+    final body = [for (var i = 0; i < 12; i++) 'code $i'].join('\n');
+    await tester.pumpWidget(host('gap.txt', body));
+    await settle(tester);
+
+    for (final i in [0, 11]) {
+      expect(
+        tester.getTopLeft(line(i)).dx - tester.getTopRight(gutter(i)).dx,
+        moreOrLessEquals(12),
+        reason: 'line $i keeps the gutter gap',
+      );
+    }
+  });
+
+  testWidgets('horizontal scroll reaches the end of the longest line', (
+    tester,
+  ) async {
+    const marker = 'END_OF_LONG_LINE';
+    final longLine = '${'x' * 300}$marker';
+    final body = ['short', longLine, 'tail'].join('\n');
+    await tester.pumpWidget(host('wide.txt', body));
+    await settle(tester);
+
+    final horizontal = find.byWidgetPredicate(
+      (w) => w is Scrollable && w.axisDirection == AxisDirection.right,
+    );
+    expect(horizontal, findsOneWidget);
+    final position = tester.state<ScrollableState>(horizontal).position;
+    expect(position.maxScrollExtent, greaterThan(0));
+    position.jumpTo(position.maxScrollExtent);
+    await settle(tester);
+
+    // Right edge of the marker's last glyph, in global coordinates.
+    final paragraph = tester.renderObject<RenderParagraph>(
+      find.descendant(of: line(1), matching: find.byType(RichText)),
+    );
+    final boxes = paragraph.getBoxesForSelection(
+      TextSelection(
+        baseOffset: longLine.length - 3,
+        extentOffset: longLine.length,
+      ),
+    );
+    expect(boxes, isNotEmpty);
+    final textEnd = paragraph
+        .localToGlobal(Offset(boxes.last.right, boxes.last.top))
+        .dx;
+    final viewport = tester.getRect(horizontal);
+    expect(
+      textEnd,
+      lessThanOrEqualTo(viewport.right),
+      reason: 'the end of $marker is reachable',
+    );
+    expect(textEnd, greaterThan(viewport.left));
+  });
 }

@@ -778,7 +778,7 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
       height: 1.45,
     );
     final longest = _lines.fold<int>(0, (m, l) => math.max(m, l.length));
-    final charWidth = MediaQuery.textScalerOf(context).scale(13) * 0.62;
+    final charWidth = _charAdvance(context, style);
     final contentWidth = math.min(longest * charWidth + 32, 20000.0);
     final currentMatch = _matches.isEmpty ? null : _matches[_current];
     // Line-number gutter: fixed width from the digit count of the last line
@@ -936,6 +936,26 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
     final width = painter.width.ceilToDouble();
     painter.dispose();
     return width;
+  }
+
+  /// Advance of one monospace character in the effective line style (theme
+  /// letter spacing and text scale included), measured on a short run so the
+  /// horizontal range always reaches the end of the longest line.
+  double _charAdvance(BuildContext context, TextStyle style) {
+    const sample = 64;
+    final painter = TextPainter(
+      text: TextSpan(
+        text: '0' * sample,
+        style: DefaultTextStyle.of(context).style.merge(style),
+      ),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+      strutStyle: _lineStrut,
+      maxLines: 1,
+    )..layout();
+    final advance = painter.width / sample;
+    painter.dispose();
+    return advance;
   }
 
   TextSpan _lineSpan(
