@@ -19,6 +19,7 @@ import '../models/agent_profile.dart';
 import '../models/cron_job.dart';
 import '../models/dock_config.dart' show DockItemId;
 import '../navigation/chat_route.dart';
+import '../navigation/enclosing_route.dart';
 import '../services/bot_roster_store.dart';
 import '../services/connection_manager.dart';
 import '../services/cron_repository.dart';
@@ -186,8 +187,13 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     });
   }
 
+  // The route arrives through [EnclosingRoute] (see `build`): reading
+  // `ModalRoute.of(context)` from this guard subscribed the whole screen to
+  // the route status, so it rebuilt in the first frame of every transition.
+  ModalRoute<Object?>? _ownRoute;
+
   bool get _refreshAllowed =>
-      mounted && _foreground && ModalRoute.of(context)?.isCurrent != false;
+      mounted && _foreground && _ownRoute?.isCurrent != false;
 
   void _startEventUpdates() {
     final override = widget.eventStreamOverride;
@@ -777,7 +783,12 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => EnclosingRoute(
+    onRoute: (route) => _ownRoute = route,
+    child: _buildScreen(context),
+  );
+
+  Widget _buildScreen(BuildContext context) {
     final s = Strings.of(context);
     return Scaffold(
       appBar: HermesAppBar(

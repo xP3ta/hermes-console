@@ -17,6 +17,7 @@ import '../models/home_widget_snapshot.dart';
 import '../models/session_live_status.dart';
 import '../models/session_category.dart';
 import '../navigation/chat_route.dart';
+import '../navigation/enclosing_route.dart';
 import '../services/active_profile_scope.dart';
 import '../services/agent_runtime/agent_runtime.dart';
 import '../services/agent_runtime/local_termux_agent_provider.dart';
@@ -165,6 +166,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   SessionListRead? _statusListRead;
   StreamSubscription<HistoryCleanupInvalidation>? _historyCleanupSubscription;
   PageRoute<dynamic>? _route;
+  bool _statusRefreshOwed = false;
+  bool _reloadOwed = false;
   bool _initialLoadComplete = false;
   double _initialLoadProgress = 0;
   int _reloadEpoch = 0;
@@ -263,7 +266,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       _listenedGlobalActivity = aggregate;
       aggregate?.addListener(_onActivityChanged);
     }
-    final route = ModalRoute.of(context);
+  }
+
+  /// The route arrives through [EnclosingRoute] instead of
+  /// `ModalRoute.of(context)` here: that call made all of Home depend on the
+  /// route status and rebuild in the first frame of every push over it and
+  /// every pop back to it (the dock transitions).
+  void _attachRoute(ModalRoute<Object?>? route) {
     if (route is PageRoute<dynamic> && !identical(route, _route)) {
       hermesRouteObserver.unsubscribe(this);
       _route = route;
@@ -298,8 +307,40 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     // (reportado en dispositivo real). `RouteAware.didPopNext` es justo el
     // gancho para esto — se dispara siempre que esta pantalla vuelve a ser
     // visible, sin depender de qué call site abrió la pantalla anterior.
-    unawaited(_refreshStatus());
+    _refreshWhenUncovered();
     _scheduleActivityReconnect(immediate: true);
+  }
+
+  /// Refreshes Home once the screen above it has finished sliding away
+  /// (see [runWhenUncovered]): refreshing when the pop started rebuilt all
+  /// of Home inside the back transition, the stutter seen when returning
+  /// through the dock. The triggers of one return (`didPopNext` and the
+  /// `.then` of the push) are coalesced: one status refresh, or the full
+  /// reload a screen asked for.
+  void _refreshWhenUncovered({bool reload = false}) {
+    if (!mounted) return;
+    if (reload) {
+      _reloadOwed = true;
+    } else {
+      _statusRefreshOwed = true;
+    }
+    // Each trigger waits on its own; the first to run takes what is owed.
+    runWhenUncovered(context, _route, () {
+      if (mounted) _runOwedRefresh();
+    });
+  }
+
+  void _runOwedRefresh() {
+    final reload = _reloadOwed;
+    final refresh = _statusRefreshOwed;
+    _reloadOwed = false;
+    _statusRefreshOwed = false;
+    // `_reload` ends with its own status refresh.
+    if (reload) {
+      _reload();
+    } else if (refresh) {
+      unawaited(_refreshStatus());
+    }
   }
 
   @override
@@ -1707,7 +1748,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         initialDictation: initialDictation,
         initialVoiceMode: initialVoiceMode,
       ),
-    ).then((_) => _refreshStatus());
+    ).then((_) => _refreshWhenUncovered());
   }
 
   ({String connectionId, String profile})? _homeDraftTarget() {
@@ -1843,7 +1884,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
           connManager: widget.connManager,
         ),
       ),
-    ).then((_) => _refreshStatus());
+    ).then((_) => _refreshWhenUncovered());
   }
 
   /// Envía el comando de arranque al agente local (Termux background) y sondea
@@ -2067,7 +2108,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      EnclosingRoute(onRoute: _attachRoute, child: _buildScreen(context));
+
+  Widget _buildScreen(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final dashboardLoginIssue =
@@ -2485,7 +2529,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                             connManager: widget.connManager,
                           ),
                         ),
-                      ).then((_) => _refreshStatus()),
+                      ).then((_) => _refreshWhenUncovered()),
               ),
               DockItemId.settings: DockItemAction(
                 onTap: _active == null
@@ -2498,7 +2542,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                             connManager: widget.connManager,
                           ),
                         ),
-                      ).then((_) => _reload()),
+                      ).then((_) => _refreshWhenUncovered(reload: true)),
               ),
               // Accesos directos opcionales (ocultos de fábrica en el
               // catálogo); mismas pantallas/criterios que ya usa HermesDrawer.
