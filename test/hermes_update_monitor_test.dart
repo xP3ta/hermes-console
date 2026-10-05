@@ -519,6 +519,43 @@ void main() {
       },
     );
 
+    test('the last useful log line is published as progress', () async {
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      final seen = <String?>[];
+      session.progressLine.addListener(
+        () => seen.add(session.progressLine.value),
+      );
+      final script = <Map<String, dynamic>>[
+        {
+          'running': true,
+          'lines': ['→ Fetching updates...'],
+        },
+        {
+          'running': true,
+          'lines': [
+            '→ Fetching updates...',
+            '→ Installing dependencies…',
+            '   web_dist/assets/index-abc.js',
+          ],
+        },
+        {'running': false, 'receipt': ourReceipt('success')},
+      ];
+      var polls = 0;
+      await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async => script[polls++],
+          serverStatus: () async => {'gateway_running': true},
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+      );
+      expect(seen, ['→ Fetching updates...', '→ Installing dependencies…']);
+    });
+
     test('el action_id fijado tras arrancar el seguimiento se usa', () async {
       final session = HermesUpdateSession.reserve(
         'a',

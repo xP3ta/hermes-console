@@ -161,6 +161,7 @@ HermesUpdateActionObservation classifyHermesUpdateAction(
       ownMarker
           ? HermesUpdateActionPhase.restartingServices
           : HermesUpdateActionPhase.running,
+      detail: detail,
       ownMarker: ownMarker,
       processRunning: true,
     );
@@ -219,7 +220,7 @@ bool _logShowsGatewayDrain(Map<String, dynamic> status) {
 }
 
 /// Última línea con contenido del log, sin marcadores internos ni ruido de
-/// assets. Se usa solo para explicar un fallo.
+/// assets. Explains a failure and shows progress while the update runs.
 String? lastMeaningfulUpdateLine(List<String> lines) {
   for (final raw in lines.reversed) {
     final line = raw.trim();
@@ -391,6 +392,9 @@ class HermesUpdateSession {
   final ValueNotifier<HermesUpdateSessionStep> step = ValueNotifier(
     HermesUpdateSessionStep.requesting,
   );
+
+  /// Latest useful line of the update log (progress for the user).
+  final ValueNotifier<String?> progressLine = ValueNotifier(null);
   final DateTime _createdAt = DateTime.now();
   final Completer<HermesUpdateResult> _result = Completer();
   bool _tracking = false;
@@ -581,6 +585,7 @@ class HermesUpdateSession {
             requestedAt: requestedAt,
           );
           missingEndpoint = 0;
+          if (obs.detail case final line?) progressLine.value = line;
         } on HermesUpdateEndpointMissing {
           lastReadFailed = false;
           if (++missingEndpoint >= 3) versionCheckSince = clock();
