@@ -685,7 +685,6 @@ class _LiveReasoningTailState extends State<_LiveReasoningTail> {
   }
 
   void _scheduleFollow() {
-    if (!_followEnd) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_followEnd || !_controller.hasClients) return;
       final position = _controller.position;
