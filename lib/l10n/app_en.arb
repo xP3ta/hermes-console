@@ -8150,5 +8150,35 @@
         "type": "String"
       }
     }
-  }
+  },
+  "pc1215NewProject": "New project",
+  "pc1215OpenFolder": "Open folder…",
+  "pc1215AddTooltip": "Add project",
+  "pc1215CreateDesc": "Name a workspace and add one or more server folders.",
+  "pc1215NameHint": "Project name",
+  "pc1215FoldersLabel": "Folders",
+  "pc1215NoFolders": "No folders added yet.",
+  "pc1215AddFolder": "Add folder",
+  "pc1215PrimaryBadge": "primary",
+  "pc1215RemoveFolder": "Remove",
+  "pc1215IdeaLabel": "Idea",
+  "pc1215IdeaHint": "What's this project about? (saved to IDEA.md)",
+  "pc1215IdeaGenerate": "Generate idea",
+  "pc1215IdeaGenerating": "Generating…",
+  "pc1215IdeaShuffle": "Other templates",
+  "pc1215Create": "Create",
+  "pc1215CreateFailed": "Couldn't create the project",
+  "pc1215CoveredTitle": "Already in “{name}”",
+  "@pc1215CoveredTitle": {"placeholders": {"name": {"type": "String"}}},
+  "pc1215CoveredBody": "This folder already belongs to a project. You can open it instead of creating another one.",
+  "pc1215CoveredAutoBody": "Hermes already detected this folder as a project. You can open it, or create a named project for it.",
+  "pc1215CoveredOpen": "Open project",
+  "pc1215CoveredAdd": "Create anyway",
+  "pc1215FolderAdded": "Folder added to “{name}”",
+  "@pc1215FolderAdded": {"placeholders": {"name": {"type": "String"}}},
+  "pc1215OpenFolderFailed": "Couldn't create the project; opening the folder anyway.",
+  "pc1215PickFolderTitle": "Choose a server folder",
+  "pc1215PickFolderUse": "Use this folder",
+  "pc1215IdeaExists": "IDEA.md already exists in the folder; it wasn't overwritten.",
+  "pc1215IdeaUnverified": "Couldn't check whether the folder already has IDEA.md, so it wasn't written."
 }

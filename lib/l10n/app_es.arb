@@ -9849,5 +9849,35 @@
         "type": "String"
       }
     }
-  }
+  },
+  "pc1215NewProject": "Nuevo proyecto",
+  "pc1215OpenFolder": "Abrir carpeta…",
+  "pc1215AddTooltip": "Añadir proyecto",
+  "pc1215CreateDesc": "Ponle nombre a un espacio de trabajo y añade una o más carpetas del servidor.",
+  "pc1215NameHint": "Nombre del proyecto",
+  "pc1215FoldersLabel": "Carpetas",
+  "pc1215NoFolders": "Aún no has añadido ninguna carpeta.",
+  "pc1215AddFolder": "Añadir carpeta",
+  "pc1215PrimaryBadge": "principal",
+  "pc1215RemoveFolder": "Quitar",
+  "pc1215IdeaLabel": "Idea",
+  "pc1215IdeaHint": "¿De qué va este proyecto? (se guarda en IDEA.md)",
+  "pc1215IdeaGenerate": "Generar idea",
+  "pc1215IdeaGenerating": "Generando…",
+  "pc1215IdeaShuffle": "Otras plantillas",
+  "pc1215Create": "Crear",
+  "pc1215CreateFailed": "No se pudo crear el proyecto",
+  "pc1215CoveredTitle": "Ya está en «{name}»",
+  "@pc1215CoveredTitle": {"placeholders": {"name": {"type": "String"}}},
+  "pc1215CoveredBody": "Esta carpeta ya forma parte de un proyecto. Puedes abrirlo en vez de crear otro.",
+  "pc1215CoveredAutoBody": "Hermes ya detectó esta carpeta como proyecto. Puedes abrirlo o crear un proyecto con nombre propio para ella.",
+  "pc1215CoveredOpen": "Abrir proyecto",
+  "pc1215CoveredAdd": "Crear igualmente",
+  "pc1215FolderAdded": "Carpeta añadida a «{name}»",
+  "@pc1215FolderAdded": {"placeholders": {"name": {"type": "String"}}},
+  "pc1215OpenFolderFailed": "No se pudo crear el proyecto; se abre la carpeta igualmente.",
+  "pc1215PickFolderTitle": "Elegir carpeta del servidor",
+  "pc1215PickFolderUse": "Usar esta carpeta",
+  "pc1215IdeaExists": "Ya existe IDEA.md en la carpeta; no se ha sobrescrito.",
+  "pc1215IdeaUnverified": "No se pudo comprobar si la carpeta ya tiene IDEA.md; no se ha escrito."
 }
