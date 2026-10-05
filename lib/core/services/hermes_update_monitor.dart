@@ -27,8 +27,11 @@ const Duration hermesUpdateMaxDuration = Duration(minutes: 45);
 /// Status poll cadence (Desktop `BACKEND_ACTION_POLL_MS` is 1.5 s).
 const Duration hermesUpdatePollInterval = Duration(seconds: 2);
 
-/// Cap while the updater runs and its log shows no gateway drain (Desktop
-/// `BACKEND_ACTION_MAX_MS`). A drain keeps [hermesUpdateMaxDuration].
+/// Cap for a run with no attributable progress: the status answers but
+/// shows neither our updater running nor a result (Desktop
+/// `BACKEND_ACTION_MAX_MS`). While the server reports the updater running,
+/// or once its log shows a gateway drain, only [hermesUpdateMaxDuration]
+/// bounds the session, so [HermesUpdateGuard] holds for the whole run.
 const Duration hermesUpdateActionMaxDuration = Duration(minutes: 6);
 
 /// After the status endpoint stops answering (the Dashboard restarts), how
@@ -554,17 +557,21 @@ class HermesUpdateSession {
     required Duration gatewayConfirmWindow,
     required DateTime Function() clock,
   }) async {
-    // Desktop deadlines: [actionMaxDuration] while the updater runs, the
-    // long [maxDuration] only once its log shows a gateway drain, and
-    // [restartWindow] from the first failed status read (the Dashboard
-    // restarting) until the updater is seen running again.
+    // Deadlines: [actionMaxDuration] only while nothing attributable is
+    // seen; the long [maxDuration] while the last read says the updater
+    // runs or once its log shows a gateway drain (ending earlier would lift
+    // the guard mid-install); [restartWindow] from the first failed status
+    // read (the Dashboard restarting) until the updater is seen again.
     final started = clock();
     var drainSeen = false;
+    var updaterRunning = false;
     DateTime? restartUntil;
     var lastReadFailed = false;
     DateTime deadline() =>
         restartUntil ??
-        started.add(drainSeen ? maxDuration : actionMaxDuration);
+        started.add(
+          drainSeen || updaterRunning ? maxDuration : actionMaxDuration,
+        );
     var missingEndpoint = 0;
     // Sin recibo utilizable: verificación por versión y `update_available`.
     DateTime? versionCheckSince;
@@ -586,9 +593,11 @@ class HermesUpdateSession {
             requestedAt: requestedAt,
           );
           missingEndpoint = 0;
+          updaterRunning = obs.processRunning;
           if (obs.detail case final line?) progressLine.value = line;
         } on HermesUpdateEndpointMissing {
           lastReadFailed = false;
+          updaterRunning = false;
           if (++missingEndpoint >= 3) versionCheckSince = clock();
         } catch (_) {
           // Dashboard reiniciándose, 401 por sesión rotada, 502…: normal,

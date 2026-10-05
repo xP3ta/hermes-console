@@ -857,8 +857,92 @@ void main() {
       expect(HermesUpdateGuard.isActive('a'), isFalse);
     });
 
+    test('updater alive past 6 min without a drain: the session and its '
+        'guard last until the updater finishes', () async {
+      final t0 = DateTime(2026, 9, 25, 10);
+      var now = t0;
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      final guardWhileRunning = <bool>[];
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async {
+            now = now.add(const Duration(minutes: 1));
+            guardWhileRunning.add(HermesUpdateGuard.isActive('a'));
+            // A long dependency install: ~11 min like the 25/09 update.
+            if (now.difference(t0) < const Duration(minutes: 11)) {
+              return {
+                'running': true,
+                'lines': ['→ Installing dependencies…'],
+              };
+            }
+            return {'running': false, 'receipt': ourReceipt('success')};
+          },
+          serverStatus: () async => {
+            'gateway_running': true,
+            'version': '0.21.5',
+          },
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.confirmed);
+      expect(guardWhileRunning, hasLength(11));
+      expect(guardWhileRunning, everyElement(isTrue));
+      expect(HermesUpdateGuard.isActive('a'), isFalse);
+    });
+
+    test('an updater that never ends is bounded by the absolute cap and '
+        'keeps the guard until then', () async {
+      final t0 = DateTime(2026, 9, 25, 10);
+      var now = t0;
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      final guardWhileRunning = <bool>[];
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async {
+            now = now.add(const Duration(minutes: 1));
+            // Only reachable when nothing bounds a running updater.
+            if (now.difference(t0) > const Duration(minutes: 50)) {
+              return {'running': false, 'receipt': ourReceipt('success')};
+            }
+            guardWhileRunning.add(HermesUpdateGuard.isActive('a'));
+            return {
+              'running': true,
+              'lines': ['→ Installing dependencies…'],
+            };
+          },
+          serverStatus: () async => {'gateway_running': true},
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.unverified);
+      expect(result.issue, HermesUpdateIssue.timedOut);
+      expect(
+        now.difference(t0),
+        allOf(
+          greaterThanOrEqualTo(hermesUpdateMaxDuration),
+          lessThanOrEqualTo(
+            hermesUpdateMaxDuration + const Duration(minutes: 1),
+          ),
+        ),
+      );
+      expect(guardWhileRunning, everyElement(isTrue));
+      expect(guardWhileRunning.length, greaterThanOrEqualTo(44));
+    });
+
     test(
-      'updater alive past 6 min without a drain: stop as unverified',
+      'no attributable news: the 6 min cap still ends the session',
       () async {
         final t0 = DateTime(2026, 9, 25, 10);
         var now = t0;
@@ -871,10 +955,7 @@ void main() {
           HermesUpdateProbes(
             actionStatus: () async {
               now = now.add(const Duration(minutes: 1));
-              return {
-                'running': true,
-                'lines': ['→ Installing dependencies…'],
-              };
+              return {'running': false, 'exit_code': null};
             },
             serverStatus: () async => {'gateway_running': true},
             updateStillAvailable: () async => null,
@@ -886,8 +967,12 @@ void main() {
         expect(result.issue, HermesUpdateIssue.timedOut);
         expect(
           now.difference(t0),
-          lessThanOrEqualTo(const Duration(minutes: 7)),
+          allOf(
+            greaterThanOrEqualTo(hermesUpdateActionMaxDuration),
+            lessThanOrEqualTo(const Duration(minutes: 7)),
+          ),
         );
+        expect(HermesUpdateGuard.isActive('a'), isFalse);
       },
     );
 
