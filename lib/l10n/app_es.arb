@@ -10219,5 +10219,13 @@
   "rpl1215ReplySummarize": "Resúmelo",
   "rpl1215SmartSuggest": "Sugerir respuestas con IA",
   "rpl1215SettingTitle": "Respuestas rápidas",
-  "rpl1215SettingSubtitle": "Propuestas de respuesta al terminar cada turno. ✨ solo consulta al modelo si la tocas."
+  "rpl1215SettingSubtitle": "Propuestas de respuesta al terminar cada turno. ✨ solo consulta al modelo si la tocas.",
+  "mc1215WrapLines": "Ajustar líneas largas",
+  "mc1215NoWrapLines": "Desplazar líneas largas",
+  "mc1215FontSmaller": "Código más pequeño",
+  "mc1215FontLarger": "Código más grande",
+  "mc1215OpenInViewer": "Abrir en el visor",
+  "mc1215CodeTitle": "Código · {language}",
+  "@mc1215CodeTitle": {"placeholders": {"language": {"type": "String"}}},
+  "mc1215ViewerActions": "Acciones del visor"
 }

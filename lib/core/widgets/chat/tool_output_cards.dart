@@ -8,6 +8,7 @@ import '../../models/tool_output.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/ansi_text.dart';
 import '../../utils/unified_diff.dart';
+import '../artifact_viewer/code_view_prefs.dart';
 
 /// Tool output cards for the chat transcript (Desktop parity:
 /// `tool/fallback.tsx` FileDiffPanel + AnsiText, `thread/changed-files-card`).
@@ -226,9 +227,15 @@ class _FileDiffCardState extends State<FileDiffCard> {
 }
 
 /// The unfolded diff: parsed on first build, paged by [fileDiffPageLines].
+///
+/// Always unified (one column). Long lines wrap when [wrap] is true; null
+/// follows the device preference ([CodeViewPrefs]: wrapped on phones). A
+/// coloured +/− gutter marks each line and stays put while an unwrapped diff
+/// scrolls sideways.
 class FileDiffBody extends StatefulWidget {
-  const FileDiffBody({required this.diff, super.key});
+  const FileDiffBody({required this.diff, this.wrap, super.key});
   final String diff;
+  final bool? wrap;
 
   @override
   State<FileDiffBody> createState() => _FileDiffBodyState();
@@ -238,6 +245,8 @@ class _FileDiffBodyState extends State<FileDiffBody> {
   late List<DiffLine> _lines = parseDiffLines(widget.diff);
   int _shown = fileDiffPageLines;
 
+  static const double _gutterWidth = 3;
+
   @override
   void didUpdateWidget(FileDiffBody oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -246,6 +255,17 @@ class _FileDiffBodyState extends State<FileDiffBody> {
 
   @override
   Widget build(BuildContext context) {
+    final prefs = CodeViewPrefs.shared;
+    return ListenableBuilder(
+      listenable: prefs,
+      builder: (context, _) => _build(
+        context,
+        widget.wrap ?? prefs.wrapFor(MediaQuery.sizeOf(context).width),
+      ),
+    );
+  }
+
+  Widget _build(BuildContext context, bool wrap) {
     final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
     final visible = _lines.take(_shown).toList(growable: false);
@@ -256,6 +276,103 @@ class _FileDiffBodyState extends State<FileDiffBody> {
       height: _monoHeight,
       color: colors.textSecondary,
     );
+    TextStyle styleOf(DiffLine line) => switch (line.kind) {
+      DiffLineKind.add => base.copyWith(color: colors.success),
+      DiffLineKind.remove => base.copyWith(color: colors.error),
+      DiffLineKind.hunk => base.copyWith(color: colors.textDisabled),
+      DiffLineKind.context => base,
+    };
+    Color? tintOf(DiffLine line) => switch (line.kind) {
+      DiffLineKind.add => colors.success.withValues(alpha: 0.12),
+      DiffLineKind.remove => colors.error.withValues(alpha: 0.12),
+      _ => null,
+    };
+    Widget gutter(int i, DiffLine line, {double? height}) => Container(
+      key: ValueKey('file-diff-gutter-$i'),
+      width: _gutterWidth,
+      height: height,
+      decoration: switch (line.kind) {
+        DiffLineKind.add => BoxDecoration(color: colors.success),
+        DiffLineKind.remove => BoxDecoration(color: colors.error),
+        _ => null,
+      },
+    );
+    Widget text(DiffLine line, {required bool wrap}) => Text(
+      line.text.isEmpty ? ' ' : line.text,
+      softWrap: wrap,
+      style: styleOf(line),
+    );
+
+    final Widget lines;
+    if (wrap) {
+      lines = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < visible.length; i++)
+            ColoredBox(
+              color: tintOf(visible[i]) ?? Colors.transparent,
+              child: IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    gutter(i, visible[i]),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: text(visible[i], wrap: true),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      );
+    } else {
+      // One row per line: the gutter column sits outside the sideways
+      // scroll, each mark as tall as its single-line row.
+      final rowHeight = MediaQuery.textScalerOf(
+        context,
+      ).scale(_monoSize * _monoHeight);
+      final strut = StrutStyle(
+        fontFamily: _mono,
+        fontSize: _monoSize,
+        height: _monoHeight,
+        forceStrutHeight: true,
+      );
+      lines = Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < visible.length; i++)
+                gutter(i, visible[i], height: rowHeight),
+            ],
+          ),
+          Expanded(
+            child: _HorizontalCode(
+              children: [
+                for (final line in visible)
+                  Container(
+                    color: tintOf(line),
+                    height: rowHeight,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(
+                      line.text.isEmpty ? ' ' : line.text,
+                      softWrap: false,
+                      maxLines: 1,
+                      strutStyle: strut,
+                      style: styleOf(line),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
     return Column(
       key: const ValueKey('file-diff-body'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -265,31 +382,7 @@ class _FileDiffBodyState extends State<FileDiffBody> {
           decoration: _boxDecoration(colors),
           clipBehavior: Clip.antiAlias,
           padding: const EdgeInsets.symmetric(vertical: 4),
-          child: _HorizontalCode(
-            children: [
-              for (final line in visible)
-                Container(
-                  color: switch (line.kind) {
-                    DiffLineKind.add => colors.success.withValues(alpha: 0.12),
-                    DiffLineKind.remove => colors.error.withValues(alpha: 0.12),
-                    _ => null,
-                  },
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Text(
-                    line.text.isEmpty ? ' ' : line.text,
-                    softWrap: false,
-                    style: switch (line.kind) {
-                      DiffLineKind.add => base.copyWith(color: colors.success),
-                      DiffLineKind.remove => base.copyWith(color: colors.error),
-                      DiffLineKind.hunk => base.copyWith(
-                        color: colors.textDisabled,
-                      ),
-                      DiffLineKind.context => base,
-                    },
-                  ),
-                ),
-            ],
-          ),
+          child: lines,
         ),
         if (remaining > 0)
           Align(
