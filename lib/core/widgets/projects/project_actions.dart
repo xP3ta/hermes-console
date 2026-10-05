@@ -26,6 +26,7 @@ enum ProjectMenuAction {
   newChat,
   rename,
   appearance,
+  addFolder,
   setActive,
   copyPath,
   newWorktree,
@@ -124,6 +125,7 @@ Future<ProjectMenuAction?> showProjectMenu(
   required bool isActive,
   required ProjectWriteBlock? writeBlock,
   required ProjectGitBlock? gitBlock,
+  ProjectWriteBlock? addFolderBlock = ProjectWriteBlock.unsupportedServer,
 }) {
   return showHermesSurface<ProjectMenuAction>(
     context: context,
@@ -283,10 +285,17 @@ Future<ProjectMenuAction?> showProjectMenu(
               const Divider(height: 12),
               if (saved)
                 item(
-                  null,
+                  ProjectMenuAction.addFolder,
                   Icons.create_new_folder_outlined,
                   strings.pj1215MenuAddFolder,
-                  note: strings.pj1215DesktopOnly,
+                  // Picked on the server, like Desktop's remote picker.
+                  note: switch (addFolderBlock) {
+                    ProjectWriteBlock.unsupportedServer =>
+                      strings.pj1215DesktopOnly,
+                    ProjectWriteBlock.readOnly =>
+                      strings.pj1215ReadOnlyConnection,
+                    null => null,
+                  },
                   key: const ValueKey('pj1215-menu-add-folder'),
                 ),
               item(
