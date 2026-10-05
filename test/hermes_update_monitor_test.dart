@@ -444,6 +444,128 @@ void main() {
       },
     );
 
+    test('Desktop cadence: polls every 1.5–2 s, 6 min cap while the '
+        'updater runs, 4 min restart window', () {
+      expect(
+        hermesUpdatePollInterval,
+        greaterThanOrEqualTo(const Duration(milliseconds: 1500)),
+      );
+      expect(
+        hermesUpdatePollInterval,
+        lessThanOrEqualTo(const Duration(seconds: 2)),
+      );
+      expect(hermesUpdateActionMaxDuration, const Duration(minutes: 6));
+      expect(hermesUpdateRestartWindow, const Duration(minutes: 4));
+    });
+
+    test('status probes failing for 4 min: restart window, then a '
+        '"server did not come back" failure', () async {
+      final t0 = DateTime(2026, 9, 25, 10);
+      var now = t0;
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      final steps = <HermesUpdateSessionStep>[];
+      session.step.addListener(() => steps.add(session.step.value));
+      var calls = 0;
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async {
+            now = now.add(const Duration(seconds: 30));
+            if (++calls == 1) return {'running': true, 'lines': <String>[]};
+            throw const SocketException('connection refused');
+          },
+          serverStatus: () async => null,
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.failed);
+      expect(result.issue, HermesUpdateIssue.serverNoReturn);
+      expect(steps, contains(HermesUpdateSessionStep.restarting));
+      // First failure at t0+60 s, then the 4 min window.
+      final elapsed = now.difference(t0);
+      expect(elapsed, greaterThanOrEqualTo(const Duration(minutes: 5)));
+      expect(elapsed, lessThan(const Duration(minutes: 6)));
+      expect(HermesUpdateGuard.isActive('a'), isFalse);
+    });
+
+    test(
+      'updater alive past 6 min without a drain: stop as unverified',
+      () async {
+        final t0 = DateTime(2026, 9, 25, 10);
+        var now = t0;
+        final session = HermesUpdateSession.reserve(
+          'a',
+          previousVersion: '0.21.4',
+          now: requestedAt,
+        )!..actionId = ownId;
+        final result = await session.track(
+          HermesUpdateProbes(
+            actionStatus: () async {
+              now = now.add(const Duration(minutes: 1));
+              return {
+                'running': true,
+                'lines': ['→ Installing dependencies…'],
+              };
+            },
+            serverStatus: () async => {'gateway_running': true},
+            updateStillAvailable: () async => null,
+          ),
+          pollInterval: Duration.zero,
+          clock: () => now,
+        );
+        expect(result.outcome, HermesUpdateOutcome.unverified);
+        expect(result.issue, HermesUpdateIssue.timedOut);
+        expect(
+          now.difference(t0),
+          lessThanOrEqualTo(const Duration(minutes: 7)),
+        );
+      },
+    );
+
+    test('a gateway drain in the log keeps the long window', () async {
+      final t0 = DateTime(2026, 9, 25, 10);
+      var now = t0;
+      final session = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async {
+            now = now.add(const Duration(minutes: 1));
+            if (now.difference(t0) < const Duration(minutes: 20)) {
+              return {
+                'running': true,
+                'lines': [
+                  '→ Restarting gateways…',
+                  '  → hermes-gateway: draining (up to 1800s)...',
+                ],
+              };
+            }
+            return {'running': false, 'receipt': ourReceipt('success')};
+          },
+          serverStatus: () async => {
+            'gateway_running': true,
+            'version': '0.21.5',
+          },
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.confirmed);
+      expect(
+        now.difference(t0),
+        greaterThanOrEqualTo(const Duration(minutes: 20)),
+      );
+    });
+
     test('la ventana cubre el drenaje máximo del gateway (30 min)', () {
       expect(hermesUpdateMaxDuration, greaterThan(const Duration(minutes: 31)));
     });

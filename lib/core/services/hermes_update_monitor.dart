@@ -22,6 +22,17 @@ import 'package:flutter/foundation.dart';
 /// "no verificado", nunca éxito.
 const Duration hermesUpdateMaxDuration = Duration(minutes: 45);
 
+/// Status poll cadence (Desktop `BACKEND_ACTION_POLL_MS` is 1.5 s).
+const Duration hermesUpdatePollInterval = Duration(seconds: 2);
+
+/// Cap while the updater runs and its log shows no gateway drain (Desktop
+/// `BACKEND_ACTION_MAX_MS`). A drain keeps [hermesUpdateMaxDuration].
+const Duration hermesUpdateActionMaxDuration = Duration(minutes: 6);
+
+/// After the status endpoint stops answering (the Dashboard restarts), how
+/// long Console waits for it to come back (Desktop `BACKEND_RETURN_MAX_MS`).
+const Duration hermesUpdateRestartWindow = Duration(minutes: 4);
+
 /// Once the run has a result, how long Console waits for the gateway to
 /// report running again. Past it the result is "code updated, gateway not
 /// confirmed" ([HermesUpdateIssue.gatewayNotConfirmed]), never a spinner.
@@ -191,6 +202,19 @@ bool _receiptIsOurs(Map<dynamic, dynamic> receipt, DateTime requestedAt) {
   return !started.isBefore(requestedAt.toUtc().subtract(_clockSkew));
 }
 
+final RegExp _gatewayDrainLine = RegExp(r'\bdrain', caseSensitive: false);
+
+/// The updater is draining a gateway (`→ <label>: draining (up to Ns)...`),
+/// which may legitimately wait for running turns up to Hermes' drain cap.
+bool _logShowsGatewayDrain(Map<String, dynamic> status) {
+  for (final line in (status['lines'] as List<dynamic>? ?? const [])) {
+    final text = line.toString().trim();
+    if (text.startsWith('===')) continue;
+    if (_gatewayDrainLine.hasMatch(text)) return true;
+  }
+  return false;
+}
+
 /// Última línea con contenido del log, sin marcadores internos ni ruido de
 /// assets. Se usa solo para explicar un fallo.
 String? lastMeaningfulUpdateLine(List<String> lines) {
@@ -229,6 +253,13 @@ enum HermesUpdateIssue {
   /// The update finished but the gateway was not seen running again within
   /// [hermesUpdateGatewayConfirmWindow].
   gatewayNotConfirmed,
+
+  /// The status endpoint stopped answering and did not come back within
+  /// [hermesUpdateRestartWindow].
+  serverNoReturn,
+
+  /// Nothing attributable to this run before the deadline.
+  timedOut,
 }
 
 @immutable
@@ -348,8 +379,10 @@ class HermesUpdateSession {
   /// Arranca el seguimiento (idempotente) y devuelve el resultado final.
   Future<HermesUpdateResult> track(
     HermesUpdateProbes probes, {
-    Duration pollInterval = const Duration(seconds: 4),
+    Duration pollInterval = hermesUpdatePollInterval,
     Duration maxDuration = hermesUpdateMaxDuration,
+    Duration actionMaxDuration = hermesUpdateActionMaxDuration,
+    Duration restartWindow = hermesUpdateRestartWindow,
     Duration legacyGrace = const Duration(seconds: 45),
     Duration gatewayConfirmWindow = hermesUpdateGatewayConfirmWindow,
     DateTime Function()? clock,
@@ -360,6 +393,8 @@ class HermesUpdateSession {
         probes,
         pollInterval: pollInterval,
         maxDuration: maxDuration,
+        actionMaxDuration: actionMaxDuration,
+        restartWindow: restartWindow,
         legacyGrace: legacyGrace,
         gatewayConfirmWindow: gatewayConfirmWindow,
         clock: clock ?? DateTime.now,
@@ -377,32 +412,54 @@ class HermesUpdateSession {
     HermesUpdateProbes probes, {
     required Duration pollInterval,
     required Duration maxDuration,
+    required Duration actionMaxDuration,
+    required Duration restartWindow,
     required Duration legacyGrace,
     required Duration gatewayConfirmWindow,
     required DateTime Function() clock,
   }) async {
-    final deadline = clock().add(maxDuration);
+    // Desktop deadlines: [actionMaxDuration] while the updater runs, the
+    // long [maxDuration] only once its log shows a gateway drain, and
+    // [restartWindow] from the first failed status read (the Dashboard
+    // restarting) until the updater is seen running again.
+    final started = clock();
+    var drainSeen = false;
+    DateTime? restartUntil;
+    var lastReadFailed = false;
+    DateTime deadline() =>
+        restartUntil ??
+        started.add(drainSeen ? maxDuration : actionMaxDuration);
     var missingEndpoint = 0;
     // Sin recibo utilizable: verificación por versión y `update_available`.
     DateTime? versionCheckSince;
     step.value = HermesUpdateSessionStep.applying;
 
-    while (clock().isBefore(deadline)) {
+    while (clock().isBefore(deadline())) {
       await Future<void>.delayed(pollInterval);
 
       if (versionCheckSince == null) {
         HermesUpdateActionObservation? obs;
         try {
+          final raw = await probes.actionStatus();
+          lastReadFailed = false;
+          if (!drainSeen && _logShowsGatewayDrain(raw)) drainSeen = true;
           obs = classifyHermesUpdateAction(
-            await probes.actionStatus(),
+            raw,
             actionId: actionId,
             requestedAt: requestedAt,
           );
           missingEndpoint = 0;
         } on HermesUpdateEndpointMissing {
+          lastReadFailed = false;
           if (++missingEndpoint >= 3) versionCheckSince = clock();
         } catch (_) {
-          // Dashboard reiniciándose, 401 por sesión rotada, 502…: normal.
+          // Dashboard reiniciándose, 401 por sesión rotada, 502…: normal,
+          // but only for [restartWindow].
+          lastReadFailed = true;
+          if (restartUntil == null) {
+            restartUntil = clock().add(restartWindow);
+            step.value = HermesUpdateSessionStep.restarting;
+          }
         }
         switch (obs?.phase) {
           case HermesUpdateActionPhase.failed:
@@ -430,8 +487,10 @@ class HermesUpdateSession {
             );
           case HermesUpdateActionPhase.restartingServices:
             step.value = HermesUpdateSessionStep.restarting;
+            restartUntil = null;
           case HermesUpdateActionPhase.running:
             step.value = HermesUpdateSessionStep.applying;
+            restartUntil = null;
           case HermesUpdateActionPhase.unknown:
           case null:
             break;
@@ -445,8 +504,12 @@ class HermesUpdateSession {
       final status = await _serverStatus(probes);
       if (!_gatewayRunning(status)) {
         step.value = HermesUpdateSessionStep.restarting;
+        lastReadFailed = status == null;
+        if (lastReadFailed) restartUntil ??= clock().add(restartWindow);
         continue;
       }
+      lastReadFailed = false;
+      restartUntil = null;
       final version = (status!['version'] ?? '').toString().trim();
       final stillAvailable = await probes.updateStillAvailable();
       final versionChanged =
@@ -467,7 +530,16 @@ class HermesUpdateSession {
         );
       }
     }
-    return const HermesUpdateResult(HermesUpdateOutcome.unverified);
+    if (lastReadFailed) {
+      return const HermesUpdateResult(
+        HermesUpdateOutcome.failed,
+        issue: HermesUpdateIssue.serverNoReturn,
+      );
+    }
+    return const HermesUpdateResult(
+      HermesUpdateOutcome.unverified,
+      issue: HermesUpdateIssue.timedOut,
+    );
   }
 
   /// The run is over ([outcome] comes from its receipt or marker); this only
