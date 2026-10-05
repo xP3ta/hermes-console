@@ -314,6 +314,88 @@ void main() {
       expect(await HermesUpdateSession.persistedConnectionIds(), isEmpty);
     });
 
+    test('a late setter after the session ended never resurrects its '
+        'record', () async {
+      // Abandoned before the POST answer, then the late answer arrives.
+      final abandoned = HermesUpdateSession.reserve(
+        'a',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!;
+      abandoned.abandon(const HermesUpdateResult(HermesUpdateOutcome.failed));
+      abandoned.actionId = ownId;
+      abandoned.attachedToRunningUpdate = true;
+      abandoned.adoptServerTime(requestedAt);
+      await HermesUpdateSession.debugFlushStore();
+      expect(await HermesUpdateSession.persistedConnectionIds(), isEmpty);
+      HermesUpdateSession.debugReset();
+      expect(await HermesUpdateSession.resumePersisted('a'), isNull);
+
+      // A session with a terminal result, set again afterwards.
+      final finished = HermesUpdateSession.reserve(
+        'b',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      await finished.track(
+        HermesUpdateProbes(
+          actionStatus: () async => {
+            'running': false,
+            'receipt': ourReceipt('failed'),
+          },
+          serverStatus: () async => {'gateway_running': true},
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+      );
+      finished.actionId = ownId;
+      await HermesUpdateSession.debugFlushStore();
+      expect(await HermesUpdateSession.persistedConnectionIds(), isEmpty);
+
+      // A superseded session (a newer one owns the connection) cannot
+      // overwrite the newer record either.
+      final newer = HermesUpdateSession.reserve(
+        'b',
+        previousVersion: '0.21.5',
+        now: requestedAt,
+      )!;
+      finished.actionId = otherId;
+      await HermesUpdateSession.debugFlushStore();
+      HermesUpdateSession.debugReset();
+      final resumed = await HermesUpdateSession.resumePersisted(
+        'b',
+        now: requestedAt,
+      );
+      expect(resumed?.previousVersion, newer.previousVersion);
+      expect(resumed?.actionId, isNull);
+
+      // A stale, unfinished object from before a resume (no longer the
+      // registered session) cannot overwrite the resumed record.
+      final stale = HermesUpdateSession.reserve(
+        'c',
+        previousVersion: '0.21.4',
+        now: requestedAt,
+      )!..actionId = ownId;
+      await HermesUpdateSession.debugFlushStore();
+      HermesUpdateSession.debugReset();
+      final live = await HermesUpdateSession.resumePersisted(
+        'c',
+        now: requestedAt,
+      );
+      expect(live, isNotNull);
+      expect(stale.isFinished, isFalse);
+      stale.actionId = otherId;
+      await HermesUpdateSession.debugFlushStore();
+      HermesUpdateSession.debugReset();
+      expect(
+        (await HermesUpdateSession.resumePersisted(
+          'c',
+          now: requestedAt,
+        ))?.actionId,
+        ownId,
+      );
+    });
+
     test('a malformed persisted record is dropped, not resumed', () async {
       SharedPreferences.setMockInitialValues({
         'hermes_update_session_v1.a': '{not json',
