@@ -171,6 +171,8 @@ void main() {
     final local = FakeLocalModelsServer();
     await _pump(tester, _dashboard(local));
     expect(find.byKey(_offer), findsNothing);
+    // A set-up server never qualifies, so the catalog is not even read.
+    expect(_reads(local, '/api/local-models/catalog'), 0);
   });
 
   testWidgets('staged models without a runtime still qualify', (tester) async {
