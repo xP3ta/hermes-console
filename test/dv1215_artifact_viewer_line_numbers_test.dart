@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -154,5 +155,86 @@ void main() {
       tester.getTopRight(gutter(99999)).dx,
       lessThanOrEqualTo(tester.getTopLeft(line(99999)).dx),
     );
+  });
+
+  /// Natural (unclipped) width of a gutter number versus its laid-out box.
+  void expectNumberFits(WidgetTester tester, int i) {
+    final paragraph = tester.renderObject<RenderParagraph>(gutter(i));
+    final painter = TextPainter(
+      text: paragraph.text,
+      textDirection: paragraph.textDirection,
+      textScaler: paragraph.textScaler,
+      strutStyle: paragraph.strutStyle,
+      maxLines: 1,
+    )..layout();
+    final natural = painter.width;
+    painter.dispose();
+    expect(
+      natural,
+      lessThanOrEqualTo(paragraph.size.width),
+      reason: 'number ${i + 1} is not clipped by the gutter',
+    );
+    expect(
+      tester.getTopRight(gutter(i)).dx + natural - paragraph.size.width,
+      lessThanOrEqualTo(tester.getTopLeft(line(i)).dx),
+      reason: 'number ${i + 1} does not overlap the code text',
+    );
+    expect(
+      tester.getTopLeft(line(i)).dx,
+      greaterThanOrEqualTo(tester.getTopRight(gutter(i)).dx),
+      reason: 'code text of line $i starts right of the gutter',
+    );
+  }
+
+  Future<void> jumpToLine(WidgetTester tester, int index) async {
+    final list = tester.widget<ListView>(
+      find.byKey(const ValueKey('artifact-viewer-text')),
+    );
+    final position = list.controller!.position;
+    final target = (index * list.itemExtent!).clamp(
+      0.0,
+      position.maxScrollExtent,
+    );
+    list.controller!.jumpTo(target);
+    await settle(tester);
+  }
+
+  testWidgets('a 12-line file sizes the gutter for the two-digit numbers', (
+    tester,
+  ) async {
+    final body = [for (var i = 0; i < 12; i++) 'code $i'].join('\n');
+    await tester.pumpWidget(host('twelve.txt', body));
+    await settle(tester);
+
+    for (final i in [0, 8, 9, 11]) {
+      expectRow(tester, i);
+      expectNumberFits(tester, i);
+    }
+    expect(tester.getSize(gutter(0)).width, tester.getSize(gutter(9)).width);
+  });
+
+  testWidgets('a 1,234-line file sizes the gutter for four-digit numbers', (
+    tester,
+  ) async {
+    final body = [for (var i = 0; i < 1234; i++) 'code $i'].join('\n');
+    await tester.pumpWidget(host('big.txt', body));
+    await settle(tester);
+
+    expectRow(tester, 0);
+    expectNumberFits(tester, 0);
+    final firstWidth = tester.getSize(gutter(0)).width;
+    final firstTextX = tester.getTopLeft(line(0)).dx;
+
+    await jumpToLine(tester, 999);
+    expectRow(tester, 999);
+    expectNumberFits(tester, 999);
+    expect(tester.getSize(gutter(999)).width, firstWidth);
+    expect(tester.getTopLeft(line(999)).dx, firstTextX);
+
+    await jumpToLine(tester, 1233);
+    expectRow(tester, 1233);
+    expectNumberFits(tester, 1233);
+    expect(tester.getSize(gutter(1233)).width, firstWidth);
+    expect(tester.takeException(), isNull);
   });
 }

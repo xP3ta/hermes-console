@@ -918,13 +918,19 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
     forceStrutHeight: true,
   );
 
-  /// Width of the widest line number, measured once on a run of zeros.
+  /// Width of the widest line number, measured once on a run of zeros with
+  /// the same effective style the gutter [Text] inherits (theme letter
+  /// spacing included), so the last number is never clipped.
   double _gutterWidth(BuildContext context, TextStyle style) {
     final digits = _lines.length.toString().length;
     final painter = TextPainter(
-      text: TextSpan(text: '0' * digits, style: style),
+      text: TextSpan(
+        text: '0' * digits,
+        style: DefaultTextStyle.of(context).style.merge(style),
+      ),
       textDirection: TextDirection.ltr,
       textScaler: MediaQuery.textScalerOf(context),
+      strutStyle: _lineStrut,
       maxLines: 1,
     )..layout();
     final width = painter.width.ceilToDouble();
