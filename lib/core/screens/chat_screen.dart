@@ -2198,9 +2198,17 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _setQuickReplyExtent(double value) {
     _quickReplyMeasured = value;
-    if (_scrollToBottomVisibility.value) return;
+    if (_scrollToBottomVisibility.value || _keyboardInsetMoving) return;
     _applyQuickReplyExtent();
   }
+
+  /// The rail hides as soon as the keyboard starts moving, but the transcript
+  /// padding waits until the inset settles: changing it rebuilds every visible
+  /// row, and doing that in the middle of the IME animation is the jank the
+  /// inset watcher exists to avoid.
+  bool _keyboardInsetMoving = false;
+  double? _lastKeyboardInset;
+  Timer? _keyboardSettleTimer;
 
   void _applyQuickReplyExtent() {
     final value = _quickReplyMeasured;
@@ -5509,7 +5517,20 @@ class _ChatScreenState extends State<ChatScreen>
   /// reconstruía la pantalla completa (transcript incluido) solo para
   /// reprogramar este temporizador.
   void _onKeyboardBottomInset(double bottomInset) {
-    if (!_disposed) _keyboardOpen.value = bottomInset > 0;
+    if (!_disposed) {
+      _keyboardOpen.value = bottomInset > 0;
+      final previous = _lastKeyboardInset;
+      _lastKeyboardInset = bottomInset;
+      if (previous != null && previous != bottomInset) {
+        _keyboardInsetMoving = true;
+        _keyboardSettleTimer?.cancel();
+        _keyboardSettleTimer = Timer(const Duration(milliseconds: 200), () {
+          _keyboardInsetMoving = false;
+          if (_disposed || _scrollToBottomVisibility.value) return;
+          _applyQuickReplyExtent();
+        });
+      }
+    }
     if (_disposed || !mounted || bottomInset <= 0 || _findOpen) return;
     // Si ya está al fondo, el resize del viewport mantiene visible el último
     // mensaje. No programes un scroll/setState durante la animación del IME.
@@ -7608,6 +7629,7 @@ class _ChatScreenState extends State<ChatScreen>
     _findStatus.dispose();
     _findActiveMessage.dispose();
     _activityPillExtent.dispose();
+    _keyboardSettleTimer?.cancel();
     _keyboardOpen.dispose();
     _quickReplyExtent.dispose();
     _compaction.dispose();
