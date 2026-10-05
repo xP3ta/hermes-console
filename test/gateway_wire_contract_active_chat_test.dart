@@ -10,8 +10,12 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/connection_request.dart';
+import 'package:hermes_android/core/models/turn_error_surface.dart'
+    show providerWaitText;
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/session_reconciler.dart'
+    show assistantActivityTraceKey;
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -164,6 +168,22 @@ final _reasoningEffect = _Effect((chat, payload, emitted, label) {
   return _emits(emitted, ActiveChatEvent.toolProgress, label);
 });
 
+/// Desktop treats `thinking.delta` as a spinner phrase: only an explained
+/// provider wait becomes the turn status; nothing reaches the reasoning.
+final _thinkingEffect = _Effect((chat, payload, emitted, label) {
+  final text = payload['text'];
+  if (!_nonEmpty(text)) return false;
+  final reasoning = chat.messages
+      .map(
+        (row) =>
+            '${row['reasoning'] ?? ''} ${row[assistantActivityTraceKey] ?? ''}',
+      )
+      .join(' ');
+  expect(reasoning, isNot(contains(text as String)), reason: label);
+  expect(chat.providerWaitText, providerWaitText(text), reason: label);
+  return true;
+});
+
 final _toolRunningEffect = _Effect((chat, _, emitted, label) {
   expect(chat.state, ChatPipelineState.executing, reason: label);
   return _emits(emitted, ActiveChatEvent.toolProgress, label);
@@ -220,7 +240,7 @@ final Map<String, _Effect> _handled = {
     return _emits(emitted, ActiveChatEvent.toolProgress, label);
   }),
   'reasoning.delta': _reasoningEffect,
-  'thinking.delta': _reasoningEffect,
+  'thinking.delta': _thinkingEffect,
   'reasoning.available': _reasoningEffect,
   'tool.start': _toolRunningEffect,
   'tool.generating': _toolRunningEffect,

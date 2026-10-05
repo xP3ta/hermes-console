@@ -360,17 +360,14 @@ void main() {
       expect(chat.providerWaitText, wait);
     });
 
-    test(
-      'a decorative spinner phrase keeps going to the reasoning trace',
-      () async {
-        final (gateway, chat) = await live();
-        gateway.emit('thinking.delta', {'text': 'pondering…'});
-        await Future<void>.delayed(Duration.zero);
+    test('a decorative spinner phrase is not reasoning (as Desktop)', () async {
+      final (gateway, chat) = await live();
+      gateway.emit('thinking.delta', {'text': 'pondering…'});
+      await Future<void>.delayed(Duration.zero);
 
-        expect(chat.providerWaitText, isNull);
-        expect(reasoningOf(chat), contains('pondering…'));
-      },
-    );
+      expect(chat.providerWaitText, isNull);
+      expect(reasoningOf(chat), isNot(contains('pondering…')));
+    });
 
     for (final event in const {
       'message.delta': {'text': 'Hola'},
@@ -407,7 +404,7 @@ void main() {
 
         expect(chat.providerWaitText, isNull);
         expect(reasoningOf(chat), contains('checking the files'));
-        expect(reasoningOf(chat), contains('pondering…'));
+        expect(reasoningOf(chat), isNot(contains('pondering…')));
         expect(reasoningOf(chat), isNot(contains('waiting on provider')));
       },
     );

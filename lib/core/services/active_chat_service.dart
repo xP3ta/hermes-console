@@ -22180,20 +22180,16 @@ class ActiveChat {
         _desktopTurnStartedAt = wallNow();
         state = ChatPipelineState.waiting;
         _emit(ActiveChatEvent.waiting);
-      case 'reasoning.delta':
       case 'thinking.delta':
+        // As Desktop: a provider wait explained by the core is turn status;
+        // every other thinking frame is a spinner phrase, never reasoning.
+        final phrase = payload['text'] ?? payload['delta'];
+        _setProviderWaitText(
+          phrase is String ? turn_error.providerWaitText(phrase) : null,
+        );
+      case 'reasoning.delta':
         final delta = payload['text'] ?? payload['delta'];
         if (delta is String && delta.isNotEmpty) {
-          // A provider wait explained by the core is turn status, not model
-          // reasoning; every other thinking frame is a spinner phrase.
-          final wait = event.type == 'thinking.delta'
-              ? turn_error.providerWaitText(delta)
-              : null;
-          if (wait != null) {
-            _setProviderWaitText(wait);
-            break;
-          }
-          _setProviderWaitText(null);
           _appendAssistantReasoningActivity(delta);
           state = ChatPipelineState.executing;
           _emit(ActiveChatEvent.toolProgress);
@@ -26080,8 +26076,8 @@ class ActiveChat {
           ConnectionManager.markStreamingSupported(connection.id);
         }
         _enqueueToken((event['delta'] ?? '').toString());
+      // `thinking.delta` is a spinner phrase, never reasoning (as Desktop).
       case 'reasoning.delta':
-      case 'thinking.delta':
         final delta = event['text'] ?? event['delta'];
         if (delta is String && delta.isNotEmpty) {
           _appendAssistantReasoningActivity(delta);

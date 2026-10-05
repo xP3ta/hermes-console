@@ -7979,6 +7979,7 @@
   "cr1215ShowQuestion": "Show question",
 "ss1215StatusWorking": "Working…",
   "ps1215NoDetailsYet": "No details yet: this updates with the next event.",
+  "lr1215ReasoningHiddenHint": "The model's reasoning only shows here if the server shares it.",
   "cq1215QuestionNotRecovered": "The question could not be recovered. Hermes is still waiting for your answer.",
   "cq1215RetryQuestion": "Retry",
   "cq1215StopTurn": "Stop turn",
