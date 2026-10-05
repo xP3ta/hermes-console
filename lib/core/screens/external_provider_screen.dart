@@ -30,6 +30,13 @@ import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_premium_ui.dart'
     show HermesListRow, HermesListSection;
+import '../design/modal.dart'
+    show
+        HermesAction,
+        HermesDialogAction,
+        HermesDialogActionStyle,
+        showHermesDialog,
+        showHermesMenu;
 
 // ── Provider type ────────────────────────────────────────────────────────────
 
@@ -309,24 +316,59 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
     }
   }
 
+  final Map<String, GlobalKey> _menuAnchors = {};
+
+  Future<void> _openSavedEndpointMenu(
+    CustomEndpoint endpoint,
+    GlobalKey anchor,
+  ) async {
+    final s = Strings.of(context);
+    final action = await showHermesMenu<_SavedEndpointAction>(
+      context: context,
+      anchorKey: anchor,
+      actions: [
+        if (!endpoint.isCurrent)
+          HermesAction(
+            value: _SavedEndpointAction.activate,
+            label: s.mdlEndpointActivate,
+          ),
+        if (endpoint.source != 'direct-config')
+          HermesAction(
+            value: _SavedEndpointAction.delete,
+            label: s.mdlEndpointDelete,
+            destructive: true,
+          ),
+      ],
+    );
+    if (!mounted) return;
+    switch (action) {
+      case _SavedEndpointAction.activate:
+        await _activateSavedEndpoint(endpoint);
+      case _SavedEndpointAction.delete:
+        await _deleteSavedEndpoint(endpoint);
+      case null:
+        break;
+    }
+  }
+
   Future<void> _deleteSavedEndpoint(CustomEndpoint endpoint) async {
     final s = Strings.of(context);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showHermesDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(s.mdlEndpointDeleteTitle(endpoint.name)),
-        content: Text(s.mdlEndpointDeleteBody),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(s.commonCancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(s.mdlEndpointDelete),
-          ),
-        ],
-      ),
+      title: s.mdlEndpointDeleteTitle(endpoint.name),
+      message: s.mdlEndpointDeleteBody,
+      actions: [
+        HermesDialogAction(
+          label: s.commonCancel,
+          value: false,
+          style: HermesDialogActionStyle.cancel,
+        ),
+        HermesDialogAction(
+          label: s.mdlEndpointDelete,
+          value: true,
+          style: HermesDialogActionStyle.destructive,
+        ),
+      ],
     );
     if (confirmed != true || !mounted) return;
     setState(() => _setting = true);
@@ -632,29 +674,21 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
             onTap: () => _editSavedEndpoint(endpoint),
             trailing:
                 (!endpoint.isCurrent || endpoint.source != 'direct-config')
-                ? PopupMenuButton<_SavedEndpointAction>(
-                    onSelected: (action) {
-                      switch (action) {
-                        case _SavedEndpointAction.activate:
-                          _activateSavedEndpoint(endpoint);
-                          break;
-                        case _SavedEndpointAction.delete:
-                          _deleteSavedEndpoint(endpoint);
-                          break;
-                      }
+                ? Builder(
+                    builder: (context) {
+                      final anchor = _menuAnchors.putIfAbsent(
+                        endpoint.id,
+                        GlobalKey.new,
+                      );
+                      return IconButton(
+                        tooltip: MaterialLocalizations.of(
+                          context,
+                        ).showMenuTooltip,
+                        icon: Icon(Icons.more_vert, key: anchor),
+                        onPressed: () =>
+                            _openSavedEndpointMenu(endpoint, anchor),
+                      );
                     },
-                    itemBuilder: (_) => [
-                      if (!endpoint.isCurrent)
-                        PopupMenuItem(
-                          value: _SavedEndpointAction.activate,
-                          child: Text(s.mdlEndpointActivate),
-                        ),
-                      if (endpoint.source != 'direct-config')
-                        PopupMenuItem(
-                          value: _SavedEndpointAction.delete,
-                          child: Text(s.mdlEndpointDelete),
-                        ),
-                    ],
                   )
                 : null,
           ),
