@@ -1,16 +1,17 @@
-// Pantalla de configuración de proveedor externo (Ollama remoto, LM Studio,
-// OpenAI-compatible, custom). Usa ruta completa (no dialog/showModalBottomSheet)
-// para evitar el assert _dependents.isEmpty con TextField enfocado.
+// Add/edit form for one custom endpoint (Ollama, LM Studio,
+// OpenAI-compatible, custom). The saved list, activate and delete live in the
+// Models screen (custom_endpoints_section.dart), like Desktop's
+// custom-endpoints-settings.tsx. Full route (not a dialog) to avoid the
+// _dependents.isEmpty assert with a focused TextField.
 //
-// Lógica:
-//  - El usuario ingresa tipo + base_url + api_key opcional.
-//  - "Probar conexión" hace GET {base_url}/v1/models desde el móvil para
-//    listar modelos. Si Ollama, intenta /api/tags como fallback.
-//  - "Usar" llama a model/set (bridge para local, Dashboard para remoto)
-//    con base_url, para que Hermes apunte a ese proveedor.
-//
-// Nota importante (se muestra en UI): la prueba es desde el teléfono.
-// Hermes también debe poder llegar al proveedor desde su servidor.
+//  - Remote Hermes: "Test connection" asks Hermes to validate the URL from
+//    its server (/api/providers/custom-endpoints/validate, or the older
+//    /api/providers/validate). The phone never contacts the endpoint.
+//  - Instance on this phone (InstanceKind.localhost): the phone is the
+//    server, so it probes {base_url}/models itself (Ollama /api/tags as
+//    fallback).
+//  - Save stores the endpoint on the active profile; older servers without
+//    the saved-endpoints route apply the model with model/set instead.
 
 import 'dart:convert';
 
@@ -28,15 +29,6 @@ import '../utils/transport_privacy.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
-import '../widgets/hermes_premium_ui.dart'
-    show HermesListRow, HermesListSection;
-import '../design/modal.dart'
-    show
-        HermesAction,
-        HermesDialogAction,
-        HermesDialogActionStyle,
-        showHermesDialog,
-        showHermesMenu;
 
 // ── Provider type ────────────────────────────────────────────────────────────
 
@@ -83,8 +75,6 @@ List<String> externalProviderBaseUrlCandidates(String raw) {
 }
 
 typedef ExternalProviderProbe = ({String baseUrl, List<String> models});
-
-enum _SavedEndpointAction { activate, delete }
 
 /// Recorre las variantes compatibles y conserva la URL exacta que respondió.
 /// Los fallos de una raíz sin `/v1` no impiden probar su variante OpenAI.
@@ -159,6 +149,10 @@ String humanizeExternalProviderError(Object error) {
 class ExternalProviderScreen extends StatefulWidget {
   final SavedConnection connection;
   final String profile;
+
+  /// Dashboard client shared with the caller (the Models screen); not closed
+  /// by this form.
+  final DashboardClient? dashboard;
   final DashboardClient? dashboardClientForTesting;
 
   /// URL pre-cargada cuando se abre en modo edición.
@@ -167,17 +161,27 @@ class ExternalProviderScreen extends StatefulWidget {
   /// Nombre/label pre-cargado cuando se abre en modo edición.
   final String? prefillName;
 
-  /// Si es true, muestra "Editar proveedor" en lugar de "Proveedor externo"
-  /// y habilita el botón de eliminar.
+  /// Shows the edit title instead of "Add endpoint".
   final bool isEditing;
+
+  /// Saved endpoint being edited, from the Models custom endpoints section.
+  final CustomEndpoint? endpoint;
+
+  /// HTTP client for the phone-side probe, used only for an instance on this
+  /// phone ([InstanceKind.localhost]).
+  @visibleForTesting
+  final http.Client? probeClientForTesting;
 
   const ExternalProviderScreen({
     required this.connection,
     this.profile = '',
+    this.dashboard,
     this.dashboardClientForTesting,
     this.prefillUrl,
     this.prefillName,
     this.isEditing = false,
+    this.endpoint,
+    this.probeClientForTesting,
     super.key,
   });
 
@@ -206,7 +210,6 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
   late final DashboardClient _dashboard;
   late final bool _ownsDashboard;
   bool? _savedEndpointsSupported;
-  List<CustomEndpoint> _savedEndpoints = const [];
   CustomEndpoint? _editingEndpoint;
   bool _makeDefault = false;
   bool _changed = false;
@@ -218,17 +221,27 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
   @override
   void initState() {
     super.initState();
-    _ownsDashboard = widget.dashboardClientForTesting == null;
-    _dashboard =
-        widget.dashboardClientForTesting ??
-        DashboardClient.lazy(widget.connection);
+    final shared = widget.dashboard ?? widget.dashboardClientForTesting;
+    _ownsDashboard = shared == null;
+    _dashboard = shared ?? DashboardClient.lazy(widget.connection);
     if (widget.prefillUrl != null && widget.prefillUrl!.isNotEmpty) {
       _urlCtrl.text = widget.prefillUrl!;
     }
     if (widget.prefillName != null && widget.prefillName!.isNotEmpty) {
       _nameCtrl.text = widget.prefillName!;
     }
-    _loadSavedEndpoints();
+    final endpoint = widget.endpoint;
+    if (endpoint != null) {
+      // Opened from a saved row: the server has the saved-endpoints route.
+      _savedEndpointsSupported = true;
+      _editingEndpoint = endpoint;
+      _nameCtrl.text = endpoint.name;
+      _urlCtrl.text = endpoint.baseUrl;
+      _models = endpoint.models;
+      _activeModel = endpoint.model.isEmpty ? null : endpoint.model;
+    } else {
+      _detectSavedEndpoints();
+    }
   }
 
   @override
@@ -248,36 +261,17 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
     super.dispose();
   }
 
-  Future<void> _loadSavedEndpoints() async {
+  /// Whether this server stores endpoints per profile (Desktop's flow) or
+  /// only accepts model/set (older servers).
+  Future<void> _detectSavedEndpoints() async {
     try {
       final catalog = await _dashboard.listCustomEndpoints(
         profile: widget.profile,
       );
-      if (!mounted) return;
-      setState(() {
-        _savedEndpointsSupported = catalog != null;
-        _savedEndpoints = catalog?.endpoints ?? const [];
-      });
+      if (mounted) setState(() => _savedEndpointsSupported = catalog != null);
     } catch (_) {
       if (mounted) setState(() => _savedEndpointsSupported = false);
     }
-  }
-
-  void _editSavedEndpoint(CustomEndpoint endpoint) {
-    setState(() {
-      _editingEndpoint = endpoint;
-      _makeDefault = false;
-      _nameCtrl.text = endpoint.name;
-      _urlCtrl.text = endpoint.baseUrl;
-      _keyCtrl.clear();
-      _models = endpoint.models;
-      _activeModel = endpoint.model.isEmpty ? null : endpoint.model;
-      _testError = null;
-      _testMessage = null;
-      _testedInputBaseUrl = null;
-      _resolvedBaseUrl = null;
-      _modelDetails = const [];
-    });
   }
 
   CustomEndpointDraft _endpointDraft({bool makeDefault = false}) =>
@@ -295,103 +289,6 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
         modelDetails: _modelDetails,
       );
 
-  Future<void> _activateSavedEndpoint(CustomEndpoint endpoint) async {
-    setState(() => _setting = true);
-    try {
-      await _dashboard.activateCustomEndpoint(
-        endpoint.id,
-        profile: widget.profile,
-      );
-      _changed = true;
-      await _loadSavedEndpoints();
-    } catch (error) {
-      if (mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(content: Text(humanizeExternalProviderError(error))),
-          kind: HermesNoticeKind.error,
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _setting = false);
-    }
-  }
-
-  final Map<String, GlobalKey> _menuAnchors = {};
-
-  Future<void> _openSavedEndpointMenu(
-    CustomEndpoint endpoint,
-    GlobalKey anchor,
-  ) async {
-    final s = Strings.of(context);
-    final action = await showHermesMenu<_SavedEndpointAction>(
-      context: context,
-      anchorKey: anchor,
-      actions: [
-        if (!endpoint.isCurrent)
-          HermesAction(
-            value: _SavedEndpointAction.activate,
-            label: s.mdlEndpointActivate,
-          ),
-        if (endpoint.source != 'direct-config')
-          HermesAction(
-            value: _SavedEndpointAction.delete,
-            label: s.mdlEndpointDelete,
-            destructive: true,
-          ),
-      ],
-    );
-    if (!mounted) return;
-    switch (action) {
-      case _SavedEndpointAction.activate:
-        await _activateSavedEndpoint(endpoint);
-      case _SavedEndpointAction.delete:
-        await _deleteSavedEndpoint(endpoint);
-      case null:
-        break;
-    }
-  }
-
-  Future<void> _deleteSavedEndpoint(CustomEndpoint endpoint) async {
-    final s = Strings.of(context);
-    final confirmed = await showHermesDialog<bool>(
-      context: context,
-      title: s.mdlEndpointDeleteTitle(endpoint.name),
-      message: s.mdlEndpointDeleteBody,
-      actions: [
-        HermesDialogAction(
-          label: s.commonCancel,
-          value: false,
-          style: HermesDialogActionStyle.cancel,
-        ),
-        HermesDialogAction(
-          label: s.mdlEndpointDelete,
-          value: true,
-          style: HermesDialogActionStyle.destructive,
-        ),
-      ],
-    );
-    if (confirmed != true || !mounted) return;
-    setState(() => _setting = true);
-    try {
-      await _dashboard.deleteCustomEndpoint(
-        endpoint.id,
-        profile: widget.profile,
-      );
-      if (_editingEndpoint?.id == endpoint.id) _editingEndpoint = null;
-      _changed = true;
-      await _loadSavedEndpoints();
-    } catch (error) {
-      if (mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(content: Text(humanizeExternalProviderError(error))),
-          kind: HermesNoticeKind.error,
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _setting = false);
-    }
-  }
-
   Future<void> _saveEndpoint() async {
     setState(() => _setting = true);
     try {
@@ -400,7 +297,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
         profile: widget.profile,
       );
       _changed = true;
-      await _loadSavedEndpoints();
+      if (mounted) Navigator.of(context).pop(true);
     } catch (error) {
       if (mounted) {
         HermesNotice.of(context).showSnackBar(
@@ -455,13 +352,19 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
       }
       final probe = _isLocal
           ? await _probeDirect(inputBase, headers)
-          : await _probeFromHermes(inputBase, apiKey, headers);
+          : await _probeFromHermes(inputBase, apiKey);
       if (!mounted) return;
       setState(() {
         _models = probe.models;
         _testedInputBaseUrl = inputBase;
         _resolvedBaseUrl = probe.baseUrl;
         _testError = probe.models.isEmpty ? s.extNoModels : null;
+        _testing = false;
+      });
+    } on _ServerValidationUnavailable {
+      if (!mounted) return;
+      setState(() {
+        _testError = s.extServerValidationUnavailable;
         _testing = false;
       });
     } catch (e) {
@@ -479,7 +382,6 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
   Future<ExternalProviderProbe> _probeFromHermes(
     String inputBase,
     String apiKey,
-    Map<String, String> directHeaders,
   ) async {
     for (final candidate in externalProviderBaseUrlCandidates(inputBase)) {
       try {
@@ -498,22 +400,34 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
         final message = (result['message'] ?? '').toString().trim();
         if (!reachable && message.isNotEmpty) throw Exception(message);
       } on DashboardHttpException catch (error) {
-        // Hermes antiguos no tienen /api/providers/validate. Conservamos el
-        // flujo anterior como compatibilidad, sin ocultar otros 4xx.
+        // Older Hermes without /api/providers/validate. The phone must not
+        // probe a remote server's endpoint itself: what the phone reaches
+        // says nothing about what Hermes reaches.
         if (error.statusCode != 404 && error.statusCode != 405) rethrow;
-        return await _probeDirect(inputBase, directHeaders);
+        throw _ServerValidationUnavailable();
       }
     }
     return (baseUrl: inputBase, models: const <String>[]);
   }
 
+  /// Phone-side probe. Only for an instance on this phone.
   Future<ExternalProviderProbe> _probeDirect(
     String inputBase,
     Map<String, String> headers,
-  ) => probeExternalProviderCandidates(
-    inputBase,
-    (candidate) => _fetchModels(candidate, headers),
-  );
+  ) {
+    return probeExternalProviderCandidates(
+      inputBase,
+      (candidate) => _fetchModels(candidate, headers),
+    );
+  }
+
+  Future<http.Response> _probeGet(Uri url, Map<String, String> headers) {
+    final client = widget.probeClientForTesting;
+    final request = client != null
+        ? client.get(url, headers: headers)
+        : http.get(url, headers: headers);
+    return request.timeout(const Duration(seconds: 8));
+  }
 
   /// Intenta `{base_url}/models`; si Ollama y falla, prueba `/api/tags` en la
   /// raíz. [base] es también la URL exacta que se persistirá si responde.
@@ -521,9 +435,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
     String base,
     Map<String, String> headers,
   ) async {
-    final res = await http
-        .get(Uri.parse('$base/models'), headers: headers)
-        .timeout(const Duration(seconds: 8));
+    final res = await _probeGet(Uri.parse('$base/models'), headers);
     if (res.statusCode == 200) {
       final models = _parseOpenAiModels(res.body);
       if (models.isNotEmpty) return models;
@@ -533,9 +445,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
       final root = base.endsWith('/v1')
           ? base.substring(0, base.length - 3)
           : base;
-      final r = await http
-          .get(Uri.parse('$root/api/tags'), headers: headers)
-          .timeout(const Duration(seconds: 8));
+      final r = await _probeGet(Uri.parse('$root/api/tags'), headers);
       if (r.statusCode == 200) return _parseOllamaTags(r.body);
     }
     if (res.statusCode != 200) {
@@ -654,55 +564,13 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
 
   // ── Build ────────────────────────────────────────────────────────────────
 
-  Widget _buildSavedEndpoints(HermesThemeColors colors) {
-    final s = Strings.of(context);
-    return HermesListSection(
-      title: s.mdlSavedEndpoints,
-      margin: EdgeInsets.zero,
-      children: [
-        for (final endpoint in _savedEndpoints)
-          HermesListRow(
-            key: ValueKey('saved-endpoint-${endpoint.id}'),
-            icon: Icons.dns_outlined,
-            title: endpoint.name,
-            subtitle: [
-              Uri.tryParse(endpoint.baseUrl)?.host ?? endpoint.baseUrl,
-              endpoint.model,
-              if (endpoint.hasApiKey) s.mdlEndpointKeySet,
-              if (endpoint.isCurrent) s.mdlEndpointCurrent,
-            ].where((value) => value.trim().isNotEmpty).join(' · '),
-            onTap: () => _editSavedEndpoint(endpoint),
-            trailing:
-                (!endpoint.isCurrent || endpoint.source != 'direct-config')
-                ? Builder(
-                    builder: (context) {
-                      final anchor = _menuAnchors.putIfAbsent(
-                        endpoint.id,
-                        GlobalKey.new,
-                      );
-                      return IconButton(
-                        tooltip: MaterialLocalizations.of(
-                          context,
-                        ).showMenuTooltip,
-                        icon: Icon(Icons.more_vert, key: anchor),
-                        onPressed: () =>
-                            _openSavedEndpointMenu(endpoint, anchor),
-                      );
-                    },
-                  )
-                : null,
-          ),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
     return Scaffold(
       appBar: HermesAppBar(
-        title: Text(widget.isEditing ? s.extEditTitle : s.extTitle),
+        title: Text(widget.isEditing ? s.extEditTitle : s.mdlAddEndpoint),
         leading: IconButton(
           icon: const Icon(Icons.close),
           tooltip: s.commonClose,
@@ -712,12 +580,10 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          HermesInfoBanner(s.extReachabilityInfo, icon: Icons.info_outline),
-          if (_savedEndpointsSupported == true &&
-              _savedEndpoints.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _buildSavedEndpoints(colors),
-          ],
+          HermesInfoBanner(
+            _isLocal ? s.extReachabilityInfo : s.extServerReachabilityInfo,
+            icon: Icons.info_outline,
+          ),
           const SizedBox(height: 20),
           _label(s.extProviderType, colors),
           const SizedBox(height: 8),
@@ -876,6 +742,9 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
     ),
   );
 }
+
+/// The server has no validation route and the instance is remote.
+class _ServerValidationUnavailable implements Exception {}
 
 // ── Sub-widgets ──────────────────────────────────────────────────────────────
 
