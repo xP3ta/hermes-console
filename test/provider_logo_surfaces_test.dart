@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hermes_android/core/screens/external_provider_screen.dart';
 import 'package:hermes_android/core/screens/models_screen.dart';
 import 'package:hermes_android/core/services/bridge_client.dart';
 import 'package:hermes_android/core/services/bridge_manager.dart';
