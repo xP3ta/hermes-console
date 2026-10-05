@@ -277,9 +277,22 @@ void main() {
   }
 
   /// Counts rebuilt elements whose ancestor chain contains [root].
+  ///
+  /// Only elements that already existed when counting started are counted: a
+  /// row first mounted because the resized viewport brings it into the cache
+  /// extent is ordinary list virtualization (it depends on where row edges
+  /// fall), not a rebuild caused by the inset.
   int Function() countRebuildsUnder(Element root) {
     var count = 0;
+    final existing = Set<Element>.identity()..add(root);
+    void collect(Element element) {
+      existing.add(element);
+      element.visitChildren(collect);
+    }
+
+    root.visitChildren(collect);
     debugOnRebuildDirtyWidget = (element, _) {
+      if (!existing.contains(element)) return;
       if (identical(element, root)) {
         count++;
         return;
