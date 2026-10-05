@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/desktop_session_config.dart';
 import 'package:hermes_android/core/models/desktop_model_catalog.dart';
@@ -63,6 +65,55 @@ void main() {
       const ModelPreset(fast: DesktopFastMode.fast),
     );
   });
+
+  test(
+    'a failed write does not poison later writes on the connection',
+    () async {
+      final prefs = _FailOnceCommitLaterPrefs();
+      final store = ModelPresetsStore(prefs, connectionId: 'server-a');
+      final uncaught = <Object>[];
+      final outcome = Completer<(Object?, Object?)>();
+
+      runZonedGuarded(() async {
+        final first = store.merge(
+          'nous',
+          'model-a',
+          effort: DesktopReasoningEffort.high,
+        );
+        final second = store.merge(
+          'nous',
+          'model-a',
+          fast: DesktopFastMode.fast,
+        );
+        Object? firstError;
+        Object? secondError;
+        try {
+          await first;
+        } catch (error) {
+          firstError = error;
+        }
+        try {
+          await second;
+        } catch (error) {
+          secondError = error;
+        }
+        outcome.complete((firstError, secondError));
+      }, (error, _) => uncaught.add(error));
+
+      final (firstError, secondError) = await outcome.future;
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(firstError, same(prefs.failure));
+      expect(secondError, isNull);
+      expect(
+        store.read('nous', 'model-a'),
+        const ModelPreset(fast: DesktopFastMode.fast),
+      );
+      expect(uncaught, isEmpty);
+    },
+  );
 
   test('corrupt JSON loads as empty', () async {
     SharedPreferences.setMockInitialValues({
@@ -135,4 +186,20 @@ final class _CommitLaterPrefs implements SharedPreferences {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Fails the first write, then behaves like [_CommitLaterPrefs].
+final class _FailOnceCommitLaterPrefs extends _CommitLaterPrefs {
+  final StateError failure = StateError('disk full');
+  bool _failed = false;
+
+  @override
+  Future<bool> setString(String key, String value) async {
+    if (!_failed) {
+      _failed = true;
+      await Future<void>.delayed(Duration.zero);
+      throw failure;
+    }
+    return super.setString(key, value);
+  }
 }
