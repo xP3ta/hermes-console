@@ -41,8 +41,8 @@ final class ProjectCreatedOutcome extends ProjectCreateOutcome {
   const ProjectCreatedOutcome(this.project, {this.ideaNotWritten});
 }
 
-/// Whether [folder] on the Hermes host already holds `IDEA.md`, from the
-/// same `GET /api/fs/list` the file browser uses. Returns
+/// Whether [folder] on the Hermes host already holds `IDEA.md` in any case,
+/// from the same `GET /api/fs/list` the file browser uses. Returns
 /// [ProjectIdeaNotWritten.exists] when it does, `unverified` when the
 /// listing failed, reported an error or hit the row cap, and null only when
 /// a complete listing shows no IDEA.md.
@@ -59,7 +59,8 @@ Future<ProjectIdeaNotWritten?> projectIdeaBlocker(
   } catch (_) {
     return ProjectIdeaNotWritten.unverified;
   }
-  if (listing.entries.any((entry) => entry.name == projectIdeaFileName)) {
+  final ideaName = projectIdeaFileName.toLowerCase();
+  if (listing.entries.any((entry) => entry.name.toLowerCase() == ideaName)) {
     return ProjectIdeaNotWritten.exists;
   }
   if (listing.error != null ||
