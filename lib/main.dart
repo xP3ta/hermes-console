@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/services/message_reaction_prefs.dart';
+import 'core/services/pinned_prompt_prefs.dart';
 import 'core/services/retired_prefs.dart';
 import 'core/app_header_title.dart';
 import 'core/companion/data/companion_preferences.dart';
@@ -260,6 +261,7 @@ Future<Widget> bootstrapHermesApp() async {
   // Rich-embed consent is per device; until it loads every type reads as off.
   await EmbedConsentStore.load(prefs);
   await MessageReactionPrefs.load(prefs);
+  await PinnedPromptPrefs.load(prefs);
   await clearRetiredPrefs(prefs);
   final themeProfileStore = ThemeProfileStore(prefs);
   final cancelledTurnStore = CancelledTurnTombstoneStore.secure();

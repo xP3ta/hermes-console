@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/settings_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/pinned_prompt_prefs.dart';
 import 'package:hermes_android/core/services/retired_prefs.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
@@ -92,5 +93,55 @@ void main() {
     expect(reactions, findsOneWidget);
     expect(find.byKey(const ValueKey('settings-quick-replies')), findsNothing);
     expect(find.text('Respuestas rápidas'), findsNothing);
+  });
+
+  testWidgets('the chat section of Settings switches the pinned prompt', (
+    tester,
+  ) async {
+    final previous = FlutterError.onError;
+    FlutterError.onError = (details) {
+      if (details.exceptionAsString().contains(
+        'ListTile background color or ink splashes may be invisible',
+      )) {
+        return;
+      }
+      previous?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = previous);
+    addTearDown(() => PinnedPromptPrefs.debugUse(null));
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    await PinnedPromptPrefs.load(prefs);
+    final manager = await ConnectionManager.create(prefs);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('es'),
+        theme: AppTheme.fromId('dark'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        home: SettingsScreen(connection: _connection(), connManager: manager),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final row = find.byKey(const ValueKey('settings-pinned-prompt'));
+    await tester.scrollUntilVisible(
+      row,
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Fijar tu pregunta arriba'), findsOneWidget);
+    expect(PinnedPromptPrefs.shared.enabled, isTrue);
+
+    await tester.ensureVisible(row);
+    await tester.pump();
+    await tester.tap(find.descendant(of: row, matching: find.byType(Switch)));
+    await tester.pump();
+
+    expect(PinnedPromptPrefs.shared.enabled, isFalse);
+    expect(prefs.getBool(PinnedPromptPrefs.key), isFalse);
+    expect((await PinnedPromptPrefs.load(prefs)).enabled, isFalse);
   });
 }

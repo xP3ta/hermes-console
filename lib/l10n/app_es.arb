@@ -10207,5 +10207,9 @@
   "apx1215ScopeOnceHint": "Solo esta llamada.",
   "apx1215ScopeSessionHint": "Este tipo de comando en este chat, hasta que el chat termine o el servidor se reinicie.",
   "apx1215ScopeAlwaysHint": "Este tipo de comando en todos los chats. Se guarda en el servidor (command_allowlist de config.yaml) y en Ajustes › Permisos / Aprobaciones; para retirarlo, quítalo de ambos sitios.",
-  "rpl1215AskAboutThis": "Preguntar sobre esto"
+  "rpl1215AskAboutThis": "Preguntar sobre esto",
+  "cs1215PinnedPromptYou": "Tú",
+  "cs1215PinnedPromptHide": "Ocultar en este chat",
+  "cs1215PinnedPromptSetting": "Fijar tu pregunta arriba",
+  "cs1215PinnedPromptSettingSubtitle": "Una línea arriba del chat con la pregunta de la respuesta que estás leyendo."
 }

@@ -182,6 +182,8 @@ import 'recovery_center_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
 import 'chat_prompt_index.dart';
+import '../services/pinned_prompt_prefs.dart';
+import '../widgets/chat/chat_pinned_prompt_header.dart';
 import 'chat_render_projection.dart';
 import '../widgets/action_approval.dart';
 import '../widgets/agent_task_widgets.dart';
@@ -1951,6 +1953,93 @@ class _ChatScreenState extends State<ChatScreen>
       return null;
     }
     return prompt;
+  }
+
+  String get _pinnedPromptChatKey =>
+      '${widget.connection.id}.${widget.session.logicalId}';
+
+  /// The slim one-line pinned prompt. It listens to the pinned prompt and
+  /// its preferences itself, so following the scroll never rebuilds the
+  /// screen or the transcript rows.
+  Widget _buildPinnedPromptHeader(Strings str) {
+    final prefs = PinnedPromptPrefs.shared;
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        _stickyPrompt,
+        _transcriptConcealed,
+        prefs,
+      ]),
+      builder: (context, _) {
+        final candidate = _stickyPrompt.value;
+        final prompt =
+            candidate == null ||
+                _findOpen ||
+                _transcriptConcealed.value ||
+                !prefs.enabled ||
+                prefs.isHiddenFor(_pinnedPromptChatKey)
+            ? null
+            : candidate;
+        final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+        Widget child = const SizedBox.shrink(
+          key: ValueKey('chat-pinned-prompt-none'),
+        );
+        if (prompt != null) {
+          final parsed = _parseUserContent(
+            (prompt['content'] ?? '').toString(),
+          );
+          var text = parsed.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+          if (text.isEmpty && parsed.attachments.isNotEmpty) {
+            text = parsed.attachments.first.name;
+          }
+          child = KeyedSubtree(
+            key: ValueKey(identityHashCode(prompt)),
+            child: ChatPinnedPromptHeader(
+              key: const ValueKey('chat-sticky-prompt'),
+              youLabel: str.cs1215PinnedPromptYou,
+              text: text,
+              attachmentCount: parsed.attachments.length,
+              semanticLabel: str.pj1215StickyPromptLabel,
+              hideLabel: str.cs1215PinnedPromptHide,
+              onTap: () => unawaited(_revealStickyPrompt(prompt)),
+              onHide: () => unawaited(prefs.hideFor(_pinnedPromptChatKey)),
+            ),
+          );
+        }
+        return AnimatedSwitcher(
+          duration: reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 150),
+          layoutBuilder: (current, previous) => Stack(
+            alignment: Alignment.topCenter,
+            children: [...previous, ?current],
+          ),
+          transitionBuilder: (child, animation) => AnimatedBuilder(
+            animation: animation,
+            child: child,
+            builder: (context, child) {
+              final exiting = animation.status == AnimationStatus.reverse;
+              return IgnorePointer(
+                ignoring: exiting,
+                child: ExcludeSemantics(
+                  excluding: exiting,
+                  child: FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween(
+                        begin: const Offset(0, -0.25),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          child: child,
+        );
+      },
+    );
   }
 
   Future<void> _revealStickyPrompt(Map<String, dynamic> prompt) async {
@@ -13354,54 +13443,7 @@ class _ChatScreenState extends State<ChatScreen>
                                   top: 0,
                                   left: 0,
                                   right: 0,
-                                  child: ListenableBuilder(
-                                    listenable: Listenable.merge([
-                                      _stickyPrompt,
-                                      _transcriptConcealed,
-                                    ]),
-                                    builder: (context, _) {
-                                      final prompt = _stickyPrompt.value;
-                                      if (prompt == null ||
-                                          _findOpen ||
-                                          _transcriptConcealed.value) {
-                                        return const SizedBox.shrink();
-                                      }
-                                      return Semantics(
-                                        button: true,
-                                        label: str.pj1215StickyPromptLabel,
-                                        child: GestureDetector(
-                                          key: const ValueKey(
-                                            'chat-sticky-prompt',
-                                          ),
-                                          behavior: HitTestBehavior.opaque,
-                                          onTap: () => unawaited(
-                                            _revealStickyPrompt(prompt),
-                                          ),
-                                          // The user bubble is translucent
-                                          // by design; pinned over the reply
-                                          // it showed the text underneath.
-                                          // Like Desktop's sticky prompt,
-                                          // the reply is hidden behind it:
-                                          // an opaque field of the screen
-                                          // background.
-                                          child: ColoredBox(
-                                            color: Theme.of(
-                                              context,
-                                            ).scaffoldBackgroundColor,
-                                            child: IgnorePointer(
-                                              child: ExcludeSemantics(
-                                                child: _PinnedUserPrompt(
-                                                  content:
-                                                      prompt['content']
-                                                          as String,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  ),
+                                  child: _buildPinnedPromptHeader(str),
                                 ),
                                 Positioned(
                                   top: 8,
@@ -20774,149 +20816,6 @@ class _RenderBubbleSizeReporter extends RenderProxyBox {
 /// area never cuts a thumbnail or a line in half. The bubble starts after the
 /// same 56 dp left gutter as the transcript bubble; the load-earlier chevron
 /// sits there.
-class _PinnedUserPrompt extends StatelessWidget {
-  final String content;
-
-  const _PinnedUserPrompt({required this.content});
-
-  static const int _maxLines = 2;
-  static const int _maxChips = 2;
-  static const double _chipHeight = 24;
-  static const double _thumbSize = 20;
-
-  /// Bounds the pinned height (2 lines + one chip row ≈ 88 dp). Larger text
-  /// sizes apply when the prompt is opened in the transcript.
-  static const double _maxTextScale = 1.2;
-
-  Widget _chip(
-    BuildContext context,
-    HermesThemeColors colors,
-    _ParsedAttachment attachment,
-  ) {
-    final imgPath = attachment.imagePath;
-    final imgFile = imgPath != null && File(imgPath).existsSync()
-        ? File(imgPath)
-        : null;
-    final isImage = _parsedAttachmentIsImage(attachment);
-    return Container(
-      height: _chipHeight,
-      constraints: const BoxConstraints(maxWidth: 160),
-      padding: const EdgeInsets.only(left: 2, right: 8),
-      decoration: BoxDecoration(
-        color: colors.surface.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(_chipHeight / 2),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox.square(
-            dimension: _thumbSize,
-            child: imgFile != null
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(_thumbSize / 2),
-                    child: Image.file(
-                      imgFile,
-                      fit: BoxFit.cover,
-                      gaplessPlayback: true,
-                      cacheWidth: 60,
-                    ),
-                  )
-                : Icon(
-                    isImage
-                        ? Icons.image_outlined
-                        : Icons.insert_drive_file_outlined,
-                    size: 14,
-                    color: colors.textSecondary,
-                  ),
-          ),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              attachment.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.2,
-                color: colors.textSecondary,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.hermes;
-    final parsed = _parseUserContent(content);
-    final text = parsed.text.replaceAll(RegExp(r'\s+'), ' ').trim();
-    final attachments = parsed.attachments;
-    final hidden = attachments.length - _maxChips;
-    return MediaQuery.withClampedTextScaling(
-      maxScaleFactor: _maxTextScale,
-      child: Padding(
-        padding: const EdgeInsets.only(left: 56, right: 12, top: 4, bottom: 2),
-        child: Align(
-          alignment: Alignment.centerRight,
-          child: Container(
-            key: const ValueKey('chat-sticky-prompt-bubble'),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-            decoration: BoxDecoration(
-              color: colors.surfaceVariant.withValues(alpha: 0.6),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (text.isNotEmpty)
-                  Text(
-                    text,
-                    maxLines: _maxLines,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: colors.textPrimary,
-                      fontSize: 14,
-                      height: 1.3,
-                    ),
-                  ),
-                if (attachments.isNotEmpty) ...[
-                  if (text.isNotEmpty) const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      for (final (index, attachment)
-                          in attachments.take(_maxChips).indexed) ...[
-                        if (index > 0) const SizedBox(width: 4),
-                        Flexible(child: _chip(context, colors, attachment)),
-                      ],
-                      if (hidden > 0) ...[
-                        const SizedBox(width: 4),
-                        Text(
-                          '+$hidden',
-                          maxLines: 1,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: colors.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _UserMessage extends StatelessWidget {
   final String content;
   final bool verbose;

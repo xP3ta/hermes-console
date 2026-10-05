@@ -8497,5 +8497,9 @@
   "apx1215ScopeOnceHint": "Only this call.",
   "apx1215ScopeSessionHint": "This kind of command in this chat, until the chat ends or the server restarts.",
   "apx1215ScopeAlwaysHint": "This kind of command in every chat. Saved on the server (command_allowlist in config.yaml) and in Settings › Permissions / Approvals; to withdraw it, remove it from both.",
-  "rpl1215AskAboutThis": "Ask about this"
+  "rpl1215AskAboutThis": "Ask about this",
+  "cs1215PinnedPromptYou": "You",
+  "cs1215PinnedPromptHide": "Hide in this chat",
+  "cs1215PinnedPromptSetting": "Pin your prompt at the top",
+  "cs1215PinnedPromptSettingSubtitle": "One line at the top of the chat with the prompt of the reply you're reading."
 }
