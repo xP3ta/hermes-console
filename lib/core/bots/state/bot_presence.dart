@@ -102,6 +102,37 @@ enum BotPresence {
     return best;
   }
 
+  /// What `session.active_list` says about [profile]'s canonical Bot Chat
+  /// alone (its id or lineage tip). Other chats of the profile do not count,
+  /// and an id [ambiguousSessionIds] gives to two profiles counts for none.
+  static BotPresence ofBotChat(
+    AgentProfile profile,
+    Iterable<DesktopActiveSession> liveSessions, {
+    Set<String> ambiguousSessionIds = const {},
+  }) {
+    final ids = botChatIds(profile);
+    var best = BotPresence.idle;
+    for (final live in liveSessions) {
+      final stored = live.storedSessionId;
+      if (stored == null ||
+          !ids.contains(stored) ||
+          ambiguousSessionIds.contains(stored)) {
+        continue;
+      }
+      final presence = ofLiveStatus(live.status);
+      if (presence.priority > best.priority) best = presence;
+    }
+    return best;
+  }
+
+  /// Ids of [profile]'s canonical Bot Chat: the stored row and its tip.
+  static Set<String> botChatIds(AgentProfile profile) => {
+    if (profile.canonicalSession case final summary?) ...[
+      summary.id,
+      ?summary.resolvedId,
+    ],
+  };
+
   /// Rows of [liveSessions] that belong to [profile]. Matching is by the
   /// profile's own stored ids only, and an id [ambiguous] between profiles
   /// matches nobody.

@@ -100,30 +100,17 @@ final class BotRosterEntry extends RosterEntry {
     DateTime? now,
   }) {
     final chat = BotChatTarget.resolve(agent.profile, now: now);
-    final signal = signalFor(
-      agent: agent,
-      live: live,
-      hasAttention: hasAttention,
-    );
-    String? clean(String? value) {
-      final text = value?.trim();
-      return text == null || text.isEmpty ? null : text;
-    }
-
-    // The chat the server says the bot is busy in, whoever moves it: it names
-    // the work («Working · chat») and the question («Waiting for you · chat»).
-    final remoteTitle = agent.livePresence == BotPresence.idle
-        ? null
-        : clean(agent.livePresenceTitle);
-    final workingOn = signal == BotFaceSignal.idle
-        ? null
-        : signal == BotFaceSignal.attention
-        ? (agent.livePresence == BotPresence.attention ? remoteTitle : null)
-        : remoteTitle ??
-              clean(chat.workingOn) ??
-              clean(live.workingOn) ??
-              clean(agent.liveSessionTitle) ??
-              clean(agent.currentTask?.title);
+    // Desktop parity: the avatar opens the canonical Bot Chat, so its aura
+    // reflects that chat alone. A turn in another chat of the same profile
+    // (the main profile chatting in Chats, a worker, a room seat) does not
+    // light it; that work shows where it happens.
+    final signal = switch (agent.botChatPresence) {
+      BotPresence.attention => BotFaceSignal.attention,
+      BotPresence.working => BotFaceSignal.working,
+      BotPresence.thinking => BotFaceSignal.thinking,
+      BotPresence.idle => BotFaceSignal.idle,
+    };
+    final title = agent.botChatTitle?.trim();
     final created = agent.profile.botModeUiMeta['created'];
     final createdAt = created is num && created > 0
         ? DateTime.fromMillisecondsSinceEpoch(created.toInt())
@@ -136,7 +123,9 @@ final class BotRosterEntry extends RosterEntry {
     return BotRosterEntry(
       agent: agent,
       signal: signal,
-      workingOn: workingOn,
+      workingOn: signal == BotFaceSignal.idle || title == null || title.isEmpty
+          ? null
+          : title,
       preview: rosterPreviewText(chat.preview),
       at: candidates.isEmpty
           ? null

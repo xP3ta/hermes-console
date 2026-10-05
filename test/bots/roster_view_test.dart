@@ -227,7 +227,7 @@ void main() {
       );
     });
 
-    test('working line uses the fresh worker title, else the preview', () {
+    test('a fresh worker alone leaves the Bot Chat line on its preview', () {
       final now = DateTime.now();
       final working = BotRosterEntry.from(
         agent: _agent(
@@ -245,7 +245,10 @@ void main() {
         live: const BotLiveStatus(RoomPresence.idle),
         now: now,
       );
-      expect(working.workingOn, 'flutter test (3/9)');
+      // Only the canonical Bot Chat lights the avatar and names the work.
+      expect(working.signal, BotFaceSignal.idle);
+      expect(working.workingOn, isNull);
+      expect(working.preview, 'old reply');
       final idle = BotRosterEntry.from(
         agent: _agent(
           'review',
