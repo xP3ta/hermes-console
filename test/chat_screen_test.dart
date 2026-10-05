@@ -35435,6 +35435,106 @@ void main() {
       expect(find.text('Preguntar sobre esto'), findsNothing);
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets('rpl1215 ask about this leaves the composer alone while a '
+        'sent message is being edited', (tester) async {
+      final gateway = _SubmissionGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-qr-ask-edit'),
+        messages: const [
+          {
+            'role': 'assistant',
+            'id': 'a-ask-edit',
+            'content': 'Analizador listo.',
+          },
+          {'role': 'user', 'id': 'u-ask-edit', 'content': 'Revisa'},
+        ],
+      );
+      await tester.tap(find.byTooltip('Editar mensaje'));
+      await tester.pump(const Duration(milliseconds: 300));
+      List<String> fieldTexts() => [
+        for (final field in tester.widgetList<EditableText>(
+          find.byType(EditableText),
+        ))
+          field.controller.text,
+      ];
+      final before = fieldTexts();
+      expect(before, contains('Revisa'));
+
+      // The transcript stays selectable while editing, so the action is
+      // still reachable from the menu; the screen must ignore it.
+      await selectWord(tester, 'Analizador');
+      expect(find.text('Preguntar sobre esto'), findsOneWidget);
+      await tester.tap(find.text('Preguntar sobre esto'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(fieldTexts(), before);
+      expect(fieldTexts().any((text) => text.contains('> ')), isFalse);
+      await tester.pump(const Duration(seconds: 2));
+      expect(gateway.submissions, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('rpl1215 ask about this quotes text selected in tool output', (
+      tester,
+    ) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-qr-ask-tool'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_ASK_PARENT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-ask-term',
+        'name': 'terminal',
+        'args': {'command': 'make test'},
+      });
+      gateway.emit('tool.complete', const {
+        'tool_id': 'call-ask-term',
+        'name': 'terminal',
+        'args': {'command': 'make test'},
+        'result': {'output': 'Toolsalida', 'exit_code': 2},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      gateway.emit('message.complete', const {'text': 'PUBLIC_ASK_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('thinking-trace-summary')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(TerminalOutputCard), findsOneWidget);
+
+      final output = find.descendant(
+        of: find.byType(TerminalOutputCard),
+        matching: find.textContaining('Toolsalida', findRichText: true),
+      );
+      await tester.longPressAt(
+        tester.getTopLeft(output.first) + const Offset(8, 8),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Copiar'), findsOneWidget);
+      expect(find.text('Preguntar sobre esto'), findsOneWidget);
+      await tester.tap(find.text('Preguntar sobre esto'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(composer(tester).text, '> Toolsalida\n\n');
+      expect(tester.takeException(), isNull);
+    });
   });
 }
 
