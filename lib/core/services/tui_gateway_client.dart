@@ -42,6 +42,9 @@ import 'connection_manager.dart';
 import 'connection_request_gateway.dart';
 import 'delegation_control.dart';
 import 'desktop_control_gateway.dart';
+import '../models/foreign_session.dart';
+import '../models/message_reaction.dart';
+import 'session_pull_requests.dart';
 import 'desktop_gateway_capabilities.dart';
 import 'json_rpc_wire.dart';
 import 'prompt_client_surface.dart';
@@ -1481,6 +1484,9 @@ class TuiGatewayClient
         HermesDesktopTurnSideGateway,
         HermesDesktopSessionControlGateway,
         HermesProjectManagementGateway,
+        HermesPullRequestGateway,
+        HermesForeignSessionGateway,
+        HermesMessageReactionGateway,
         HermesProjectFilesGateway,
         HermesProjectFileWritesGateway,
         HermesExtensionManagementGateway,
@@ -6834,10 +6840,12 @@ class TuiGatewayClient
         _invalidControlResponse();
   }
 
-  Future<T> _projectGitRequest<T>(Future<T> Function() request) async {
-    if (!_capabilityCache.canAttempt(
-      DesktopGatewayCapability.projectWorktrees,
-    )) {
+  Future<T> _projectGitRequest<T>(
+    Future<T> Function() request, {
+    DesktopGatewayCapability capability =
+        DesktopGatewayCapability.projectWorktrees,
+  }) async {
+    if (!_capabilityCache.canAttempt(capability)) {
       throw const DesktopControlFailure(
         DesktopControlFailureKind.unsupported,
         code: 404,
@@ -6846,19 +6854,225 @@ class TuiGatewayClient
     try {
       final value = await _dashboardExtensionRequest(request);
       _capabilityCache.mark(
-        DesktopGatewayCapability.projectWorktrees,
+        capability,
         DesktopGatewayCapabilityState.supported,
       );
       return value;
     } on DesktopControlFailure catch (failure) {
       if (failure.kind == DesktopControlFailureKind.unsupported) {
         _capabilityCache.mark(
-          DesktopGatewayCapability.projectWorktrees,
+          capability,
           DesktopGatewayCapabilityState.unsupported,
         );
       }
       rethrow;
     }
+  }
+
+  /// True only once the server has answered a `session.foreign.*` call on
+  /// this connection (see [confirmForeignSessions]); an unconfirmed server, a
+  /// -32601 one and a read-only connection all keep the import entry hidden.
+  bool get foreignSessionsAvailable =>
+      !_connection.readOnly &&
+      _capabilityCache.state(DesktopGatewayCapability.foreignSessions) ==
+          DesktopGatewayCapabilityState.supported;
+
+  /// Asks for the first page of foreign sessions once, to learn whether the
+  /// server has the methods. Nothing is imported and errors are swallowed.
+  Future<bool> confirmForeignSessions() async {
+    if (_connection.readOnly) return false;
+    if (_capabilityCache.state(DesktopGatewayCapability.foreignSessions) ==
+        DesktopGatewayCapabilityState.unknown) {
+      try {
+        await foreignList();
+      } catch (_) {}
+    }
+    return foreignSessionsAvailable;
+  }
+
+  static const Duration _foreignTimeout = Duration(seconds: 60);
+
+  Map<String, dynamic> _foreignParams(
+    String? profile,
+    Map<String, Object?> rest,
+  ) {
+    final owner = profile?.trim() ?? '';
+    return {
+      if (owner.isNotEmpty) 'profile': owner,
+      for (final entry in rest.entries)
+        if (entry.value != null) entry.key: entry.value,
+    };
+  }
+
+  /// Foreign ids are opaque handles: sent exactly as received.
+  String _foreignHandle(String id) {
+    if (id.isEmpty || id.length > 1024) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    return id;
+  }
+
+  /// False once `message.react` answered -32601 on this connection (or for a
+  /// read-only one): reactions are then not offered.
+  /// True only once the server has answered `message.react` (a reaction, or
+  /// the probe's invalid-params refusal); unknown stays hidden.
+  @override
+  bool get messageReactionsAvailable =>
+      !_connection.readOnly &&
+      _capabilityCache.state(DesktopGatewayCapability.messageReactions) ==
+          DesktopGatewayCapabilityState.supported;
+
+  Future<bool>? _reactionProbe;
+
+  /// One probe per connection: chats that ask while it is in flight share its
+  /// answer instead of sending the same request again.
+  @override
+  Future<bool> confirmMessageReactions(String runtimeSessionId) {
+    if (_connection.readOnly) return Future.value(false);
+    if (_capabilityCache.state(DesktopGatewayCapability.messageReactions) !=
+        DesktopGatewayCapabilityState.unknown) {
+      return Future.value(messageReactionsAvailable);
+    }
+    return _reactionProbe ??= _probeMessageReactions(runtimeSessionId)
+        .whenComplete(() => _reactionProbe = null);
+  }
+
+  Future<bool> _probeMessageReactions(String runtimeSessionId) async {
+    try {
+      await _request('message.react', {
+        'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+      });
+      _capabilityCache.mark(
+        DesktopGatewayCapability.messageReactions,
+        DesktopGatewayCapabilityState.supported,
+      );
+    } on TuiGatewayRpcError catch (error) {
+      if (error.code == -32601) {
+        _capabilityCache.mark(
+          DesktopGatewayCapability.messageReactions,
+          DesktopGatewayCapabilityState.unsupported,
+        );
+      } else if (error.code == -32602 || error.code == 4023) {
+        // -32602: invalid params; 4023: the agent's own refusal when neither
+        // row_id nor newest_role is given. Either means the method answered.
+        _capabilityCache.mark(
+          DesktopGatewayCapability.messageReactions,
+          DesktopGatewayCapabilityState.supported,
+        );
+      }
+    } catch (_) {
+      // Nothing learned.
+    }
+    return messageReactionsAvailable;
+  }
+
+  @override
+  Future<({int rowId, List<MessageReaction> reactions})> reactToMessage(
+    String runtimeSessionId, {
+    int? rowId,
+    String? newestRole,
+    String? emoji,
+    String? profile,
+  }) async {
+    if (rowId == null && (newestRole == null || newestRole.isEmpty)) {
+      throw ArgumentError('a reaction needs a row id or newest_role');
+    }
+    _requireWritableControlConnection();
+    final owner = profile?.trim() ?? '';
+    final result = await _controlRequest('message.react', {
+      'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
+      if (owner.isNotEmpty) 'profile': owner,
+      if (rowId != null) 'row_id': rowId else 'newest_role': newestRole,
+      'emoji': ?emoji,
+      'author': 'user',
+    }, capability: DesktopGatewayCapability.messageReactions);
+    final id = result['row_id'];
+    final list = result['reactions'];
+    if (id is! int || list is! List) {
+      _invalidControlResponse(DesktopGatewayCapability.messageReactions);
+    }
+    return (rowId: id, reactions: parseReactions(list));
+  }
+
+  @override
+  Future<ForeignSessionPage> foreignList({
+    String? profile,
+    ForeignSource? source,
+    int? offset,
+  }) async {
+    final result = await _controlRequest(
+      'session.foreign.list',
+      _foreignParams(profile, {'source': source?.wire, 'offset': offset}),
+      timeout: _foreignTimeout,
+      capability: DesktopGatewayCapability.foreignSessions,
+    );
+    return ForeignSessionPage.fromJson(result);
+  }
+
+  @override
+  Future<ForeignPreview> foreignPreview(String id, {String? profile}) async {
+    final result = await _controlRequest(
+      'session.foreign.preview',
+      _foreignParams(profile, {'id': _foreignHandle(id)}),
+      timeout: _foreignTimeout,
+      capability: DesktopGatewayCapability.foreignSessions,
+    );
+    return ForeignPreview.fromJson(result);
+  }
+
+  @override
+  Future<ForeignImportResult> foreignImport(
+    String id, {
+    String? profile,
+  }) async {
+    _requireWritableControlConnection();
+    final result = await _controlRequest(
+      'session.foreign.import',
+      _foreignParams(profile, {'id': _foreignHandle(id)}),
+      timeout: _foreignTimeout,
+      capability: DesktopGatewayCapability.foreignSessions,
+    );
+    final parsed = ForeignImportResult.tryParse(result);
+    if (parsed == null) {
+      _invalidControlResponse(DesktopGatewayCapability.foreignSessions);
+    }
+    return parsed;
+  }
+
+  @override
+  Future<PullRequestList> prList(
+    String repoPath, {
+    List<String> branches = const [],
+    List<int> numbers = const [],
+  }) {
+    final body = {
+      'path': _validatedControlValue(repoPath, maxLength: 4096),
+      'branches': [
+        for (final b in branches) _validatedControlValue(b, maxLength: 512),
+      ],
+      'numbers': numbers,
+    };
+    return _projectGitRequest(
+      () async => PullRequestList.fromJson(
+        await _dashboard.apiPost('git/review/pr-list', body: body),
+      ),
+      capability: DesktopGatewayCapability.projectPullRequests,
+    );
+  }
+
+  @override
+  Future<PullRequestScan> scanSessionPullRequests(List<String> ids) {
+    final body = {
+      'ids': [
+        for (final id in ids) _validatedControlValue(id, maxLength: 1024),
+      ],
+    };
+    return _projectGitRequest(
+      () async => PullRequestScan.fromJson(
+        await _dashboard.apiPost('profiles/sessions/pull-requests', body: body),
+      ),
+      capability: DesktopGatewayCapability.sessionPullRequestScan,
+    );
   }
 
   String _gitQuery(String route, String repoPath) {

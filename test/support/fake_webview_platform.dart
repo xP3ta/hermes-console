@@ -14,11 +14,16 @@ class FakeWebViewPlatform extends WebViewPlatform {
 
   FakeWebViewController get last => controllers.last;
 
+  /// When set, every controller created afterwards waits on it inside
+  /// `enableZoom`, i.e. while the viewer is still configuring the WebView.
+  Future<void>? holdConfigure;
+
   @override
   PlatformWebViewController createPlatformWebViewController(
     PlatformWebViewControllerCreationParams params,
   ) {
-    final controller = FakeWebViewController(params);
+    final controller = FakeWebViewController(params)
+      ..configureGate = holdConfigure;
     controllers.add(controller);
     return controller;
   }
@@ -53,6 +58,7 @@ class FakeWebViewController extends PlatformWebViewController {
   FakeNavigationDelegate? navigationDelegate;
   void Function(PlatformWebViewPermissionRequest request)? permissionHandler;
   bool? zoomEnabled;
+  Future<void>? configureGate;
 
   JavaScriptMode? get javaScriptMode =>
       javaScriptModes.isEmpty ? null : javaScriptModes.last;
@@ -79,7 +85,10 @@ class FakeWebViewController extends PlatformWebViewController {
       loadedRequests.add(params.uri);
 
   @override
-  Future<void> enableZoom(bool enabled) async => zoomEnabled = enabled;
+  Future<void> enableZoom(bool enabled) async {
+    await configureGate;
+    zoomEnabled = enabled;
+  }
 
   /// Every JavaScript bridge the code under test tried to expose.
   final List<String> javaScriptChannels = [];

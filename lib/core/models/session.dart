@@ -67,6 +67,13 @@ class Session implements SessionSortKey {
   /// Sesión origen cuando esta es resultado de un fork.
   final String? parentSessionId;
 
+  /// `_branched_from`: set only by a genuine `/branch` fork.
+  final String? branchedFromId;
+
+  /// `_reset_from`: set by `/new` and idle/daily rotation, which start a new
+  /// conversation rather than a fork.
+  final String? resetFromId;
+
   /// Stable compression lineage identity advertised by Dashboard 0.19.
   final String? lineageRootId;
 
@@ -148,6 +155,8 @@ class Session implements SessionSortKey {
     this.updatedAt,
     this.endReason,
     this.parentSessionId,
+    this.branchedFromId,
+    this.resetFromId,
     this.lineageRootId,
     this.lineageIds = const [],
     this.isInternalChild,
@@ -561,6 +570,8 @@ class Session implements SessionSortKey {
     double? updatedAt,
     String? endReason,
     String? parentSessionId,
+    String? branchedFromId,
+    String? resetFromId,
     String? lineageRootId,
     List<String>? lineageIds,
     bool? isInternalChild,
@@ -600,6 +611,8 @@ class Session implements SessionSortKey {
     updatedAt: normalizeEpochTimestamp(updatedAt) ?? this.updatedAt,
     endReason: endReason ?? this.endReason,
     parentSessionId: parentSessionId ?? this.parentSessionId,
+    branchedFromId: branchedFromId ?? this.branchedFromId,
+    resetFromId: resetFromId ?? this.resetFromId,
     lineageRootId: lineageRootId ?? this.lineageRootId,
     lineageIds: lineageIds ?? this.lineageIds,
     isInternalChild: isInternalChild ?? this.isInternalChild,
@@ -665,6 +678,8 @@ class Session implements SessionSortKey {
       updatedAt: lastActive,
       endReason: _boundedText(json['end_reason'], 256),
       parentSessionId: _opaqueId(json['parent_session_id']),
+      branchedFromId: _opaqueId(json['_branched_from']),
+      resetFromId: _opaqueId(json['_reset_from']),
       lineageRootId: _opaqueId(
         json['_lineage_root_id'] ?? json['lineage_root'],
       ),

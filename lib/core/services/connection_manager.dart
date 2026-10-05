@@ -997,6 +997,7 @@ class ConnectionManager {
     'hidden_rows_',
     'deleted_sessions_',
     'session_auto_titles_',
+    'pr_scanned_ids_',
     'mission_control.organizations.v1.',
     'mission_control.rooms.v1.',
     'mission_control.bot_chat_pins.v1.',

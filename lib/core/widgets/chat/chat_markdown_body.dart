@@ -26,6 +26,9 @@ import '../hermes_file_tree.dart';
 import '../hermes_notice.dart';
 import '../markdown_table.dart';
 import 'chat_message_selection_area.dart';
+import 'embeds/embed_card.dart';
+import 'embeds/embed_consent_store.dart';
+import 'embeds/embed_detector.dart';
 
 /// Render compartido del Markdown de las respuestas del chat (spec 070, T102).
 ///
@@ -46,7 +49,11 @@ class ChatMarkdownBody extends StatelessWidget {
     this.selectable = true,
     this.selectionIdentity,
     this.onLinkTap,
+    this.embeds = false,
   });
+
+  /// Rich embeds for a finished message (never while [isStreaming]).
+  final bool embeds;
 
   /// Markdown tal cual llegó (sin normalizar).
   final String data;
@@ -74,7 +81,11 @@ class ChatMarkdownBody extends StatelessWidget {
         : buildAssistantAnswerBlocks(
             data,
             isStreaming: isStreaming,
-            markdown: (d) => ChatMarkdownBlock(data: d, onLinkTap: tap),
+            markdown: (d) => ChatMarkdownBlock(
+              data: d,
+              onLinkTap: tap,
+              embeds: embeds && !isStreaming,
+            ),
             callout: (b) =>
                 CalloutCard(kind: b.kind, title: b.title, body: b.body),
             onLinkTap: tap,
@@ -105,9 +116,14 @@ class ChatMarkdownBlock extends StatelessWidget {
     required this.data,
     this.onLinkTap,
     this.styleSheet,
+    this.embeds = false,
   });
 
   final String data;
+
+  /// Rich embeds (consent-gated). Only for finished messages: a streaming
+  /// block never embeds anything.
+  final bool embeds;
 
   /// Manejador de enlaces. Por defecto [openChatMarkdownLink].
   final void Function(String? href)? onLinkTap;
@@ -117,6 +133,35 @@ class ChatMarkdownBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!embeds) return _markdown(context);
+    return ListenableBuilder(
+      listenable: EmbedConsentStore.shared,
+      builder: (context, _) {
+        final store = EmbedConsentStore.shared;
+        final cards = detectStandaloneEmbeds(data)
+            .where((e) => store.modeFor(e.provider) != EmbedMode.off)
+            .toList(growable: false);
+        final body = _markdown(context);
+        if (cards.isEmpty) return body;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            body,
+            // The link stays in the text above; the card only adds the player.
+            for (final embed in cards)
+              EmbedCard(
+                key: ValueKey(embed.id),
+                descriptor: embed,
+                fallback: const SizedBox.shrink(),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _markdown(BuildContext context) {
     final colors = Theme.of(context).hermes;
     return MarkdownBody(
       data: data,
@@ -135,7 +180,7 @@ class ChatMarkdownBlock extends StatelessWidget {
         colors: colors,
       ),
       styleSheet: styleSheet ?? assistantMarkdownStyleSheet(context, data),
-      builders: {'pre': ChatCodeBlockBuilder()},
+      builders: {'pre': ChatCodeBlockBuilder(embeds: embeds)},
     );
   }
 }
@@ -579,6 +624,12 @@ class _PlainTextBlock extends StatelessWidget {
 
 /// Builder de `pre` del chat: árbol de ficheros, prosa o bloque de código.
 class ChatCodeBlockBuilder extends MarkdownElementBuilder {
+  ChatCodeBlockBuilder({this.embeds = false});
+
+  /// ```svg fences become consent-gated embeds; the code block is the
+  /// fallback and exactly what an `off` type shows.
+  final bool embeds;
+
   // Como registramos un builder para `pre`, flutter_markdown enruta el texto
   // interno del code block a ESTE builder vía visitText. El contenido ya lo
   // extraemos del elemento en visitElementAfter, así que aquí devolvemos un
@@ -604,7 +655,11 @@ class ChatCodeBlockBuilder extends MarkdownElementBuilder {
     if (_isPlainProse(code, lang)) {
       return _PlainTextBlock(text: code);
     }
-    return _CodeBlockWrapper(code: code, lang: lang);
+    final block = _CodeBlockWrapper(code: code, lang: lang);
+    if (embeds && normalizedLanguage == 'svg') {
+      return EmbedCard(svgSource: code, fallback: block);
+    }
+    return block;
   }
 
   /// Heurística conservadora: solo es "prosa" si NO hay lenguaje real y el
