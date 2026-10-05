@@ -19,6 +19,7 @@ import '../widgets/chat/chat_markdown_body.dart';
 import '../widgets/chat/message_reaction_bar.dart';
 import 'terminal_pane_screen.dart';
 import '../widgets/chat/chat_message_frame.dart';
+import '../widgets/chat/composer_pasted_image.dart';
 import '../widgets/chat/console_composer.dart';
 import '../widgets/chat/chat_message_selection_area.dart';
 import '../widgets/chat/chat_quick_reply_bar.dart';
@@ -1806,7 +1807,7 @@ class _ChatScreenState extends State<ChatScreen>
   final RecentInterruptGuard _recentInterrupt = RecentInterruptGuard();
   bool _imagePickerOpen = false;
   bool _documentPickerOpen = false;
-  static const int _maxPendingImages = 10;
+  static const int _maxPendingImages = kComposerMaxPendingImages;
 
   // Developer diagnostics mode (ex verbose)
   bool _devDiagnostics = false;
@@ -12559,90 +12560,39 @@ class _ChatScreenState extends State<ChatScreen>
     KeyboardInsertedContent content,
   ) async {
     if (_attachmentSubmitting) return;
-    final bytes = content.data;
-    if (bytes == null || bytes.isEmpty) {
-      if (mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(context).chaAttachmentPreparationFailed),
-          ),
-          kind: HermesNoticeKind.error,
-        );
-      }
+    void preparationFailed() {
+      if (!mounted) return;
+      HermesNotice.of(context).showSnackBar(
+        SnackBar(
+          content: Text(Strings.of(context).chaAttachmentPreparationFailed),
+        ),
+        kind: HermesNoticeKind.error,
+      );
+    }
+
+    // Shared with the room composer: same image types and batch limits.
+    if (composerPasteRejection(content, pending: _pendingAttachments) != null) {
+      preparationFailed();
       return;
     }
-    final currentImages = _pendingAttachments
-        .where((item) => item.isImage)
-        .length;
-    final currentBatchBytes = _pendingAttachments.fold<int>(
-      0,
-      (sum, item) => sum + item.sizeBytes,
-    );
-    if (currentImages >= _maxPendingImages ||
-        pendingAttachmentLimitViolation(
-              sizeBytes: bytes.length,
-              itemLimit: AttachmentUploader.maxBytes,
-              currentBatchBytes: currentBatchBytes,
-            ) !=
-            null) {
-      if (mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(context).chaAttachmentPreparationFailed),
-          ),
-          kind: HermesNoticeKind.error,
-        );
-      }
-      return;
-    }
-    final digest = sha256.convert(bytes).toString();
+    final digest = sha256.convert(content.data!).toString();
     if ((await _knownAttachmentDigests()).contains(digest)) return;
 
-    final extension = switch (content.mimeType.toLowerCase()) {
-      'image/jpeg' => 'jpg',
-      'image/gif' => 'gif',
-      'image/webp' => 'webp',
-      _ => 'png',
-    };
-    final source = File(
-      '${Directory.systemTemp.path}/hermes-ime-${const Uuid().v4()}.$extension',
-    );
-    AttachmentDraft? persisted;
     try {
-      await source.writeAsBytes(bytes, flush: true);
-      persisted = await _materializeAttachment(
-        AttachmentDraft(
-          localId: const Uuid().v4(),
-          type: AttachmentType.image,
-          name: 'pasted-image.$extension',
-          mimeType: content.mimeType,
-          sizeBytes: bytes.length,
-          localPath: source.path,
-        ),
+      final persisted = await stageComposerPastedImage(
+        content,
+        materialize: _materializeAttachment,
       );
       if (persisted == null || !mounted) {
         if (persisted != null) await _deletePrivateAttachmentCopy(persisted);
         return;
       }
       setState(() {
-        _pendingAttachments.add(persisted!);
+        _pendingAttachments.add(persisted);
       });
       _scheduleDraftSave();
     } catch (_) {
-      if (mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(Strings.of(context).chaAttachmentPreparationFailed),
-          ),
-          kind: HermesNoticeKind.error,
-        );
-      }
-    } finally {
-      if (persisted?.localPath != source.path) {
-        try {
-          if (await source.exists()) await source.delete();
-        } catch (_) {}
-      }
+      preparationFailed();
     }
   }
 

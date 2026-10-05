@@ -12393,6 +12393,122 @@ void main() {
     expect(find.byType(AttachmentCard), findsOneWidget);
   });
 
+  testWidgets('Bot Chat: pegar imagen desde el IME la adjunta y la envía', (
+    tester,
+  ) async {
+    final temp = Directory.systemTemp.createTempSync('bot-ime-image-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+    addTearDown(
+      () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null),
+    );
+    final gateway = _SubmissionGateway();
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-bot-ime-paste'),
+      desktopGateway: gateway,
+      session: _session().copyWith(source: 'mobile-bot'),
+      missionBotProfile: const AgentProfile(name: 'Sol'),
+      attachmentMaterializer: (attachment) async => attachment,
+      attachmentPrivateCopyDeleter: (_) async => true,
+      initialPreferences: {
+        'approval_global_mode': ApprovalMode.yolo.storageKey,
+      },
+    );
+    List<AttachmentCard> composerCards() => tester
+        .widgetList<AttachmentCard>(find.byType(AttachmentCard))
+        .where((card) => card.onRemove != null)
+        .toList();
+    final field = tester.widget<TextField>(find.byType(TextField).last);
+    expect(field.contentInsertionConfiguration, isNotNull);
+    field.contentInsertionConfiguration!.onContentInserted(
+      KeyboardInsertedContent(
+        mimeType: 'image/png',
+        uri: 'content://keyboard/chart.png',
+        data: base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+          'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        ),
+      ),
+    );
+    await pumpUntilReal(
+      tester,
+      () => composerCards().isNotEmpty,
+      timeoutMessage: 'pasted image did not reach the Bot Chat composer',
+    );
+    expect(composerCards().single.name, 'pasted-image.png');
+
+    await tester.enterText(find.byType(TextField).last, 'mira la gráfica');
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(const ValueKey('send')));
+    for (var i = 0; i < 80 && gateway.submissions.isEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(gateway.submissions, hasLength(1));
+    expect(gateway.imageAttachCalls, 1);
+    expect(gateway.submissions.single, contains('pasted-image.png'));
+    expect(gateway.submissions.single, contains('mira la gráfica'));
+    gateway.emitComplete();
+    await tester.pump(const Duration(seconds: 10));
+  });
+
+  testWidgets('pegar desde el IME un tipo que no es imagen no crea adjunto', (
+    tester,
+  ) async {
+    final temp = Directory.systemTemp.createTempSync('chat-ime-refused-');
+    addTearDown(() {
+      if (temp.existsSync()) temp.deleteSync(recursive: true);
+    });
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+    addTearDown(
+      () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null),
+    );
+    var materialized = 0;
+    await pumpChat(
+      tester,
+      attachmentMaterializer: (attachment) async {
+        materialized++;
+        return attachment;
+      },
+    );
+    tester
+        .widget<TextField>(find.byType(TextField).last)
+        .contentInsertionConfiguration!
+        .onContentInserted(
+          KeyboardInsertedContent(
+            mimeType: 'application/x-msdownload',
+            uri: 'content://keyboard/payload',
+            data: Uint8List.fromList([0x4d, 0x5a, 0x90, 0x00]),
+          ),
+        );
+    for (var i = 0; i < 10; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+    expect(materialized, 0);
+    expect(find.byType(AttachmentCard), findsNothing);
+    expect(
+      find.text(
+        'No se pudo preparar uno de los adjuntos. Vuelve a seleccionarlo.',
+      ),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 10));
+  });
+
   testWidgets(
     'pegar texto grande lo colapsa en un adjunto editable (Desktop 3000)',
     (tester) async {
