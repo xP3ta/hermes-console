@@ -93,7 +93,11 @@ class ProjectFilesController extends ChangeNotifier {
     required this.gateway,
     this.writes,
     this.readOnlyConnection = false,
-  }) : _path = root;
+    this.pickFolders = false,
+    String? initialPath,
+  }) : _path = initialPath != null && _isInside(root, initialPath)
+           ? initialPath
+           : root;
 
   /// Project folder on the Hermes host; the browser never leaves it.
   final String root;
@@ -107,6 +111,11 @@ class ProjectFilesController extends ChangeNotifier {
   /// The saved connection is read-only: never offer a write.
   final bool readOnlyConnection;
 
+  /// Server folder picker (new project / add folder): files are listed but
+  /// not opened, and the only write offered is "Nueva carpeta", like
+  /// Desktop's remote folder picker.
+  final bool pickFolders;
+
   /// True when this connection must not write (read-only connection or
   /// gateway), as opposed to a server that simply lacks the routes.
   bool get writesBlockedByConnection =>
@@ -117,6 +126,9 @@ class ProjectFilesController extends ChangeNotifier {
   bool canWrite(ProjectFileWriteAction action) {
     final writes = this.writes;
     if (writes == null || writesBlockedByConnection) return false;
+    if (pickFolders && action != ProjectFileWriteAction.createFolder) {
+      return false;
+    }
     return !writes.projectFileWriteKnownUnsupported(action);
   }
 
@@ -145,9 +157,10 @@ class ProjectFilesController extends ChangeNotifier {
   /// Folders from the project root down to [path], as (label, path).
   List<(String, String)> get crumbs {
     final out = <(String, String)>[(_basename(root), root)];
-    if (atRoot || !_path.startsWith('$root/')) return out;
-    var current = root;
-    for (final part in _path.substring(root.length + 1).split('/')) {
+    if (atRoot || !_inside(_path)) return out;
+    var current = root == '/' ? '' : root;
+    final rest = _path.substring(root == '/' ? 1 : root.length + 1);
+    for (final part in rest.split('/')) {
       if (part.isEmpty) continue;
       current = '$current/$part';
       out.add((part, current));
@@ -228,7 +241,11 @@ class ProjectFilesController extends ChangeNotifier {
     }
   }
 
-  bool _inside(String folder) => folder == root || folder.startsWith('$root/');
+  bool _inside(String folder) => _isInside(root, folder);
+
+  static bool _isInside(String root, String folder) =>
+      folder == root ||
+      (root == '/' ? folder.startsWith('/') : folder.startsWith('$root/'));
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -878,8 +895,11 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
                             unawaited(_openEntryMenu(entry, anchor)),
                       )
                     : null,
+                muted: controller.pickFolders && !entry.isDirectory,
                 onTap: entry.isDirectory
                     ? () => unawaited(controller.open(entry.path))
+                    : controller.pickFolders
+                    ? null
                     : () => unawaited(_openFile(entry)),
               ),
           ],
@@ -891,19 +911,21 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
         controller.canWrite(ProjectFileWriteAction.writeText) ||
         controller.canWrite(ProjectFileWriteAction.upload);
     final writable = controller.canWriteAnything;
-    children.add(
-      Padding(
-        padding: const EdgeInsets.fromLTRB(6, 10, 6, 0),
-        child: Text(
-          controller.writesBlockedByConnection
-              ? strings.pw1215FilesReadOnlyConnection
-              : writable
-              ? strings.pw1215FilesWritableNote
-              : strings.pf1215FilesReadOnlyNote,
-          style: TextStyle(color: colors.textSecondary, fontSize: 11.5),
+    if (!controller.pickFolders) {
+      children.add(
+        Padding(
+          padding: const EdgeInsets.fromLTRB(6, 10, 6, 0),
+          child: Text(
+            controller.writesBlockedByConnection
+                ? strings.pw1215FilesReadOnlyConnection
+                : writable
+                ? strings.pw1215FilesWritableNote
+                : strings.pf1215FilesReadOnlyNote,
+            style: TextStyle(color: colors.textSecondary, fontSize: 11.5),
+          ),
         ),
-      ),
-    );
+      );
+    }
     if (canAdd && failure == null) {
       children[0] = Row(
         children: [
@@ -1182,6 +1204,96 @@ class _EditableTextViewerState extends State<_EditableTextViewer> {
       onEdit: widget.writes != null && widget.canEdit()
           ? () => unawaited(_edit())
           : null,
+    );
+  }
+}
+
+/// Picks a folder on the Hermes host, never on the phone: Desktop's remote
+/// folder picker (`selectDesktopPaths` in remote mode) seeded at the
+/// server's default folder. The whole server filesystem is browsable;
+/// "Nueva carpeta" is offered when the connection may write. Returns the
+/// absolute server path, or null when cancelled.
+Future<String?> showServerFolderPicker(
+  BuildContext context, {
+  required HermesProjectFilesGateway files,
+  HermesProjectFileWritesGateway? writes,
+  bool readOnlyConnection = false,
+  String? startPath,
+  required String Function(Object failure) failureText,
+}) => Navigator.of(context).push<String>(
+  MaterialPageRoute(
+    builder: (_) => _ServerFolderPicker(
+      controller: ProjectFilesController(
+        root: '/',
+        gateway: files,
+        writes: writes,
+        readOnlyConnection: readOnlyConnection,
+        pickFolders: true,
+        initialPath: startPath,
+      ),
+      failureText: failureText,
+    ),
+  ),
+);
+
+class _ServerFolderPicker extends StatefulWidget {
+  const _ServerFolderPicker({
+    required this.controller,
+    required this.failureText,
+  });
+
+  final ProjectFilesController controller;
+  final String Function(Object failure) failureText;
+
+  @override
+  State<_ServerFolderPicker> createState() => _ServerFolderPickerState();
+}
+
+class _ServerFolderPickerState extends State<_ServerFolderPicker> {
+  @override
+  void dispose() {
+    widget.controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    final controller = widget.controller;
+    return Scaffold(
+      appBar: AppBar(title: Text(strings.pc1215PickFolderTitle)),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        children: [
+          ProjectFilesBrowser(
+            controller: controller,
+            failureText: widget.failureText,
+          ),
+        ],
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: ListenableBuilder(
+            listenable: controller,
+            builder: (context, _) {
+              final listing = controller.listing;
+              final usable =
+                  !controller.unsupported &&
+                  listing != null &&
+                  listing.error == null;
+              return FilledButton.icon(
+                key: const ValueKey('pc1215-pick-folder-use'),
+                onPressed: usable
+                    ? () => Navigator.of(context).pop(controller.path)
+                    : null,
+                icon: const Icon(Icons.check_rounded),
+                label: Text(strings.pc1215PickFolderUse),
+              );
+            },
+          ),
+        ),
+      ),
     );
   }
 }
