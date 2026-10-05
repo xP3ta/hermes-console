@@ -1,9 +1,13 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/navigation/enclosing_route.dart';
+import 'package:hermes_android/core/screens/cron_screen.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
@@ -11,6 +15,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/mission_control_repository.dart';
 import 'package:hermes_android/core/services/mission_snapshot_cache.dart';
 import 'package:hermes_android/core/services/mission_snapshot_prewarm.dart';
+import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/general_dock_shell.dart';
 import 'package:hermes_android/core/widgets/instance_status_panel.dart';
@@ -266,6 +271,54 @@ void main() {
     await _idle(tester);
 
     final rebuilds = await _transitionRebuilds<MissionControlScreen>(tester);
+
+    expect(rebuilds.push, 0, reason: 'during the push');
+    expect(rebuilds.pop, 0, reason: 'during the back transition');
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _idle(tester);
+  });
+
+  testWidgets('Cron does not rebuild when a screen is pushed over it or '
+      'popped back to it', (tester) async {
+    final (_, connection) = await _manager();
+    var reads = 0;
+    final events = StreamController<TuiGatewayEvent>.broadcast();
+    addTearDown(events.close);
+    final client = DashboardClient(
+      host: 'hermes.local',
+      manualToken: 'token',
+      httpClientOverride: MockClient((request) async {
+        if (request.method == 'GET' && request.url.path == '/api/cron/jobs') {
+          reads++;
+          return http.Response(
+            jsonEncode([
+              {'id': 'job', 'name': 'Daily sweep', 'enabled': true},
+            ]),
+            200,
+          );
+        }
+        return http.Response('{}', 404);
+      }),
+    );
+    await tester.pumpWidget(
+      _app(
+        CronScreen(
+          connection: connection,
+          clientOverride: client,
+          eventStreamOverride: events.stream,
+        ),
+      ),
+    );
+    await _idle(tester);
+    // A live change while Cron is visible runs its refresh guard, which reads
+    // the route status.
+    events.add(
+      const TuiGatewayEvent(type: 'cron.changed', sessionId: '', payload: {}),
+    );
+    await _idle(tester);
+    expect(reads, 2, reason: 'the visible screen refreshed on the event');
+
+    final rebuilds = await _transitionRebuilds<CronScreen>(tester);
 
     expect(rebuilds.push, 0, reason: 'during the push');
     expect(rebuilds.pop, 0, reason: 'during the back transition');
