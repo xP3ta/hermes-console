@@ -114,27 +114,28 @@ void main() {
       ]);
     });
 
-    test('anything else offers continue / summarize', () {
-      expect(heuristicQuickReplies('Here is the overview of X.', en), [
-        'Continue',
-        'Summarize it',
-      ]);
-      expect(heuristicQuickReplies('Este es el resumen.', es), [
-        'Continúa',
-        'Resúmelo',
-      ]);
+    test('anything else offers no chips', () {
+      // No generic follow-ups (Desktop has none): only a recognisable
+      // context earns chips.
+      expect(heuristicQuickReplies('Here is the overview of X.', en), isEmpty);
+      expect(heuristicQuickReplies('Este es el resumen.', es), isEmpty);
     });
 
     test(
       'a question in the middle of the answer is not a closing question',
       () {
-        expect(heuristicQuickReplies('Why? Because X. Done.', en), [
-          'Continue',
-          'Summarize it',
-        ]);
+        expect(heuristicQuickReplies('Why? Because X. Done.', en), isEmpty);
         expect(
           heuristicQuickReplies('¿Por qué? Porque falta el índice. Listo.', es),
-          ['Continúa', 'Resúmelo'],
+          isEmpty,
+        );
+        // An earlier paragraph's question does not count either.
+        expect(
+          heuristicQuickReplies(
+            '¿Quieres que lo aplique?\n\nLo he aplicado ya.',
+            es,
+          ),
+          isEmpty,
         );
       },
     );
@@ -164,10 +165,10 @@ void main() {
         classifyQuickReplyContext('Hecho:\n\n1. Crear la tabla'),
         QuickReplyContext.generic,
       );
-      expect(heuristicQuickReplies('Done:\n\n1. Create the table', en), [
-        'Continue',
-        'Summarize it',
-      ]);
+      expect(
+        heuristicQuickReplies('Done:\n\n1. Create the table', en),
+        isEmpty,
+      );
       expect(
         classifyQuickReplyContext('Hecho:\n\n1. Crear la tabla\n2. Migrar'),
         QuickReplyContext.plan,

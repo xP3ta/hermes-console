@@ -10215,8 +10215,6 @@
   "rpl1215ReplyStepByStep": "Hazlo paso a paso",
   "rpl1215ReplyRunTests": "Ejecuta los tests",
   "rpl1215ReplyReviewChanges": "Revisa los cambios",
-  "rpl1215ReplyContinue": "Continúa",
-  "rpl1215ReplySummarize": "Resúmelo",
   "rpl1215SmartSuggest": "Sugerir respuestas con IA",
   "rpl1215SettingTitle": "Respuestas rápidas",
   "rpl1215SettingSubtitle": "Propuestas de respuesta al terminar cada turno. ✨ solo consulta al modelo si la tocas."

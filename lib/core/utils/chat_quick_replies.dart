@@ -34,6 +34,9 @@ QuickReplyContext classifyQuickReplyContext(String answer) {
 }
 
 /// Free, local reply chips for the last assistant [answer] (no model call).
+///
+/// Empty unless the answer closes with a question, proposes a plan or
+/// carries code.
 List<String> heuristicQuickReplies(String answer, Strings strings) {
   if (answer.trim().isEmpty) return const [];
   return switch (classifyQuickReplyContext(answer)) {
@@ -50,10 +53,10 @@ List<String> heuristicQuickReplies(String answer, Strings strings) {
       strings.rpl1215ReplyGoAhead,
       strings.rpl1215ReplyStepByStep,
     ],
-    QuickReplyContext.generic => [
-      strings.rpl1215ReplyContinue,
-      strings.rpl1215ReplySummarize,
-    ],
+    // No generic follow-ups ("continue", "summarize"): Desktop offers none,
+    // and chips that fit every answer are noise. Only a recognisable
+    // context earns chips.
+    QuickReplyContext.generic => const [],
   };
 }
 
