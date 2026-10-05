@@ -548,20 +548,36 @@ Widget? toolOutputCard(ToolOutputRecord? record) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// One row per edited file of a turn, first-touched order, edits of the same
-/// file concatenated (Desktop `deriveChangedFiles`).
+/// file concatenated in order (Desktop `deriveChangedFiles`). The same edit
+/// reported twice (a replayed tool id, or an identical diff of the same
+/// file) counts once.
 List<FileDiff> aggregateChangedFiles(Iterable<ToolOutputRecord?> records) {
   final byPath = <String, List<String>>{};
+  final seenTools = <String>{};
   for (final record in records) {
     if (record == null || !record.hasDiff) continue;
+    if (!seenTools.add(record.toolId)) continue;
     for (final file in record.files) {
       if (file.path.isEmpty) continue;
-      (byPath[file.path] ??= <String>[]).add(file.diff);
+      final edits = byPath[file.path] ??= <String>[];
+      if (!edits.contains(file.diff)) edits.add(file.diff);
     }
   }
   return [
     for (final entry in byPath.entries)
       FileDiff(entry.key, entry.value.join('\n')),
   ];
+}
+
+/// Lines added and removed across a turn's changed files.
+DiffStats turnChangeTotals(List<FileDiff> files) {
+  var added = 0;
+  var removed = 0;
+  for (final file in files) {
+    added += file.stats.added;
+    removed += file.stats.removed;
+  }
+  return DiffStats(added, removed);
 }
 
 /// «N files changed» closing out a turn; unfolds into per-file diff cards.
