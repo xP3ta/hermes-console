@@ -330,6 +330,12 @@ class HermesUpdateSession {
 
   static final Map<String, HermesUpdateSession> _sessions = {};
 
+  /// App-wide reconnect of the gateway sockets of a connection, set by the
+  /// app shell. Fired once when an update ends with updated code: the
+  /// restarted gateway strands the old sockets (often half-open over
+  /// tunnels), like Desktop's `reconnectGateway()` after a backend update.
+  static void Function(String connectionId)? reconnectGateway;
+
   final String connectionId;
   final String previousVersion;
 
@@ -497,6 +503,7 @@ class HermesUpdateSession {
     Duration legacyGrace = const Duration(seconds: 45),
     Duration gatewayConfirmWindow = hermesUpdateGatewayConfirmWindow,
     DateTime Function()? clock,
+    void Function(String connectionId)? reconnect,
   }) {
     if (!_tracking && !isFinished) {
       _tracking = true;
@@ -510,7 +517,20 @@ class HermesUpdateSession {
         gatewayConfirmWindow: gatewayConfirmWindow,
         clock: clock ?? DateTime.now,
       ).then(
-        _finish,
+        (result) {
+          // Only the first track() runs this, so the reconnect fires once.
+          if (result.outcome == HermesUpdateOutcome.confirmed ||
+              result.outcome == HermesUpdateOutcome.partial) {
+            try {
+              (reconnect ?? reconnectGateway)?.call(connectionId);
+            } catch (error) {
+              debugPrint(
+                '[hermes-update] reconnect failed (${error.runtimeType})',
+              );
+            }
+          }
+          _finish(result);
+        },
         onError: (Object e) => _finish(
           HermesUpdateResult(HermesUpdateOutcome.unverified, detail: '$e'),
         ),

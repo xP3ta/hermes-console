@@ -54,6 +54,7 @@ import 'core/services/notifications/background_listener.dart';
 import 'core/services/notifications/notification_service.dart';
 import 'core/services/performance_trace.dart';
 import 'core/bots/data/gateway_socket_meter.dart';
+import 'core/services/hermes_update_monitor.dart';
 import 'core/services/hermes_update_probes.dart';
 import 'core/services/shared_gateway_pool.dart';
 import 'core/services/new_session_launch_coordinator.dart';
@@ -1337,6 +1338,12 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
     widget.appLock.locked.addListener(_retryPendingNewSessionLaunch);
     widget.appLock.locked.addListener(_onAppLockNoticeGateChanged);
     widget.appLock.locked.addListener(_restoreColdStartTailsAfterUnlock);
+    // A finished server update restarted the gateway: re-dial its sockets
+    // (Desktop `reconnectGateway()` after a backend update).
+    HermesUpdateSession.reconnectGateway = (connectionId) {
+      widget.activeChats.requestTransportRecoveryForConnection(connectionId);
+      unawaited(SharedGatewayPool.instance.probeConnection(connectionId));
+    };
     widget.appLock.locked.addListener(_resumeHermesUpdates);
     _resumeHermesUpdates();
     widget.appLock.locked.addListener(_openCatalogLinks);

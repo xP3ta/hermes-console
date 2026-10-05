@@ -442,6 +442,83 @@ void main() {
       expect(now.difference(t0), lessThan(const Duration(minutes: 3)));
     });
 
+    test('the gateway reconnect fires exactly once when the update ends '
+        'with updated code, never on failure', () async {
+      Future<List<String>> run({
+        required Map<String, dynamic> action,
+        required bool gatewayUp,
+      }) async {
+        HermesUpdateSession.debugReset();
+        final reconnects = <String>[];
+        var now = DateTime(2026, 9, 25, 10);
+        final session = HermesUpdateSession.reserve(
+          'a',
+          previousVersion: '0.21.4',
+          now: requestedAt,
+        )!..actionId = ownId;
+        await session.track(
+          HermesUpdateProbes(
+            actionStatus: () async => action,
+            serverStatus: () async {
+              now = now.add(const Duration(seconds: 30));
+              return {'gateway_running': gatewayUp, 'version': '0.21.5'};
+            },
+            updateStillAvailable: () async => null,
+          ),
+          pollInterval: Duration.zero,
+          clock: () => now,
+          reconnect: reconnects.add,
+        );
+        // Late callers (screen reopened) do not fire it again.
+        await session.track(
+          HermesUpdateProbes(
+            actionStatus: () async => action,
+            serverStatus: () async => null,
+            updateStillAvailable: () async => null,
+          ),
+          reconnect: reconnects.add,
+        );
+        return reconnects;
+      }
+
+      final success = {'running': false, 'receipt': ourReceipt('success')};
+      expect(await run(action: success, gatewayUp: true), ['a']);
+      expect(await run(action: success, gatewayUp: false), ['a']);
+      expect(
+        await run(
+          action: {'running': false, 'receipt': ourReceipt('failed')},
+          gatewayUp: true,
+        ),
+        isEmpty,
+      );
+    });
+
+    test(
+      'without an explicit callback the app-wide reconnect hook is used',
+      () async {
+        final reconnects = <String>[];
+        HermesUpdateSession.reconnectGateway = reconnects.add;
+        addTearDown(() => HermesUpdateSession.reconnectGateway = null);
+        final session = HermesUpdateSession.reserve(
+          'a',
+          previousVersion: '0.21.4',
+          now: requestedAt,
+        )!..actionId = ownId;
+        await session.track(
+          HermesUpdateProbes(
+            actionStatus: () async => {
+              'running': false,
+              'receipt': ourReceipt('success'),
+            },
+            serverStatus: () async => {'gateway_running': true},
+            updateStillAvailable: () async => null,
+          ),
+          pollInterval: Duration.zero,
+        );
+        expect(reconnects, ['a']);
+      },
+    );
+
     test('el action_id fijado tras arrancar el seguimiento se usa', () async {
       final session = HermesUpdateSession.reserve(
         'a',
@@ -825,6 +902,16 @@ void main() {
   });
 
   group('cableado (fuente)', () {
+    test('the reconnect hook drives the recovery path of that connection', () {
+      final main = File('lib/main.dart').readAsStringSync();
+      final hook = main.substring(
+        main.indexOf('HermesUpdateSession.reconnectGateway = '),
+      );
+      final body = hook.substring(0, hook.indexOf('};'));
+      expect(body, contains('requestTransportRecoveryForConnection('));
+      expect(body, contains('SharedGatewayPool.instance.probeConnection('));
+    });
+
     test('persisted updates resume on cold start, foreground and unlock, '
         'never while App Lock is closed', () {
       final main = File('lib/main.dart').readAsStringSync();
