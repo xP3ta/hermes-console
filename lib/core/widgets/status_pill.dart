@@ -71,18 +71,27 @@ class _StatusPillState extends State<StatusPill>
       begin: 0.35,
       end: 1.0,
     ).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut));
-    if (widget.status == InstanceStatus.checking) {
-      _pulse.repeat(reverse: true);
-    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncPulse();
   }
 
   @override
   void didUpdateWidget(StatusPill old) {
     super.didUpdateWidget(old);
-    if (widget.status == InstanceStatus.checking) {
+    _syncPulse();
+  }
+
+  void _syncPulse() {
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (widget.status == InstanceStatus.checking && !reduceMotion) {
       if (!_pulse.isAnimating) _pulse.repeat(reverse: true);
     } else {
       if (_pulse.isAnimating) _pulse.stop();
+      if (reduceMotion) _pulse.value = 1;
     }
   }
 

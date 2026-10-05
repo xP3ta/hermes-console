@@ -1786,10 +1786,21 @@ class _GeneratedAudioPlayerCardState extends State<GeneratedAudioPlayerCard> {
             width: 300,
             child: Row(
               children: [
-                IconButton(
-                  onPressed: _toggle,
-                  icon: Icon(
-                    _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                Semantics(
+                  label: _playing
+                      ? Strings.of(context).a11yPauseAudio
+                      : Strings.of(context).a11yPlayAudio,
+                  button: true,
+                  onTap: _toggle,
+                  excludeSemantics: true,
+                  child: IconButton(
+                    onPressed: _toggle,
+                    tooltip: _playing
+                        ? Strings.of(context).a11yPauseAudio
+                        : Strings.of(context).a11yPlayAudio,
+                    icon: Icon(
+                      _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                    ),
                   ),
                 ),
                 Expanded(

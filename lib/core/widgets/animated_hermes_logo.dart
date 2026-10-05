@@ -51,9 +51,36 @@ class _AnimatedHermesLogoState extends State<AnimatedHermesLogo>
       vsync: this,
       duration: const Duration(seconds: 9),
     );
-    if (widget.animate) {
-      _breath.repeat(reverse: true);
-      if (widget.orbit) _orbit.repeat();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncMotion();
+  }
+
+  @override
+  void didUpdateWidget(AnimatedHermesLogo oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncMotion();
+  }
+
+  void _syncMotion() {
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (!widget.animate || reduceMotion) {
+      _breath
+        ..stop()
+        ..value = 0.5;
+      _orbit
+        ..stop()
+        ..value = 0;
+      return;
+    }
+    if (!_breath.isAnimating) _breath.repeat(reverse: true);
+    if (widget.orbit) {
+      if (!_orbit.isAnimating) _orbit.repeat();
+    } else if (_orbit.isAnimating) {
+      _orbit.stop();
     }
   }
 

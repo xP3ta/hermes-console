@@ -929,13 +929,20 @@ class _InstalledTab extends StatelessWidget {
                 color: colors.textSecondary,
               ),
               suffixIcon: searchController.text.isNotEmpty
-                  ? IconButton(
-                      icon: Icon(
-                        Icons.clear,
-                        size: 16,
-                        color: colors.textSecondary,
+                  ? Semantics(
+                      label: Strings.of(context).slClearSearch,
+                      button: true,
+                      onTap: searchController.clear,
+                      excludeSemantics: true,
+                      child: IconButton(
+                        tooltip: Strings.of(context).slClearSearch,
+                        icon: Icon(
+                          Icons.clear,
+                          size: 16,
+                          color: colors.textSecondary,
+                        ),
+                        onPressed: searchController.clear,
                       ),
-                      onPressed: () => searchController.clear(),
                     )
                   : null,
               isDense: true,

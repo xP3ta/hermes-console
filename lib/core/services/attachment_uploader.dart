@@ -143,6 +143,9 @@ class AttachmentUploader {
   // misma instancia. Evita dos round-trips redundantes en cada envío posterior.
   static final Map<String, String> _uploadDirs = <String, String>{};
 
+  @visibleForTesting
+  static void clearUploadDirectoryCacheForTesting() => _uploadDirs.clear();
+
   /// Límite conservador para no llenar el disco del agente ni reventar el
   /// timeout HTTP con base64 enorme.
   static const int maxBytes = 8 * 1024 * 1024;
@@ -762,7 +765,7 @@ class AttachmentUploader {
       // La API exige ruta ABSOLUTA (400 "Path must be absolute"). Subimos bajo
       // hermes_home (lo informa /api/status, y el agente lo tiene en su fs), en
       // una subcarpeta dedicada que el agente puede leer con sus herramientas.
-      final dir = await _uploadDir(dash);
+      final dir = await resolveUploadDirectory(dash);
 
       final ts = DateTime.now().millisecondsSinceEpoch;
       final absPath = '$dir/${ts}_$safeName';
@@ -780,7 +783,9 @@ class AttachmentUploader {
     }
   }
 
-  static Future<String> _uploadDir(DashboardClient dash) async {
+  /// Resolves the existing managed upload folder shared by attachments and
+  /// profile imports. The folder is created best effort and cached per server.
+  static Future<String> resolveUploadDirectory(DashboardClient dash) async {
     final cached = _uploadDirs[dash.baseUrl];
     if (cached != null) return cached;
     final base = await _agentBaseDir(dash);

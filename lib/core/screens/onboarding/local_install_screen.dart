@@ -2323,6 +2323,9 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
                     size: 18,
                     color: colors.textSecondary,
                   ),
+                  tooltip: _apiKeyVisible
+                      ? Strings.of(context).a11yHideSecret
+                      : Strings.of(context).a11yShowSecret,
                   onPressed: () =>
                       setState(() => _apiKeyVisible = !_apiKeyVisible),
                 ),

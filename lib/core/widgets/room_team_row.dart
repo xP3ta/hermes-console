@@ -147,6 +147,7 @@ class RoomTeamRow extends StatelessWidget {
               IconButton(
                 key: ValueKey('room-team-secondary-action-$profileName'),
                 onPressed: onSecondaryAction,
+                tooltip: Strings.of(context).commonOpen,
                 icon: Icon(
                   secondaryActionIcon ?? Icons.message_outlined,
                   size: 20,
