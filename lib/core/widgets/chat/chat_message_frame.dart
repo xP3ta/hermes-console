@@ -23,6 +23,7 @@ class ChatMessageFrame extends StatelessWidget {
     this.time,
     this.selectable = true,
     this.selectionIdentity,
+    this.askable = false,
     this.padding = const EdgeInsets.only(
       left: 12,
       right: 16,
@@ -48,6 +49,10 @@ class ChatMessageFrame extends StatelessWidget {
   /// Identidad del mensaje; al cambiar se limpia la selección previa.
   final Object? selectionIdentity;
 
+  /// Ofrece "Preguntar sobre esto" en el menú de selección (ver
+  /// [ChatAskAboutScope]); solo respuestas del asistente.
+  final bool askable;
+
   final EdgeInsetsGeometry padding;
 
   /// Separación entre la cabecera y el cuerpo.
@@ -60,6 +65,7 @@ class ChatMessageFrame extends StatelessWidget {
     return ChatMessageSelectionArea(
       enabled: selectable,
       selectionIdentity: selectionIdentity,
+      askable: askable,
       child: Padding(
         padding: padding,
         child: Column(

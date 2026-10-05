@@ -165,6 +165,7 @@ import '../utils/slash_commands.dart';
 import '../utils/assistant_content.dart';
 import '../utils/assistant_operational_artifacts.dart';
 import '../utils/assistant_suggestions.dart';
+import '../utils/chat_ask_about.dart';
 import '../utils/generated_artifact_markdown_scanner.dart';
 import '../utils/streaming_normalizer.dart';
 import 'activity_screen.dart';
@@ -3841,6 +3842,24 @@ class _ChatScreenState extends State<ChatScreen>
     _refreshReferenceQuery();
     _maybeDiscardFailedTurnFromExplicitEmptyComposer();
     _scheduleDraftSave();
+  }
+
+  /// "Ask about this": quotes the selected transcript text into the composer
+  /// after any draft and focuses it. Never sends.
+  void _askAboutSelection(String selected) {
+    if (!mounted ||
+        widget.connection.readOnly ||
+        _cronRunReadOnly ||
+        _editingUserMessage) {
+      return;
+    }
+    final quote = buildAskAboutQuote(selected);
+    if (quote.isEmpty) return;
+    _textController.value = insertQuoteIntoComposer(
+      _textController.value,
+      quote,
+    );
+    _textFocusNode.requestFocus();
   }
 
   Future<bool> _useAssistantSuggestion(
@@ -13648,7 +13667,14 @@ class _ChatScreenState extends State<ChatScreen>
     return _BotChatIdentity(
       profile: botSurface ? widget.missionBotProfile : null,
       avatarCache: botSurface ? widget.missionAvatarCache : null,
-      child: scaffold,
+      child: ChatAskAboutScope(
+        label: Strings.of(context).rpl1215AskAboutThis,
+        // Stable tear-off: a fresh closure would rebuild every message.
+        onAsk: widget.connection.readOnly || _cronRunReadOnly
+            ? null
+            : _askAboutSelection,
+        child: scaffold,
+      ),
     );
   }
 
@@ -21641,6 +21667,7 @@ class _AssistantMessage extends StatelessWidget {
     return ChatMessageFrame(
       selectable: !isStreaming,
       selectionIdentity: metadata['message_id'] ?? metadata['id'] ?? metadata,
+      askable: true,
       padding: EdgeInsets.only(
         left: 12,
         right: 16,

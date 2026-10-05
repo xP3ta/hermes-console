@@ -34986,6 +34986,82 @@ void main() {
       ], reason: 'rows=$rows');
     },
   );
+
+  group('rpl1215 ask about this', () {
+    TextEditingController composer(WidgetTester tester) =>
+        tester.widget<TextField>(find.byType(TextField)).controller!;
+
+    Future<void> selectWord(WidgetTester tester, String word) async {
+      final target = find.textContaining(word, findRichText: true).first;
+      final topLeft = tester.getTopLeft(target);
+      await tester.longPressAt(topLeft + const Offset(8, 8));
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    testWidgets(
+      'rpl1215 ask about this quotes the selection into the composer',
+      (tester) async {
+        final gateway = _SubmissionGateway();
+        await pumpChat(
+          tester,
+          desktopGateway: gateway,
+          connection: _remoteConn('conn-qr-ask'),
+          messages: const [
+            {
+              'role': 'assistant',
+              'id': 'a-ask',
+              'content': 'Analizador listo.',
+            },
+            {'role': 'user', 'id': 'u-ask', 'content': 'Revisa'},
+          ],
+        );
+        await tester.enterText(find.byType(TextField), 'Mi borrador');
+        await tester.pump(const Duration(milliseconds: 250));
+
+        await selectWord(tester, 'Analizador');
+        // The existing selection menu keeps its items.
+        expect(find.text('Copiar'), findsOneWidget);
+        expect(find.text('Preguntar sobre esto'), findsOneWidget);
+
+        await tester.tap(find.text('Preguntar sobre esto'));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        final controller = composer(tester);
+        expect(controller.text, 'Mi borrador\n\n> Analizador\n\n');
+        expect(
+          controller.selection,
+          TextSelection.collapsed(offset: controller.text.length),
+        );
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).focusNode!.hasFocus,
+          isTrue,
+        );
+        expect(find.text('Preguntar sobre esto'), findsNothing);
+        await tester.pump(const Duration(seconds: 2));
+        expect(gateway.submissions, isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('rpl1215 ask about this is not offered on the user message', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-qr-ask-user'),
+        messages: const [
+          {'role': 'assistant', 'id': 'a-ask2', 'content': 'Hecho.'},
+          {'role': 'user', 'id': 'u-ask2', 'content': 'Peticionlarga'},
+        ],
+      );
+      await selectWord(tester, 'Peticionlarga');
+      expect(find.text('Copiar'), findsOneWidget);
+      expect(find.text('Preguntar sobre esto'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  });
 }
 
 class _TodoResumeGateway extends _StableRefreshGateway {
