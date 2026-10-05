@@ -10061,5 +10061,8 @@
   "termUnreachable": "No se pudo comprobar el terminal de este servidor",
   "termRetry": "Reintentar",
   "backupUnreachable": "No se pudo comprobar si este servidor admite copias de seguridad",
-  "backupRetry": "Reintentar"
+  "backupRetry": "Reintentar",
+  "apx1215ScopeOnceHint": "Solo esta llamada.",
+  "apx1215ScopeSessionHint": "Este tipo de comando en este chat, hasta que el chat termine o el servidor se reinicie.",
+  "apx1215ScopeAlwaysHint": "Este tipo de comando en todos los chats. Se guarda en el servidor (command_allowlist de config.yaml) y en Ajustes › Permisos / Aprobaciones; para retirarlo, quítalo de ambos sitios."
 }
