@@ -21,6 +21,7 @@ import '../services/connection_manager.dart';
 import '../services/custom_endpoints_api.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_notice.dart';
+import '../widgets/provider_logo.dart';
 import '../widgets/hermes_premium_ui.dart'
     show HermesListRow, HermesListSection;
 import 'external_provider_screen.dart';
@@ -233,7 +234,12 @@ class CustomEndpointsSectionState extends State<CustomEndpointsSection> {
         !endpoint.isCurrent || endpoint.source != 'direct-config';
     return HermesListRow(
       key: ValueKey('saved-endpoint-${endpoint.id}'),
-      icon: Icons.dns_outlined,
+      leading: ProviderLogo(
+        provider: endpoint.id,
+        providerName: endpoint.name,
+        size: 20,
+        selected: endpoint.isCurrent,
+      ),
       title: endpoint.name,
       selected: endpoint.isCurrent,
       subtitle: [
