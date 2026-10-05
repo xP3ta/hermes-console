@@ -35236,6 +35236,33 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('rpl1215 hidden while messages are queued', (tester) async {
+      final gateway = _QuickReplyGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-qr-queued'),
+        messages: finishedTurn,
+        chatState: ChatPipelineState.streaming,
+      );
+      expect(chat.enqueue('Siguiente turno en cola'), isTrue);
+      // The turn is over but the queue still owns what comes next.
+      chat.state = ChatPipelineState.completed;
+      await rebuildThroughComposer(tester);
+      expect(chat.isStreaming, isFalse);
+      expect(chat.queuedMessages, ['Siguiente turno en cola']);
+      expect(chip(0), findsNothing);
+      expect(smart, findsNothing);
+
+      // Once the queue is empty the chips come back.
+      chat.clearQueueForTesting();
+      await rebuildThroughComposer(tester);
+      expect(chat.queuedMessages, isEmpty);
+      expect(chipText(tester, 0), 'Sí');
+      expect(gateway.calls, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('rpl1215 a read-only connection shows no chips', (
       tester,
     ) async {
