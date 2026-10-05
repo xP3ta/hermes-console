@@ -282,10 +282,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
   }
 
-  /// Counts rebuilds of elements that already existed under the transcript
-  /// list when called (fresh mounts from virtualization are not counted).
+  /// Counts rebuilds of row elements that already existed under the
+  /// transcript sliver when called (fresh mounts from virtualization and the
+  /// scroll view's own chrome are not counted).
   int Function() countRowRebuilds(WidgetTester tester) {
-    final list = tester.element(transcript());
+    final list = tester.element(
+      find.descendant(of: transcript(), matching: find.byType(SliverList)),
+    );
     final existing = <Element>{};
     void collect(Element element) {
       existing.add(element);
@@ -385,6 +388,37 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.byKey(const ValueKey('chat-slash-palette')), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tearDownChat(tester, gateway);
+  });
+
+  testWidgets('kbf1215 the scroll-to-bottom arrow rebuilds no row', (
+    tester,
+  ) async {
+    usePhoneView(tester);
+    final gateway = _Gateway();
+    await pumpChat(tester, gateway);
+    await settle(tester);
+    final controller = tester.widget<ListView>(transcript()).controller!;
+    double arrowPadding() =>
+        (tester.widget<ListView>(transcript()).padding! as EdgeInsets).bottom;
+    final before = arrowPadding();
+
+    // Scroll a little first so the jump below only toggles the arrow.
+    controller.jumpTo(40);
+    await settle(tester);
+    final rows = countRowRebuilds(tester);
+    controller.jumpTo(160);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(arrowPadding(), before + 48, reason: 'the arrow is showing');
+    expect(rows(), 0, reason: 'showing the arrow rebuilt rows');
+
+    controller.jumpTo(40);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(arrowPadding(), before);
+    expect(rows(), 0, reason: 'hiding the arrow rebuilt rows');
     expect(tester.takeException(), isNull);
     await tearDownChat(tester, gateway);
   });
