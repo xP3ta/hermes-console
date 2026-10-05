@@ -88,6 +88,7 @@ import 'package:hermes_android/core/navigation/chat_route.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
+import 'package:hermes_android/core/services/quick_reply_prefs.dart';
 import 'package:hermes_android/core/services/subagent_transcript_projection.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
@@ -34986,6 +34987,258 @@ void main() {
       ], reason: 'rows=$rows');
     },
   );
+  group('rpl1215 quick replies', () {
+    setUp(() => QuickReplyPrefs.debugUse(QuickReplyPrefs.forTesting(null)));
+    tearDown(() => QuickReplyPrefs.debugUse(null));
+
+    const finishedTurn = [
+      {
+        'role': 'assistant',
+        'id': 'a-qr-1',
+        'content': 'He revisado el parser.\n\n¿Quieres que lo aplique?',
+      },
+      {'role': 'user', 'id': 'u-qr-1', 'content': 'Arregla el parser'},
+    ];
+    Finder chip(int index) =>
+        find.byKey(ValueKey('quick-reply-$index'), skipOffstage: false);
+    final smart = find.byKey(const ValueKey('quick-reply-smart'));
+    String chipText(WidgetTester tester, int index) => tester
+        .widget<Text>(
+          find.descendant(of: chip(index), matching: find.byType(Text)),
+        )
+        .data!;
+    TextEditingController composer(WidgetTester tester) =>
+        tester.widget<TextField>(find.byType(TextField)).controller!;
+
+    testWidgets('rpl1215 chips follow a completed turn, no automatic oneshot', (
+      tester,
+    ) async {
+      final gateway = _QuickReplyGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-qr-turn'),
+      );
+      await tester.enterText(find.byType(TextField), 'Arregla el parser');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(gateway.submissions, ['Arregla el parser']);
+      // While the turn runs there is nothing to answer yet.
+      expect(chip(0), findsNothing);
+      expect(smart, findsNothing);
+
+      gateway.emitComplete('Listo. ¿Quieres que lo aplique?');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(chat.isStreaming, isFalse);
+      expect(chipText(tester, 0), 'Sí');
+      expect(chipText(tester, 1), 'No');
+      expect(chipText(tester, 2), 'Explícamelo más');
+      expect(smart, findsOneWidget);
+
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+      expect(gateway.calls, isEmpty, reason: 'llm.oneshot only on tap');
+      expect(gateway.submissions, hasLength(1));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('rpl1215 tapping a chip fills the composer and sends nothing', (
+      tester,
+    ) async {
+      final gateway = _QuickReplyGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-qr-fill'),
+        messages: finishedTurn,
+      );
+      expect(chipText(tester, 1), 'No');
+
+      await tester.tap(chip(1));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(composer(tester).text, 'No');
+      expect(gateway.submissions, isEmpty);
+      // The rail steps aside while the composer holds text.
+      expect(chip(0), findsNothing);
+      expect(gateway.calls, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('rpl1215 no chips while streaming or with a pending approval', (
+      tester,
+    ) async {
+      final gateway = _QuickReplyGateway();
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-qr-busy'),
+        messages: finishedTurn,
+        chatState: ChatPipelineState.streaming,
+      );
+      expect(chip(0), findsNothing);
+      expect(smart, findsNothing);
+
+      Future<void> rebuildThroughComposer() async {
+        await tester.enterText(find.byType(TextField), 'x');
+        await tester.pump();
+        await tester.enterText(find.byType(TextField), '');
+        await tester.pump(const Duration(milliseconds: 250));
+      }
+
+      chat.state = ChatPipelineState.completed;
+      chat.pendingApproval = const {'request_id': 'approval-qr'};
+      await rebuildThroughComposer();
+      expect(chip(0), findsNothing);
+      expect(smart, findsNothing);
+
+      chat.pendingApproval = null;
+      await rebuildThroughComposer();
+      expect(chipText(tester, 0), 'Sí');
+      expect(gateway.calls, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('rpl1215 ✨ asks once on tap with only the last two messages', (
+      tester,
+    ) async {
+      final gateway = _QuickReplyGateway();
+      final probe = ChatPerformanceProbe();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-qr-smart'),
+        messages: [
+          ...finishedTurn,
+          {'role': 'assistant', 'id': 'a-qr-0', 'content': 'Respuesta vieja'},
+          {'role': 'user', 'id': 'u-qr-0', 'content': 'Pregunta vieja'},
+        ],
+        performanceProbe: probe,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(gateway.calls, isEmpty);
+      final screenBuilds = probe.screenBuilds;
+      final assistantBuilds = probe.terminalAssistantBuilds;
+
+      await tester.tap(smart);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(gateway.calls, hasLength(1));
+      final call = gateway.calls.single;
+      expect(call.lastUser, 'Arregla el parser');
+      expect(call.lastAssistant, contains('¿Quieres que lo aplique?'));
+      expect(call.lastAssistant, isNot(contains('Respuesta vieja')));
+      expect(chipText(tester, 0), 'Sí, aplícalo');
+      expect(chipText(tester, 1), 'Enséñame el diff');
+      // The ideas land in the rail only: no screen or transcript rebuild.
+      expect(probe.screenBuilds, screenBuilds);
+      expect(probe.terminalAssistantBuilds, assistantBuilds);
+
+      // Cached for this turn: tapping again never asks again.
+      await tester.tap(smart);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(gateway.calls, hasLength(1));
+      await tester.tap(chip(0));
+      await tester.pump();
+      expect(composer(tester).text, 'Sí, aplícalo');
+      await tester.enterText(find.byType(TextField), '');
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(chipText(tester, 0), 'Sí, aplícalo');
+      expect(gateway.calls, hasLength(1));
+      expect(gateway.submissions, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('rpl1215 ✨ hidden without the capability or read-only', (
+      tester,
+    ) async {
+      final gateway = _QuickReplyGateway()..available = false;
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-qr-nocap'),
+        messages: finishedTurn,
+      );
+      expect(chipText(tester, 0), 'Sí');
+      expect(smart, findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('rpl1215 a read-only connection shows no chips', (
+      tester,
+    ) async {
+      final gateway = _QuickReplyGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-qr-ro').copyWith(readOnly: true),
+        messages: finishedTurn,
+      );
+      expect(chip(0), findsNothing);
+      expect(smart, findsNothing);
+      expect(gateway.calls, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('rpl1215 the setting hides the chips without a rebuild', (
+      tester,
+    ) async {
+      final gateway = _QuickReplyGateway();
+      final probe = ChatPerformanceProbe();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-qr-setting'),
+        messages: finishedTurn,
+        performanceProbe: probe,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(chipText(tester, 0), 'Sí');
+      final assistantBuilds = probe.terminalAssistantBuilds;
+
+      await QuickReplyPrefs.shared.setEnabled(false);
+      await tester.pump();
+
+      expect(chip(0), findsNothing);
+      expect(smart, findsNothing);
+      expect(probe.terminalAssistantBuilds, assistantBuilds);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('rpl1215 scrolling away hides the chips without moving text', (
+      tester,
+    ) async {
+      final history = scrollableChatHistory('carril rápido');
+      await pumpChat(
+        tester,
+        desktopGateway: _QuickReplyGateway(),
+        connection: _remoteConn('conn-rpl-scroll'),
+        messages: history,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(chip(0), findsOneWidget);
+      final controller = tester.widget<ListView>(chatListFinder()).controller!;
+      final marker = find.textContaining('carril rápido histórico 1.').first;
+      final before = tester.getTopLeft(marker).dy;
+
+      // Far enough for the scroll-to-bottom arrow, which hides the rail.
+      controller.jumpTo(120);
+      await tester.pump();
+      expect(chip(0), findsNothing);
+      expect(tester.getTopLeft(marker).dy - before, closeTo(120, 0.5));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.getTopLeft(marker).dy - before, closeTo(120, 0.5));
+
+      controller.jumpTo(0);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(chip(0), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
 
   group('rpl1215 ask about this', () {
     TextEditingController composer(WidgetTester tester) =>
@@ -35115,5 +35368,29 @@ class _Dup9340HistoryGateway extends _UiRewindGateway
       pagination: null,
       paginationProvided: false,
     );
+  }
+}
+
+class _QuickReplyGateway extends _SubmissionGateway
+    implements HermesQuickReplySuggestionGateway {
+  bool available = true;
+  List<String> ideas = const ['Sí, aplícalo', 'Enséñame el diff'];
+  final calls = <({String lastAssistant, String lastUser, String profile})>[];
+
+  @override
+  bool get quickReplySuggestionsAvailable => available;
+
+  @override
+  Future<List<String>> suggestQuickReplies({
+    required String lastAssistant,
+    required String lastUser,
+    String profile = '',
+  }) async {
+    calls.add((
+      lastAssistant: lastAssistant,
+      lastUser: lastUser,
+      profile: profile,
+    ));
+    return ideas;
   }
 }

@@ -21,6 +21,7 @@ import 'terminal_pane_screen.dart';
 import '../widgets/chat/chat_message_frame.dart';
 import '../widgets/chat/console_composer.dart';
 import '../widgets/chat/chat_message_selection_area.dart';
+import '../widgets/chat/chat_quick_reply_bar.dart';
 // Chat screen with real-time streaming via REST API.
 // Uses REST endpoints: POST /api/sessions/{id}/chat and
 // GET /api/sessions/{id}/messages.
@@ -166,6 +167,7 @@ import '../utils/assistant_content.dart';
 import '../utils/assistant_operational_artifacts.dart';
 import '../utils/assistant_suggestions.dart';
 import '../utils/chat_ask_about.dart';
+import '../utils/chat_quick_replies.dart';
 import '../utils/generated_artifact_markdown_scanner.dart';
 import '../utils/streaming_normalizer.dart';
 import 'activity_screen.dart';
@@ -1838,6 +1840,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (_scrollToBottomVisibility.value == value) return;
     _recordTranscriptOverlayExtentChange(value ? 48 : -48);
     _scrollToBottomVisibility.value = value;
+    if (!value) _applyQuickReplyExtent();
     if (value) {
       _beginAwayFromBottom();
     } else {
@@ -2182,6 +2185,29 @@ class _ChatScreenState extends State<ChatScreen>
   // Alto medido del hueco de las pastillas de actividad. Notifier aparte por
   // la misma razón que la flecha: cambiar no reconstruye la pantalla.
   final ValueNotifier<double> _activityPillExtent = ValueNotifier(0);
+
+  /// Keyboard up, for the quick reply rail (a notifier: no screen rebuild).
+  final ValueNotifier<bool> _keyboardOpen = ValueNotifier(false);
+
+  /// Height the quick reply rail pads the transcript with. While the reader
+  /// is away from the latest message it stays frozen (the rail hides) and the
+  /// last measure is applied on return, so the padding never changes under
+  /// someone reading history.
+  final ValueNotifier<double> _quickReplyExtent = ValueNotifier(0);
+  double _quickReplyMeasured = 0;
+
+  void _setQuickReplyExtent(double value) {
+    _quickReplyMeasured = value;
+    if (_scrollToBottomVisibility.value) return;
+    _applyQuickReplyExtent();
+  }
+
+  void _applyQuickReplyExtent() {
+    final value = _quickReplyMeasured;
+    if (_disposed || _quickReplyExtent.value == value) return;
+    _recordTranscriptOverlayExtentChange(value - _quickReplyExtent.value);
+    _quickReplyExtent.value = value;
+  }
 
   /// Compactación (automática o manual) de la sesión abierta: mide el tiempo,
   /// aprende la duración típica y conserva el resultado unos segundos. La
@@ -3862,6 +3888,108 @@ class _ChatScreenState extends State<ChatScreen>
     _textFocusNode.requestFocus();
   }
 
+  /// The finished turn quick replies answer, or null while anything else
+  /// owns the conversation (streaming, a pending card, a queue, read-only).
+  ({Object turnKey, String answer, String lastUser})? _quickReplySource() {
+    if (!_chatBound ||
+        _isBotChatSurface ||
+        widget.connection.readOnly ||
+        _cronRunReadOnly ||
+        _chat.conflictReadOnly ||
+        _chat.isStreaming ||
+        _sending ||
+        _compressingSession ||
+        _attachmentSubmitting ||
+        _interactiveMessageRefreshPending ||
+        _chat.pendingApproval != null ||
+        _chat.pendingInteractivePrompt != null ||
+        _chat.queuedMessages.isNotEmpty ||
+        _editingUserMessage ||
+        _isRecording ||
+        _transcribing) {
+      return null;
+    }
+    Map<String, dynamic>? assistant;
+    var lastUser = '';
+    for (final message in _messages) {
+      final role = message['role'];
+      if (assistant == null) {
+        if (role == 'assistant') {
+          assistant = message;
+          continue;
+        }
+        if (role == 'user' || role == 'assistant_error') return null;
+        continue;
+      }
+      if (role == 'user') {
+        lastUser = _parseUserContent(
+          (message['content'] ?? '').toString(),
+        ).text;
+        break;
+      }
+    }
+    if (assistant == null ||
+        assistant['_cancelled'] == true ||
+        assistant['_stopped'] == true ||
+        assistant['_pipeline'] == true) {
+      return null;
+    }
+    final content = (assistant['content'] ?? '').toString();
+    final projection = projectAssistantSuggestions(
+      GeneratedMediaService.stripDirectives(splitReasoning(content).answer),
+    );
+    // The answer already ends with its own tappable offers.
+    if (projection.hasSuggestions) return null;
+    final answer = projection.body.trim();
+    if (answer.isEmpty) return null;
+    final id = assistant['id'] ?? assistant['message_id'] ?? '';
+    return (
+      turnKey: '$id:${content.length}:${content.hashCode}',
+      answer: answer,
+      lastUser: lastUser,
+    );
+  }
+
+  Widget _buildQuickReplyBar({bool suppressed = false}) {
+    final strings = Strings.of(context);
+    final source = suppressed ? null : _quickReplySource();
+    return ChatQuickReplyBar(
+      key: const ValueKey('chat-quick-replies'),
+      turnKey: source?.turnKey,
+      replies: source == null
+          ? const []
+          : heuristicQuickReplies(source.answer, strings),
+      composer: _textController,
+      awayFromLatest: _scrollToBottomVisibility,
+      keyboardOpen: _keyboardOpen,
+      onFill: _fillComposerFromQuickReply,
+      smartLabel: strings.rpl1215SmartSuggest,
+      loadSmart: source != null && _chat.canSuggestQuickReplies
+          ? _loadSmartQuickReplies
+          : null,
+    );
+  }
+
+  /// Only ever runs from a tap on the ✨ chip.
+  Future<List<String>> _loadSmartQuickReplies() async {
+    final source = _quickReplySource();
+    if (source == null) return const [];
+    return _chat.suggestQuickReplies(
+      lastAssistant: source.answer,
+      lastUser: source.lastUser,
+    );
+  }
+
+  /// A quick reply fills an empty composer for editing; it is never sent.
+  void _fillComposerFromQuickReply(String reply) {
+    if (!mounted || _textController.text.isNotEmpty) return;
+    _textController.value = TextEditingValue(
+      text: reply,
+      selection: TextSelection.collapsed(offset: reply.length),
+    );
+    _textFocusNode.requestFocus();
+  }
+
   Future<bool> _useAssistantSuggestion(
     Map<String, dynamic> sourceMessage,
     String suggestion,
@@ -5381,6 +5509,7 @@ class _ChatScreenState extends State<ChatScreen>
   /// reconstruía la pantalla completa (transcript incluido) solo para
   /// reprogramar este temporizador.
   void _onKeyboardBottomInset(double bottomInset) {
+    if (!_disposed) _keyboardOpen.value = bottomInset > 0;
     if (_disposed || !mounted || bottomInset <= 0 || _findOpen) return;
     // Si ya está al fondo, el resize del viewport mantiene visible el último
     // mensaje. No programes un scroll/setState durante la animación del IME.
@@ -7479,6 +7608,8 @@ class _ChatScreenState extends State<ChatScreen>
     _findStatus.dispose();
     _findActiveMessage.dispose();
     _activityPillExtent.dispose();
+    _keyboardOpen.dispose();
+    _quickReplyExtent.dispose();
     _compaction.dispose();
     _sessionContextMetrics.dispose();
     super.dispose();
@@ -13282,6 +13413,7 @@ class _ChatScreenState extends State<ChatScreen>
                                     contentChanges: _liveAssistantFrame,
                                     transcriptOverlayExtent: () =>
                                         _activityPillExtent.value +
+                                        _quickReplyExtent.value +
                                         (_scrollToBottomVisibility.value
                                             ? 48
                                             : 0),
@@ -13480,6 +13612,18 @@ class _ChatScreenState extends State<ChatScreen>
                                               ),
                                             ),
                                           ],
+                                        ),
+                                      ),
+                                      // Quick replies float under the pill,
+                                      // never in the bottom bars: their
+                                      // measured height pads the transcript
+                                      // (frozen while the reader is away), so
+                                      // they never move what is being read.
+                                      _BottomGapWhenVisible(
+                                        gap: 4,
+                                        onExtent: _setQuickReplyExtent,
+                                        child: _buildQuickReplyBar(
+                                          suppressed: showVoiceSurface,
                                         ),
                                       ),
                                     ],
@@ -16625,11 +16769,13 @@ class _ChatScreenState extends State<ChatScreen>
     final transcript = ListenableBuilder(
       listenable: Listenable.merge([
         _activityPillExtent,
+        _quickReplyExtent,
         _scrollToBottomVisibility,
       ]),
       builder: (context, _) {
         final overlayExtent =
             _activityPillExtent.value +
+            _quickReplyExtent.value +
             (_scrollToBottomVisibility.value ? 48 : 0);
         return ChatScrollInteractionGuard(
           onPointerDown: _pauseStreamingFollow,

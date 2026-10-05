@@ -7,6 +7,42 @@ import '../theme/app_theme.dart';
 
 typedef AssistantSuggestionCallback = Future<bool> Function(String suggestion);
 
+/// Compact stadium chip shared by every suggestion rail (assistant offers
+/// and the composer's quick replies), so they read as one component. A rail
+/// that floats over the transcript passes an opaque [backgroundColor].
+ButtonStyle hermesSuggestionButtonStyle(
+  HermesThemeColors colors, {
+  required double maxWidth,
+  bool highlighted = false,
+  Color backgroundColor = Colors.transparent,
+}) => OutlinedButton.styleFrom(
+  foregroundColor: colors.textPrimary,
+  disabledForegroundColor: colors.textPrimary,
+  backgroundColor: backgroundColor,
+  disabledBackgroundColor: backgroundColor,
+  overlayColor: colors.accent.withValues(alpha: 0.08),
+  side: BorderSide(
+    width: 0.8,
+    color: highlighted
+        ? colors.accent.withValues(alpha: 0.52)
+        : colors.divider.withValues(alpha: 0.62),
+  ),
+  minimumSize: const Size(0, 48),
+  maximumSize: Size(maxWidth, double.infinity),
+  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+  shape: const StadiumBorder(),
+  textStyle: const TextStyle(
+    fontSize: 13,
+    height: 1.2,
+    fontWeight: FontWeight.w500,
+  ),
+);
+
+/// Width cap of one suggestion chip for the current screen.
+double hermesSuggestionMaxWidth(BuildContext context) =>
+    (MediaQuery.sizeOf(context).width * 0.78).clamp(160.0, 288.0).toDouble();
+
 /// Acciones sugeridas sin cabecera ni tarjeta contenedora.
 ///
 /// Replica el patrón de AI Elements en una adaptación táctil para Android: un
@@ -98,9 +134,7 @@ class _HermesSuggestionsState extends State<HermesSuggestions> {
     final colors = Theme.of(context).hermes;
     final suggestions = widget.suggestions.take(3).toList(growable: false);
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    final itemMaxWidth = (MediaQuery.sizeOf(context).width * 0.78)
-        .clamp(160.0, 288.0)
-        .toDouble();
+    final itemMaxWidth = hermesSuggestionMaxWidth(context);
     return Padding(
       padding: const EdgeInsets.only(top: 8, bottom: 2),
       child: ScrollConfiguration(
@@ -135,34 +169,13 @@ class _HermesSuggestionsState extends State<HermesSuggestions> {
                       onPressed: _canSubmit
                           ? () => unawaited(_submit(index))
                           : null,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: colors.textPrimary,
-                        disabledForegroundColor: colors.textPrimary,
-                        backgroundColor: Colors.transparent,
-                        disabledBackgroundColor: Colors.transparent,
-                        overlayColor: colors.accent.withValues(alpha: 0.08),
-                        side: BorderSide(
-                          width: 0.8,
-                          color:
-                              _submittingIndex == index ||
-                                  _submittedIndex == index ||
-                                  _rejectedIndex == index
-                              ? colors.accent.withValues(alpha: 0.52)
-                              : colors.divider.withValues(alpha: 0.62),
-                        ),
-                        minimumSize: const Size(0, 48),
-                        maximumSize: Size(itemMaxWidth, double.infinity),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 8,
-                        ),
-                        shape: const StadiumBorder(),
-                        textStyle: const TextStyle(
-                          fontSize: 13,
-                          height: 1.2,
-                          fontWeight: FontWeight.w500,
-                        ),
+                      style: hermesSuggestionButtonStyle(
+                        colors,
+                        maxWidth: itemMaxWidth,
+                        highlighted:
+                            _submittingIndex == index ||
+                            _submittedIndex == index ||
+                            _rejectedIndex == index,
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
