@@ -9,11 +9,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
+import 'package:hermes_android/core/widgets/chat/chat_message_frame.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/quick_reply_prefs.dart';
@@ -26,7 +28,25 @@ import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/main.dart';
 
 class _Gateway
-    implements HermesDesktopGateway, HermesDesktopSessionLifecycleGateway {
+    implements
+        HermesDesktopGateway,
+        HermesDesktopSessionLifecycleGateway,
+        HermesQuickReplySuggestionGateway {
+  int smartCalls = 0;
+
+  @override
+  bool get quickReplySuggestionsAvailable => true;
+
+  @override
+  Future<List<String>> suggestQuickReplies({
+    required String lastAssistant,
+    required String lastUser,
+    String profile = '',
+  }) async {
+    smartCalls++;
+    return const ['Sí, aplícalo'];
+  }
+
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
 
@@ -46,7 +66,7 @@ class _Gateway
     List<Map<String, dynamic>> seedMessages = const [],
     String model = '',
   }) async => DesktopSessionBinding(
-    runtimeSessionId: 'runtime-kb-settle',
+    runtimeSessionId: 'runtime-inline-qr',
     storedSessionId: storedSessionId,
     created: false,
   );
@@ -58,7 +78,7 @@ class _Gateway
     bool omitMessages = false,
     bool deferHistory = false,
   }) async => DesktopSessionSnapshot(
-    runtimeSessionId: 'runtime-kb-settle',
+    runtimeSessionId: 'runtime-inline-qr',
     storedSessionId: storedSessionId,
     created: false,
   );
@@ -69,8 +89,8 @@ class _Gateway
     List<Map<String, dynamic>> seedMessages = const [],
     String model = '',
   }) async => const DesktopSessionSnapshot(
-    runtimeSessionId: 'runtime-kb-settle',
-    storedSessionId: 'sess-kb-settle',
+    runtimeSessionId: 'runtime-inline-qr',
+    storedSessionId: 'sess-inline-qr',
     created: true,
   );
 
@@ -98,16 +118,16 @@ class _Gateway
 }
 
 SavedConnection _connection() => SavedConnection(
-  id: 'conn-kb-settle',
-  label: 'Keyboard settle',
+  id: 'conn-inline-qr',
+  label: 'Inline quick replies',
   host: 'example.test',
   port: 8642,
   apiKey: 'test-key',
 );
 
 Session _session() => Session(
-  id: 'sess-kb-settle',
-  title: 'Respuestas rápidas y teclado',
+  id: 'sess-inline-qr',
+  title: 'Respuestas rápidas en línea',
   model: 'hermes-agent',
   source: 'mobile',
   messageCount: 0,
@@ -122,16 +142,21 @@ ApiClient _safeApi() => ApiClient(
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 
-List<Map<String, dynamic>> _history() => List.generate(12, (index) {
-  return {
-    'id': 'kb-settle-message-$index',
-    'role': index.isEven ? 'assistant' : 'user',
-    'content':
-        'teclado histórico $index. '
-        '${List.filled(18, 'Contenido estable.').join(' ')}'
-        '${index == 0 ? '\n\n¿Quieres que lo aplique?' : ''}',
-  };
-});
+const _question = '\n\n¿Quieres que lo aplique?';
+
+/// Newest first. [questionAt] lists the assistant rows that close with a
+/// question.
+List<Map<String, dynamic>> _history({Set<int> questionAt = const {0}}) =>
+    List.generate(12, (index) {
+      return {
+        'id': 'inline-qr-message-$index',
+        'role': index.isEven ? 'assistant' : 'user',
+        'content':
+            'respuesta histórica $index. '
+            '${List.filled(18, 'Contenido estable.').join(' ')}'
+            '${questionAt.contains(index) ? _question : ''}',
+      };
+    });
 
 /// Insets Android publishes frame by frame while the IME opens or closes.
 final _openFrames = [for (var i = 1; i <= 20; i++) 900.0 * i / 20];
@@ -208,7 +233,11 @@ void main() {
     return () => count;
   }
 
-  Future<void> pumpChat(WidgetTester tester, _Gateway gateway) async {
+  Future<void> pumpChat(
+    WidgetTester tester,
+    _Gateway gateway, {
+    Set<int> questionAt = const {0},
+  }) async {
     tester.platformDispatcher.localesTestValue = [const Locale('es')];
     addTearDown(tester.platformDispatcher.clearLocalesTestValue);
     SharedPreferences.setMockInitialValues({'onboarding_done': true});
@@ -219,14 +248,14 @@ void main() {
     final connection = _connection();
     final chat = activeChats.attach(
       connection: connection,
-      sessionId: 'sess-kb-settle',
-      sessionTitle: 'Respuestas rápidas y teclado',
+      sessionId: 'sess-inline-qr',
+      sessionTitle: 'Respuestas rápidas en línea',
       api: _safeApi(),
       desktopGateway: gateway,
       disableForegroundKeepAlive: true,
     );
     chat
-      ..internalMessagesForTesting = _history()
+      ..internalMessagesForTesting = _history(questionAt: questionAt)
       ..messagesLoaded = true;
     await tester.pumpWidget(
       HermesApp(
@@ -266,8 +295,6 @@ void main() {
       find.byKey(ValueKey('quick-reply-$index'), skipOffstage: false);
   double bottomPadding(WidgetTester tester) =>
       (tester.widget<ListView>(transcript()).padding! as EdgeInsets).bottom;
-  ScrollController controller(WidgetTester tester) =>
-      tester.widget<ListView>(transcript()).controller!;
 
   Future<void> setInset(WidgetTester tester, double inset) async {
     tester.view.viewInsets = FakeViewPadding(bottom: inset);
@@ -283,176 +310,143 @@ void main() {
 
   /// Chips shown at the latest message, nothing animating: returns the
   /// padding the rail adds to the transcript.
-  Future<double> settledWithChips(WidgetTester tester) async {
+  Finder smart() => find.byKey(const ValueKey('quick-reply-smart'));
+
+  /// The message frame that paints the newest answer.
+  Finder latestAnswerFrame() => find.ancestor(
+    of: find.textContaining('respuesta histórica 0.', findRichText: true),
+    matching: find.byType(ChatMessageFrame),
+  );
+
+  testWidgets('rpl1215 chips render inside the latest assistant bubble', (
+    tester,
+  ) async {
+    usePhoneView(tester);
+    final gateway = _Gateway();
+    await pumpChat(tester, gateway);
     await tester.pump(const Duration(milliseconds: 400));
+
     expect(chip(0), findsOneWidget);
-    expect(controller(tester).position.pixels, 0);
-    final withChips = bottomPadding(tester);
-    // Base padding (12) plus the rail's measured height.
-    expect(withChips, greaterThan(12 + 20));
-    return withChips;
-  }
+    expect(
+      find.descendant(of: latestAnswerFrame(), matching: chip(0)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: latestAnswerFrame(), matching: smart()),
+      findsOneWidget,
+    );
+    // Below the answer text, inside the transcript (no floating rail).
+    expect(
+      find.descendant(of: transcript(), matching: chip(0)),
+      findsOneWidget,
+    );
+    expect(
+      tester.getTopLeft(chip(0)).dy,
+      greaterThan(
+        tester
+            .getBottomLeft(
+              find
+                  .textContaining(
+                    '¿Quieres que lo aplique?',
+                    findRichText: true,
+                  )
+                  .first,
+            )
+            .dy,
+      ),
+    );
+    expect(bottomPadding(tester), 12);
+    expect(gateway.smartCalls, 0);
+    expect(tester.takeException(), isNull);
+    await tearDownChat(tester, gateway);
+  });
+
+  testWidgets('rpl1215 an older answer never gets chips', (tester) async {
+    usePhoneView(tester);
+    final gateway = _Gateway();
+    // Only an older answer closes with a question; the newest is generic.
+    await pumpChat(tester, gateway, questionAt: const {2});
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(
+      find.textContaining(
+        '¿Quieres que lo aplique?',
+        findRichText: true,
+        skipOffstage: false,
+      ),
+      findsWidgets,
+    );
+    expect(chip(0), findsNothing);
+    // Without contextual chips there is no lone ✨ either.
+    expect(smart(), findsNothing);
+    expect(bottomPadding(tester), 12);
+    expect(tester.takeException(), isNull);
+    await tearDownChat(tester, gateway);
+  });
+
+  testWidgets('rpl1215 the latest question gets exactly one set of chips', (
+    tester,
+  ) async {
+    usePhoneView(tester);
+    final gateway = _Gateway();
+    await pumpChat(tester, gateway, questionAt: const {0, 2});
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(chip(0), findsOneWidget);
+    expect(smart(), findsOneWidget);
+    expect(
+      find.descendant(of: latestAnswerFrame(), matching: chip(0)),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    await tearDownChat(tester, gateway);
+  });
 
   testWidgets(
-    'rpl1215 the padding and the rows hold still while the keyboard moves',
+    'rpl1215 the keyboard leaves the chips, the padding and the rows alone',
     (tester) async {
       usePhoneView(tester);
       final gateway = _Gateway();
       await pumpChat(tester, gateway);
-      final withChips = await settledWithChips(tester);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(chip(0), findsOneWidget);
       final listElement = tester.element(transcript());
       final rebuilds = countTranscriptRebuilds(tester);
 
-      for (final inset in _openFrames) {
+      for (final inset in [..._openFrames, ..._closeFrames]) {
         await setInset(tester, inset);
-        expect(chip(0), findsNothing, reason: 'inset $inset');
-        expect(bottomPadding(tester), withChips, reason: 'inset $inset');
+        expect(bottomPadding(tester), 12, reason: 'inset $inset');
         expect(rebuilds(), 0, reason: 'inset $inset rebuilt transcript rows');
         expect(identical(tester.element(transcript()), listElement), isTrue);
       }
-      // Still inside the debounce window after the last frame.
-      await tester.pump(const Duration(milliseconds: 150));
-      expect(bottomPadding(tester), withChips);
-      expect(rebuilds(), 0);
-
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(bottomPadding(tester), 12);
-      expect(rebuilds(), 1);
-      final afterOpen = rebuilds();
-
-      for (final inset in _closeFrames) {
-        await setInset(tester, inset);
-        expect(bottomPadding(tester), 12, reason: 'inset $inset');
-        expect(rebuilds(), afterOpen, reason: 'inset $inset rebuilt rows');
-      }
+      await tester.pump(const Duration(milliseconds: 400));
       expect(chip(0), findsOneWidget);
-      await tester.pump(const Duration(milliseconds: 150));
       expect(bottomPadding(tester), 12);
-      expect(rebuilds(), afterOpen);
-
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(bottomPadding(tester), withChips);
+      expect(rebuilds(), 0);
       expect(tester.takeException(), isNull);
       await tearDownChat(tester, gateway);
     },
   );
 
-  testWidgets('rpl1215 the settled padding matches the final keyboard state', (
+  testWidgets('rpl1215 the setting hides the inline chips and the ✨', (
     tester,
   ) async {
     usePhoneView(tester);
     final gateway = _Gateway();
     await pumpChat(tester, gateway);
-    final withChips = await settledWithChips(tester);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(chip(0), findsOneWidget);
 
-    // Keyboard open and stable: chips hidden, base padding only.
-    for (final inset in _openFrames) {
-      await setInset(tester, inset);
-    }
-    await tester.pump(const Duration(milliseconds: 200));
+    await QuickReplyPrefs.shared.setEnabled(false);
+    await tester.pump();
     expect(chip(0), findsNothing);
-    expect(bottomPadding(tester), 12);
-    await tester.pump(const Duration(seconds: 1));
+    expect(smart(), findsNothing);
     expect(bottomPadding(tester), 12);
 
-    // Keyboard closed and stable: chips back with their padding.
-    for (final inset in _closeFrames) {
-      await setInset(tester, inset);
-    }
-    await tester.pump(const Duration(milliseconds: 200));
+    await QuickReplyPrefs.shared.setEnabled(true);
+    await tester.pump();
     expect(chip(0), findsOneWidget);
-    expect(bottomPadding(tester), withChips);
-    await tester.pump(const Duration(seconds: 1));
-    expect(bottomPadding(tester), withChips);
-
-    // Open and close again inside one debounce window: the padding never
-    // moves and ends where it started.
-    for (final inset in [300.0, 600.0, 900.0, 600.0, 300.0, 0.0]) {
-      await setInset(tester, inset);
-      expect(bottomPadding(tester), withChips, reason: 'inset $inset');
-    }
-    expect(chip(0), findsOneWidget);
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(bottomPadding(tester), withChips);
-
-    // Quick open that stays open: the padding lands on the open value.
-    for (final inset in [300.0, 900.0]) {
-      await setInset(tester, inset);
-      expect(bottomPadding(tester), withChips, reason: 'inset $inset');
-    }
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(bottomPadding(tester), 12);
     expect(tester.takeException(), isNull);
     await tearDownChat(tester, gateway);
-  });
-
-  testWidgets('rpl1215 a reader away when the keyboard settles keeps the '
-      'padding until returning', (tester) async {
-    usePhoneView(tester);
-    final gateway = _Gateway();
-    await pumpChat(tester, gateway);
-    final withChips = await settledWithChips(tester);
-
-    for (final inset in _openFrames) {
-      await setInset(tester, inset);
-    }
-    expect(bottomPadding(tester), withChips);
-    // The reader leaves the latest message before the inset settles.
-    controller(tester).jumpTo(120);
-    await tester.pump();
-    expect(bottomPadding(tester), withChips + 48);
-    await tester.pump(const Duration(milliseconds: 250));
-    expect(bottomPadding(tester), withChips + 48);
-    await tester.pump(const Duration(seconds: 1));
-    expect(bottomPadding(tester), withChips + 48);
-
-    // Back at the latest message the settled measure (no rail) applies.
-    controller(tester).jumpTo(0);
-    await tester.pump();
-    expect(bottomPadding(tester), 12);
-    await tester.pump(const Duration(milliseconds: 300));
-    expect(chip(0), findsNothing);
-    expect(bottomPadding(tester), 12);
-    expect(tester.takeException(), isNull);
-    await tearDownChat(tester, gateway);
-  });
-
-  testWidgets('rpl1215 no settle timer survives leaving the chat', (
-    tester,
-  ) async {
-    usePhoneView(tester);
-    final gateway = _Gateway();
-    await pumpChat(tester, gateway);
-    await settledWithChips(tester);
-
-    for (final inset in _openFrames.take(5)) {
-      await setInset(tester, inset);
-    }
-    await gateway.close();
-    await tester.pumpWidget(const SizedBox.shrink());
-    tester.view.resetViewInsets();
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pump(const Duration(seconds: 1));
-    expect(tester.takeException(), isNull);
-  });
-
-  // Ends inside the debounce window: a settle timer left behind by the
-  // disposed screen trips the binding's pending timer check.
-  testWidgets('rpl1215 leaving the chat cancels a pending settle', (
-    tester,
-  ) async {
-    usePhoneView(tester);
-    final gateway = _Gateway();
-    await pumpChat(tester, gateway);
-    await settledWithChips(tester);
-
-    for (final inset in _openFrames.take(5)) {
-      await setInset(tester, inset);
-    }
-    await gateway.close();
-    await tester.pumpWidget(const SizedBox.shrink());
-    tester.view.resetViewInsets();
-    await tester.pump(const Duration(milliseconds: 20));
-    expect(tester.takeException(), isNull);
   });
 }

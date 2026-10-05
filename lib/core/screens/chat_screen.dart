@@ -1841,7 +1841,6 @@ class _ChatScreenState extends State<ChatScreen>
     if (_scrollToBottomVisibility.value == value) return;
     _recordTranscriptOverlayExtentChange(value ? 48 : -48);
     _scrollToBottomVisibility.value = value;
-    if (!value) _applyQuickReplyExtent();
     if (value) {
       _beginAwayFromBottom();
     } else {
@@ -2186,37 +2185,6 @@ class _ChatScreenState extends State<ChatScreen>
   // Alto medido del hueco de las pastillas de actividad. Notifier aparte por
   // la misma razón que la flecha: cambiar no reconstruye la pantalla.
   final ValueNotifier<double> _activityPillExtent = ValueNotifier(0);
-
-  /// Keyboard up, for the quick reply rail (a notifier: no screen rebuild).
-  final ValueNotifier<bool> _keyboardOpen = ValueNotifier(false);
-
-  /// Height the quick reply rail pads the transcript with. While the reader
-  /// is away from the latest message it stays frozen (the rail hides) and the
-  /// last measure is applied on return, so the padding never changes under
-  /// someone reading history.
-  final ValueNotifier<double> _quickReplyExtent = ValueNotifier(0);
-  double _quickReplyMeasured = 0;
-
-  void _setQuickReplyExtent(double value) {
-    _quickReplyMeasured = value;
-    if (_scrollToBottomVisibility.value || _keyboardInsetMoving) return;
-    _applyQuickReplyExtent();
-  }
-
-  /// The rail hides as soon as the keyboard starts moving, but the transcript
-  /// padding waits until the inset settles: changing it rebuilds every visible
-  /// row, and doing that in the middle of the IME animation is the jank the
-  /// inset watcher exists to avoid.
-  bool _keyboardInsetMoving = false;
-  double? _lastKeyboardInset;
-  Timer? _keyboardSettleTimer;
-
-  void _applyQuickReplyExtent() {
-    final value = _quickReplyMeasured;
-    if (_disposed || _quickReplyExtent.value == value) return;
-    _recordTranscriptOverlayExtentChange(value - _quickReplyExtent.value);
-    _quickReplyExtent.value = value;
-  }
 
   /// Compactación (automática o manual) de la sesión abierta: mide el tiempo,
   /// aprende la duración típica y conserva el resultado unos segundos. La
@@ -3963,8 +3931,15 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// The finished turn quick replies answer, or null while anything else
   /// owns the conversation (streaming, a pending card, a queue, read-only).
-  ({Object turnKey, String answer, String lastUser})? _quickReplySource() {
+  ({
+    Map<String, dynamic> assistant,
+    Object turnKey,
+    String answer,
+    String lastUser,
+  })?
+  _quickReplySource() {
     if (!_chatBound ||
+        (kVoiceRuntimeEnabled && _voiceOverlayVisible) ||
         _isBotChatSurface ||
         widget.connection.readOnly ||
         _cronRunReadOnly ||
@@ -4017,29 +3992,29 @@ class _ChatScreenState extends State<ChatScreen>
     if (answer.isEmpty) return null;
     final id = assistant['id'] ?? assistant['message_id'] ?? '';
     return (
+      assistant: assistant,
       turnKey: '$id:${content.length}:${content.hashCode}',
       answer: answer,
       lastUser: lastUser,
     );
   }
 
-  Widget _buildQuickReplyBar({bool suppressed = false}) {
+  /// Contextual reply chips closing the latest finished answer [message],
+  /// in the same slot as the answer's own suggestions; null for any other
+  /// row or when nothing is due. They live inside the bubble, so showing or
+  /// hiding them never changes the transcript padding.
+  Widget? _inlineQuickRepliesFor(Map<String, dynamic> message) {
+    final source = _quickReplySource();
+    if (source == null || !identical(source.assistant, message)) return null;
     final strings = Strings.of(context);
-    final source = suppressed ? null : _quickReplySource();
     return ChatQuickReplyBar(
       key: const ValueKey('chat-quick-replies'),
-      turnKey: source?.turnKey,
-      replies: source == null
-          ? const []
-          : heuristicQuickReplies(source.answer, strings),
+      turnKey: source.turnKey,
+      replies: heuristicQuickReplies(source.answer, strings),
       composer: _textController,
-      awayFromLatest: _scrollToBottomVisibility,
-      keyboardOpen: _keyboardOpen,
       onFill: _fillComposerFromQuickReply,
       smartLabel: strings.rpl1215SmartSuggest,
-      loadSmart: source != null && _chat.canSuggestQuickReplies
-          ? _loadSmartQuickReplies
-          : null,
+      loadSmart: _chat.canSuggestQuickReplies ? _loadSmartQuickReplies : null,
     );
   }
 
@@ -5625,20 +5600,6 @@ class _ChatScreenState extends State<ChatScreen>
   /// reconstruía la pantalla completa (transcript incluido) solo para
   /// reprogramar este temporizador.
   void _onKeyboardBottomInset(double bottomInset) {
-    if (!_disposed) {
-      _keyboardOpen.value = bottomInset > 0;
-      final previous = _lastKeyboardInset;
-      _lastKeyboardInset = bottomInset;
-      if (previous != null && previous != bottomInset) {
-        _keyboardInsetMoving = true;
-        _keyboardSettleTimer?.cancel();
-        _keyboardSettleTimer = Timer(const Duration(milliseconds: 200), () {
-          _keyboardInsetMoving = false;
-          if (_disposed || _scrollToBottomVisibility.value) return;
-          _applyQuickReplyExtent();
-        });
-      }
-    }
     if (_disposed || !mounted || bottomInset <= 0 || _findOpen) return;
     // Si ya está al fondo, el resize del viewport mantiene visible el último
     // mensaje. No programes un scroll/setState durante la animación del IME.
@@ -7737,9 +7698,6 @@ class _ChatScreenState extends State<ChatScreen>
     _findStatus.dispose();
     _findActiveMessage.dispose();
     _activityPillExtent.dispose();
-    _keyboardSettleTimer?.cancel();
-    _keyboardOpen.dispose();
-    _quickReplyExtent.dispose();
     _compaction.dispose();
     _sessionContextMetrics.dispose();
     super.dispose();
@@ -13577,7 +13535,6 @@ class _ChatScreenState extends State<ChatScreen>
                                     contentChanges: _liveAssistantFrame,
                                     transcriptOverlayExtent: () =>
                                         _activityPillExtent.value +
-                                        _quickReplyExtent.value +
                                         (_scrollToBottomVisibility.value
                                             ? 48
                                             : 0),
@@ -13776,18 +13733,6 @@ class _ChatScreenState extends State<ChatScreen>
                                               ),
                                             ),
                                           ],
-                                        ),
-                                      ),
-                                      // Quick replies float under the pill,
-                                      // never in the bottom bars: their
-                                      // measured height pads the transcript
-                                      // (frozen while the reader is away), so
-                                      // they never move what is being read.
-                                      _BottomGapWhenVisible(
-                                        gap: 4,
-                                        onExtent: _setQuickReplyExtent,
-                                        child: _buildQuickReplyBar(
-                                          suppressed: showVoiceSurface,
                                         ),
                                       ),
                                     ],
@@ -16933,13 +16878,11 @@ class _ChatScreenState extends State<ChatScreen>
     final transcript = ListenableBuilder(
       listenable: Listenable.merge([
         _activityPillExtent,
-        _quickReplyExtent,
         _scrollToBottomVisibility,
       ]),
       builder: (context, _) {
         final overlayExtent =
             _activityPillExtent.value +
-            _quickReplyExtent.value +
             (_scrollToBottomVisibility.value ? 48 : 0);
         return ChatScrollInteractionGuard(
           onPointerDown: _pauseStreamingFollow,
@@ -17803,6 +17746,10 @@ class _ChatScreenState extends State<ChatScreen>
       onBranch: _branchFromHereFor(msg),
       onSuggestionSelected: suggestionsEnabled
           ? (suggestion) => _useAssistantSuggestion(msg, suggestion)
+          : null,
+      quickReplies:
+          role == 'assistant' && !isStreaming && !isCancelled && !isPipeline
+          ? _inlineQuickRepliesFor(msg)
           : null,
       connectionCard: role == 'assistant'
           ? _connectionCardFor(metadataMsg)
@@ -20050,6 +19997,9 @@ class _MessageBubble extends StatelessWidget {
   final ValueChanged<String>? onSaveEdit;
   final VoidCallback? onRegenerate;
   final AssistantSuggestionCallback? onSuggestionSelected;
+
+  /// Contextual quick reply chips closing the latest finished answer.
+  final Widget? quickReplies;
   final _ConnectionCardBinding? connectionCard;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
@@ -20088,6 +20038,7 @@ class _MessageBubble extends StatelessWidget {
     this.onSaveEdit,
     this.onRegenerate,
     this.onSuggestionSelected,
+    this.quickReplies,
     this.connectionCard,
     this.compact = false,
     this.performanceProbe,
@@ -20135,6 +20086,7 @@ class _MessageBubble extends StatelessWidget {
             onRegenerate: onRegenerate,
             onBranch: onBranch,
             onSuggestionSelected: onSuggestionSelected,
+            quickReplies: quickReplies,
             connectionCard: connectionCard,
             compact: compact,
             performanceProbe: performanceProbe,
@@ -21579,6 +21531,10 @@ class _AssistantMessage extends StatelessWidget {
   final VoidCallback? onRegenerate;
   final VoidCallback? onBranch;
   final AssistantSuggestionCallback? onSuggestionSelected;
+
+  /// Contextual quick reply chips, painted where the answer's own
+  /// suggestions go (never both: the chips stand aside for those).
+  final Widget? quickReplies;
   final _ConnectionCardBinding? connectionCard;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
@@ -21613,6 +21569,7 @@ class _AssistantMessage extends StatelessWidget {
     this.onRegenerate,
     this.onBranch,
     this.onSuggestionSelected,
+    this.quickReplies,
     this.connectionCard,
     this.compact = false,
     this.performanceProbe,
@@ -22034,7 +21991,9 @@ class _AssistantMessage extends StatelessWidget {
           HermesSuggestions(
             suggestions: suggestionProjection.suggestions,
             onSelected: onSuggestionSelected!,
-          ),
+          )
+        else if (showFooter && quickReplies != null)
+          quickReplies!,
         if (showFooter && metadata['show_link_preview'] == true)
           Builder(
             builder: (ctx) {

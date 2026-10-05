@@ -8507,5 +8507,5 @@
   "rpl1215ReplyReviewChanges": "Review the changes",
   "rpl1215SmartSuggest": "Suggest replies with AI",
   "rpl1215SettingTitle": "Quick replies",
-  "rpl1215SettingSubtitle": "Reply ideas after each turn. ✨ only asks the model when you tap it."
+  "rpl1215SettingSubtitle": "Ideas at the end of the latest answer when they fit (a question, a plan or code). ✨ only asks the model when you tap it."
 }

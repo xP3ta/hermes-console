@@ -20,12 +20,9 @@ class _Harness {
     return smartResult;
   }
 
-  final away = ValueNotifier(false);
-  final keyboard = ValueNotifier(false);
-
   Widget build({
     Object? turnKey = 'turn-1',
-    List<String> replies = const ['Continúa', 'Resúmelo'],
+    List<String> replies = const ['Adelante', 'Hazlo paso a paso'],
     bool smart = true,
   }) => MaterialApp(
     home: Scaffold(
@@ -38,8 +35,6 @@ class _Harness {
           onFill: filled.add,
           loadSmart: smart ? loadSmart : null,
           smartLabel: 'Sugerir respuestas con IA',
-          awayFromLatest: away,
-          keyboardOpen: keyboard,
         ),
       ),
     ),
@@ -65,8 +60,8 @@ void main() {
     await tester.pumpWidget(h.build());
     await tester.pump(const Duration(seconds: 5));
 
-    expect(_chip('Continúa'), findsOneWidget);
-    expect(_chip('Resúmelo'), findsOneWidget);
+    expect(_chip('Adelante'), findsOneWidget);
+    expect(_chip('Hazlo paso a paso'), findsOneWidget);
     expect(find.byKey(const ValueKey('quick-reply-smart')), findsOneWidget);
     expect(h.smartCalls, 0);
   });
@@ -75,10 +70,10 @@ void main() {
     final h = _Harness();
     await tester.pumpWidget(h.build());
 
-    await tester.tap(_chip('Resúmelo'));
+    await tester.tap(_chip('Hazlo paso a paso'));
     await tester.pump();
 
-    expect(h.filled, ['Resúmelo']);
+    expect(h.filled, ['Hazlo paso a paso']);
     expect(h.smartCalls, 0);
   });
 
@@ -87,38 +82,39 @@ void main() {
     await tester.pumpWidget(h.build());
     h.composer.text = 'h';
     await tester.pump();
-    expect(_chip('Continúa'), findsNothing);
+    expect(_chip('Adelante'), findsNothing);
     expect(find.byKey(const ValueKey('quick-reply-smart')), findsNothing);
 
     h.composer.clear();
     await tester.pump();
-    expect(_chip('Continúa'), findsOneWidget);
+    expect(_chip('Adelante'), findsOneWidget);
   });
 
-  testWidgets('hidden while the keyboard is open', (tester) async {
+  testWidgets('without contextual chips there is no lone ✨', (tester) async {
     final h = _Harness();
-    await tester.pumpWidget(h.build());
-    h.keyboard.value = true;
+    await tester.pumpWidget(h.build(replies: const []));
     await tester.pump();
     expect(find.byType(OutlinedButton), findsNothing);
-
-    h.keyboard.value = false;
-    await tester.pump();
-    expect(_chip('Continúa'), findsOneWidget);
+    expect(find.byKey(const ValueKey('quick-reply-smart')), findsNothing);
+    expect(h.smartCalls, 0);
   });
 
-  testWidgets('hidden while the reader is away from the latest message', (
+  testWidgets('the chips are transparent and keep a 48 dp target', (
     tester,
   ) async {
     final h = _Harness();
     await tester.pumpWidget(h.build());
-    h.away.value = true;
-    await tester.pump();
-    expect(find.byType(OutlinedButton), findsNothing);
-
-    h.away.value = false;
-    await tester.pump();
-    expect(_chip('Continúa'), findsOneWidget);
+    for (final finder in [
+      _chip('Adelante'),
+      find.byKey(const ValueKey('quick-reply-smart')),
+    ]) {
+      final button = tester.widget<OutlinedButton>(finder);
+      expect(
+        button.style!.backgroundColor!.resolve(const {}),
+        Colors.transparent,
+      );
+      expect(tester.getSize(finder).height, greaterThanOrEqualTo(48));
+    }
   });
 
   testWidgets('the setting turns every chip off', (tester) async {
@@ -127,7 +123,7 @@ void main() {
     await QuickReplyPrefs.shared.setEnabled(false);
     await tester.pump();
 
-    expect(_chip('Continúa'), findsNothing);
+    expect(_chip('Adelante'), findsNothing);
     expect(find.byKey(const ValueKey('quick-reply-smart')), findsNothing);
   });
 
@@ -140,7 +136,7 @@ void main() {
   testWidgets('without the capability there is no ✨ chip', (tester) async {
     final h = _Harness();
     await tester.pumpWidget(h.build(smart: false));
-    expect(_chip('Continúa'), findsOneWidget);
+    expect(_chip('Adelante'), findsOneWidget);
     expect(find.byKey(const ValueKey('quick-reply-smart')), findsNothing);
   });
 
@@ -162,7 +158,7 @@ void main() {
     await tester.pump();
     expect(_chip('Sí, hazlo'), findsOneWidget);
     expect(_chip('Enséñame el diff'), findsOneWidget);
-    expect(_chip('Continúa'), findsNothing);
+    expect(_chip('Adelante'), findsNothing);
 
     // Typing hides the rail; clearing brings back the cached ideas.
     h.composer.text = 'x';
@@ -186,8 +182,8 @@ void main() {
     await tester.pump();
 
     expect(h.smartCalls, 1);
-    expect(_chip('Continúa'), findsOneWidget);
-    expect(_chip('Resúmelo'), findsOneWidget);
+    expect(_chip('Adelante'), findsOneWidget);
+    expect(_chip('Hazlo paso a paso'), findsOneWidget);
   });
 
   testWidgets('a new turn drops the cached ideas and late answers', (
@@ -202,7 +198,7 @@ void main() {
     h.gate = Completer<List<String>>();
     await tester.pumpWidget(h.build(turnKey: 'turn-2'));
     expect(_chip('Sí, hazlo'), findsNothing);
-    expect(_chip('Continúa'), findsOneWidget);
+    expect(_chip('Adelante'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('quick-reply-smart')));
     await tester.pump();
@@ -211,6 +207,6 @@ void main() {
     h.gate!.complete(const ['Tarde']);
     await tester.pump();
     expect(_chip('Tarde'), findsNothing);
-    expect(_chip('Continúa'), findsOneWidget);
+    expect(_chip('Adelante'), findsOneWidget);
   });
 }

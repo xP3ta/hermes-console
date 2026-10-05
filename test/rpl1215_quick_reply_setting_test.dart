@@ -86,6 +86,14 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('Respuestas rápidas'), findsOneWidget);
+    // Describes where the chips appear now: inside the latest answer.
+    expect(
+      find.text(
+        'Propuestas al final de la última respuesta cuando encajan '
+        '(pregunta, plan o código). ✨ solo consulta al modelo si la tocas.',
+      ),
+      findsOneWidget,
+    );
     expect(QuickReplyPrefs.shared.enabled, isTrue);
 
     await tester.ensureVisible(row);
