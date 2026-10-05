@@ -33,6 +33,9 @@ class FakeLocalModelsServer {
   final loaded = <String, String>{'Qwen3-8B-Q4_K_M': 'loaded'};
   final jobs = <Map<String, Object?>>[];
 
+  /// Replaces the default two-row catalog when set.
+  List<Map<String, Object?>>? catalog;
+
   /// Next response override per "METHOD path" (status, detail).
   final failures = <String, (int, String)>{};
 
@@ -116,6 +119,8 @@ class FakeLocalModelsServer {
       case ('GET', '/api/local-models/status'):
         return _json(status());
       case ('GET', '/api/local-models/catalog'):
+        final custom = catalog;
+        if (custom != null) return _json({'models': custom});
         return _json({
           'models': [
             {

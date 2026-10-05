@@ -132,7 +132,6 @@ const _alertDialogAllowed = <String, int>{
   'lib/core/screens/mission_control_screen.dart': 1,
   'lib/core/screens/models_screen.dart': 1,
   'lib/core/screens/notification_settings_screen.dart': 1,
-  'lib/core/screens/ollama_models_screen.dart': 6,
   'lib/core/screens/onboarding/local_agent_setup_screen.dart': 1,
   'lib/core/screens/onboarding/local_install_screen.dart': 1,
   'lib/core/screens/profile_flows.dart': 1,
@@ -156,7 +155,6 @@ const _showDialogAllowed = <String, int>{
   'lib/core/screens/mission_control_screen.dart': 1,
   'lib/core/screens/models_screen.dart': 1,
   'lib/core/screens/notification_settings_screen.dart': 1,
-  'lib/core/screens/ollama_models_screen.dart': 6,
   'lib/core/screens/onboarding/local_agent_setup_screen.dart': 1,
   'lib/core/screens/onboarding/local_install_screen.dart': 1,
   'lib/core/screens/profile_flows.dart': 1,
@@ -203,7 +201,6 @@ const _popupMenuButtonAllowed = <String, int>{
 const _hermesPillAllowed = <String, int>{
   'lib/core/screens/litert_store_screen.dart': 4,
   'lib/core/screens/local_instance_control_screen.dart': 1,
-  'lib/core/screens/ollama_models_screen.dart': 1,
   'lib/core/screens/permissions_screen.dart': 3,
   'lib/core/screens/runs_screen.dart': 2,
   'lib/core/screens/task_center_screen.dart': 1,
