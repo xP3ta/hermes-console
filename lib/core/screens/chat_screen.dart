@@ -2641,6 +2641,11 @@ class _ChatScreenState extends State<ChatScreen>
       _slashCompletions.cancel();
       _closeReferencePalette();
     }
+    // Only the slash/reference palettes read composer focus in build. With
+    // both empty a focus flip changes nothing on screen, and a screen-wide
+    // setState here rebuilds every cached transcript row on the very frame
+    // the keyboard starts opening or closing.
+    if (_slashSuggestions.isEmpty && _referenceItems.isEmpty) return;
     if (mounted && !_disposed) setState(() {});
   }
 

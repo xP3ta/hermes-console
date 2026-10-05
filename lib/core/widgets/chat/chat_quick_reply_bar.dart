@@ -47,9 +47,36 @@ class _ChatQuickReplyBarState extends State<ChatQuickReplyBar> {
   List<String>? _smart;
   Object? _loadingTurn;
 
+  /// Only emptiness matters: caret moves, selection on focus and further
+  /// keystrokes must not rebuild the chips (they sit in a transcript row).
+  late bool _composerEmpty = widget.composer.value.text.isEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.composer.addListener(_onComposerChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.composer.removeListener(_onComposerChanged);
+    super.dispose();
+  }
+
+  void _onComposerChanged() {
+    final empty = widget.composer.value.text.isEmpty;
+    if (empty == _composerEmpty) return;
+    setState(() => _composerEmpty = empty);
+  }
+
   @override
   void didUpdateWidget(ChatQuickReplyBar oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.composer, widget.composer)) {
+      oldWidget.composer.removeListener(_onComposerChanged);
+      widget.composer.addListener(_onComposerChanged);
+      _composerEmpty = widget.composer.value.text.isEmpty;
+    }
     if (oldWidget.turnKey != widget.turnKey) {
       _smart = null;
       _smartTurn = null;
@@ -84,13 +111,13 @@ class _ChatQuickReplyBarState extends State<ChatQuickReplyBar> {
   Widget build(BuildContext context) {
     final prefs = QuickReplyPrefs.shared;
     return ListenableBuilder(
-      listenable: Listenable.merge([prefs, widget.composer]),
+      listenable: prefs,
       builder: (context, _) {
         final turn = widget.turnKey;
         if (!QuickReplyPrefs.shared.enabled ||
             turn == null ||
             widget.replies.isEmpty ||
-            widget.composer.value.text.isNotEmpty) {
+            !_composerEmpty) {
           return const SizedBox.shrink();
         }
         final smart = _smartTurn == turn ? _smart : null;
