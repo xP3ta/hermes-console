@@ -62,7 +62,6 @@ import 'server_config_page_screen.dart' show ServerConfigStoreFactory;
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/message_reaction_prefs.dart';
-import '../services/quick_reply_prefs.dart';
 import '../services/shared_gateway_pool.dart';
 import '../services/terminal_availability.dart';
 import '../widgets/hermes_app_bar.dart';
@@ -385,17 +384,6 @@ class SettingsScreen extends StatelessWidget {
                         subtitle: Strings.of(context).reactSettingsSubtitle,
                         value: MessageReactionPrefs.shared.enabled,
                         onChanged: MessageReactionPrefs.shared.setEnabled,
-                      ),
-                    ),
-                    ListenableBuilder(
-                      listenable: QuickReplyPrefs.shared,
-                      builder: (context, _) => HermesToggleRow(
-                        key: const ValueKey('settings-quick-replies'),
-                        icon: Icons.quickreply_outlined,
-                        title: Strings.of(context).rpl1215SettingTitle,
-                        subtitle: Strings.of(context).rpl1215SettingSubtitle,
-                        value: QuickReplyPrefs.shared.enabled,
-                        onChanged: QuickReplyPrefs.shared.setEnabled,
                       ),
                     ),
                   ],

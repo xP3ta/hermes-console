@@ -10207,15 +10207,5 @@
   "apx1215ScopeOnceHint": "Solo esta llamada.",
   "apx1215ScopeSessionHint": "Este tipo de comando en este chat, hasta que el chat termine o el servidor se reinicie.",
   "apx1215ScopeAlwaysHint": "Este tipo de comando en todos los chats. Se guarda en el servidor (command_allowlist de config.yaml) y en Ajustes › Permisos / Aprobaciones; para retirarlo, quítalo de ambos sitios.",
-  "rpl1215AskAboutThis": "Preguntar sobre esto",
-  "rpl1215ReplyYes": "Sí",
-  "rpl1215ReplyNo": "No",
-  "rpl1215ReplyExplainMore": "Explícamelo más",
-  "rpl1215ReplyGoAhead": "Adelante",
-  "rpl1215ReplyStepByStep": "Hazlo paso a paso",
-  "rpl1215ReplyRunTests": "Ejecuta los tests",
-  "rpl1215ReplyReviewChanges": "Revisa los cambios",
-  "rpl1215SmartSuggest": "Sugerir respuestas con IA",
-  "rpl1215SettingTitle": "Respuestas rápidas",
-  "rpl1215SettingSubtitle": "Propuestas al final de la última respuesta cuando encajan (pregunta, plan o código). ✨ solo consulta al modelo si la tocas."
+  "rpl1215AskAboutThis": "Preguntar sobre esto"
 }

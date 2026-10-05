@@ -8497,15 +8497,5 @@
   "apx1215ScopeOnceHint": "Only this call.",
   "apx1215ScopeSessionHint": "This kind of command in this chat, until the chat ends or the server restarts.",
   "apx1215ScopeAlwaysHint": "This kind of command in every chat. Saved on the server (command_allowlist in config.yaml) and in Settings › Permissions / Approvals; to withdraw it, remove it from both.",
-  "rpl1215AskAboutThis": "Ask about this",
-  "rpl1215ReplyYes": "Yes",
-  "rpl1215ReplyNo": "No",
-  "rpl1215ReplyExplainMore": "Explain it in more detail",
-  "rpl1215ReplyGoAhead": "Go ahead",
-  "rpl1215ReplyStepByStep": "Do it step by step",
-  "rpl1215ReplyRunTests": "Run the tests",
-  "rpl1215ReplyReviewChanges": "Review the changes",
-  "rpl1215SmartSuggest": "Suggest replies with AI",
-  "rpl1215SettingTitle": "Quick replies",
-  "rpl1215SettingSubtitle": "Ideas at the end of the latest answer when they fit (a question, a plan or code). ✨ only asks the model when you tap it."
+  "rpl1215AskAboutThis": "Ask about this"
 }

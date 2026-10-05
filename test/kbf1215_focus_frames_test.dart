@@ -15,10 +15,8 @@ import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
 import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
-import 'package:hermes_android/core/services/quick_reply_prefs.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
@@ -28,25 +26,7 @@ import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/main.dart';
 
 class _Gateway
-    implements
-        HermesDesktopGateway,
-        HermesDesktopSessionLifecycleGateway,
-        HermesQuickReplySuggestionGateway {
-  int smartCalls = 0;
-
-  @override
-  bool get quickReplySuggestionsAvailable => true;
-
-  @override
-  Future<List<String>> suggestQuickReplies({
-    required String lastAssistant,
-    required String lastUser,
-    String profile = '',
-  }) async {
-    smartCalls++;
-    return const ['Sí, aplícalo'];
-  }
-
+    implements HermesDesktopGateway, HermesDesktopSessionLifecycleGateway {
   final StreamController<TuiGatewayEvent> _events =
       StreamController<TuiGatewayEvent>.broadcast();
 
@@ -170,7 +150,6 @@ void main() {
   setUp(() {
     secureStore.clear();
     TurnOutboxStore.resetSerializationForTesting();
-    QuickReplyPrefs.debugUse(QuickReplyPrefs.forTesting(null));
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -198,7 +177,6 @@ void main() {
     mockChannel('flutter_foreground_task/methods');
     mockChannel('flutter_foreground_task/background');
   });
-  tearDown(() => QuickReplyPrefs.debugUse(null));
 
   void usePhoneView(WidgetTester tester) {
     tester.view

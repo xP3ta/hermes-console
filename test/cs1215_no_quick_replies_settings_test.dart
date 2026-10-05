@@ -3,14 +3,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/settings_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
-import 'package:hermes_android/core/services/quick_reply_prefs.dart';
+import 'package:hermes_android/core/services/retired_prefs.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 SavedConnection _connection() => SavedConnection(
-  id: 'conn-rpl1215-settings',
-  label: 'Quick replies',
+  id: 'conn-cs1215-settings',
+  label: 'Settings',
   host: 'hermes.example.test',
   port: 8642,
   apiKey: 'unused',
@@ -29,7 +29,6 @@ void main() {
   });
 
   tearDown(() {
-    QuickReplyPrefs.debugUse(null);
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
           const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
@@ -37,18 +36,23 @@ void main() {
         );
   });
 
-  test('quick replies are on by default and the choice persists', () async {
-    SharedPreferences.setMockInitialValues({});
+  test('the stored quick replies choice is removed at start-up', () async {
+    SharedPreferences.setMockInitialValues({
+      'chat_quick_replies_enabled': false,
+      'unrelated_pref': true,
+    });
     final prefs = await SharedPreferences.getInstance();
-    final store = await QuickReplyPrefs.load(prefs);
-    expect(store.enabled, isTrue);
 
-    await store.setEnabled(false);
-    expect(prefs.getBool(QuickReplyPrefs.key), isFalse);
-    expect((await QuickReplyPrefs.load(prefs)).enabled, isFalse);
+    await clearRetiredPrefs(prefs);
+
+    expect(prefs.containsKey('chat_quick_replies_enabled'), isFalse);
+    expect(prefs.getBool('unrelated_pref'), isTrue);
+    // Nothing stored is fine too.
+    await clearRetiredPrefs(prefs);
+    expect(prefs.containsKey('chat_quick_replies_enabled'), isFalse);
   });
 
-  testWidgets('the chat section of Settings toggles quick replies', (
+  testWidgets('the chat section of Settings has no quick replies switch', (
     tester,
   ) async {
     final previous = FlutterError.onError;
@@ -64,7 +68,6 @@ void main() {
     addTearDown(() => FlutterError.onError = previous);
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
-    await QuickReplyPrefs.load(prefs);
     final manager = await ConnectionManager.create(prefs);
 
     await tester.pumpWidget(
@@ -79,29 +82,15 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    final row = find.byKey(const ValueKey('settings-quick-replies'));
+    // The neighbouring chat switch is there; the quick replies one is not.
+    final reactions = find.byKey(const ValueKey('settings-reactions'));
     await tester.scrollUntilVisible(
-      row,
+      reactions,
       300,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Respuestas rápidas'), findsOneWidget);
-    // Describes where the chips appear now: inside the latest answer.
-    expect(
-      find.text(
-        'Propuestas al final de la última respuesta cuando encajan '
-        '(pregunta, plan o código). ✨ solo consulta al modelo si la tocas.',
-      ),
-      findsOneWidget,
-    );
-    expect(QuickReplyPrefs.shared.enabled, isTrue);
-
-    await tester.ensureVisible(row);
-    await tester.pump();
-    await tester.tap(find.descendant(of: row, matching: find.byType(Switch)));
-    await tester.pump();
-
-    expect(QuickReplyPrefs.shared.enabled, isFalse);
-    expect(prefs.getBool(QuickReplyPrefs.key), isFalse);
+    expect(reactions, findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-quick-replies')), findsNothing);
+    expect(find.text('Respuestas rápidas'), findsNothing);
   });
 }

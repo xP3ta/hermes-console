@@ -88,7 +88,6 @@ import 'package:hermes_android/core/navigation/chat_route.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
-import 'package:hermes_android/core/services/quick_reply_prefs.dart';
 import 'package:hermes_android/core/services/subagent_transcript_projection.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
@@ -120,6 +119,7 @@ import 'package:hermes_android/core/services/voice/stt_remote.dart';
 import 'package:hermes_android/core/services/voice/conversation/native_voice.dart';
 import 'package:hermes_android/core/services/voice/voice_phase.dart';
 import 'package:hermes_android/core/widgets/attachment_card.dart';
+import 'package:hermes_android/core/widgets/hermes_suggestions.dart';
 import 'package:hermes_android/core/widgets/attachment_history_preview.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/chat/tool_output_cards.dart';
@@ -35184,10 +35184,10 @@ void main() {
       ], reason: 'rows=$rows');
     },
   );
-  group('rpl1215 quick replies', () {
-    setUp(() => QuickReplyPrefs.debugUse(QuickReplyPrefs.forTesting(null)));
-    tearDown(() => QuickReplyPrefs.debugUse(null));
-
+  // Owner decision: the quick reply chips are gone for good. A finished
+  // turn closes with the answer alone; only the assistant's own offers
+  // (server suggestions) stay tappable.
+  group('cs1215 no quick replies', () {
     const finishedTurn = [
       {
         'role': 'assistant',
@@ -35196,518 +35196,63 @@ void main() {
       },
       {'role': 'user', 'id': 'u-qr-1', 'content': 'Arregla el parser'},
     ];
-    Finder chip(int index) =>
-        find.byKey(ValueKey('quick-reply-$index'), skipOffstage: false);
-    final smart = find.byKey(const ValueKey('quick-reply-smart'));
-    String chipText(WidgetTester tester, int index) => tester
-        .widget<Text>(
-          find.descendant(of: chip(index), matching: find.byType(Text)),
-        )
-        .data!;
-    TextEditingController composer(WidgetTester tester) =>
-        tester.widget<TextField>(find.byType(TextField)).controller!;
 
-    testWidgets('rpl1215 chips follow a completed turn, no automatic oneshot', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      final chat = await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-turn'),
-      );
-      double bottomPadding() =>
-          (tester.widget<ListView>(chatListFinder()).padding! as EdgeInsets)
-              .bottom;
-      await tester.enterText(find.byType(TextField), 'Arregla el parser');
-      await tester.pump(const Duration(milliseconds: 250));
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(gateway.submissions, ['Arregla el parser']);
-      // While the turn runs there is nothing to answer yet.
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-      final paddingWhileRunning = bottomPadding();
-
-      gateway.emitComplete('Listo. ¿Quieres que lo aplique?');
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(chat.isStreaming, isFalse);
-      expect(chipText(tester, 0), 'Sí');
-      // The chips live inside the answer: finishing the turn never changes
-      // the transcript padding.
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(bottomPadding(), paddingWhileRunning);
-      expect(
-        find.descendant(of: chatListFinder(), matching: chip(0)),
-        findsOneWidget,
-      );
-      expect(chipText(tester, 1), 'No');
-      expect(chipText(tester, 2), 'Explícamelo más');
-      expect(smart, findsOneWidget);
-
-      for (var i = 0; i < 5; i++) {
-        await tester.pump(const Duration(seconds: 1));
-      }
-      expect(gateway.calls, isEmpty, reason: 'llm.oneshot only on tap');
-      expect(gateway.submissions, hasLength(1));
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 tapping a chip fills the composer and sends nothing', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-fill'),
-        messages: finishedTurn,
-      );
-      expect(chipText(tester, 1), 'No');
-
-      await tester.tap(chip(1));
-      await tester.pump(const Duration(milliseconds: 400));
-
-      expect(composer(tester).text, 'No');
-      expect(gateway.submissions, isEmpty);
-      // The chips step aside while the composer holds text.
-      expect(chip(0), findsNothing);
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 no chips while streaming or with a pending approval', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      final chat = await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-busy'),
-        messages: finishedTurn,
-        chatState: ChatPipelineState.streaming,
-      );
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-
-      Future<void> rebuildThroughComposer() async {
-        await tester.enterText(find.byType(TextField), 'x');
-        await tester.pump();
-        await tester.enterText(find.byType(TextField), '');
-        await tester.pump(const Duration(milliseconds: 250));
-      }
-
-      chat.state = ChatPipelineState.completed;
-      chat.pendingApproval = const {'request_id': 'approval-qr'};
-      await rebuildThroughComposer();
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-
-      chat.pendingApproval = null;
-      await rebuildThroughComposer();
-      expect(chipText(tester, 0), 'Sí');
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    Future<void> rebuildThroughComposer(WidgetTester tester) async {
-      final field = find.descendant(
-        of: find.byKey(const ValueKey('chat-composer-host')),
-        matching: find.byType(TextField),
-      );
-      await tester.enterText(field, 'x');
-      await tester.pump();
-      await tester.enterText(field, '');
-      await tester.pump(const Duration(milliseconds: 250));
-    }
-
-    testWidgets('rpl1215 hidden while a question is pending', (tester) async {
-      final gateway = _InteractiveUiGateway();
-      final chat = await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-question'),
-        messages: finishedTurn,
-        acquireDesktopRuntimeBeforeMount: true,
-      );
-      await tester.pump(const Duration(milliseconds: 250));
-      expect(chipText(tester, 0), 'Sí');
-
-      gateway.emit('clarify.request', const {
-        'request_id': 'clarify-qr',
-        'question': '¿Qué rama uso?',
-        'choices': ['main', 'dev'],
-      });
-      await tester.pump();
-      // A parked question outlives the run state (resume, reconnect): only
-      // the open prompt itself must keep the chips away.
-      chat.state = ChatPipelineState.completed;
-      await rebuildThroughComposer(tester);
-      expect(chat.isStreaming, isFalse);
-      expect(chat.pendingInteractivePrompt, isNotNull);
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-
-      // Once the question is closed the chips come back.
-      gateway.emit('clarify.expire', const {'request_id': 'clarify-qr'});
-      await tester.pump();
-      await rebuildThroughComposer(tester);
-      expect(chat.pendingInteractivePrompt, isNull);
-      expect(chipText(tester, 0), 'Sí');
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 hidden while an approval is pending', (tester) async {
-      final gateway = _QuickReplyGateway();
-      final chat = await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-approval'),
-        messages: finishedTurn,
-      );
-      expect(chipText(tester, 0), 'Sí');
-
-      chat.pendingApproval = const {'request_id': 'approval-qr-2'};
-      await rebuildThroughComposer(tester);
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-
-      chat.pendingApproval = null;
-      await rebuildThroughComposer(tester);
-      expect(chipText(tester, 0), 'Sí');
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 ✨ asks once on tap with only the last two messages', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      final probe = ChatPerformanceProbe();
-      await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-smart'),
-        messages: [
-          ...finishedTurn,
-          {'role': 'assistant', 'id': 'a-qr-0', 'content': 'Respuesta vieja'},
-          {'role': 'user', 'id': 'u-qr-0', 'content': 'Pregunta vieja'},
-        ],
-        performanceProbe: probe,
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(gateway.calls, isEmpty);
-      final screenBuilds = probe.screenBuilds;
-      final assistantBuilds = probe.terminalAssistantBuilds;
-
-      await tester.tap(smart);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-
-      expect(gateway.calls, hasLength(1));
-      final call = gateway.calls.single;
-      expect(call.lastUser, 'Arregla el parser');
-      expect(call.lastAssistant, contains('¿Quieres que lo aplique?'));
-      expect(call.lastAssistant, isNot(contains('Respuesta vieja')));
-      expect(chipText(tester, 0), 'Sí, aplícalo');
-      expect(chipText(tester, 1), 'Enséñame el diff');
-      // The ideas land in the rail only: no screen or transcript rebuild.
-      expect(probe.screenBuilds, screenBuilds);
-      expect(probe.terminalAssistantBuilds, assistantBuilds);
-
-      // Cached for this turn: tapping again never asks again.
-      await tester.tap(smart);
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(gateway.calls, hasLength(1));
-      await tester.tap(chip(0));
-      await tester.pump();
-      expect(composer(tester).text, 'Sí, aplícalo');
-      await tester.enterText(find.byType(TextField), '');
-      await tester.pump(const Duration(milliseconds: 250));
-      expect(chipText(tester, 0), 'Sí, aplícalo');
-      expect(gateway.calls, hasLength(1));
-      expect(gateway.submissions, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 ✨ hidden without the capability or read-only', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway()..available = false;
-      await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-nocap'),
-        messages: finishedTurn,
-      );
-      expect(chipText(tester, 0), 'Sí');
-      expect(smart, findsNothing);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 hidden while messages are queued', (tester) async {
-      final gateway = _QuickReplyGateway();
-      final chat = await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-queued'),
-        messages: finishedTurn,
-        chatState: ChatPipelineState.streaming,
-      );
-      expect(chat.enqueue('Siguiente turno en cola'), isTrue);
-      // The turn is over but the queue still owns what comes next.
-      chat.state = ChatPipelineState.completed;
-      await rebuildThroughComposer(tester);
-      expect(chat.isStreaming, isFalse);
-      expect(chat.queuedMessages, ['Siguiente turno en cola']);
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-
-      // Once the queue is empty the chips come back.
-      chat.clearQueueForTesting();
-      await rebuildThroughComposer(tester);
-      expect(chat.queuedMessages, isEmpty);
-      expect(chipText(tester, 0), 'Sí');
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 a read-only connection shows no chips', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-ro').copyWith(readOnly: true),
-        messages: finishedTurn,
-      );
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 the setting hides the chips without a rebuild', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      final probe = ChatPerformanceProbe();
-      await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-setting'),
-        messages: finishedTurn,
-        performanceProbe: probe,
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(chipText(tester, 0), 'Sí');
-      final assistantBuilds = probe.terminalAssistantBuilds;
-
-      await QuickReplyPrefs.shared.setEnabled(false);
-      await tester.pump();
-
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-      expect(probe.terminalAssistantBuilds, assistantBuilds);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 hidden while a run streams over a finished answer', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      final chat = await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-streaming'),
-        messages: finishedTurn,
-      );
-      expect(chipText(tester, 0), 'Sí');
-
-      // A run attached without its own row yet (resume, background turn):
-      // the last row is still the finished answer, only the run state says
-      // the conversation is busy.
-      for (final running in [
-        ChatPipelineState.connecting,
-        ChatPipelineState.waiting,
-        ChatPipelineState.executing,
-        ChatPipelineState.streaming,
-      ]) {
-        chat.state = running;
-        await rebuildThroughComposer(tester);
-        expect(chat.isStreaming, isTrue);
-        expect(chat.messages.first['id'], 'a-qr-1');
-        expect(chip(0), findsNothing, reason: '$running');
-        expect(smart, findsNothing, reason: '$running');
-
-        chat.state = ChatPipelineState.completed;
-        await rebuildThroughComposer(tester);
-        expect(chipText(tester, 0), 'Sí');
-      }
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 hidden while a sent message is being edited', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-edit'),
-        messages: finishedTurn,
-      );
-      expect(chipText(tester, 0), 'Sí');
-
-      await tester.tap(find.byTooltip('Editar mensaje'));
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(
-        tester
-            .widgetList<EditableText>(find.byType(EditableText))
-            .map((field) => field.controller.text),
-        contains('Arregla el parser'),
-      );
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-      expect(gateway.calls, isEmpty);
-      expect(gateway.submissions, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    for (final flag in ['_cancelled', '_stopped', '_pipeline']) {
-      testWidgets('rpl1215 no chips under an assistant row marked $flag', (
-        tester,
-      ) async {
-        final gateway = _QuickReplyGateway();
-        await pumpChat(
-          tester,
-          desktopGateway: gateway,
-          connection: _remoteConn('conn-qr$flag'),
-          messages: [
-            {
-              'role': 'assistant',
-              'id': 'a-qr-flag',
-              'content': 'Lo dejé a medias. ¿Quieres que siga?',
-              flag: true,
-            },
-            {'role': 'user', 'id': 'u-qr-flag', 'content': 'Arregla el parser'},
-          ],
-          chatState: ChatPipelineState.completed,
+    void expectNoQuickReplies() {
+      expect(find.byKey(const ValueKey('chat-quick-replies')), findsNothing);
+      for (var index = 0; index < 4; index++) {
+        expect(
+          find.byKey(ValueKey('quick-reply-$index'), skipOffstage: false),
+          findsNothing,
         );
-        await tester.pump(const Duration(milliseconds: 400));
-        expect(chip(0), findsNothing);
-        expect(smart, findsNothing);
-        expect(gateway.calls, isEmpty);
-        expect(tester.takeException(), isNull);
-      });
+      }
+      expect(find.byKey(const ValueKey('quick-reply-smart')), findsNothing);
+      expect(find.text('Explícamelo más'), findsNothing);
     }
 
-    const failedTurn = {
-      'role': 'assistant_error',
-      'id': 'e-qr-1',
-      'content': 'El proveedor no respondió.',
-    };
-    const unansweredUser = {
-      'role': 'user',
-      'id': 'u-qr-2',
-      'content': 'Aplícalo',
-    };
-    for (final (name, rows, state) in [
-      (
-        'a failed turn after a new prompt',
-        [failedTurn, unansweredUser, ...finishedTurn],
-        ChatPipelineState.failed,
-      ),
-      (
-        'a failed step right after the answer',
-        [failedTurn, ...finishedTurn],
-        ChatPipelineState.failed,
-      ),
-      (
-        'a prompt nobody answered yet',
-        [unansweredUser, ...finishedTurn],
-        ChatPipelineState.idle,
-      ),
-    ]) {
-      testWidgets('rpl1215 no chips after $name', (tester) async {
-        final gateway = _QuickReplyGateway();
-        await pumpChat(
-          tester,
-          desktopGateway: gateway,
-          connection: _remoteConn('conn-qr-error'),
-          messages: rows,
-          chatState: state,
-        );
-        await tester.pump(const Duration(milliseconds: 400));
-        // The older finished answer must not lend its chips to a later turn.
-        expect(chip(0), findsNothing);
-        expect(smart, findsNothing);
-        expect(gateway.calls, isEmpty);
-        expect(tester.takeException(), isNull);
-      });
-    }
-
-    testWidgets('rpl1215 no chips over an answer with its own suggestions', (
+    testWidgets('cs1215 a finished turn offers no quick reply chips', (
       tester,
     ) async {
-      final gateway = _QuickReplyGateway();
+      final gateway = _SubmissionGateway();
       await pumpChat(
         tester,
         desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-own'),
+        connection: _remoteConn('conn-cs-no-qr'),
+        messages: finishedTurn,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.textContaining('¿Quieres que lo aplique?'), findsOneWidget);
+      expectNoQuickReplies();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      expect(gateway.submissions, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('cs1215 the answer\'s own suggestions still render', (
+      tester,
+    ) async {
+      final gateway = _SubmissionGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-cs-server-suggestions'),
         messages: const [
           {
             'role': 'assistant',
-            'id': 'a-qr-own',
+            'id': 'a-sg-1',
             'content':
-                'He revisado el parser.\n\nSi quieres, puedo:\n'
-                '- resumirlo\n- ampliarlo',
+                'He revisado el parser.\n\n'
+                'Si quieres, puedo:\n- Aplica el cambio\n- Enséñame el diff',
           },
-          {'role': 'user', 'id': 'u-qr-own', 'content': 'Revisa el parser'},
-        ],
-        chatState: ChatPipelineState.completed,
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      // The answer's own offers are painted; the rail stays away.
-      expect(find.textContaining('resumirlo'), findsWidgets);
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 ✨ sends the typed text of a message with files', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-attach'),
-        messages: const [
-          {
-            'role': 'assistant',
-            'id': 'a-qr-attach',
-            'content': 'El contrato vence en mayo. ¿Lo resumo?',
-          },
-          {
-            'role': 'user',
-            'id': 'u-qr-attach',
-            'content': '[📎 contrato.pdf · 31 B]\nRevisa el contrato',
-          },
+          {'role': 'user', 'id': 'u-sg-1', 'content': 'Arregla el parser'},
         ],
       );
       await tester.pump(const Duration(milliseconds: 400));
-      await tester.tap(smart);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-
-      expect(gateway.calls, hasLength(1));
-      expect(gateway.calls.single.lastUser, 'Revisa el contrato');
-      expect(gateway.calls.single.lastAssistant, contains('¿Lo resumo?'));
+      expect(find.byType(HermesSuggestions), findsOneWidget);
+      expect(find.text('Aplica el cambio'), findsOneWidget);
+      expectNoQuickReplies();
       expect(tester.takeException(), isNull);
     });
   });
@@ -35965,29 +35510,5 @@ class _Dup9340HistoryGateway extends _UiRewindGateway
       pagination: null,
       paginationProvided: false,
     );
-  }
-}
-
-class _QuickReplyGateway extends _SubmissionGateway
-    implements HermesQuickReplySuggestionGateway {
-  bool available = true;
-  List<String> ideas = const ['Sí, aplícalo', 'Enséñame el diff'];
-  final calls = <({String lastAssistant, String lastUser, String profile})>[];
-
-  @override
-  bool get quickReplySuggestionsAvailable => available;
-
-  @override
-  Future<List<String>> suggestQuickReplies({
-    required String lastAssistant,
-    required String lastUser,
-    String profile = '',
-  }) async {
-    calls.add((
-      lastAssistant: lastAssistant,
-      lastUser: lastUser,
-      profile: profile,
-    ));
-    return ideas;
   }
 }

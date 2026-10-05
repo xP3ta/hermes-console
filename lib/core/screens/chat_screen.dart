@@ -21,7 +21,6 @@ import 'terminal_pane_screen.dart';
 import '../widgets/chat/chat_message_frame.dart';
 import '../widgets/chat/console_composer.dart';
 import '../widgets/chat/chat_message_selection_area.dart';
-import '../widgets/chat/chat_quick_reply_bar.dart';
 // Chat screen with real-time streaming via REST API.
 // Uses REST endpoints: POST /api/sessions/{id}/chat and
 // GET /api/sessions/{id}/messages.
@@ -168,7 +167,6 @@ import '../utils/assistant_content.dart';
 import '../utils/assistant_operational_artifacts.dart';
 import '../utils/assistant_suggestions.dart';
 import '../utils/chat_ask_about.dart';
-import '../utils/chat_quick_replies.dart';
 import '../utils/generated_artifact_markdown_scanner.dart';
 import '../utils/streaming_normalizer.dart';
 import 'activity_screen.dart';
@@ -3930,115 +3928,6 @@ class _ChatScreenState extends State<ChatScreen>
     _textController.value = insertQuoteIntoComposer(
       _textController.value,
       quote,
-    );
-    _textFocusNode.requestFocus();
-  }
-
-  /// The finished turn quick replies answer, or null while anything else
-  /// owns the conversation (streaming, a pending card, a queue, read-only).
-  ({
-    Map<String, dynamic> assistant,
-    Object turnKey,
-    String answer,
-    String lastUser,
-  })?
-  _quickReplySource() {
-    if (!_chatBound ||
-        (kVoiceRuntimeEnabled && _voiceOverlayVisible) ||
-        _isBotChatSurface ||
-        widget.connection.readOnly ||
-        _cronRunReadOnly ||
-        _chat.conflictReadOnly ||
-        _chat.isStreaming ||
-        _sending ||
-        _compressingSession ||
-        _attachmentSubmitting ||
-        _interactiveMessageRefreshPending ||
-        _chat.pendingApproval != null ||
-        _chat.pendingInteractivePrompt != null ||
-        _chat.queuedMessages.isNotEmpty ||
-        _editingUserMessage ||
-        _isRecording ||
-        _transcribing) {
-      return null;
-    }
-    Map<String, dynamic>? assistant;
-    var lastUser = '';
-    for (final message in _messages) {
-      final role = message['role'];
-      if (assistant == null) {
-        if (role == 'assistant') {
-          assistant = message;
-          continue;
-        }
-        if (role == 'user' || role == 'assistant_error') return null;
-        continue;
-      }
-      if (role == 'user') {
-        lastUser = _parseUserContent(
-          (message['content'] ?? '').toString(),
-        ).text;
-        break;
-      }
-    }
-    if (assistant == null ||
-        assistant['_cancelled'] == true ||
-        assistant['_stopped'] == true ||
-        assistant['_pipeline'] == true) {
-      return null;
-    }
-    final content = (assistant['content'] ?? '').toString();
-    final projection = projectAssistantSuggestions(
-      GeneratedMediaService.stripDirectives(splitReasoning(content).answer),
-    );
-    // The answer already ends with its own tappable offers.
-    if (projection.hasSuggestions) return null;
-    final answer = projection.body.trim();
-    if (answer.isEmpty) return null;
-    final id = assistant['id'] ?? assistant['message_id'] ?? '';
-    return (
-      assistant: assistant,
-      turnKey: '$id:${content.length}:${content.hashCode}',
-      answer: answer,
-      lastUser: lastUser,
-    );
-  }
-
-  /// Contextual reply chips closing the latest finished answer [message],
-  /// in the same slot as the answer's own suggestions; null for any other
-  /// row or when nothing is due. They live inside the bubble, so showing or
-  /// hiding them never changes the transcript padding.
-  Widget? _inlineQuickRepliesFor(Map<String, dynamic> message) {
-    final source = _quickReplySource();
-    if (source == null || !identical(source.assistant, message)) return null;
-    final strings = Strings.of(context);
-    return ChatQuickReplyBar(
-      key: const ValueKey('chat-quick-replies'),
-      turnKey: source.turnKey,
-      replies: heuristicQuickReplies(source.answer, strings),
-      composer: _textController,
-      onFill: _fillComposerFromQuickReply,
-      smartLabel: strings.rpl1215SmartSuggest,
-      loadSmart: _chat.canSuggestQuickReplies ? _loadSmartQuickReplies : null,
-    );
-  }
-
-  /// Only ever runs from a tap on the ✨ chip.
-  Future<List<String>> _loadSmartQuickReplies() async {
-    final source = _quickReplySource();
-    if (source == null) return const [];
-    return _chat.suggestQuickReplies(
-      lastAssistant: source.answer,
-      lastUser: source.lastUser,
-    );
-  }
-
-  /// A quick reply fills an empty composer for editing; it is never sent.
-  void _fillComposerFromQuickReply(String reply) {
-    if (!mounted || _textController.text.isNotEmpty) return;
-    _textController.value = TextEditingValue(
-      text: reply,
-      selection: TextSelection.collapsed(offset: reply.length),
     );
     _textFocusNode.requestFocus();
   }
@@ -17742,10 +17631,6 @@ class _ChatScreenState extends State<ChatScreen>
       onSuggestionSelected: suggestionsEnabled
           ? (suggestion) => _useAssistantSuggestion(msg, suggestion)
           : null,
-      quickReplies:
-          role == 'assistant' && !isStreaming && !isCancelled && !isPipeline
-          ? _inlineQuickRepliesFor(msg)
-          : null,
       connectionCard: role == 'assistant'
           ? _connectionCardFor(metadataMsg)
           : null,
@@ -19992,9 +19877,6 @@ class _MessageBubble extends StatelessWidget {
   final ValueChanged<String>? onSaveEdit;
   final VoidCallback? onRegenerate;
   final AssistantSuggestionCallback? onSuggestionSelected;
-
-  /// Contextual quick reply chips closing the latest finished answer.
-  final Widget? quickReplies;
   final _ConnectionCardBinding? connectionCard;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
@@ -20033,7 +19915,6 @@ class _MessageBubble extends StatelessWidget {
     this.onSaveEdit,
     this.onRegenerate,
     this.onSuggestionSelected,
-    this.quickReplies,
     this.connectionCard,
     this.compact = false,
     this.performanceProbe,
@@ -20081,7 +19962,6 @@ class _MessageBubble extends StatelessWidget {
             onRegenerate: onRegenerate,
             onBranch: onBranch,
             onSuggestionSelected: onSuggestionSelected,
-            quickReplies: quickReplies,
             connectionCard: connectionCard,
             compact: compact,
             performanceProbe: performanceProbe,
@@ -21677,10 +21557,6 @@ class _AssistantMessage extends StatelessWidget {
   final VoidCallback? onRegenerate;
   final VoidCallback? onBranch;
   final AssistantSuggestionCallback? onSuggestionSelected;
-
-  /// Contextual quick reply chips, painted where the answer's own
-  /// suggestions go (never both: the chips stand aside for those).
-  final Widget? quickReplies;
   final _ConnectionCardBinding? connectionCard;
   final bool compact;
   final ChatPerformanceProbe? performanceProbe;
@@ -21715,7 +21591,6 @@ class _AssistantMessage extends StatelessWidget {
     this.onRegenerate,
     this.onBranch,
     this.onSuggestionSelected,
-    this.quickReplies,
     this.connectionCard,
     this.compact = false,
     this.performanceProbe,
@@ -22137,9 +22012,7 @@ class _AssistantMessage extends StatelessWidget {
           HermesSuggestions(
             suggestions: suggestionProjection.suggestions,
             onSelected: onSuggestionSelected!,
-          )
-        else if (showFooter && quickReplies != null)
-          quickReplies!,
+          ),
         if (showFooter && metadata['show_link_preview'] == true)
           Builder(
             builder: (ctx) {

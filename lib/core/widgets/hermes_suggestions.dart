@@ -7,8 +7,7 @@ import '../theme/app_theme.dart';
 
 typedef AssistantSuggestionCallback = Future<bool> Function(String suggestion);
 
-/// Compact stadium chip shared by every suggestion rail (assistant offers
-/// and the inline quick replies), so they read as one component.
+/// Compact stadium chip of the assistant's suggestion rail.
 ButtonStyle hermesSuggestionButtonStyle(
   HermesThemeColors colors, {
   required double maxWidth,
