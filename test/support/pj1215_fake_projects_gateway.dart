@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:hermes_android/core/models/desktop_control_center.dart';
 import 'package:hermes_android/core/models/project_files.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
@@ -410,6 +412,25 @@ class Pc1215CreatingProjectsGateway extends Pj1215FakeProjectsGateway
   Future<ProjectDirectoryListing> listProjectDirectory(String path) async {
     calls.add('GET /api/fs/list:$path');
     return ProjectDirectoryListing(entries: folders[path] ?? const []);
+  }
+
+  @override
+  Future<ProjectFilePreview> readProjectFileText(String path) async {
+    calls.add('GET /api/fs/read-text:$path');
+    return ProjectFilePreview(
+      path: path,
+      text: 'contents of $path',
+      binary: false,
+      truncated: false,
+      byteSize: 16,
+      mimeType: 'text/plain',
+    );
+  }
+
+  @override
+  Future<Uint8List> readProjectFileBytes(String path) async {
+    calls.add('GET /api/fs/read-data-url:$path');
+    return Uint8List(0);
   }
 
   @override

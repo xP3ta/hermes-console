@@ -595,6 +595,43 @@ void main() {
       expect(picked, '/home/demo/code');
     });
 
+    testWidgets('a file row in pick mode cannot be opened', (tester) async {
+      final gateway = fs();
+      // The same file opens in the normal project browser (control): the
+      // fake really serves it, so only the pick-mode guard keeps it shut.
+      expect(
+        (await gateway.readProjectFileText('/home/demo/notes.md')).text,
+        isNotEmpty,
+      );
+      gateway.calls.clear();
+      final picked = await pick(
+        tester,
+        gateway,
+        start: '/home/demo',
+        steps: () async {
+          await tester.tap(find.text('notes.md'));
+          await tester.pumpAndSettle();
+          expect(
+            gateway.calls.where((c) => c.startsWith('GET /api/fs/read')),
+            isEmpty,
+          );
+          // No viewer or file-info surface was pushed over the picker.
+          expect(find.text('contents of /home/demo/notes.md'), findsNothing);
+          expect(
+            find.byKey(const ValueKey('pc1215-pick-folder-use')),
+            findsOne,
+          );
+          expect(find.text('notes.md'), findsOneWidget);
+          await tester.tap(
+            find.byKey(const ValueKey('pc1215-pick-folder-use')),
+          );
+          await tester.pumpAndSettle();
+        },
+      );
+      // The picker still returns the folder, never the tapped file.
+      expect(picked, '/home/demo');
+    });
+
     testWidgets('breadcrumbs go up to the filesystem root; files are not '
         'opened; only "new folder" is offered', (tester) async {
       final gateway = fs();
@@ -606,6 +643,17 @@ void main() {
           await tester.tap(find.text('notes.md'));
           await tester.pumpAndSettle();
           expect(gateway.calls.where((c) => c.contains('read')), isEmpty);
+          // No per-entry edit/rename/delete menu on any row.
+          expect(
+            find.byWidgetPredicate(
+              (w) =>
+                  w.key is ValueKey<String> &&
+                  (w.key! as ValueKey<String>).value.startsWith(
+                    'pw1215-fs-entry-menu-',
+                  ),
+            ),
+            findsNothing,
+          );
           await tester.tap(find.byKey(const ValueKey('pw1215-fs-add')));
           await tester.pumpAndSettle();
           expect(find.byKey(const ValueKey('pw1215-add-folder')), findsOne);
