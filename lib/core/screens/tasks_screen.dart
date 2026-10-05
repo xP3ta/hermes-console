@@ -992,9 +992,11 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
               if (busy.contains(field)) return Future<void>.value();
               setSheet(() => busy.add(field));
               final run = writes.then((_) => runWrite(field, write));
-              // A failed write must not stall the ones queued behind it.
+              // A failed write must not stall the ones queued behind it, nor
+              // escape to the unawaited tap handlers; runWrite has already
+              // reported it.
               writes = run.then((_) {}, onError: (_) {});
-              return run;
+              return writes;
             }
 
             Future<void> pickProfile({required bool orchestrator}) async {
