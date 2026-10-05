@@ -2826,7 +2826,9 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
     }
     session
       ..actionId = applyResult.actionId
-      ..responseConfirmed = applyResult.responseConfirmed;
+      ..responseConfirmed = applyResult.responseConfirmed
+      ..attachedToRunningUpdate = applyResult.alreadyRunning
+      ..adoptServerTime(applyResult.serverDate);
     if (mounted) {
       _snack(
         applyResult.alreadyRunning

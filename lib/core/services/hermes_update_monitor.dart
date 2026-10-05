@@ -39,8 +39,9 @@ const Duration hermesUpdateRestartWindow = Duration(minutes: 4);
 const Duration hermesUpdateGatewayConfirmWindow = Duration(minutes: 2);
 
 /// Margen para relojes de móvil y servidor desfasados al decidir si un
-/// recibo pertenece a esta ejecución.
-const Duration _clockSkew = Duration(minutes: 2);
+/// recibo pertenece a esta ejecución (Desktop uses 60 s; [requestedAt] is the
+/// server's own clock when the POST answer carried a `Date` header).
+const Duration _clockSkew = Duration(seconds: 60);
 
 /// Fase observada de la acción `hermes-update`.
 enum HermesUpdateActionPhase {
@@ -313,15 +314,42 @@ class HermesUpdateProbes {
 class HermesUpdateSession {
   HermesUpdateSession._({
     required this.connectionId,
-    required this.requestedAt,
+    required DateTime requestedAt,
     required this.previousVersion,
-  });
+  }) : _requestedAt = requestedAt.toUtc();
 
   static final Map<String, HermesUpdateSession> _sessions = {};
 
   final String connectionId;
-  final DateTime requestedAt;
   final String previousVersion;
+
+  /// When this run was requested, on the server clock when known (see
+  /// [adoptServerTime]). Receipts that started before it (minus a 60 s
+  /// margin) belong to an earlier run.
+  DateTime get requestedAt => _requestedAt;
+  DateTime _requestedAt;
+
+  /// The POST answered `already_running`: this session follows a run that
+  /// started before our request.
+  bool attachedToRunningUpdate = false;
+
+  /// Anchors [requestedAt] on the server clock of the POST answer, so a
+  /// phone clock running ahead does not disown our own receipt.
+  void adoptServerTime(DateTime? serverDate) {
+    if (serverDate == null) return;
+    _requestedAt = serverDate.toUtc();
+  }
+
+  /// Attached to a run already in progress: its own receipt, open while the
+  /// updater lives, tells when it started; adopt that as the request time.
+  void _adoptAttachedRunStart(Map<String, dynamic> status) {
+    final receipt = status['receipt'];
+    if (status['running'] != true || receipt is! Map) return;
+    if ((receipt['finished_at'] ?? '').toString().trim().isNotEmpty) return;
+    final started = DateTime.tryParse((receipt['started_at'] ?? '').toString());
+    if (started == null || !started.isBefore(_requestedAt)) return;
+    _requestedAt = started.toUtc();
+  }
 
   /// `action_id` de Hermes; llega con la respuesta del POST. Se relee en
   /// cada sondeo, así que puede fijarse después de arrancar [track].
@@ -443,6 +471,7 @@ class HermesUpdateSession {
           final raw = await probes.actionStatus();
           lastReadFailed = false;
           if (!drainSeen && _logShowsGatewayDrain(raw)) drainSeen = true;
+          if (attachedToRunningUpdate) _adoptAttachedRunStart(raw);
           obs = classifyHermesUpdateAction(
             raw,
             actionId: actionId,

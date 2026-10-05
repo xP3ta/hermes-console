@@ -137,6 +137,27 @@ void main() {
       );
     });
 
+    test('clock margin is 60 s (Desktop), not minutes', () {
+      Map<String, dynamic> receiptStartedBefore(Duration before) => {
+        'running': false,
+        'receipt': {
+          'outcome': 'success',
+          'started_at': requestedAt.subtract(before).toIso8601String(),
+          'finished_at': requestedAt
+              .add(const Duration(minutes: 9))
+              .toIso8601String(),
+        },
+      };
+      expect(
+        classify(receiptStartedBefore(const Duration(seconds: 50))).phase,
+        HermesUpdateActionPhase.succeeded,
+      );
+      expect(
+        classify(receiptStartedBefore(const Duration(seconds: 90))).phase,
+        HermesUpdateActionPhase.unknown,
+      );
+    });
+
     test('Dashboard recién reiniciado sin datos: desconocido', () {
       expect(
         classify({'running': false, 'exit_code': null}).phase,
@@ -444,6 +465,97 @@ void main() {
       },
     );
 
+    test('phone clock 3 min ahead: the server Date of the POST still '
+        'matches our own receipt', () async {
+      final phoneNow = requestedAt.add(const Duration(minutes: 3));
+      Future<HermesUpdateResult> run({required bool serverClock}) {
+        HermesUpdateSession.debugReset();
+        var now = DateTime(2026, 9, 25, 10);
+        final session = HermesUpdateSession.reserve(
+          'a',
+          previousVersion: '0.21.4',
+          now: phoneNow,
+        )!..actionId = ownId;
+        session.adoptServerTime(serverClock ? requestedAt : null);
+        return session.track(
+          HermesUpdateProbes(
+            actionStatus: () async {
+              now = now.add(const Duration(minutes: 1));
+              // Receipt only (no marker): the log rotated.
+              return {'running': false, 'receipt': ourReceipt('success')};
+            },
+            serverStatus: () async => {
+              'gateway_running': true,
+              'version': '0.21.5',
+            },
+            updateStillAvailable: () async => null,
+          ),
+          pollInterval: Duration.zero,
+          clock: () => now,
+        );
+      }
+
+      expect(
+        (await run(serverClock: true)).outcome,
+        HermesUpdateOutcome.confirmed,
+      );
+      // Without the server time only the 60 s margin is left.
+      expect(
+        (await run(serverClock: false)).outcome,
+        HermesUpdateOutcome.unverified,
+      );
+    });
+
+    test('already_running: attaches to the running action and reads its '
+        'receipt although it started before our request', () async {
+      final runStarted = requestedAt.subtract(const Duration(minutes: 5));
+      final receipt = {
+        'outcome': 'running',
+        'started_at': runStarted.toIso8601String(),
+        'finished_at': null,
+      };
+      var now = DateTime(2026, 9, 25, 10);
+      final session =
+          HermesUpdateSession.reserve(
+              'a',
+              previousVersion: '0.21.4',
+              now: requestedAt,
+            )!
+            ..actionId = ownId
+            ..attachedToRunningUpdate = true;
+      session.adoptServerTime(requestedAt);
+      var polls = 0;
+      final result = await session.track(
+        HermesUpdateProbes(
+          actionStatus: () async {
+            now = now.add(const Duration(seconds: 30));
+            if (++polls < 3) {
+              return {'running': true, 'receipt': receipt, 'lines': <String>[]};
+            }
+            return {
+              'running': false,
+              'exit_code': 0,
+              'receipt': {
+                ...receipt,
+                'outcome': 'success',
+                'finished_at': requestedAt.toIso8601String(),
+              },
+            };
+          },
+          serverStatus: () async => {
+            'gateway_running': true,
+            'version': '0.21.5',
+          },
+          updateStillAvailable: () async => null,
+        ),
+        pollInterval: Duration.zero,
+        clock: () => now,
+      );
+      expect(result.outcome, HermesUpdateOutcome.confirmed);
+      expect(polls, 3);
+      expect(session.requestedAt, runStarted);
+    });
+
     test('Desktop cadence: polls every 1.5–2 s, 6 min cap while the '
         'updater runs, 4 min restart window', () {
       expect(
@@ -628,6 +740,16 @@ void main() {
       expect(reserve, greaterThan(0));
       expect(post, greaterThan(reserve));
       expect(apply, contains('session.track('));
+      // Server clock and already_running reach the session before tracking.
+      final track = apply.indexOf('session.track(');
+      expect(
+        apply.indexOf('adoptServerTime(applyResult.serverDate)'),
+        allOf(greaterThan(post), lessThan(track)),
+      );
+      expect(
+        apply.indexOf('attachedToRunningUpdate = applyResult.alreadyRunning'),
+        allOf(greaterThan(post), lessThan(track)),
+      );
       expect(settings, contains('client.getUpdateActionStatus()'));
     });
 

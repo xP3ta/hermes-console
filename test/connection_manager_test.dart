@@ -2480,6 +2480,26 @@ void main() {
       client.close();
     });
 
+    test('returns the server clock of the answer (Date header)', () async {
+      final client = DashboardClient(
+        host: 'hermes.local',
+        port: 9119,
+        manualToken: 'test-token',
+        httpClientOverride: MockClient((_) async {
+          return http.Response(
+            '{"ok":true,"action_id":"0123456789abcdef0123456789abcdef"}',
+            200,
+            headers: {'date': 'Fri, 25 Sep 2026 08:45:03 GMT'},
+          );
+        }),
+      );
+
+      final result = await client.applyUpdate();
+
+      expect(result.serverDate, DateTime.utc(2026, 9, 25, 8, 45, 3));
+      client.close();
+    });
+
     test('marca una actualización que ya estaba en curso', () async {
       final client = DashboardClient(
         host: 'hermes.local',
