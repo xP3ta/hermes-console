@@ -1543,10 +1543,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   }
 
   int _homeRecentLimit() {
-    final media = MediaQuery.of(context);
-    final textScale = media.textScaler.scale(14) / 14;
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
     return homeRecentSessionLimit(
-      viewportHeight: media.size.height,
+      viewportHeight: MediaQuery.sizeOf(context).height,
       textScale: textScale,
     );
   }
