@@ -7,7 +7,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
+import 'package:hermes_android/core/models/home_widget_snapshot.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/services/home_widget_publisher.dart';
 import 'package:hermes_android/core/services/mission_control_repository.dart';
 import 'package:hermes_android/core/services/mission_snapshot_cache.dart';
 import 'package:hermes_android/core/services/mission_snapshot_prewarm.dart';
@@ -140,6 +142,7 @@ void main() {
     _Server server, {
     MissionSnapshotPrewarm? prewarm,
     bool botModeOpened = false,
+    HermesHomeWidgetPublisher? homeWidget,
   }) async {
     final manager = await ConnectionManager.create(
       await SharedPreferences.getInstance(),
@@ -171,6 +174,7 @@ void main() {
           ),
           dashboardAuthProbe: (_) async => DashboardAuthCheck.ok,
           missionPrewarm: prewarm,
+          homeWidgetUpdateOverride: homeWidget?.update,
         ),
       ),
     );
@@ -443,6 +447,117 @@ void main() {
     });
   });
 
+  // The launcher widget flickered «connecting» on every background status
+  // refresh of a healthy connection. It follows the Home status line:
+  // «connecting» only while nothing is known for the active connection.
+  group('home screen widget during re-checks', () {
+    Future<void> recheck(WidgetTester tester) async {
+      final state = tester.state(find.byType(HomeDashboardScreen));
+      (state as WidgetsBindingObserver).didChangeAppLifecycleState(
+        AppLifecycleState.resumed,
+      );
+    }
+
+    ({HermesHomeWidgetPublisher publisher, _WidgetStore store})
+    widgetPublisher() {
+      final store = _WidgetStore();
+      var clock = 2000000000000;
+      final publisher = HermesHomeWidgetPublisher(
+        store: store,
+        nowMs: () => clock += 1000,
+      );
+      return (publisher: publisher, store: store);
+    }
+
+    testWidgets('a healthy re-check writes online once, never connecting', (
+      tester,
+    ) async {
+      final w = widgetPublisher();
+      final server = _Server();
+      await pumpHome(tester, server, homeWidget: w.publisher);
+      await settleHome(tester);
+      expect(w.store.states.last, 'connected');
+      final before = w.store.states.length;
+
+      server.healthDelay = const Duration(seconds: 1);
+      await recheck(tester);
+      await tester.pump(const Duration(seconds: 1));
+      await settleHome(tester);
+      final published = w.store.states.sublist(before);
+      expect(published, ['connected'], reason: 'one heartbeat write per check');
+      await unmount(tester);
+    });
+
+    testWidgets('the first check publishes connecting, then online', (
+      tester,
+    ) async {
+      final w = widgetPublisher();
+      final server = _Server()..healthDelay = const Duration(seconds: 1);
+      await pumpHome(tester, server, homeWidget: w.publisher);
+      expect(w.store.states, ['connecting']);
+      await tester.pump(const Duration(seconds: 1));
+      await settleHome(tester);
+      expect(w.store.states, ['connecting', 'connected']);
+      await unmount(tester);
+    });
+
+    testWidgets('after a failure the next check publishes connecting', (
+      tester,
+    ) async {
+      final w = widgetPublisher();
+      final server = _Server();
+      await pumpHome(tester, server, homeWidget: w.publisher);
+      await settleHome(tester);
+
+      server.healthStatus = 503;
+      await recheck(tester);
+      await settleHome(tester);
+      expect(w.store.states.last, 'disconnected');
+      final before = w.store.states.length;
+
+      server
+        ..healthStatus = 200
+        ..healthDelay = const Duration(seconds: 1);
+      await recheck(tester);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(w.store.states.sublist(before), ['connecting']);
+      await tester.pump(const Duration(seconds: 1));
+      await settleHome(tester);
+      expect(w.store.states.sublist(before), ['connecting', 'connected']);
+      await unmount(tester);
+    });
+
+    testWidgets('another connection publishes connecting again', (
+      tester,
+    ) async {
+      final w = widgetPublisher();
+      final server = _Server();
+      final manager = await pumpHome(tester, server, homeWidget: w.publisher);
+      await settleHome(tester);
+      expect(w.store.states.last, 'connected');
+
+      await manager.saveConnection(
+        'QB',
+        '127.0.0.3',
+        8642,
+        'test-key',
+        kind: InstanceKind.vps,
+      );
+      final next = manager.getConnections().singleWhere((c) => c.label == 'QB');
+      server.healthDelay = const Duration(seconds: 1);
+      final before = w.store.states.length;
+      await manager.setActiveConnection(next.id);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(w.store.states.sublist(before), ['connecting']);
+      expect(w.store.instances.last, next.id);
+      await tester.pump(const Duration(seconds: 1));
+      await settleHome(tester);
+      expect(w.store.states.sublist(before), ['connecting', 'connected']);
+      expect(w.store.instances.last, next.id);
+      await unmount(tester);
+    });
+  });
+
   group('Bot Mode prewarm from Home', () {
     ({MissionSnapshotPrewarm warm, List<_WarmSource> built}) prewarm({
       Completer<void>? hold,
@@ -557,4 +672,24 @@ final class _WarmSource implements MissionControlDataSource {
   Stream<KanbanEvent>? watchKanban({required int since}) => null;
   @override
   void close() => closes++;
+}
+
+/// Records what each launcher redraw would show.
+final class _WidgetStore implements HomeWidgetStore {
+  final values = <String, Object?>{};
+  final states = <String?>[];
+  final instances = <String?>[];
+
+  @override
+  Future<Object?> read(String key) async => values[key];
+
+  @override
+  Future<void> write(String key, Object? value) async => values[key] = value;
+
+  @override
+  Future<void> requestUpdate() async {
+    const prefix = HermesHomeWidgetSnapshot.storagePrefix;
+    states.add(values['${prefix}connection_state'] as String?);
+    instances.add(values['${prefix}instance_id'] as String?);
+  }
 }
