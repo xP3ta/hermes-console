@@ -143,6 +143,51 @@ abstract class HermesProjectManagementGateway {
   Future<void> switchBranch(String repoPath, String branch);
 }
 
+/// The saved project `projects.create` returned: its id and the folder that
+/// became primary (where Desktop writes IDEA.md).
+final class ProjectCreated {
+  final String id;
+  final String primaryPath;
+
+  const ProjectCreated({required this.id, required this.primaryPath});
+}
+
+/// Creating projects from scratch, exactly as Hermes Desktop's project
+/// dialog and "Open folder…" do (`apps/desktop/src/store/projects.ts`):
+/// `projects.create`, `projects.add_folder`, `llm.oneshot` for the idea,
+/// `GET /api/fs/default-cwd` to seed the remote folder picker and
+/// `projects.discover_repos {scan: true}` on refresh. Separate from
+/// [HermesProjectManagementGateway] so older fakes and servers keep
+/// compiling; a screen hides creation when the gateway lacks it.
+abstract class HermesProjectCreationGateway {
+  /// True when this connection may write (not a read-only instance).
+  bool get projectWritesAllowed;
+
+  /// True once `projects.*` writes answered "method not found".
+  bool get projectCreationKnownUnsupported;
+
+  /// `projects.create {name, folders, primary_path?, use}`.
+  Future<ProjectCreated> createProjectFromFolders({
+    required String name,
+    required List<String> folders,
+    String? primaryPath,
+    bool use = true,
+  });
+
+  /// `projects.add_folder {id, path, is_primary: false}`.
+  Future<void> addProjectFolder(String id, String path);
+
+  /// `llm.oneshot` with Desktop's project-idea prompt; '' when it fails.
+  Future<String> generateProjectIdea(String name);
+
+  /// `GET /api/fs/default-cwd` → the server's default folder, or null.
+  Future<String?> projectDefaultFolder();
+
+  /// `projects.discover_repos {scan: true}`: the host scans its discovery
+  /// roots so repositories without chats show up. Best effort.
+  Future<void> scanProjectRepos();
+}
+
 /// Read-only browsing of a project folder through the Dashboard file routes
 /// Hermes Desktop's remote file tree uses (`apps/desktop/src/lib/
 /// desktop-fs.ts`): `GET /api/fs/list?path=`, `GET /api/fs/read-text?path=`

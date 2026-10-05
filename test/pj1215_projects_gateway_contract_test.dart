@@ -355,4 +355,165 @@ void main() {
       expect(plain.containsKey('cwd_explicit'), isFalse);
     },
   );
+
+  group('project creation (Desktop project dialog / Open folder…)', () {
+    Object answer(Map<String, dynamic> frame) => switch (frame['method']) {
+      'projects.create' => {
+        'project': {
+          'id': 'p_9',
+          'primary_path': '/srv/garden',
+          'folders': [
+            {'path': '/srv/garden', 'is_primary': true},
+          ],
+        },
+      },
+      'projects.add_folder' => {
+        'project': {'id': 'p_9'},
+      },
+      'llm.oneshot' => {'text': '  A garden planner.\n- Beds  '},
+      'projects.discover_repos' => {'repos': <Object>[]},
+      _ => _defaultAnswer(frame),
+    };
+
+    test(
+      'projects.create sends name, folders and use like the dialog',
+      () async {
+        final h = _client(respond: answer);
+        final created = await h.client.createProjectFromFolders(
+          name: 'garden',
+          folders: ['/srv/garden', '/srv/seeds'],
+        );
+        expect(_params(h.requests, 'projects.create'), {
+          'name': 'garden',
+          'folders': ['/srv/garden', '/srv/seeds'],
+          'use': true,
+        });
+        expect(created.id, 'p_9');
+        expect(created.primaryPath, '/srv/garden');
+      },
+    );
+
+    test('Open folder… also sends primary_path', () async {
+      final h = _client(respond: answer);
+      await h.client.createProjectFromFolders(
+        name: 'garden',
+        folders: ['/srv/garden'],
+        primaryPath: '/srv/garden',
+      );
+      expect(_params(h.requests, 'projects.create'), {
+        'name': 'garden',
+        'folders': ['/srv/garden'],
+        'primary_path': '/srv/garden',
+        'use': true,
+      });
+    });
+
+    test('a create without folders never reaches the wire', () async {
+      final h = _client(respond: answer);
+      await expectLater(
+        h.client.createProjectFromFolders(name: 'x', folders: const []),
+        throwsA(isA<DesktopControlFailure>()),
+      );
+      expect(
+        h.requests.where((r) => r['method'] == 'projects.create'),
+        isEmpty,
+      );
+    });
+
+    test('projects.add_folder {id, path, is_primary: false}', () async {
+      final h = _client(respond: answer);
+      await h.client.addProjectFolder('p_9', '/srv/photos');
+      expect(_params(h.requests, 'projects.add_folder'), {
+        'id': 'p_9',
+        'path': '/srv/photos',
+        'is_primary': false,
+      });
+      await expectLater(
+        h.client.addProjectFolder('/srv/auto', '/srv/photos'),
+        throwsA(isA<DesktopControlFailure>()),
+      );
+    });
+
+    test('llm.oneshot uses Desktop generateProjectIdea prompt', () async {
+      final h = _client(respond: answer);
+      expect(
+        await h.client.generateProjectIdea(' Huerto '),
+        'A garden planner.\n- Beds',
+      );
+      final params = _params(h.requests, 'llm.oneshot')!;
+      expect(params['input'], 'Project name: Huerto');
+      expect(params['temperature'], 1.0);
+      expect(
+        params['instructions'],
+        startsWith('You generate a single, concrete project idea'),
+      );
+      expect(params.keys.toSet(), {'instructions', 'input', 'temperature'});
+      await h.client.generateProjectIdea('');
+      expect(
+        _params(h.requests, 'llm.oneshot')!['input'],
+        'Surprise me with a fun project.',
+      );
+    });
+
+    test('a failed idea generation answers an empty idea', () async {
+      final h = _client(
+        respond: (frame) => frame['method'] == 'llm.oneshot'
+            ? const _RpcError(5030)
+            : _defaultAnswer(frame),
+      );
+      expect(await h.client.generateProjectIdea('x'), '');
+    });
+
+    test('default folder comes from GET /api/fs/default-cwd', () async {
+      final h = _client(respond: answer);
+      h.dashboard.respond = (_) => {'cwd': '/home/demo', 'branch': ''};
+      expect(await h.client.projectDefaultFolder(), '/home/demo');
+      expect(h.dashboard.calls.single.$2, 'fs/default-cwd');
+      h.dashboard.failStatus = 404;
+      expect(await h.client.projectDefaultFolder(), isNull);
+    });
+
+    test('projects.discover_repos asks the host to scan', () async {
+      final h = _client(respond: answer);
+      await h.client.scanProjectRepos();
+      expect(_params(h.requests, 'projects.discover_repos'), {'scan': true});
+    });
+
+    test('read-only connections never create or add folders', () async {
+      final h = _client(readOnly: true, respond: answer);
+      await expectLater(
+        h.client.createProjectFromFolders(name: 'x', folders: ['/srv/x']),
+        throwsA(isA<DesktopControlFailure>()),
+      );
+      await expectLater(
+        h.client.addProjectFolder('p_9', '/srv/x'),
+        throwsA(isA<DesktopControlFailure>()),
+      );
+      expect(
+        h.requests.where(
+          (r) =>
+              r['method'] == 'projects.create' ||
+              r['method'] == 'projects.add_folder',
+        ),
+        isEmpty,
+      );
+    });
+
+    test(
+      'method-not-found on projects.create marks creation unsupported',
+      () async {
+        final h = _client(
+          respond: (frame) => frame['method'] == 'projects.create'
+              ? const _RpcError(-32601)
+              : _defaultAnswer(frame),
+        );
+        expect(h.client.projectCreationKnownUnsupported, isFalse);
+        await expectLater(
+          h.client.createProjectFromFolders(name: 'x', folders: ['/srv/x']),
+          throwsA(isA<DesktopControlFailure>()),
+        );
+        expect(h.client.projectCreationKnownUnsupported, isTrue);
+      },
+    );
+  });
 }

@@ -1473,6 +1473,7 @@ class TuiGatewayClient
         HermesDesktopTurnSideGateway,
         HermesDesktopSessionControlGateway,
         HermesProjectManagementGateway,
+        HermesProjectCreationGateway,
         HermesProjectFilesGateway,
         HermesProjectFileWritesGateway,
         HermesExtensionManagementGateway,
@@ -6734,6 +6735,111 @@ class TuiGatewayClient
     await _controlRequest('projects.set_active', {
       'id': _savedProjectId(id),
     }, capability: DesktopGatewayCapability.projectManagement);
+  }
+
+  // ── Project creation (Desktop project dialog / "Open folder…") ─────────
+
+  @override
+  bool get projectCreationKnownUnsupported =>
+      !_capabilityCache.canAttempt(DesktopGatewayCapability.projectManagement);
+
+  @override
+  Future<ProjectCreated> createProjectFromFolders({
+    required String name,
+    required List<String> folders,
+    String? primaryPath,
+    bool use = true,
+  }) async {
+    _requireWritableControlConnection();
+    final paths = [
+      for (final folder in folders)
+        _validatedControlValue(folder, maxLength: 4096),
+    ];
+    if (paths.isEmpty) {
+      throw const DesktopControlFailure(DesktopControlFailureKind.rejected);
+    }
+    final primary = primaryPath == null
+        ? null
+        : _validatedControlValue(primaryPath, maxLength: 4096);
+    final result = await _controlRequest('projects.create', {
+      'name': _projectName(name),
+      'folders': paths,
+      'primary_path': ?primary,
+      'use': use,
+    }, capability: DesktopGatewayCapability.projectManagement);
+    final project = result['project'];
+    if (project is! Map || project['id'] is! String) {
+      _invalidControlResponse(DesktopGatewayCapability.projectManagement);
+    }
+    String folderOf(Object? raw) =>
+        raw is Map && raw['path'] is String ? (raw['path'] as String) : '';
+    final rawFolders = project['folders'];
+    final stored = project['primary_path'];
+    return ProjectCreated(
+      id: project['id'] as String,
+      primaryPath: stored is String && stored.trim().isNotEmpty
+          ? stored.trim()
+          : rawFolders is List && rawFolders.isNotEmpty
+          ? folderOf(rawFolders.first)
+          : primary ?? paths.first,
+    );
+  }
+
+  @override
+  Future<void> addProjectFolder(String id, String path) async {
+    _requireWritableControlConnection();
+    final result = await _controlRequest('projects.add_folder', {
+      'id': _savedProjectId(id),
+      'path': _validatedControlValue(path, maxLength: 4096),
+      'is_primary': false,
+    }, capability: DesktopGatewayCapability.projectManagement);
+    if (result['project'] is! Map) {
+      _invalidControlResponse(DesktopGatewayCapability.projectManagement);
+    }
+  }
+
+  /// Desktop `generateProjectIdea`: same prompt, same temperature.
+  @override
+  Future<String> generateProjectIdea(String name) async {
+    final trimmed = name.trim();
+    try {
+      final result = await _controlRequest('llm.oneshot', {
+        'instructions':
+            'You generate a single, concrete project idea as a short IDEA.md '
+            'body: a one-line summary, then 3-5 bullet goals. No preamble, no '
+            'code fences, under 120 words.',
+        'input': trimmed.isNotEmpty
+            ? 'Project name: ${_projectName(trimmed)}'
+            : 'Surprise me with a fun project.',
+        'temperature': 1.0,
+      });
+      final text = result['text'];
+      return text is String ? text.trim() : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  @override
+  Future<String?> projectDefaultFolder() async {
+    try {
+      final result = await _dashboardExtensionRequest(
+        () => _dashboard.apiGet('fs/default-cwd'),
+      );
+      final cwd = result['cwd'];
+      return cwd is String && cwd.trim().startsWith('/') ? cwd.trim() : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> scanProjectRepos() async {
+    try {
+      await _controlRequest('projects.discover_repos', {'scan': true});
+    } catch (_) {
+      // Best effort, like Desktop: the last known tree stays on screen.
+    }
   }
 
   /// Re-homes a STORED session's workspace (`session.workspace.move`): the
