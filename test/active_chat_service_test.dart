@@ -3798,6 +3798,40 @@ void main() {
       },
     );
 
+    test('a run thinking.delta spinner phrase is not reasoning', () async {
+      final client = _ApprovalRaceClient();
+      addTearDown(client.close);
+      final chat = ActiveChat(
+        compressionRestoreStore: testCompressionRestoreStore(),
+        connection: _conn(id: 'conn-run-thinking'),
+        sessionId: 'sess-run-thinking',
+        sessionTitle: 'Run thinking',
+        notifications: null,
+        onTerminal: () {},
+        api: ApiClient(
+          baseUrl: 'http://hermes.local:8642',
+          apiKey: 'test-key',
+          httpClient: client,
+        ),
+      )..smoothStreaming = false;
+      addTearDown(chat.dispose);
+      String reasoning() => chat.messages
+          .map(
+            (m) =>
+                '${m['reasoning'] ?? ''} ${m[assistantActivityTraceKey] ?? ''}',
+          )
+          .join(' ');
+
+      await chat.send(fullText: 'go', model: 'hermes-agent', history: const []);
+      client.emit({'event': 'reasoning.delta', 'text': 'Checking the files. '});
+      await _waitFor(() => reasoning().contains('Checking the files.'));
+      client.emit({'event': 'thinking.delta', 'text': '(¬_¬) pondering...'});
+      client.emit({'event': 'reasoning.delta', 'text': 'Then I edit.'});
+      await _waitFor(() => reasoning().contains('Then I edit.'));
+
+      expect(reasoning(), isNot(contains('pondering')));
+    });
+
     test(
       'colecciona intermedios y final una vez sin narrar tools ni logs',
       () async {
