@@ -45,6 +45,17 @@ Widget _host(String locale, Widget child) => MaterialApp(
 
 const _approval = {'command': 'rm -rf /tmp/build', 'description': 'terminal'};
 
+/// The message of the Tooltip that wraps the button labelled [label], i.e. the
+/// nearest Tooltip ancestor of that label. Anchoring to the button (not merely
+/// "some tooltip on screen") catches explanations attached to the wrong scope.
+String? _tooltipOf(WidgetTester tester, String label) {
+  final button = find.text(label);
+  expect(button, findsOneWidget, reason: 'button "$label"');
+  final tooltips = find.ancestor(of: button, matching: find.byType(Tooltip));
+  if (tooltips.evaluate().isEmpty) return null;
+  return tester.widget<Tooltip>(tooltips.first).message;
+}
+
 void main() {
   for (final locale in _expected.keys) {
     final want = _expected[locale]!;
@@ -60,9 +71,11 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.byTooltip(want.once), findsOneWidget);
-      expect(find.byTooltip(want.session), findsOneWidget);
-      expect(find.byTooltip(want.always), findsOneWidget);
+      final s = Strings.of(tester.element(find.byType(ChatApprovalCard)));
+      expect(_tooltipOf(tester, s.cevAllow), want.once);
+      expect(_tooltipOf(tester, s.cevThisSession), want.session);
+      expect(_tooltipOf(tester, s.cevAlways), want.always);
+      expect(_tooltipOf(tester, s.cevDeny), isNull);
     });
 
     testWidgets('run approval block explains every scope ($locale)', (
@@ -83,9 +96,13 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.byTooltip(want.once), findsOneWidget);
-      expect(find.byTooltip(want.session), findsOneWidget);
-      expect(find.byTooltip(want.always), findsOneWidget);
+      final s = Strings.of(
+        tester.element(find.byType(RunApprovalDecisionBlock)),
+      );
+      expect(_tooltipOf(tester, s.runsApproveOnce), want.once);
+      expect(_tooltipOf(tester, s.runsApproveSession), want.session);
+      expect(_tooltipOf(tester, s.runsAllowAlways), want.always);
+      expect(_tooltipOf(tester, s.runsDeny), isNull);
     });
   }
 
@@ -104,7 +121,9 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byTooltip(_expected['es']!.session), findsOneWidget);
+    final s = Strings.of(tester.element(find.byType(ChatApprovalCard)));
+    expect(_tooltipOf(tester, s.cevThisSession), _expected['es']!.session);
+    expect(find.text(s.cevAlways), findsNothing);
     expect(find.byTooltip(_expected['es']!.always), findsNothing);
   });
 
