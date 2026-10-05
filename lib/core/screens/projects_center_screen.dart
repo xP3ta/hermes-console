@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_localizations.dart';
 import '../models/desktop_control_center.dart';
 import '../navigation/chat_route.dart';
+import '../design/modal.dart' show HermesAction, showHermesMenu;
 import '../services/connection_manager.dart';
 import '../services/desktop_control_gateway.dart';
 import '../services/new_session_factory.dart';
@@ -18,6 +19,7 @@ import '../widgets/hermes_premium_ui.dart'
     show HermesSegment, HermesSegmentedControl, showHermesFloatingSurface;
 import '../widgets/hermes_ui.dart';
 import '../widgets/projects/project_actions.dart';
+import '../widgets/projects/project_create_sheet.dart';
 import '../widgets/projects/project_files_browser.dart';
 import 'chat_screen.dart';
 
@@ -40,6 +42,10 @@ final class ProjectChatRequest {
 typedef ProjectChatLauncher =
     void Function(BuildContext context, ProjectChatRequest request);
 
+/// Opens a folder picker on the Hermes host at [startPath]; null = cancel.
+typedef ServerFolderPickerLauncher =
+    Future<String?> Function(BuildContext context, String? startPath);
+
 /// Mobile projection of Hermes Desktop's Projects sidebar.
 ///
 /// The phone never scans host paths or invents project membership: the list
@@ -61,6 +67,10 @@ class ProjectsCenterScreen extends StatefulWidget {
   @visibleForTesting
   final ProjectUploadPicker? projectUploadPicker;
 
+  /// Replaces the server folder picker in widget tests.
+  @visibleForTesting
+  final ServerFolderPickerLauncher? folderPicker;
+
   const ProjectsCenterScreen({
     required this.connection,
     required this.connectionManager,
@@ -68,6 +78,7 @@ class ProjectsCenterScreen extends StatefulWidget {
     this.disposeGateway,
     this.chatLauncher,
     this.projectUploadPicker,
+    this.folderPicker,
     super.key,
   });
 
@@ -87,12 +98,48 @@ class _ProjectWriteContext {
   bool writesUnsupported = false;
   bool gitUnsupported = false;
 
+  /// Server folder picker (set by the screen); null without one.
+  Future<String?> Function(BuildContext context)? pickFolder;
+
   _ProjectWriteContext(this.gateway, this.connection);
 
   HermesProjectManagementGateway? get management =>
       gateway is HermesProjectManagementGateway
       ? gateway as HermesProjectManagementGateway
       : null;
+
+  HermesProjectCreationGateway? get creation =>
+      gateway is HermesProjectCreationGateway
+      ? gateway as HermesProjectCreationGateway
+      : null;
+
+  HermesProjectFilesGateway? get files => gateway is HermesProjectFilesGateway
+      ? gateway as HermesProjectFilesGateway
+      : null;
+
+  HermesProjectFileWritesGateway? get fileWrites =>
+      gateway is HermesProjectFileWritesGateway
+      ? gateway as HermesProjectFileWritesGateway
+      : null;
+
+  /// Creating projects and adding folders (Desktop project dialog) needs
+  /// `projects.create`/`projects.add_folder` and the server folder listing
+  /// for the picker; read-only connections never get it.
+  ProjectWriteBlock? get createBlock {
+    final creation = this.creation;
+    final files = this.files;
+    if (creation == null ||
+        files == null ||
+        writesUnsupported ||
+        creation.projectCreationKnownUnsupported ||
+        files.projectFilesKnownUnsupported) {
+      return ProjectWriteBlock.unsupportedServer;
+    }
+    if (connection.readOnly || !creation.projectWritesAllowed) {
+      return ProjectWriteBlock.readOnly;
+    }
+    return null;
+  }
 
   ProjectWriteBlock? get writeBlock {
     final management = this.management;
@@ -204,7 +251,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
   @override
   void initState() {
     super.initState();
-    _writes = _ProjectWriteContext(widget.gateway, widget.connection);
+    _writes = _newWriteContext();
     _snapshot = _memoryCache[widget.connection.id];
     _hidden = _readHidden();
     unawaited(_load());
@@ -215,7 +262,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.gateway != widget.gateway ||
         oldWidget.connection.id != widget.connection.id) {
-      _writes = _ProjectWriteContext(widget.gateway, widget.connection);
+      _writes = _newWriteContext();
       _snapshot = _memoryCache[widget.connection.id];
       _failure = null;
       _hidden = _readHidden();
@@ -229,6 +276,154 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
     if (close != null) unawaited(close());
     super.dispose();
   }
+
+  _ProjectWriteContext _newWriteContext() =>
+      _ProjectWriteContext(widget.gateway, widget.connection)
+        ..pickFolder = _pickServerFolder;
+
+  /// Desktop `pickProjectFolder`: the remote picker seeded at the server's
+  /// default folder (`/api/fs/default-cwd`).
+  Future<String?> _pickServerFolder(BuildContext context) async {
+    final files = _writes.files;
+    if (files == null) return null;
+    final start = await _writes.creation?.projectDefaultFolder();
+    if (!context.mounted) return null;
+    final override = widget.folderPicker;
+    if (override != null) return override(context, start);
+    final strings = Strings.of(context);
+    return showServerFolderPicker(
+      context,
+      files: files,
+      writes: _writes.fileWrites,
+      readOnlyConnection: widget.connection.readOnly,
+      startPath: start,
+      failureText: (error) => projectFailureText(error, strings),
+    );
+  }
+
+  /// Owner of [folder] on a fresh tree (Desktop refreshes first so a repo
+  /// cloned since the last scan enters its project instead of duplicating).
+  Future<ProjectNode?> _ownerOf(String folder) async {
+    await _load();
+    return projectOwningFolder(_snapshot?.projects ?? const [], folder);
+  }
+
+  /// Opens the project [id] from the latest tree, if it is there.
+  Future<void> _enter(String id) async {
+    for (final project in _snapshot?.projects ?? const <ProjectNode>[]) {
+      if (project.id == id) {
+        await _openProject(project);
+        return;
+      }
+    }
+  }
+
+  void _toast(String text) => HermesNotice.of(context).showSnackBar(
+    SnackBar(content: Text(text), duration: const Duration(seconds: 3)),
+  );
+
+  Future<void> _createProject() async {
+    final creation = _writes.creation;
+    if (creation == null || _writes.createBlock != null) return;
+    final strings = Strings.of(context);
+    final outcome = await showProjectCreateSheet(
+      context,
+      creation: creation,
+      pickFolder: () => _pickServerFolder(context),
+      ownerOf: _ownerOf,
+      failureText: (error) => projectFailureText(error, strings),
+      ideaWriter: _writes.fileWrites,
+    );
+    if (!mounted || outcome == null) return;
+    switch (outcome) {
+      case ProjectOpenExistingOutcome(:final project):
+        await _enter(project.id);
+      case ProjectCreatedOutcome(:final project):
+        await _load();
+        if (!mounted) return;
+        await _enter(project.id);
+    }
+  }
+
+  /// Desktop "Open folder…": a folder covered by a project enters it, any
+  /// other becomes a project named after it; either way a new chat starts
+  /// in the folder.
+  Future<void> _openFolder() async {
+    final creation = _writes.creation;
+    if (creation == null || _writes.createBlock != null) return;
+    final strings = Strings.of(context);
+    final picked = await _pickServerFolder(context);
+    if (!mounted || picked == null) return;
+    final target = normalizeServerFolder(picked);
+    if (!target.startsWith('/')) return;
+    final existing = await _ownerOf(target);
+    if (!mounted) return;
+    if (existing != null) {
+      unawaited(_enter(existing.id));
+    } else {
+      try {
+        final created = await creation.createProjectFromFolders(
+          name: projectFolderBaseName(target),
+          folders: [target],
+          primaryPath: target,
+        );
+        await _load();
+        if (!mounted) return;
+        unawaited(_enter(created.id));
+      } catch (error) {
+        if (!mounted) return;
+        if (_isUnsupported(error)) {
+          setState(() => _writes.writesUnsupported = true);
+        }
+        _toast(strings.pc1215OpenFolderFailed);
+      }
+    }
+    if (!mounted) return;
+    _launch(context, ProjectChatRequest.newChat(target));
+  }
+
+  Future<void> _openAddMenu() async {
+    final strings = Strings.of(context);
+    final action = await showHermesMenu<String>(
+      context: context,
+      anchorKey: _addAnchor,
+      surfaceKey: const ValueKey('pc1215-add-menu'),
+      actions: [
+        HermesAction(
+          key: const ValueKey('pc1215-add-create'),
+          value: 'create',
+          icon: Icons.create_new_folder_outlined,
+          label: strings.pc1215NewProject,
+        ),
+        HermesAction(
+          key: const ValueKey('pc1215-add-open-folder'),
+          value: 'open',
+          icon: Icons.folder_open_outlined,
+          label: strings.pc1215OpenFolder,
+        ),
+      ],
+    );
+    if (!mounted) return;
+    switch (action) {
+      case 'create':
+        await _createProject();
+      case 'open':
+        await _openFolder();
+    }
+  }
+
+  /// Manual refresh: like Desktop on a remote backend, ask the host to scan
+  /// its discovery roots first so repositories without chats show up.
+  Future<void> _refresh() async {
+    final creation = _writes.creation;
+    if (creation != null && _writes.createBlock == null) {
+      await creation.scanProjectRepos();
+      if (!mounted) return;
+    }
+    await _load();
+  }
+
+  final GlobalKey _addAnchor = GlobalKey();
 
   Set<String> _readHidden() =>
       (widget.connectionManager.prefs.getStringList(
@@ -335,6 +530,8 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
     ];
     final hiddenCount = all.where((p) => _hidden.contains(p.id)).length;
     final hasRealProjects = all.any((p) => !p.noProject);
+    final createBlock = _writes.createBlock;
+    final canCreate = createBlock == null;
     return Scaffold(
       appBar: AppBar(
         title: Text(strings.projectsCenterTitle),
@@ -347,9 +544,19 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
           ),
           IconButton(
             tooltip: strings.projectsCenterRefreshTooltip,
-            onPressed: _loading ? null : _load,
+            onPressed: _loading ? null : _refresh,
             icon: const Icon(Icons.refresh_rounded),
           ),
+          if (canCreate)
+            IconButton(
+              key: const ValueKey('pc1215-add'),
+              tooltip: strings.pc1215AddTooltip,
+              onPressed: _openAddMenu,
+              icon: KeyedSubtree(
+                key: _addAnchor,
+                child: const Icon(Icons.add_rounded),
+              ),
+            ),
         ],
       ),
       body: GeneralDockShell(
@@ -383,7 +590,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
                   onRetry: _load,
                 )
               : RefreshIndicator(
-                  onRefresh: _load,
+                  onRefresh: _refresh,
                   child: ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
@@ -395,7 +602,10 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
                         ),
                       _IntroLine(onMore: _showExplainer),
                       if (!hasRealProjects)
-                        _EmptyProjects(onMore: _showExplainer)
+                        _EmptyProjects(
+                          onMore: _showExplainer,
+                          onCreate: canCreate ? _createProject : null,
+                        )
                       else
                         HermesSectionHeader(
                           strings.projectsCenterWorkspacesSection,
@@ -431,7 +641,11 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
                             ),
                           ),
                         ),
-                      _DesktopOnlyCreate(),
+                      if (canCreate)
+                        _CreateProjectTile(onTap: _createProject)
+                      else if (createBlock ==
+                          ProjectWriteBlock.unsupportedServer)
+                        _DesktopOnlyCreate(),
                       if (_failure != null && snapshot != null)
                         Padding(
                           padding: const EdgeInsets.only(top: 8),
@@ -474,6 +688,7 @@ Future<void> _runProjectMenu(
     isActive: isActive,
     writeBlock: writes.writeBlock,
     gitBlock: writes.gitBlock,
+    addFolderBlock: writes.createBlock,
   );
   if (action == null || !context.mounted) return;
   await _performProjectAction(
@@ -573,6 +788,22 @@ Future<void> _performProjectAction(
             icon: icon.isEmpty ? null : icon,
           );
         }
+        await reload();
+      } catch (error) {
+        fail(error);
+      }
+    case ProjectMenuAction.addFolder:
+      final creation = writes.creation;
+      final pick = writes.pickFolder;
+      if (creation == null || pick == null) return;
+      final folder = await pick(context);
+      if (folder == null || !context.mounted) return;
+      try {
+        await creation.addProjectFolder(
+          project.id,
+          normalizeServerFolder(folder),
+        );
+        toast(strings.pc1215FolderAdded(label));
         await reload();
       } catch (error) {
         fail(error);
@@ -766,6 +997,37 @@ class _DesktopOnlyCreate extends StatelessWidget {
           strings.pj1215CreateProjectDesktopOnly,
           style: TextStyle(color: colors.textSecondary, fontSize: 12),
         ),
+      ),
+    );
+  }
+}
+
+/// Enabled twin of [_DesktopOnlyCreate] once the server can create
+/// projects from the phone.
+class _CreateProjectTile extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _CreateProjectTile({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final strings = Strings.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: ListTile(
+        key: const ValueKey('pc1215-create'),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+        leading: Icon(Icons.create_new_folder_outlined, color: colors.accent),
+        title: Text(
+          strings.pc1215NewProject,
+          style: TextStyle(color: colors.textPrimary, fontSize: 14),
+        ),
+        subtitle: Text(
+          strings.pc1215CreateDesc,
+          style: TextStyle(color: colors.textSecondary, fontSize: 12),
+        ),
+        onTap: onTap,
       ),
     );
   }
@@ -1445,8 +1707,9 @@ class _LaneGroup extends StatelessWidget {
 
 class _EmptyProjects extends StatelessWidget {
   final VoidCallback onMore;
+  final VoidCallback? onCreate;
 
-  const _EmptyProjects({required this.onMore});
+  const _EmptyProjects({required this.onMore, this.onCreate});
 
   @override
   Widget build(BuildContext context) {
@@ -1485,6 +1748,15 @@ class _EmptyProjects extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
+              if (onCreate != null) ...[
+                FilledButton.icon(
+                  key: const ValueKey('pc1215-empty-create'),
+                  onPressed: onCreate,
+                  icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+                  label: Text(strings.pc1215NewProject),
+                ),
+                const SizedBox(height: 8),
+              ],
               OutlinedButton.icon(
                 onPressed: onMore,
                 icon: const Icon(Icons.help_outline_rounded, size: 18),

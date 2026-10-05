@@ -1,4 +1,5 @@
 import 'package:hermes_android/core/models/desktop_control_center.dart';
+import 'package:hermes_android/core/models/project_files.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
 
 /// Synthetic Projects fixture shared by the capture and behaviour tests.
@@ -317,4 +318,114 @@ class Pj1215FakeProjectsGateway extends Pj1215ReadOnlyProjectsGateway
   @override
   Future<void> switchBranch(String repoPath, String branch) async =>
       _git('POST /api/git/branch/switch', {'path': repoPath, 'branch': branch});
+}
+
+/// Adds Desktop's project creation surface (`projects.create`,
+/// `projects.add_folder`, `llm.oneshot`, `/api/fs/default-cwd`,
+/// `projects.discover_repos`) plus the file routes the server folder picker
+/// and IDEA.md use. Every call is recorded in [writes] with its wire params.
+class Pc1215CreatingProjectsGateway extends Pj1215FakeProjectsGateway
+    implements
+        HermesProjectCreationGateway,
+        HermesProjectFilesGateway,
+        HermesProjectFileWritesGateway {
+  Pc1215CreatingProjectsGateway({super.tree, super.writesAllowed});
+
+  factory Pc1215CreatingProjectsGateway.sample() {
+    final gateway = Pc1215CreatingProjectsGateway(
+      tree: ProjectTreeSnapshot.fromJson(pj1215SampleTreeJson()),
+    );
+    gateway.details['p_console'] = ProjectNode.tryParse(
+      pj1215ConsoleDetailJson(),
+    )!;
+    return gateway;
+  }
+
+  Object? createFailure;
+  bool creationUnsupported = false;
+  bool filesUnsupported = false;
+  String idea = 'A tiny garden planner.\n\n- Track seeds';
+  String? defaultFolder = '/home/demo';
+  final Map<String, List<ProjectFsEntry>> folders = {};
+
+  /// Tree served after a successful create (the server's next answer).
+  ProjectTreeSnapshot? treeAfterCreate;
+
+  @override
+  bool get projectCreationKnownUnsupported => creationUnsupported;
+
+  @override
+  Future<ProjectCreated> createProjectFromFolders({
+    required String name,
+    required List<String> folders,
+    String? primaryPath,
+    bool use = true,
+  }) async {
+    writes.add((
+      'projects.create',
+      {
+        'name': name,
+        'folders': folders,
+        'primary_path': ?primaryPath,
+        'use': use,
+      },
+    ));
+    final failure = createFailure;
+    if (failure != null) throw failure;
+    final next = treeAfterCreate;
+    if (next != null) tree = next;
+    return ProjectCreated(
+      id: 'p_new',
+      primaryPath: primaryPath ?? folders.first,
+    );
+  }
+
+  @override
+  Future<void> addProjectFolder(String id, String path) async => _write(
+    'projects.add_folder',
+    {'id': id, 'path': path, 'is_primary': false},
+  );
+
+  @override
+  Future<String> generateProjectIdea(String name) async {
+    writes.add(('llm.oneshot', {'name': name}));
+    return idea;
+  }
+
+  @override
+  Future<String?> projectDefaultFolder() async {
+    calls.add('GET /api/fs/default-cwd');
+    return defaultFolder;
+  }
+
+  @override
+  Future<void> scanProjectRepos() async {
+    calls.add('projects.discover_repos:scan');
+  }
+
+  @override
+  bool get projectFilesKnownUnsupported => filesUnsupported;
+
+  @override
+  Future<ProjectDirectoryListing> listProjectDirectory(String path) async {
+    calls.add('GET /api/fs/list:$path');
+    return ProjectDirectoryListing(entries: folders[path] ?? const []);
+  }
+
+  @override
+  bool get projectFileWritesAllowed => writesAllowed;
+
+  @override
+  bool projectFileWriteKnownUnsupported(ProjectFileWriteAction action) => false;
+
+  @override
+  Future<void> writeProjectFileText(String path, String content) async {
+    writes.add(('POST /api/fs/write-text', {'path': path, 'content': content}));
+  }
+
+  @override
+  Future<String> createProjectFolder(String path) async {
+    writes.add(('POST /api/files/mkdir', {'path': path}));
+    return path;
+  }
 }
