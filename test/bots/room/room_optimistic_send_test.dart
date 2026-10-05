@@ -159,12 +159,23 @@ Future<_SlowRoomGateway> _pump(
   WidgetTester tester, {
   RoomDraftStore? drafts,
   String? publishedAttempt,
+  bool memberReply = false,
 }) async {
   tester.view.physicalSize = const Size(1080, 2400);
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
   final seq = EventSeq();
-  final events = [seq.user('Earlier message')];
+  final user = seq.user('Earlier message');
+  final events = <Map<String, dynamic>>[
+    user,
+    if (memberReply)
+      seq.member(
+        'm-builder',
+        'builder',
+        'Reply here',
+        user['event_id'] as String,
+      ),
+  ];
   if (publishedAttempt != null) {
     final ev = seq.user('already sent');
     ev['event_id'] = TuiGatewayClient.durableGroupEventId(publishedAttempt);
@@ -345,6 +356,22 @@ void main() {
     expect(find.byKey(ValueKey('room-user-bubble-$durable')), findsOneWidget);
     expect(_keyPrefix('room-pending-'), findsNothing);
     expect(_composerText(tester), 'next', reason: 'the new draft is kept');
+  });
+
+  testWidgets('reply-seeded mention is the unchanged groups.send text', (
+    tester,
+  ) async {
+    final gateway = await _pump(tester, memberReply: true);
+    await tester.tap(find.byKey(const ValueKey('room-reply-message.member-2')));
+    await tester.pump();
+    expect(_composerText(tester), '@builder ');
+
+    await _tapSend(tester);
+
+    expect(gateway.sends.single.text, '@builder');
+    expect(gateway.sends.single.thread, 'thread-1');
+    await tester.pump(_rpc * 3);
+    await tester.pumpAndSettle();
   });
 
   testWidgets('quick sends keep their order and reconcile once each', (

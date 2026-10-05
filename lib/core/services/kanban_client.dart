@@ -13,6 +13,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/agent_profile.dart';
 import '../models/kanban.dart';
+import '../models/kanban_orchestration.dart';
 import 'connection_manager.dart';
 
 const int kKanbanAttachmentMaxBytes = 25 * 1024 * 1024;
@@ -465,6 +466,59 @@ class KanbanClient {
     );
   }
 
+  /// Desktop-parity Kanban orchestration settings. Legacy plugins omit the
+  /// route; callers hide the entry when this returns null.
+  Future<KanbanOrchestration?> getOrchestration() async {
+    try {
+      return KanbanOrchestration.fromJson(
+        await _dash.apiGet('$_base/orchestration'),
+      );
+    } on DashboardHttpException catch (error) {
+      if (error.statusCode == 404 || error.statusCode == 405) return null;
+      rethrow;
+    }
+  }
+
+  Future<KanbanOrchestration> setOrchestration({
+    String? orchestratorProfile,
+    String? defaultAssignee,
+    bool? autoDecompose,
+  }) async {
+    _requireWritable();
+    final body = <String, dynamic>{
+      'orchestrator_profile': ?orchestratorProfile?.trim(),
+      'default_assignee': ?defaultAssignee?.trim(),
+      'auto_decompose': ?autoDecompose,
+    };
+    if (body.isEmpty) {
+      throw ArgumentError('one orchestration field is required');
+    }
+    return KanbanOrchestration.fromJson(
+      await _dash.apiPut('$_base/orchestration', body: body),
+    );
+  }
+
+  Future<KanbanProfileDescriptionResult> setProfileDescription(
+    String name,
+    String text,
+  ) async {
+    _requireWritable();
+    final json = await _dash.apiPatch(
+      '$_base/profiles/${Uri.encodeComponent(name)}',
+      body: {'description': text.trim()},
+    );
+    return KanbanProfileDescriptionResult.fromJson(json);
+  }
+
+  Future<KanbanAutoDescriptionResult> autoDescribeProfile(String name) async {
+    _requireWritable();
+    final json = await _dash.apiPost(
+      '$_base/profiles/${Uri.encodeComponent(name)}/describe-auto',
+      body: const {'overwrite': false},
+    );
+    return KanbanAutoDescriptionResult.fromJson(json);
+  }
+
   /// Perfiles asignables (GET /api/profiles). El `assignee` de una tarjeta es
   /// el perfil que la EJECUTA: el dispatcher del gateway sólo coge tareas
   /// `ready` con un perfil asignado real. Una tarjeta sin assignee se queda
@@ -493,6 +547,9 @@ class KanbanClient {
     String? assignee,
     String? parent,
     String? board,
+    String? modelOverride,
+    String? providerOverride,
+    String? reasoningEffort,
   }) async {
     _requireWritable();
     await _dash.apiPost(
@@ -504,6 +561,9 @@ class KanbanClient {
         priority: priority,
         assignee: assignee,
         parent: parent,
+        modelOverride: modelOverride,
+        providerOverride: providerOverride,
+        reasoningEffort: reasoningEffort,
       ),
     );
   }
@@ -520,6 +580,9 @@ class KanbanClient {
     String? assignee,
     String? parent,
     String? board,
+    String? modelOverride,
+    String? providerOverride,
+    String? reasoningEffort,
   }) async {
     _requireWritable();
     final key = idempotencyKey.trim();
@@ -545,6 +608,9 @@ class KanbanClient {
       priority: priority,
       assignee: assignee,
       parent: parent,
+      modelOverride: modelOverride,
+      providerOverride: providerOverride,
+      reasoningEffort: reasoningEffort,
     )..['idempotency_key'] = key;
     final response = await _dash.apiPost(
       _endpoint('tasks', board: board),
@@ -609,7 +675,19 @@ class KanbanClient {
     String? priority,
     String? assignee,
     String? parent,
+    String? modelOverride,
+    String? providerOverride,
+    String? reasoningEffort,
   }) {
+    final model = _nonEmpty(modelOverride);
+    final effort = _nonEmpty(reasoningEffort);
+    if (effort != null && !kKanbanReasoningEfforts.contains(effort)) {
+      throw ArgumentError.value(
+        reasoningEffort,
+        'reasoningEffort',
+        'is not supported',
+      );
+    }
     final payload = <String, dynamic>{'title': title};
     if (body != null && body.isNotEmpty) payload['body'] = body;
     if (status != null) payload['status'] = status;
@@ -618,6 +696,12 @@ class KanbanClient {
     // Sin assignee la tarea jamás se ejecuta; sólo se manda si hay perfil.
     if (assignee != null && assignee.isNotEmpty) payload['assignee'] = assignee;
     if (parent != null) payload['parent'] = parent;
+    if (model != null) {
+      payload['model_override'] = model;
+      final provider = _nonEmpty(providerOverride);
+      if (provider != null) payload['provider_override'] = provider;
+    }
+    if (effort != null) payload['reasoning_effort'] = effort;
     return payload;
   }
 

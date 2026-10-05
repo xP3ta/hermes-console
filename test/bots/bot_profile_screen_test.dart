@@ -97,6 +97,7 @@ void main() {
     WidgetTester tester, {
     List<BotNowItem> now = const [],
     bool readOnly = false,
+    void Function()? onSkills,
     void Function()? onChanged,
   }) async {
     await tester.binding.setSurfaceSize(const Size(420, 1400));
@@ -118,7 +119,7 @@ void main() {
           onChat: () {},
           onRoutines: () {},
           onSoul: () {},
-          onSkills: () {},
+          onSkills: onSkills ?? () {},
           onMemory: () {},
           onRooms: () {},
           onChanged: onChanged,
@@ -150,6 +151,17 @@ void main() {
     ]) {
       expect(find.byKey(ValueKey(key)), findsOneWidget);
     }
+  });
+
+  testWidgets('Skills and tools delegates to the scoped route callback', (
+    tester,
+  ) async {
+    var opens = 0;
+    await pumpProfile(tester, onSkills: () => opens++);
+
+    await tester.tap(find.byKey(const ValueKey('bot-profile-skills')));
+
+    expect(opens, 1);
   });
 
   testWidgets('changing the model calls profiles.configure', (tester) async {

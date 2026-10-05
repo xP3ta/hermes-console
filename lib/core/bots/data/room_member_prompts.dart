@@ -25,6 +25,7 @@
 library;
 
 import '../../models/hosted_groups.dart';
+import '../../services/tui_gateway_client.dart' show TuiGatewayRpcError;
 
 /// `last_seen` above any replay sequence: `session.events.since` then returns
 /// no events (only `open_requests`), so the probe never ships a transcript.
@@ -156,6 +157,122 @@ typedef RoomPromptRpc =
       String method,
       Map<String, dynamic> params,
     );
+
+enum RoomMemberCompressionKind { compressed, pending, nothing }
+
+final class RoomMemberCompressionResult {
+  final RoomMemberCompressionKind kind;
+  final String? detail;
+
+  const RoomMemberCompressionResult(this.kind, {this.detail});
+}
+
+/// Compresses one local member's hidden room session over the room
+/// authority's existing pooled socket.
+final class GatewayRoomMemberCompressor {
+  final RoomPromptRpc rpc;
+
+  const GatewayRoomMemberCompressor(this.rpc);
+
+  Future<RoomMemberCompressionResult> compress(
+    HostedGroupRoom room,
+    HostedGroupMember member,
+  ) async {
+    if (member.owner.connectionId != room.authorityGatewayId) {
+      return const RoomMemberCompressionResult(
+        RoomMemberCompressionKind.nothing,
+      );
+    }
+    final profile = member.owner.profile;
+    final listed = await rpc('session.list', {
+      'profile': profile,
+      'title': roomMemberSessionTitle(room.roomId),
+      'include_hidden': true,
+    });
+    final sessions = listed['sessions'];
+    if (sessions is! List || sessions.isEmpty || sessions.first is! Map) {
+      return const RoomMemberCompressionResult(
+        RoomMemberCompressionKind.nothing,
+      );
+    }
+    final first = sessions.first as Map;
+    final stored = _firstSessionId(first);
+    if (stored == null) {
+      return const RoomMemberCompressionResult(
+        RoomMemberCompressionKind.nothing,
+      );
+    }
+
+    final Map<String, dynamic> resumed;
+    try {
+      resumed = await rpc('session.resume', {
+        'session_id': stored,
+        'profile': profile,
+        'source': 'bot_room',
+        'omit_messages': true,
+      });
+    } on TuiGatewayRpcError catch (error) {
+      if (error.code == 4007) {
+        return const RoomMemberCompressionResult(
+          RoomMemberCompressionKind.nothing,
+        );
+      }
+      rethrow;
+    }
+    final runtime = resumed['session_id'];
+    if (runtime is! String || runtime.isEmpty) {
+      throw StateError('resume returned no runtime');
+    }
+
+    final result = await rpc('session.compress', {'session_id': runtime});
+    return parseRoomMemberCompressionResult(result);
+  }
+}
+
+RoomMemberCompressionResult parseRoomMemberCompressionResult(
+  Map<String, dynamic> result,
+) {
+  if (result['status'] == 'pending') {
+    return const RoomMemberCompressionResult(RoomMemberCompressionKind.pending);
+  }
+  final summary = result['summary'];
+  final aborted =
+      result['status'] == 'aborted' ||
+      (summary is Map && summary['aborted'] == true) ||
+      result['compressed'] == false ||
+      result['lock_held'] == true;
+  if (aborted) {
+    return RoomMemberCompressionResult(
+      RoomMemberCompressionKind.nothing,
+      detail: _nonEmptyText(result['message']),
+    );
+  }
+  final headline = summary is Map ? _nonEmptyText(summary['headline']) : null;
+  final before = (result['before_messages'] as num?)?.toInt();
+  final after = (result['after_messages'] as num?)?.toInt();
+  return RoomMemberCompressionResult(
+    RoomMemberCompressionKind.compressed,
+    detail:
+        headline ??
+        (before != null && after != null
+            ? '$before → $after messages'
+            : 'History compressed'),
+  );
+}
+
+String? _firstSessionId(Map row) {
+  for (final key in const ['resolved_id', 'id']) {
+    final value = row[key];
+    if (value is String && value.isNotEmpty) return value;
+  }
+  return null;
+}
+
+String? _nonEmptyText(Object? value) {
+  if (value is! String) return null;
+  final text = value.trim();
+  return text.isEmpty ? null : text;
+}
 
 /// What the Room screen needs to see and answer member prompts.
 abstract interface class RoomMemberPromptSource {

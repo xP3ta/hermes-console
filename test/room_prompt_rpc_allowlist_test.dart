@@ -71,6 +71,21 @@ TuiGatewayClient _client(HttpServer server, {required bool readOnly}) =>
     );
 
 void main() {
+  test('only room member compression gets the compute-host timeout', () {
+    expect(
+      TuiGatewayClient.roomPromptTimeoutFor('session.compress'),
+      const Duration(seconds: 660),
+    );
+    expect(
+      TuiGatewayClient.roomPromptTimeoutFor('session.resume'),
+      const Duration(seconds: 15),
+    );
+    expect(
+      TuiGatewayClient.roomPromptTimeoutFor('session.list'),
+      const Duration(seconds: 15),
+    );
+  });
+
   test('room prompt RPCs pass through with their exact payload', () async {
     final (server, seen) = await _server();
     final client = _client(server, readOnly: false);
@@ -82,11 +97,16 @@ void main() {
       'id': 'srq-1',
       'result': {'answer': 'Sí'},
     });
-    expect(seen.single.$1, 'request.answer');
-    expect(seen.single.$2, {
+    await client.roomPromptRequest('session.compress', {
+      'session_id': 'runtime-builder',
+    });
+    expect(seen.first.$1, 'request.answer');
+    expect(seen.first.$2, {
       'id': 'srq-1',
       'result': {'answer': 'Sí'},
     });
+    expect(seen.last.$1, 'session.compress');
+    expect(seen.last.$2, {'session_id': 'runtime-builder'});
     await expectLater(
       client.roomPromptRequest('session.close', {'session_id': 'rt'}),
       throwsA(isA<TuiGatewayRpcError>()),
@@ -107,6 +127,7 @@ void main() {
       'clarify.lock',
       'approval.respond',
       'session.interrupt',
+      'session.compress',
     ]) {
       await expectLater(
         client.roomPromptRequest(method, const {}),

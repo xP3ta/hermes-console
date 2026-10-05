@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/bots/data/room_member_prompts.dart';
 import 'package:hermes_android/core/models/agent_task_list.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
@@ -278,6 +279,15 @@ final List<_Consumer> _consumers = [
     (c) => c.methodResultSchema('session.context_breakdown'),
     (s) {
       DesktopContextBreakdown.fromJson(s);
+      return true;
+    },
+  ),
+  _Consumer(
+    'result',
+    'session.compress',
+    (c) => c.methodResultSchema('session.compress'),
+    (s) {
+      parseRoomMemberCompressionResult(s);
       return true;
     },
   ),

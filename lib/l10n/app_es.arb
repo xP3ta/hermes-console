@@ -1160,6 +1160,29 @@
   "commonSave2": "Guardar",
   "lockUnlockShort": "Desbloquear",
   "kanbanTitle": "KANBAN",
+  "kanbanOrchestrationTitle": "Orquestación",
+  "kanbanOrchestrationSubtitle": "Perfiles, asignación y desglose de tareas",
+  "kanbanOrchestratorProfile": "Perfil orquestador",
+  "kanbanDefaultAssignee": "Asignado predeterminado",
+  "kanbanOrchestrationDefault": "(predeterminado)",
+  "kanbanAutoDecompose": "Desglosar automáticamente",
+  "kanbanAutoDecomposeSubtitle": "Divide automáticamente las tareas adecuadas en subtareas",
+  "kanbanProfileDescriptions": "Descripciones de perfiles",
+  "kanbanDescriptionSave": "Guardar",
+  "kanbanDescriptionAuto": "Auto",
+  "kanbanDescriptionAutoConfirmTitle": "¿Generar una descripción del perfil?",
+  "kanbanDescriptionAutoConfirmBody": "Hermes llamará a un modelo para describir {profile}.",
+  "@kanbanDescriptionAutoConfirmBody": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "kanbanDescriptionAutoFailed": "Hermes no pudo generar una descripción.",
+  "kanbanCreateModel": "Modelo",
+  "kanbanProfileDefault": "Predeterminado del perfil",
+  "kanbanCreateReasoning": "Nivel de razonamiento",
   "kanbanColBacklog": "Backlog",
   "kanbanColInProgress": "En curso",
   "kanbanColDone": "Hecho",
@@ -8031,6 +8054,38 @@
   "roomSettingsName": "Nombre",
   "roomSettingsPicture": "Foto",
   "roomSettingsPictureReadOnly": "Se cambia en Hermes Desktop",
+  "roomCompressHistory": "Comprimir historial",
+  "roomCompressHistorySubtitle": "Resume los turnos antiguos de un miembro",
+  "roomCompressPickMember": "Elige un miembro",
+  "roomCompressConfirmTitle": "¿Comprimir el historial de @{handle}?",
+  "@roomCompressConfirmTitle": {
+    "placeholders": {
+      "handle": {
+        "type": "String"
+      }
+    }
+  },
+  "roomCompressConfirmBody": "El resumen sustituye los turnos anteriores.",
+  "roomCompressConfirm": "Comprimir",
+  "roomCompressing": "Comprimiendo…",
+  "roomCompressPending": "La compresión continúa en segundo plano",
+  "roomCompressNothing": "No hay nada que comprimir",
+  "roomCompressSuccess": "Comprimido: {detail}",
+  "@roomCompressSuccess": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "roomCompressBusy": "@{handle} está ocupado; inténtalo cuando la sala esté inactiva",
+  "@roomCompressBusy": {
+    "placeholders": {
+      "handle": {
+        "type": "String"
+      }
+    }
+  },
   "roomRename": "Renombrar",
   "roomSave": "Guardar",
   "roomCancel": "Cancelar",
@@ -8059,6 +8114,15 @@
   "roomFileSaved": "Archivo guardado",
   "roomFileFailed": "No se pudo obtener el archivo",
   "roomComposerHint": "Mensaje",
+  "roomUnknownMention": "No hay ningún miembro llamado @{handle}; responderán todos.",
+  "@roomUnknownMention": {
+    "placeholders": {
+      "handle": {
+        "type": "String"
+      }
+    }
+  },
+  "roomSlashUnsupported": "Las salas no ejecutan comandos. Quita la / inicial…",
   "roomDesktopReadOnly": "Sala de Desktop · solo lectura",
   "roomDesktopReadOnlyBody": "Hermes Desktop dirige esta sala por su cuenta; aquí ves sus últimos mensajes.",
   "roomDesktopOmitted": "{count, plural, =1{1 mensaje anterior no se muestra} other{{count} mensajes anteriores no se muestran}}",

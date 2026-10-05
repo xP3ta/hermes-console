@@ -4149,6 +4149,7 @@ class TuiGatewayClient
       'clarify.lock',
       'approval.respond',
       'session.interrupt',
+      'session.compress',
     };
     if (!(reads.contains(method) ||
         (writes.contains(method) && !_connection.readOnly) ||
@@ -4158,8 +4159,14 @@ class TuiGatewayClient
       throw TuiGatewayRpcError(method, 'Room prompt request unavailable');
     }
     await _connectForRequest('gateway.connect');
-    return _request(method, params, timeout: const Duration(seconds: 15));
+    return _request(method, params, timeout: roomPromptTimeoutFor(method));
   }
+
+  @visibleForTesting
+  static Duration roomPromptTimeoutFor(String method) =>
+      method == 'session.compress'
+      ? const Duration(seconds: 660)
+      : const Duration(seconds: 15);
 
   /// `session.resume` passes only in the hosted room driver's own shape
   /// (`hosted_room_server_rpc.py::resume`): a stalled member's durable room

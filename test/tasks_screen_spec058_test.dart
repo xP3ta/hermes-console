@@ -3,11 +3,13 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/design/content.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/screens/tasks_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/kanban_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -309,6 +311,376 @@ void main() {
     expect(
       find.byKey(const ValueKey('kanban-task-other-task')),
       findsOneWidget,
+    );
+  });
+
+  testWidgets('help probes orchestration once and hides its row on 404', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final events = StreamController<KanbanEvent>.broadcast();
+    addTearDown(events.close);
+    var orchestrationReads = 0;
+    var profileReads = 0;
+    final client = MockClient((request) async {
+      switch (request.url.path) {
+        case '/api/plugins/kanban/board':
+          return http.Response('{"columns":[]}', 200);
+        case '/api/plugins/kanban/boards':
+          return http.Response('{}', 404);
+        case '/api/plugins/kanban/profiles':
+          profileReads++;
+          return http.Response('{"profiles":[]}', 200);
+        case '/api/plugins/kanban/orchestration':
+          orchestrationReads++;
+          return http.Response('{}', 404);
+        default:
+          return http.Response('{}', 404);
+      }
+    });
+
+    await pumpScreen(tester, httpClient: client, events: events.stream);
+    final profilesBeforeHelp = profileReads;
+    await tester.tap(find.byTooltip('How it works'));
+    await tester.pumpAndSettle();
+
+    expect(orchestrationReads, 1);
+    expect(profileReads, profilesBeforeHelp + 1);
+    expect(
+      find.byKey(const ValueKey('kanban-orchestration-row')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('new-task model options load only when its row is tapped', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final events = StreamController<KanbanEvent>.broadcast();
+    addTearDown(events.close);
+    var optionReads = 0;
+    final client = MockClient((request) async {
+      switch (request.url.path) {
+        case '/api/plugins/kanban/board':
+          return http.Response(
+            '{"columns":[{"name":"todo","tasks":[{"id":"t1","title":"One","status":"todo"}]}]}',
+            200,
+          );
+        case '/api/plugins/kanban/boards':
+          return http.Response('{}', 404);
+        case '/api/plugins/kanban/profiles':
+          return http.Response(
+            '{"profiles":[{"name":"builder","is_default":true}]}',
+            200,
+          );
+        case '/api/plugins/kanban/model-options':
+          optionReads++;
+          return http.Response(
+            '{"providers":[{"slug":"openai","label":"OpenAI","models":["gpt-5.6"]}]}',
+            200,
+          );
+        default:
+          return http.Response('{}', 404);
+      }
+    });
+
+    await pumpScreen(tester, httpClient: client, events: events.stream);
+    await tester.tap(find.byTooltip('New task'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('kanban-create-model')), findsOneWidget);
+    expect(optionReads, 0);
+
+    await tester.tap(find.byKey(const ValueKey('kanban-create-model')));
+    await tester.pumpAndSettle();
+    expect(optionReads, 1);
+    expect(
+      find.byKey(const ValueKey('kanban-create-model-openai-gpt-5.6')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('orchestration controls send one field per request', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final events = StreamController<KanbanEvent>.broadcast();
+    addTearDown(events.close);
+    final writes = <Map<String, dynamic>>[];
+    var orchestrator = '';
+    var autoDecompose = false;
+    final client = MockClient((request) async {
+      switch (request.url.path) {
+        case '/api/plugins/kanban/board':
+          return http.Response('{"columns":[]}', 200);
+        case '/api/plugins/kanban/boards':
+          return http.Response('{}', 404);
+        case '/api/plugins/kanban/profiles':
+          return http.Response(
+            '{"profiles":[{"name":"builder","is_default":true},{"name":"lead"}]}',
+            200,
+          );
+        case '/api/plugins/kanban/orchestration':
+          if (request.method == 'PUT') {
+            final body = Map<String, dynamic>.from(
+              jsonDecode(request.body) as Map,
+            );
+            writes.add(body);
+            if (body['orchestrator_profile'] case final String value) {
+              orchestrator = value;
+            }
+            if (body['auto_decompose'] case final bool value) {
+              autoDecompose = value;
+            }
+          }
+          return http.Response(
+            jsonEncode({
+              'orchestrator_profile': orchestrator,
+              'default_assignee': null,
+              'auto_decompose': autoDecompose,
+              'resolved_orchestrator_profile': orchestrator.isEmpty
+                  ? 'builder'
+                  : orchestrator,
+              'resolved_default_assignee': 'builder',
+              'active_profile': 'default',
+            }),
+            200,
+          );
+        default:
+          return http.Response('{}', 404);
+      }
+    });
+
+    await pumpScreen(tester, httpClient: client, events: events.stream);
+    await tester.tap(find.byTooltip('How it works'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('kanban-orchestration-row')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('kanban-orchestrator-profile')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('kanban-option-surface')),
+        matching: find.text('lead'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('kanban-auto-decompose')));
+    await tester.pumpAndSettle();
+
+    expect(writes, [
+      {'orchestrator_profile': 'lead'},
+      {'auto_decompose': true},
+    ]);
+  });
+
+  testWidgets('overlapping orchestration writes keep every field', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final events = StreamController<KanbanEvent>.broadcast();
+    addTearDown(events.close);
+    final writes = <Map<String, dynamic>>[];
+    final orchestratorGate = Completer<void>();
+    var orchestrator = '';
+    var autoDecompose = false;
+    String snapshot() => jsonEncode({
+      'orchestrator_profile': orchestrator,
+      'default_assignee': null,
+      'auto_decompose': autoDecompose,
+      'resolved_orchestrator_profile': orchestrator.isEmpty
+          ? 'builder'
+          : orchestrator,
+      'resolved_default_assignee': 'builder',
+      'active_profile': 'default',
+    });
+    final client = MockClient((request) async {
+      switch (request.url.path) {
+        case '/api/plugins/kanban/board':
+          return http.Response('{"columns":[]}', 200);
+        case '/api/plugins/kanban/boards':
+          return http.Response('{}', 404);
+        case '/api/plugins/kanban/profiles':
+          return http.Response(
+            '{"profiles":[{"name":"builder","is_default":true},{"name":"lead"}]}',
+            200,
+          );
+        case '/api/plugins/kanban/orchestration':
+          if (request.method != 'PUT') return http.Response(snapshot(), 200);
+          final body = Map<String, dynamic>.from(
+            jsonDecode(request.body) as Map,
+          );
+          writes.add(body);
+          if (body['orchestrator_profile'] case final String value) {
+            orchestrator = value;
+          }
+          if (body['auto_decompose'] case final bool value) {
+            autoDecompose = value;
+          }
+          // The server applies the write on arrival; only the reply
+          // (a full snapshot taken now) is delayed.
+          final reply = snapshot();
+          if (body.containsKey('orchestrator_profile')) {
+            await orchestratorGate.future;
+          }
+          return http.Response(reply, 200);
+        default:
+          return http.Response('{}', 404);
+      }
+    });
+
+    bool toggleValue() => tester
+        .widget<HermesToggleRow>(
+          find.byKey(const ValueKey('kanban-auto-decompose')),
+        )
+        .value;
+
+    await pumpScreen(tester, httpClient: client, events: events.stream);
+    await tester.tap(find.byTooltip('How it works'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('kanban-orchestration-row')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('kanban-orchestrator-profile')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('kanban-option-surface')),
+        matching: find.text('lead'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // The orchestrator reply is still held; the user flips the toggle.
+    expect(writes, [
+      {'orchestrator_profile': 'lead'},
+    ]);
+    await tester.tap(find.byKey(const ValueKey('kanban-auto-decompose')));
+    await tester.pumpAndSettle();
+
+    orchestratorGate.complete();
+    await tester.pumpAndSettle();
+
+    expect(writes, [
+      {'orchestrator_profile': 'lead'},
+      {'auto_decompose': true},
+    ]);
+    expect(toggleValue(), isTrue);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('kanban-orchestrator-profile')),
+        matching: find.text('lead'),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a failed orchestration write does not stall the next one', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final events = StreamController<KanbanEvent>.broadcast();
+    addTearDown(events.close);
+    final writes = <Map<String, dynamic>>[];
+    final orchestratorGate = Completer<void>();
+    var refreshFails = false;
+    var autoDecompose = false;
+    String snapshot() => jsonEncode({
+      'orchestrator_profile': '',
+      'default_assignee': null,
+      'auto_decompose': autoDecompose,
+      'resolved_orchestrator_profile': 'builder',
+      'resolved_default_assignee': 'builder',
+      'active_profile': 'default',
+    });
+    final client = MockClient((request) async {
+      switch (request.url.path) {
+        case '/api/plugins/kanban/board':
+          return http.Response('{"columns":[]}', 200);
+        case '/api/plugins/kanban/boards':
+          return http.Response('{}', 404);
+        case '/api/plugins/kanban/profiles':
+          return http.Response(
+            '{"profiles":[{"name":"builder","is_default":true},{"name":"lead"}]}',
+            200,
+          );
+        case '/api/plugins/kanban/orchestration':
+          if (request.method != 'PUT') {
+            // The refresh after the rejected write fails too.
+            if (refreshFails) return http.Response('{"detail":"down"}', 500);
+            return http.Response(snapshot(), 200);
+          }
+          final body = Map<String, dynamic>.from(
+            jsonDecode(request.body) as Map,
+          );
+          writes.add(body);
+          if (body.containsKey('orchestrator_profile')) {
+            await orchestratorGate.future;
+            refreshFails = true;
+            return http.Response('{"detail":"unknown profile"}', 400);
+          }
+          if (body['auto_decompose'] case final bool value) {
+            autoDecompose = value;
+          }
+          return http.Response(snapshot(), 200);
+        default:
+          return http.Response('{}', 404);
+      }
+    });
+
+    bool toggleValue() => tester
+        .widget<HermesToggleRow>(
+          find.byKey(const ValueKey('kanban-auto-decompose')),
+        )
+        .value;
+
+    await pumpScreen(tester, httpClient: client, events: events.stream);
+    await tester.tap(find.byTooltip('How it works'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('kanban-orchestration-row')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('kanban-orchestrator-profile')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('kanban-option-surface')),
+        matching: find.text('lead'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // The toggle queues behind the orchestrator write that is about to fail.
+    await tester.tap(find.byKey(const ValueKey('kanban-auto-decompose')));
+    await tester.pumpAndSettle();
+    expect(writes, [
+      {'orchestrator_profile': 'lead'},
+    ]);
+
+    orchestratorGate.complete();
+    await tester.pumpAndSettle();
+
+    expect(writes, [
+      {'orchestrator_profile': 'lead'},
+      {'auto_decompose': true},
+    ]);
+    expect(autoDecompose, isTrue);
+    expect(toggleValue(), isTrue);
+    expect(
+      tester
+          .widget<HermesListRow>(
+            find.byKey(const ValueKey('kanban-orchestrator-profile')),
+          )
+          .onTap,
+      isNotNull,
+    );
+    expect(
+      tester
+          .widget<HermesToggleRow>(
+            find.byKey(const ValueKey('kanban-auto-decompose')),
+          )
+          .onChanged,
+      isNotNull,
     );
   });
 }
