@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -22,6 +24,7 @@ import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
+import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/main.dart';
 
 // ignore: unused_element
@@ -216,6 +219,7 @@ void main() {
     List<Map<String, dynamic>>? history,
     Map<String, Object> initialPrefs = const {},
     int Function()? wallClockMs,
+    bool earlierAvailable = false,
   }) async {
     tester.platformDispatcher.localesTestValue = [const Locale('es')];
     addTearDown(tester.platformDispatcher.clearLocalesTestValue);
@@ -241,6 +245,7 @@ void main() {
     chat
       ..internalMessagesForTesting = history ?? _history()
       ..messagesLoaded = true;
+    if (earlierAvailable) chat.earlierMessagesAvailableForTesting = true;
 
     await tester.pumpWidget(
       HermesApp(
@@ -1379,6 +1384,253 @@ void main() {
       await settle(tester);
       expect(
         find.descendant(of: jumpButton(), matching: find.text('1 nuevo')),
+        findsOneWidget,
+      );
+      await tearDownChat(tester, gateway);
+    });
+  });
+
+  // Owner report (QA 9489, Pixel 9 Pro): a prompt sent with two images was
+  // pinned as two full 120 dp thumbnails cut off mid-image by the pinned
+  // area, with no prompt text and the load-earlier chevron drawn over the
+  // middle of the pictures. Like Desktop's sticky prompt (two-line clamp,
+  // attachments left in the flow), the pinned copy is a short summary: the
+  // text first, attachments as small chips, everything inside the pinned box.
+  group('#1215 pinned prompt with attachments', () {
+    Finder sticky() => find.byKey(const ValueKey('chat-sticky-prompt'));
+    Finder earlier() => find.byKey(const ValueKey('chat-load-earlier'));
+    const maxPinnedHeight = 88.0;
+    const promptText =
+        'Revisa estas dos capturas del panel de control y dime qué ves raro '
+        'en la gráfica de consumo, en la tabla de alertas y en la barra '
+        'lateral, porque desde ayer algo no cuadra con los datos reales.';
+    // 1x1 transparent PNG.
+    final pngBytes = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+    );
+    late Directory dir;
+
+    setUp(() {
+      dir = Directory.systemTemp.createTempSync('pinned-attachments-');
+      File('${dir.path}/una.png').writeAsBytesSync(pngBytes);
+      File('${dir.path}/dos.png').writeAsBytesSync(pngBytes);
+    });
+    tearDown(() {
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    });
+
+    String promptWithImages(String text) => [
+      '[📎 una.png · 1 KB]',
+      '[📎 dos.png · 2 KB]',
+      if (text.isNotEmpty) text,
+      '⟦adjunto⟧',
+      'payload para el modelo',
+      '⟦img:0:${dir.path}/una.png⟧',
+      '⟦img:1:${dir.path}/dos.png⟧',
+    ].join('\n');
+
+    List<Map<String, dynamic>> history(String userContent) => [
+      {
+        'id': 'att-a',
+        'role': 'assistant',
+        'content': List.filled(
+          90,
+          'Texto de una respuesta muy larga que ocupa varias pantallas.',
+        ).join('\n\n'),
+      },
+      {'id': 'att-u', 'role': 'user', 'content': userContent},
+      ..._history(turns: 6, prefix: 'older'),
+    ];
+
+    Rect rectOf(Element element) {
+      final box = element.renderObject! as RenderBox;
+      return box.localToGlobal(Offset.zero) & box.size;
+    }
+
+    bool contains(Rect outer, Rect inner) =>
+        inner.left >= outer.left - 0.5 &&
+        inner.top >= outer.top - 0.5 &&
+        inner.right <= outer.right + 0.5 &&
+        inner.bottom <= outer.bottom + 0.5;
+
+    /// Every painted piece of the pinned prompt: its texts and images.
+    List<Rect> pinnedContent() => [
+      for (final element
+          in find
+              .descendant(
+                of: sticky(),
+                matching: find.byWidgetPredicate(
+                  (w) => w is RichText || w is RawImage,
+                ),
+              )
+              .evaluate())
+        rectOf(element),
+    ];
+
+    // Pixel 9 Pro portrait (QA device): 412 dp wide, so a long prompt wraps.
+    void usePhone(WidgetTester tester) {
+      tester.view
+        ..physicalSize = const Size(1280, 2856)
+        ..devicePixelRatio = 3.1;
+      addTearDown(tester.view.reset);
+    }
+
+    void expectCompactPinnedLayout(WidgetTester tester) {
+      final box = tester.getRect(sticky());
+      expect(
+        box.height,
+        lessThanOrEqualTo(maxPinnedHeight),
+        reason: 'the pinned prompt must stay a short summary',
+      );
+      final content = pinnedContent();
+      expect(content, isNotEmpty);
+      for (final rect in content) {
+        expect(
+          contains(box, rect),
+          isTrue,
+          reason: 'pinned content $rect must not be cut by the box $box',
+        );
+      }
+      final chevron = tester.getRect(earlier());
+      for (final rect in content) {
+        expect(
+          chevron.overlaps(rect),
+          isFalse,
+          reason: 'the load-earlier chevron $chevron covers $rect',
+        );
+      }
+    }
+
+    testWidgets('a pinned prompt with two images shows its text and small '
+        'thumbnails fully inside the pinned box', (tester) async {
+      usePhone(tester);
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: history(promptWithImages(promptText)),
+        earlierAvailable: true,
+      );
+      await settle(tester);
+      expect(sticky(), findsOneWidget, reason: 'precondition: pinned');
+      expect(earlier(), findsOneWidget, reason: 'precondition: chevron');
+
+      final text = find.descendant(
+        of: sticky(),
+        matching: find.textContaining('Revisa estas dos capturas'),
+      );
+      expect(text, findsOneWidget);
+      expect(
+        find.descendant(of: sticky(), matching: find.byType(AttachmentCard)),
+        findsNothing,
+        reason: 'the full-size bubble cards are not pinned',
+      );
+      final thumbs = find.descendant(
+        of: sticky(),
+        matching: find.byType(RawImage),
+      );
+      expect(thumbs, findsNWidgets(2));
+      for (final element in thumbs.evaluate()) {
+        final size = rectOf(element).size;
+        expect(size.width, lessThanOrEqualTo(32));
+        expect(size.height, lessThanOrEqualTo(32));
+      }
+      expectCompactPinnedLayout(tester);
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('large text keeps the pinned prompt compact and uncut', (
+      tester,
+    ) async {
+      tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      usePhone(tester);
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: history(promptWithImages(promptText)),
+        earlierAvailable: true,
+      );
+      await settle(tester);
+      expect(sticky(), findsOneWidget, reason: 'precondition: pinned');
+      expect(
+        find.descendant(
+          of: sticky(),
+          matching: find.textContaining('Revisa estas dos capturas'),
+        ),
+        findsOneWidget,
+      );
+      expectCompactPinnedLayout(tester);
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('an attachments-only pinned prompt shows named chips', (
+      tester,
+    ) async {
+      usePhone(tester);
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: history(promptWithImages('')),
+        earlierAvailable: true,
+      );
+      await settle(tester);
+      expect(sticky(), findsOneWidget, reason: 'precondition: pinned');
+      for (final name in ['una.png', 'dos.png']) {
+        expect(
+          find.descendant(of: sticky(), matching: find.text(name)),
+          findsOneWidget,
+          reason: 'the pinned chip names $name',
+        );
+      }
+      expectCompactPinnedLayout(tester);
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('the prompt bubble in the transcript keeps full thumbnails', (
+      tester,
+    ) async {
+      usePhone(tester);
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: history(promptWithImages(promptText)),
+      );
+      await settle(tester);
+      await tester.tap(sticky());
+      for (var frame = 0; frame < 60; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await settle(tester);
+      // The reveal brings the bubble into the transcript; the previous
+      // reply may still span the top and pin ITS prompt, which is fine.
+      final bubble = find.ancestor(
+        of: find.descendant(
+          of: transcript(),
+          matching: find.textContaining('Revisa estas dos capturas'),
+        ),
+        matching: find.byKey(const ValueKey('user-message-bubble')),
+      );
+      expect(bubble, findsOneWidget, reason: 'precondition: bubble revealed');
+      final cards = find.descendant(
+        of: bubble,
+        matching: find.byType(AttachmentCard),
+      );
+      expect(cards, findsNWidgets(2));
+      for (final element in cards.evaluate()) {
+        expect(rectOf(element).size, const Size(120, 120));
+      }
+      expect(
+        find.descendant(
+          of: transcript(),
+          matching: find.textContaining('Revisa estas dos capturas'),
+        ),
         findsOneWidget,
       );
       await tearDownChat(tester, gateway);

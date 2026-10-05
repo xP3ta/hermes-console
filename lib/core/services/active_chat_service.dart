@@ -8111,6 +8111,10 @@ class ActiveChat {
   /// Quedan mensajes anteriores en el servidor más allá de lo ya cargado.
   bool get hasEarlierMessages => _earlierMessagesAvailable;
 
+  @visibleForTesting
+  set earlierMessagesAvailableForTesting(bool value) =>
+      _earlierMessagesAvailable = value;
+
   /// El último intento de cargar una página anterior falló. Es la única causa
   /// para mostrar la recuperación flotante de historial.
   bool get earlierMessagesLoadFailed => _earlierMessagesLoadFailed;
