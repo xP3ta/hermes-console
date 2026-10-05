@@ -10203,5 +10203,8 @@
   "pc1215PickFolderTitle": "Elegir carpeta del servidor",
   "pc1215PickFolderUse": "Usar esta carpeta",
   "pc1215IdeaExists": "Ya existe IDEA.md en la carpeta; no se ha sobrescrito.",
-  "pc1215IdeaUnverified": "No se pudo comprobar si la carpeta ya tiene IDEA.md; no se ha escrito."
+  "pc1215IdeaUnverified": "No se pudo comprobar si la carpeta ya tiene IDEA.md; no se ha escrito.",
+  "apx1215ScopeOnceHint": "Solo esta llamada.",
+  "apx1215ScopeSessionHint": "Este tipo de comando en este chat, hasta que el chat termine o el servidor se reinicie.",
+  "apx1215ScopeAlwaysHint": "Este tipo de comando en todos los chats. Se guarda en el servidor (command_allowlist de config.yaml) y en Ajustes › Permisos / Aprobaciones; para retirarlo, quítalo de ambos sitios."
 }

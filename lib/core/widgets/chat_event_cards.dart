@@ -1027,12 +1027,15 @@ class ChatApprovalCard extends StatelessWidget {
                 children: [
                   if (allowed.contains('once'))
                     Expanded(
-                      child: _ApprovalChoice(
-                        label: s.cevAllow,
-                        icon: Icons.check_rounded,
-                        color: colors.success,
-                        busy: busy,
-                        onTap: () => onChoice('once'),
+                      child: Tooltip(
+                        message: s.apx1215ScopeOnceHint,
+                        child: _ApprovalChoice(
+                          label: s.cevAllow,
+                          icon: Icons.check_rounded,
+                          color: colors.success,
+                          busy: busy,
+                          onTap: () => onChoice('once'),
+                        ),
                       ),
                     ),
                   if (allowed.contains('once') && allowed.contains('deny'))
@@ -1062,20 +1065,26 @@ class ChatApprovalCard extends StatelessWidget {
                     style: TextStyle(fontSize: 11, color: colors.textDisabled),
                   ),
                   if (allowed.contains('session'))
-                    _ScopeChip(
-                      label: s.cevThisSession,
-                      icon: Icons.repeat_rounded,
-                      busy: busy,
-                      semanticHint: s.cevRemember,
-                      onTap: () => onChoice('session'),
+                    Tooltip(
+                      message: s.apx1215ScopeSessionHint,
+                      child: _ScopeChip(
+                        label: s.cevThisSession,
+                        icon: Icons.repeat_rounded,
+                        busy: busy,
+                        semanticHint: s.cevRemember,
+                        onTap: () => onChoice('session'),
+                      ),
                     ),
                   if (allowed.contains('always'))
-                    _ScopeChip(
-                      label: s.cevAlways,
-                      icon: Icons.all_inclusive_rounded,
-                      busy: busy,
-                      semanticHint: s.cevRemember,
-                      onTap: () => onChoice('always'),
+                    Tooltip(
+                      message: s.apx1215ScopeAlwaysHint,
+                      child: _ScopeChip(
+                        label: s.cevAlways,
+                        icon: Icons.all_inclusive_rounded,
+                        busy: busy,
+                        semanticHint: s.cevRemember,
+                        onTap: () => onChoice('always'),
+                      ),
                     ),
                 ],
               ),

@@ -8493,5 +8493,8 @@
   "pc1215PickFolderTitle": "Choose a server folder",
   "pc1215PickFolderUse": "Use this folder",
   "pc1215IdeaExists": "IDEA.md already exists in the folder; it wasn't overwritten.",
-  "pc1215IdeaUnverified": "Couldn't check whether the folder already has IDEA.md, so it wasn't written."
+  "pc1215IdeaUnverified": "Couldn't check whether the folder already has IDEA.md, so it wasn't written.",
+  "apx1215ScopeOnceHint": "Only this call.",
+  "apx1215ScopeSessionHint": "This kind of command in this chat, until the chat ends or the server restarts.",
+  "apx1215ScopeAlwaysHint": "This kind of command in every chat. Saved on the server (command_allowlist in config.yaml) and in Settings › Permissions / Approvals; to withdraw it, remove it from both."
 }
