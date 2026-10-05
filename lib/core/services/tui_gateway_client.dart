@@ -30,6 +30,7 @@ import '../models/desktop_control_center.dart';
 import '../models/desktop_context_breakdown.dart';
 import '../models/desktop_model_catalog.dart';
 import '../models/desktop_session_config.dart';
+import '../models/free_tier_status.dart';
 import '../models/desktop_session_snapshot.dart';
 import '../models/interactive_prompt.dart';
 import '../models/hosted_groups.dart';
@@ -654,6 +655,12 @@ abstract class HermesDesktopGlobalModelCatalogGateway {
     Duration timeout = const Duration(seconds: 6),
     bool connectedOnly = false,
   });
+}
+
+abstract class HermesDesktopFreeTierGateway {
+  Future<FreeTierStatus> freeTierStatus({String profile = ''});
+
+  Future<FreeTierAckNotice> ackFreeTierNotice({String profile = ''});
 }
 
 /// Desglose opcional de la ventana de contexto del runtime vivo.
@@ -1377,6 +1384,7 @@ class TuiGatewayClient
         HermesDesktopSessionActivityGateway,
         HermesDesktopModelCatalogGateway,
         HermesDesktopGlobalModelCatalogGateway,
+        HermesDesktopFreeTierGateway,
         HermesDesktopContextUsageGateway,
         HermesDesktopProfileAssetsGateway,
         HermesDesktopBotCreationGateway,
@@ -5310,6 +5318,56 @@ class TuiGatewayClient
       DesktopGatewayCapabilityState.supported,
     );
     return DesktopModelCatalog.fromJson(result);
+  }
+
+  Map<String, dynamic> _freeTierParams(String profile) => {
+    'profile': profile.trim().isEmpty || profile.trim() == 'default'
+        ? null
+        : profile.trim(),
+  };
+
+  @override
+  Future<FreeTierStatus> freeTierStatus({String profile = ''}) async {
+    const method = 'free_tier.status';
+    final result = await _requestOptionalCapability(
+      DesktopGatewayCapability.freeTier,
+      method,
+      _freeTierParams(profile),
+    );
+    try {
+      return FreeTierStatus.fromJson(result);
+    } on FormatException {
+      _capabilityCache.mark(
+        DesktopGatewayCapability.freeTier,
+        DesktopGatewayCapabilityState.invalid,
+      );
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid free-tier status',
+      );
+    }
+  }
+
+  @override
+  Future<FreeTierAckNotice> ackFreeTierNotice({String profile = ''}) async {
+    const method = 'free_tier.ack_notice';
+    final result = await _requestOptionalCapability(
+      DesktopGatewayCapability.freeTier,
+      method,
+      _freeTierParams(profile),
+    );
+    try {
+      return FreeTierAckNotice.fromJson(result);
+    } on FormatException {
+      _capabilityCache.mark(
+        DesktopGatewayCapability.freeTier,
+        DesktopGatewayCapabilityState.invalid,
+      );
+      throw const TuiGatewayRpcError(
+        method,
+        'Hermes returned an invalid free-tier notice acknowledgement',
+      );
+    }
   }
 
   @override

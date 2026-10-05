@@ -4,6 +4,7 @@ class ModelProvider {
   final String name;
   final bool isCurrent;
   final bool authenticated;
+  final bool freeTier;
   final String authType;
   final String oauthProviderId;
   final String keyEnv;
@@ -25,6 +26,7 @@ class ModelProvider {
     required this.name,
     required this.isCurrent,
     required this.authenticated,
+    this.freeTier = false,
     required this.authType,
     required this.oauthProviderId,
     required this.keyEnv,
@@ -39,6 +41,7 @@ class ModelProvider {
     name: name,
     isCurrent: isCurrent,
     authenticated: authenticated,
+    freeTier: freeTier,
     authType: authType,
     oauthProviderId: oauthProviderId,
     keyEnv: keyEnv,
@@ -52,9 +55,12 @@ class ModelProvider {
     slug: _string(json['slug'] ?? json['id'] ?? json['provider']),
     name: _string(json['name'] ?? json['label'] ?? json['title']),
     isCurrent: _bool(json['is_current'] ?? json['current'] ?? json['active']),
-    authenticated: _bool(
-      json['authenticated'] ?? json['configured'] ?? json['available'],
-    ),
+    authenticated:
+        _bool(
+          json['authenticated'] ?? json['configured'] ?? json['available'],
+        ) &&
+        !_bool(json['free_tier']),
+    freeTier: _bool(json['free_tier']),
     authType: _string(json['auth_type'] ?? json['auth'] ?? json['type']),
     oauthProviderId:
         (json['oauth_provider'] ??

@@ -3,11 +3,16 @@
 // Los widget tests se omiten aquí porque dependen de DashboardClient /
 // BridgeManager — ver connection_manager_test para ese nivel.
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/external_provider_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
+import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 void main() {
   final en = lookupStrings(const Locale('en'));
@@ -251,6 +256,372 @@ void main() {
           reason: '${t.label} debe tener un urlHint',
         );
       }
+    });
+  });
+
+  group('saved endpoints', () {
+    final connection = SavedConnection(
+      id: 'server-a',
+      label: 'Server',
+      host: 'hermes.example.test',
+      port: 5000,
+      apiKey: 'test-token',
+    );
+
+    Future<void> pumpScreen(
+      WidgetTester tester,
+      DashboardClient dashboard,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.hermesRedDark,
+          locale: const Locale('en'),
+          localizationsDelegates: Strings.localizationsDelegates,
+          supportedLocales: Strings.supportedLocales,
+          home: ExternalProviderScreen(
+            connection: connection,
+            profile: 'team one',
+            dashboardClientForTesting: dashboard,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('unsupported server keeps the legacy primary test action', (
+      tester,
+    ) async {
+      final calls = <http.Request>[];
+      final dashboard = DashboardClient(
+        host: 'hermes.example.test',
+        manualToken: 'test-token',
+        httpClientOverride: MockClient((request) async {
+          calls.add(request);
+          return http.Response('', 404);
+        }),
+      );
+      addTearDown(dashboard.close);
+
+      await pumpScreen(tester, dashboard);
+
+      expect(calls, hasLength(1));
+      expect(find.text('Saved endpoints'), findsNothing);
+      expect(
+        find.widgetWithText(FilledButton, 'Test connection'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+      'edit leaves key blank, validate resolves URL, and delete is guarded',
+      (tester) async {
+        const preview = r'${NEVER_RENDER_THIS}';
+        final calls = <http.Request>[];
+        final dashboard = DashboardClient(
+          host: 'hermes.example.test',
+          manualToken: 'test-token',
+          httpClientOverride: MockClient((request) async {
+            calls.add(request);
+            if (request.method == 'GET') {
+              return http.Response('''{"endpoints":[
+                  {"id":"edge/a","name":"Edge","base_url":"https://llm.example.test","model":"edge-model","models":["edge-model"],"has_api_key":true,"api_key_preview":"$preview","is_current":false,"source":"providers"},
+                  {"id":"direct","name":"Direct","base_url":"https://direct.example.test/v1","model":"direct-model","models":["direct-model"],"has_api_key":false,"is_current":true,"source":"direct-config"}
+                ]}''', 200);
+            }
+            if (request.url.path.endsWith('/validate')) {
+              return http.Response(
+                '{"ok":true,"reachable":true,"message":"Ready",'
+                '"models":["edge-model"],"model_details":[],'
+                '"resolved_base_url":"https://llm.example.test/v1"}',
+                200,
+              );
+            }
+            return http.Response('{"ok":true}', 200);
+          }),
+        );
+        addTearDown(dashboard.close);
+
+        await pumpScreen(tester, dashboard);
+
+        expect(find.text('Saved endpoints'), findsOneWidget);
+        expect(find.textContaining(preview), findsNothing);
+        expect(find.byIcon(Icons.more_vert), findsOneWidget);
+
+        await tester.tap(find.text('Edge').first);
+        await tester.pump();
+        expect(find.text('https://llm.example.test'), findsOneWidget);
+        expect(find.textContaining(preview), findsNothing);
+
+        final testButton = find
+            .widgetWithText(OutlinedButton, 'Test connection')
+            .first;
+        await tester.drag(find.byType(ListView), const Offset(0, -500));
+        await tester.pumpAndSettle();
+        await tester.tap(testButton);
+        await tester.pumpAndSettle();
+        expect(find.text('https://llm.example.test/v1'), findsOneWidget);
+        expect(find.text('Ready'), findsOneWidget);
+        final validate = calls.singleWhere(
+          (request) => request.url.path.endsWith('/validate'),
+        );
+        expect(validate.url.queryParameters, {'profile': 'team one'});
+
+        await tester.drag(find.byType(ListView), const Offset(0, 500));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.more_vert));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Delete'));
+        await tester.pumpAndSettle();
+        expect(find.text('Delete Edge?'), findsOneWidget);
+        await tester.tap(find.text('Delete').last);
+        await tester.pumpAndSettle();
+
+        expect(
+          calls.where((request) => request.method == 'DELETE'),
+          hasLength(1),
+        );
+      },
+    );
+
+    testWidgets(
+      'editing preserves endpoint metadata and activation stays explicit',
+      (tester) async {
+        final calls = <http.Request>[];
+        final dashboard = DashboardClient(
+          host: 'hermes.example.test',
+          manualToken: 'test-token',
+          httpClientOverride: MockClient((request) async {
+            calls.add(request);
+            if (request.method == 'GET') {
+              return http.Response(
+                '{"endpoints":[{"id":"edge/a","name":"Edge",'
+                '"base_url":"https://llm.example.test/v1",'
+                '"model":"edge-model","models":["edge-model"],'
+                '"api_mode":"anthropic_messages","context_length":32000,'
+                '"discover_models":false,"has_api_key":true,'
+                '"is_current":false,"source":"providers"}]}',
+                200,
+              );
+            }
+            return http.Response('{"ok":true,"id":"edge/a"}', 200);
+          }),
+        );
+        addTearDown(dashboard.close);
+
+        await pumpScreen(tester, dashboard);
+        await tester.tap(find.text('Edge').first);
+        await tester.pump();
+        await tester.drag(find.byType(ListView), const Offset(0, -700));
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(FilledButton, 'Save endpoint'));
+        await tester.pumpAndSettle();
+
+        final save = calls.firstWhere(
+          (request) =>
+              request.method == 'POST' &&
+              request.url.path == '/api/providers/custom-endpoints',
+        );
+        final body = jsonDecode(save.body) as Map<String, dynamic>;
+        expect(body['make_default'], isFalse);
+        expect(body['api_mode'], 'anthropic_messages');
+        expect(body['context_length'], 32000);
+        expect(body['discover_models'], isFalse);
+        expect(body, isNot(contains('api_key')));
+
+        await tester.drag(find.byType(ListView), const Offset(0, 700));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.more_vert));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Activate'));
+        await tester.pumpAndSettle();
+
+        expect(
+          calls.where(
+            (request) =>
+                request.method == 'POST' &&
+                request.url.path ==
+                    '/api/providers/custom-endpoints/edge%2Fa/activate',
+          ),
+          hasLength(1),
+        );
+      },
+    );
+
+    group('saved endpoint menu and delete dialog', () {
+      Map<String, Object?> endpointJson(
+        String id,
+        String name, {
+        bool current = false,
+        String source = 'providers',
+      }) => {
+        'id': id,
+        'name': name,
+        'base_url': 'https://$name.example.test/v1'.toLowerCase(),
+        'model': '$name-model'.toLowerCase(),
+        'models': ['$name-model'.toLowerCase()],
+        'has_api_key': false,
+        'is_current': current,
+        'source': source,
+      };
+
+      late List<Map<String, Object?>> served;
+      late List<http.Request> calls;
+      late DashboardClient dashboard;
+
+      setUp(() {
+        served = [
+          endpointJson('edge/a', 'Edge'),
+          endpointJson('cur', 'Current', current: true),
+          endpointJson('direct', 'Direct', source: 'direct-config'),
+        ];
+        calls = [];
+        dashboard = DashboardClient(
+          host: 'hermes.example.test',
+          manualToken: 'test-token',
+          httpClientOverride: MockClient((request) async {
+            calls.add(request);
+            if (request.method == 'GET') {
+              return http.Response(jsonEncode({'endpoints': served}), 200);
+            }
+            if (request.method == 'DELETE') {
+              final id = Uri.decodeComponent(request.url.pathSegments.last);
+              served.removeWhere((endpoint) => endpoint['id'] == id);
+            }
+            return http.Response('{"ok":true}', 200);
+          }),
+        );
+      });
+
+      tearDown(() => dashboard.close());
+
+      Iterable<http.Request> deletes() =>
+          calls.where((request) => request.method == 'DELETE');
+
+      Finder menuButton(String id) => find.descendant(
+        of: find.byKey(ValueKey('saved-endpoint-$id')),
+        matching: find.byIcon(Icons.more_vert),
+      );
+
+      Finder inMenu(String label) => find.descendant(
+        of: find.byKey(const ValueKey('hermes-menu')),
+        matching: find.text(label),
+      );
+
+      Finder inDialog(String label) => find.descendant(
+        of: find.byKey(const ValueKey('hermes-dialog')),
+        matching: find.text(label),
+      );
+
+      Future<void> openMenu(WidgetTester tester, String id) async {
+        await tester.tap(menuButton(id));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('hermes-menu')), findsOneWidget);
+      }
+
+      Future<void> openDeleteDialog(WidgetTester tester) async {
+        await openMenu(tester, 'edge/a');
+        await tester.tap(inMenu('Delete'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('hermes-dialog')), findsOneWidget);
+        expect(find.text('Delete Edge?'), findsOneWidget);
+      }
+
+      void expectEdgeKept() {
+        expect(find.byKey(const ValueKey('hermes-dialog')), findsNothing);
+        expect(deletes(), isEmpty);
+        expect(
+          find.byKey(const ValueKey('saved-endpoint-edge/a')),
+          findsOneWidget,
+        );
+      }
+
+      testWidgets('Cancel keeps the endpoint and sends no delete', (
+        tester,
+      ) async {
+        await pumpScreen(tester, dashboard);
+        await openDeleteDialog(tester);
+
+        await tester.tap(inDialog('Cancel'));
+        await tester.pumpAndSettle();
+
+        expectEdgeKept();
+      });
+
+      testWidgets('tapping outside the dialog keeps the endpoint', (
+        tester,
+      ) async {
+        await pumpScreen(tester, dashboard);
+        await openDeleteDialog(tester);
+
+        await tester.tapAt(const Offset(4, 4));
+        await tester.pumpAndSettle();
+
+        expectEdgeKept();
+      });
+
+      testWidgets('system back on the dialog keeps the endpoint', (
+        tester,
+      ) async {
+        await pumpScreen(tester, dashboard);
+        await openDeleteDialog(tester);
+
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+
+        expectEdgeKept();
+        expect(find.byType(ExternalProviderScreen), findsOneWidget);
+      });
+
+      testWidgets('menu actions follow current and direct-config endpoints', (
+        tester,
+      ) async {
+        await pumpScreen(tester, dashboard);
+        expect(find.byIcon(Icons.more_vert), findsNWidgets(3));
+
+        await openMenu(tester, 'edge/a');
+        expect(inMenu('Activate'), findsOneWidget);
+        expect(inMenu('Delete'), findsOneWidget);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+
+        await openMenu(tester, 'cur');
+        expect(inMenu('Activate'), findsNothing);
+        expect(inMenu('Delete'), findsOneWidget);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+
+        await openMenu(tester, 'direct');
+        expect(inMenu('Activate'), findsOneWidget);
+        expect(inMenu('Delete'), findsNothing);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(const ValueKey('hermes-menu')), findsNothing);
+        expect(calls.where((request) => request.method != 'GET'), isEmpty);
+      });
+
+      testWidgets('confirmed delete prunes the menu anchor of the removed id', (
+        tester,
+      ) async {
+        await pumpScreen(tester, dashboard);
+        final state = tester.state(find.byType(ExternalProviderScreen));
+        expect((state as dynamic).debugMenuAnchorIds, {
+          'edge/a',
+          'cur',
+          'direct',
+        });
+
+        await openDeleteDialog(tester);
+        await tester.tap(inDialog('Delete'));
+        await tester.pumpAndSettle();
+
+        expect(deletes(), hasLength(1));
+        expect(
+          find.byKey(const ValueKey('saved-endpoint-edge/a')),
+          findsNothing,
+        );
+        expect((state as dynamic).debugMenuAnchorIds, {'cur', 'direct'});
+      });
     });
   });
 }
