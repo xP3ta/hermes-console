@@ -15,6 +15,7 @@ import '../../../services/attachment_uploader.dart';
 import '../../../services/tui_gateway_client.dart' show TuiGatewayRpcError;
 import '../../../theme/app_theme.dart';
 import '../../../widgets/attachment_source_sheet.dart';
+import '../../../widgets/chat/composer_pasted_image.dart';
 import '../../../widgets/chat/console_composer.dart';
 import '../../../widgets/hermes_app_bar.dart';
 import '../../../widgets/hermes_notice.dart';
@@ -206,6 +207,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   bool _localLoaded = false;
   bool _detailOpen = false;
   final List<AttachmentDraft> _attachments = [];
+  Future<void> _pasteTail = Future<void>.value();
   final Set<String> _answering = {};
 
   /// Prompts open in members' sessions (latest probe), and the ones being
@@ -1351,6 +1353,53 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Pastes from the keyboard are serialized so two quick pastes cannot
+  /// both pass the batch limits checked against the same strip.
+  Future<void> _insertKeyboardContent(KeyboardInsertedContent content) {
+    final run = _pasteTail.then((_) => _insertKeyboardContentNow(content));
+    _pasteTail = run.catchError((Object _) {});
+    return run;
+  }
+
+  Future<void> _insertKeyboardContentNow(
+    KeyboardInsertedContent content,
+  ) async {
+    if (!mounted) return;
+    final s = Strings.of(context);
+    switch (_attachBlock) {
+      case RoomAttachBlock.none:
+        break;
+      case RoomAttachBlock.crossGateway:
+        _notice(s.roomAttachCrossGateway, kind: HermesNoticeKind.warning);
+        return;
+      case RoomAttachBlock.noUploader:
+      case RoomAttachBlock.readOnly:
+        _notice(s.roomAttachUnavailable, kind: HermesNoticeKind.warning);
+        return;
+    }
+    if (composerPasteRejection(content, pending: _attachments) != null) {
+      _notice(s.chaAttachmentPreparationFailed);
+      return;
+    }
+    try {
+      final draft = await stageComposerPastedImage(
+        content,
+        materialize: AttachmentUploader.materializeForDraft,
+      );
+      if (draft == null) {
+        if (mounted) _notice(s.chaAttachmentPreparationFailed);
+        return;
+      }
+      if (!mounted) {
+        await AttachmentUploader.deletePrivateDraftCopy(draft);
+        return;
+      }
+      setState(() => _attachments.add(draft));
+    } catch (_) {
+      if (mounted) _notice(s.chaAttachmentPreparationFailed);
+    }
+  }
+
   static String _mime(String name, AttachmentType type) {
     final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
     return switch (ext) {
@@ -2003,6 +2052,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             }
           },
           attachEnabled: block == RoomAttachBlock.none,
+          // Keyboard images (Gboard, clipboard screenshots) join the same
+          // strip as the `+` picks, with the main composer's limits.
+          onContentInserted: (content) =>
+              unawaited(_insertKeyboardContent(content)),
           attachments: _attachments,
           onRemoveAttachment: (id) =>
               setState(() => _attachments.removeWhere((a) => a.localId == id)),
