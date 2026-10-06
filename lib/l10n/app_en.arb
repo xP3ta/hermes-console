@@ -8544,5 +8544,9 @@
   "tabletPickConversation": "Pick a conversation to open it here",
   "@tabletPickConversation": {
     "description": "Placeholder in the tablet detail pane of the conversation list before one is opened."
+  },
+  "tabletPickProject": "Pick a project to open it here",
+  "@tabletPickProject": {
+    "description": "Placeholder in the tablet detail pane of the Projects list before one is opened."
   }
 }

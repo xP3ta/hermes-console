@@ -10248,5 +10248,6 @@
   "q90PinnedPromptUndo": "Deshacer",
   "q90PinnedPromptShow": "Mostrar tu pregunta fijada",
   "cs1215LoadingEarlier": "Cargando mensajes anteriores…",
-  "tabletPickConversation": "Elige una conversación para abrirla aquí"
+  "tabletPickConversation": "Elige una conversación para abrirla aquí",
+  "tabletPickProject": "Elige un proyecto para abrirlo aquí"
 }

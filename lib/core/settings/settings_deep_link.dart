@@ -39,10 +39,15 @@ class SettingsDeepLinkScope extends StatefulWidget {
   final Widget Function(BuildContext context, ScrollController controller)
   builder;
 
+  /// Called with the requested section before it is looked up, so a layout
+  /// that shows one section at a time (the tablet list-detail) can open it.
+  final ValueChanged<SettingsSection>? onReveal;
+
   const SettingsDeepLinkScope({
     super.key,
     required this.sections,
     required this.builder,
+    this.onReveal,
   });
 
   @override
@@ -87,6 +92,7 @@ class _SettingsDeepLinkScopeState extends State<SettingsDeepLinkScope> {
     }
     SettingsDeepLink.pending.value = null;
     _revealing = true;
+    widget.onReveal?.call(section);
     _step(section, 0);
   }
 

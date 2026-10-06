@@ -231,6 +231,7 @@ import '../design/modal.dart'
 import 'subagent_detail_screen.dart'
     show SubagentTranscriptPage, subagentIsLive;
 import '../widgets/activity_panel.dart';
+import '../widgets/activity_side_panel.dart';
 import '../widgets/activity_task_linger.dart';
 import '../widgets/compaction_dock.dart';
 import '../widgets/platform_setup_commands.dart';
@@ -14045,7 +14046,10 @@ class _ChatScreenState extends State<ChatScreen>
         onAsk: widget.connection.readOnly || _cronRunReadOnly
             ? null
             : _askAboutSelection,
-        child: scaffold,
+        // Tablets: the activity pill opens a side panel beside the whole
+        // chat (header, transcript, approvals, composer) instead of the
+        // modal, when the window and this chat have room for it.
+        child: ActivitySidePanelHost(child: scaffold),
       ),
     );
   }
