@@ -326,6 +326,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       onDelta: (_) {},
       onError: (error) => _refreshFailed(error, via: 'poll'),
       timer: widget.pollTimer,
+      backoff: RoomPollBackoff(clock: () => _now),
     );
     // Text, focus and dictation rebuild only the composer area (a
     // ListenableBuilder in build), never the whole screen.

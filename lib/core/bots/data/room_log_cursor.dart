@@ -165,22 +165,37 @@ final class RoomLogCursor {
       );
 }
 
-/// Poll cadence for a visible room: 3 s while the driver works or the log
-/// just changed, doubling to a 15 s ceiling while idle (plan.md § Rules).
+/// Poll cadence for a visible room: 3 s while the driver works or the room
+/// saw activity in the last [activeWindow], doubling to a 15 s ceiling once
+/// it has been idle that long (plan.md § Rules). Hidden rooms never poll.
 final class RoomPollBackoff {
+  /// How long a visible room keeps the fast cadence after its last activity.
+  static const activeWindow = Duration(minutes: 2);
+
   final Duration fast;
   final Duration slow;
+  final DateTime Function() _clock;
   Duration _current;
 
   RoomPollBackoff({
     this.fast = const Duration(seconds: 3),
     this.slow = const Duration(seconds: 15),
-  }) : _current = fast;
+    DateTime Function()? clock,
+  }) : _current = fast,
+       _clock = clock ?? DateTime.now;
 
   Duration get current => _current;
 
+  DateTime? _lastActivity;
+
+  /// 3 s while the driver works, the log just changed or the room saw
+  /// activity in the last [activeWindow] (rc1215: bots answer tens of seconds
+  /// after the message they reply to); doubling to [slow] only after that.
   Duration next({required bool working, required bool changed}) {
-    if (working || changed) {
+    final now = _clock();
+    if (working || changed) _lastActivity = now;
+    final last = _lastActivity;
+    if (last != null && now.difference(last) < activeWindow) {
       _current = fast;
     } else {
       final doubled = _current * 2;
@@ -189,7 +204,11 @@ final class RoomPollBackoff {
     return _current;
   }
 
-  void resetFast() => _current = fast;
+  /// The room was (re)opened or the user just wrote: both open the window.
+  void resetFast() {
+    _current = fast;
+    _lastActivity = _clock();
+  }
 }
 
 typedef RoomPollTimerFactory =

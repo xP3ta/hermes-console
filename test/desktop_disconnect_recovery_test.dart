@@ -2107,6 +2107,77 @@ void main() {
     },
   );
 
+  // QA 9491: after one loss every later turn kept saying «Conexión perdida —
+  // reconectando…» while the socket worked. The automatic reattach published
+  // offline and then stopped (the user's next turn made it non-current), and
+  // nothing else ever published connected again.
+  group('rc1215 a turn that reaches the server clears a stale loss', () {
+    Future<
+      ({ActiveChat chat, _ActivityLifecycleRecoverableGateway gateway})
+    >
+    stranded(String id) async {
+      final gateway = _ActivityLifecycleRecoverableGateway()
+        ..initialSnapshot = DesktopSessionSnapshot(
+          runtimeSessionId: 'runtime-$id-1',
+          storedSessionId: 'session-$id',
+          created: false,
+          messagesProvided: true,
+          running: false,
+          status: 'completed',
+        )
+        ..resumeExistingError = const TuiGatewayRpcError(
+          'session.resume',
+          'Hermes Desktop connection lost',
+          failureKind: TuiGatewayRpcFailureKind.connectionLost,
+        )
+        ..resumeExistingFailuresRemaining = 1;
+      final chat = _productionAttachChat(
+        id,
+        gateway,
+        // The reattach loop's second attempt waits an hour: the loss stays
+        // published while the user types the next turn.
+        desktopRecoveryBackoff: const [Duration.zero, Duration(hours: 1)],
+        desktopRecoveryRandom: () => 1.0,
+      );
+      await chat.loadMessages(profile: 'owner-profile');
+      gateway.drop();
+      await _waitUntil(() => gateway.resumeExistingCalls == 1);
+      await pumpEventQueue();
+      expect(chat.transportStatus.isConnected, isFalse, reason: 'staged loss');
+      expect(chat.desktopRuntimeSessionId, isNull);
+      return (chat: chat, gateway: gateway);
+    }
+
+    test('the next submit publishes the transport connected', () async {
+      final (:chat, :gateway) = await stranded('rc-next');
+      addTearDown(chat.dispose);
+      gateway.initialSnapshot = const DesktopSessionSnapshot(
+        runtimeSessionId: 'runtime-rc-next-2',
+        storedSessionId: 'session-rc-next',
+        created: false,
+        messagesProvided: true,
+        running: false,
+        status: 'completed',
+      );
+
+      unawaited(
+        chat.send(
+          fullText: 'siguiente turno',
+          model: 'hermes-agent',
+          history: const [],
+          delivery: _delivery('rc-next', _NoopOutbox()),
+        ),
+      );
+      await _waitUntil(() => gateway.submitCalls == 1);
+      await pumpEventQueue();
+
+      expect(gateway.submittedRuntimeIds, ['runtime-rc-next-2']);
+      expect(chat.state, ChatPipelineState.waiting);
+      expect(chat.transportStatus.state, ChatTransportState.connected);
+      expect(chat.transportStatus.disconnectedSince, isNull);
+    });
+  });
+
   test('socket loss while the automatic reattach waits out its backoff '
       'restarts recovery at once', () async {
     final gateway = _ActivityLifecycleRecoverableGateway()

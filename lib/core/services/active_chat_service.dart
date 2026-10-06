@@ -18886,6 +18886,13 @@ class ActiveChat {
       _listenToDesktopGateway(gateway);
       await gateway.connect();
       if (_turnEpoch != turnEpoch || _runTerminal) return false;
+      // rc1215: this turn just proved the socket. An automatic reattach that
+      // published a loss and then stopped (this turn made it non-current)
+      // leaves nobody else to clear it, and every later turn showed
+      // «reconnecting» on a healthy connection.
+      if (gateway.isConnected) {
+        _publishTransportState(ChatTransportState.connected);
+      }
       var runtimeId = _desktopRuntimeSessionId;
       if (runtimeId == null) {
         final draftSource = serverSessionId;
