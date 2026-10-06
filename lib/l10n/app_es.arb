@@ -1554,11 +1554,9 @@
     }
   },
   "memBackupJson": "Backup JSON",
-  "memLoadError": "No se pudo cargar la memoria",
   "memSize": "tamaño",
-  "memNoFileEndpoint": "La API /api/memory solo devuelve metadatos (nombre + tamaño). No hay endpoint para leer ni escribir el contenido del archivo.",
+  "memNoFileEndpoint": "Cada guardado comprueba antes que nadie haya cambiado la entrada desde que la abriste.",
   "memOpenDraft": "Abrir borrador local",
-  "memCreateDraft": "Crear borrador local",
   "aboutScreenTitle": "Acerca de",
   "aboutReleaseStatus": "cliente no oficial · XPeta Lab",
   "aboutTagline": "Cliente Android remoto y privado para Hermes Agent self-hosted. Pensado para acceder a tu gateway por Tailscale o LAN, sin telemetría de XPeta Lab; los servicios externos son siempre opcionales.",
@@ -3552,105 +3550,10 @@
   "secPinErrorMismatch": "Los PIN no coinciden",
   "secPinSave": "Guardar PIN",
   "memCancel": "Cancelar",
-  "memApply": "Aplicar",
-  "memReload": "Recargar",
   "memDiscard": "Descartar",
-  "memReloadTitle": "Recargar del servidor",
-  "memReloadContent": "Esto reemplaza el contenido del editor por el del servidor. Se perderán los cambios locales no aplicados.",
   "memDiscardTitle": "Descartar borrador",
   "memDiscardContent": "¿Eliminar este borrador local? Esta acción no se puede deshacer.",
-  "memApplyDiffTitle": "Aplicar a {target} en el servidor",
-  "@memApplyDiffTitle": {
-    "placeholders": {
-      "target": {
-        "type": "String"
-      }
-    }
-  },
-  "memNoDiff": "(sin cambios)",
-  "memLoadedFromServer": "Cargado del servidor ({bytes} bytes)",
-  "@memLoadedFromServer": {
-    "placeholders": {
-      "bytes": {
-        "type": "String"
-      }
-    }
-  },
-  "memFileNotOnServer": "El archivo no existe aún en el servidor",
-  "memBridgeError": "Bridge: {message}",
-  "@memBridgeError": {
-    "placeholders": {
-      "message": {
-        "type": "String"
-      }
-    }
-  },
-  "memLoadFailed": "No se pudo cargar: {error}",
-  "@memLoadFailed": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "memApplyFailed": "No se pudo aplicar: {error}",
-  "@memApplyFailed": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "memApplyReason": "Aplicar memoria al servidor",
-  "memApplied": "Aplicado al servidor",
-  "memAppliedWithBackup": "Aplicado al servidor · backup {backup}",
-  "@memAppliedWithBackup": {
-    "placeholders": {
-      "backup": {
-        "type": "String"
-      }
-    }
-  },
-  "memBridgeConnectedSnack": "Bridge conectado · escritura: {write}",
-  "@memBridgeConnectedSnack": {
-    "placeholders": {
-      "write": {
-        "type": "String"
-      }
-    }
-  },
-  "memBridgeInvalidToken": "Bridge detectado pero el token no es válido",
-  "memBridgeConnFailed": "No se pudo conectar con el bridge en {url}",
-  "@memBridgeConnFailed": {
-    "placeholders": {
-      "url": {
-        "type": "String"
-      }
-    }
-  },
-  "memBridgeConnectedRW": "Mobile Bridge conectado: editas el contenido real del servidor; «aplicar» guarda con backup y diff.",
-  "memBridgeConnectedRO": "Mobile Bridge conectado en solo lectura: puedes cargar y ver el contenido del servidor, pero no aplicarlo.",
-  "memBridgeNeedsToken": "Bridge detectado en {url}. Pulsa el icono de nube y pega el token para leer/editar el archivo real.",
-  "@memBridgeNeedsToken": {
-    "placeholders": {
-      "url": {
-        "type": "String"
-      }
-    }
-  },
-  "memBridgeAuthFailed": "Bridge detectado pero el token no es válido. Revísalo en el icono de nube.",
-  "memBridgeUnreachable": "Bridge no habilitado en {url}. Mientras tanto, borrador local. Actívalo en el servidor para leer/aplicar.",
-  "@memBridgeUnreachable": {
-    "placeholders": {
-      "url": {
-        "type": "String"
-      }
-    }
-  },
-  "memBridgeNotConfigured": "La API no permite guardar memoria remotamente. Borrador local; configura el Mobile Bridge (icono nube) para el servidor.",
-  "memBadgeBridge": "bridge",
   "memBadgeDraft": "borrador local",
-  "memConfigureBridge": "Configurar Mobile Bridge",
   "memEditorHint": "# Notas para {filename}.md…\n\nEscribe aquí lo que quieras aplicar luego en el servidor (copiar → pegar via CLI).",
   "@memEditorHint": {
     "placeholders": {
@@ -3668,10 +3571,6 @@
       }
     }
   },
-  "memButtonLoading": "cargando…",
-  "memButtonReload": "recargar",
-  "memButtonApplying": "aplicando…",
-  "memButtonApply": "aplicar",
   "memButtonCopy": "copiar",
   "memButtonExport": "exportar",
   "memButtonDiscard": "descartar",
@@ -3692,13 +3591,11 @@
       }
     }
   },
-  "memYes": "sí",
-  "memNo": "no",
   "memActiveProviderLabel": "Proveedor activo",
   "memNoneValue": "Ninguno",
   "memBuiltinFiles": "Archivos integrados",
   "memProvidersSection": "Proveedores",
-  "memReadOnlyNote": "Solo lectura con esta instancia: /api/memory del Dashboard es solo GET (verificado). La edición se hace en el servidor; aquí tienes borradores locales y backup JSON.",
+  "memReadOnlyNote": "MEMORY.md y USER.md se editan en el servidor, una entrada cada vez. El backup JSON guarda este resumen.",
   "sesScreenTitle": "sesión",
   "sesTabSummary": "resumen",
   "sesTabMessages": "mensajes",
@@ -8453,7 +8350,6 @@
   "aboutSectionApp": "App",
   "aboutSectionLegal": "Licencias y privacidad",
   "aboutSectionLinks": "Enlaces",
-  "memDetailFile": "Archivo",
   "designDetails": "Detalles",
   "cphTitle": "Capacidades",
   "cphSegCatalog": "Catálogo",
@@ -10315,5 +10211,46 @@
         "type": "String"
       }
     }
-  }
+  },
+  "memEditEntries": "Editar entradas",
+  "memEntriesLocked": "Desbloquea la app para ver esta memoria.",
+  "memEntriesUnsupported": "Este servidor no permite editar entradas de memoria. Actualiza Hermes para editarlas desde aquí.",
+  "memEntriesLoadFailed": "No se pudieron cargar las entradas de memoria.",
+  "memEntriesEmpty": "Aún no hay entradas. El agente las añade a medida que aprende.",
+  "memEntryHint": "Texto de la entrada",
+  "memEntrySave": "Guardar",
+  "memEntryDelete": "Borrar",
+  "memEntrySaveTitle": "¿Guardar esta entrada?",
+  "memEntrySaveBody": "Sustituye la entrada en {file} del perfil {profile} en el servidor.",
+  "@memEntrySaveBody": {
+    "placeholders": {
+      "file": {
+        "type": "String"
+      },
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "memEntryDeleteTitle": "¿Borrar esta entrada?",
+  "memEntryDeleteBody": "El agente dejará de recordarla. No se puede deshacer.",
+  "memEntryLockReason": "Editar la memoria en el servidor",
+  "memEntryConflictTitle": "Cambió en otro sitio",
+  "memEntryConflictBody": "Desde que la abriste, esta entrada se cambió o se borró en otro sitio (otro dispositivo o el agente). No se ha guardado nada.",
+  "memEntryConflictReload": "Ver la versión actual",
+  "memEntryConflictKeep": "Seguir editando",
+  "memEntryGone": "Esta entrada ya no existe tal como estaba. Vuelve para ver la lista actual.",
+  "memEntryTooLarge": "Esta entrada es demasiado larga para guardarla.",
+  "memEntryRejected": "El servidor no la guardó: {detail}",
+  "@memEntryRejected": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "memEntryFailed": "No se pudo contactar con el servidor. No se ha guardado nada.",
+  "memEntrySaved": "Entrada guardada",
+  "memEntryDeleted": "Entrada borrada",
+  "memDraftLegacyNote": "Borrador local de una versión anterior. No está en el servidor: copia lo que necesites a una entrada y luego descártalo."
 }

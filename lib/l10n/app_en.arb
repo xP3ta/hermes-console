@@ -959,16 +959,14 @@
   "provNoModelsAvail": "No models available",
   "memBackupSaveError": "error saving backup: {error}",
   "memBackupJson": "Backup JSON",
-  "memLoadError": "Couldn't load memory",
   "memSize": "size",
-  "memNoFileEndpoint": "The /api/memory API only returns metadata (name + size). There is no endpoint to read or write the file content.",
+  "memNoFileEndpoint": "Each save first checks that nobody changed the entry since you opened it.",
   "memOpenDraft": "Open local draft",
-  "memCreateDraft": "Create local draft",
   "memActiveProviderLabel": "Active Provider",
   "memNoneValue": "None",
   "memBuiltinFiles": "Built-in Files",
   "memProvidersSection": "Providers",
-  "memReadOnlyNote": "Read-only with this instance: /api/memory from the Dashboard is GET-only (verified). Editing is done on the server; here you have local drafts and JSON backup.",
+  "memReadOnlyNote": "MEMORY.md and USER.md are edited on the server one entry at a time. The JSON backup saves this summary.",
   "aboutScreenTitle": "About",
   "aboutReleaseStatus": "unofficial client · XPeta Lab",
   "aboutTagline": "Private, remote Android client for self-hosted Hermes Agent. Designed to reach your gateway over Tailscale or LAN, with no XPeta Lab telemetry; external services are always optional.",
@@ -2698,105 +2696,10 @@
   "secPinErrorMismatch": "PINs do not match",
   "secPinSave": "Save PIN",
   "memCancel": "Cancel",
-  "memApply": "Apply",
-  "memReload": "Reload",
   "memDiscard": "Discard",
-  "memReloadTitle": "Reload from server",
-  "memReloadContent": "This replaces the editor content with the server content. Unapplied local changes will be lost.",
   "memDiscardTitle": "Discard draft",
   "memDiscardContent": "Delete this local draft? This action cannot be undone.",
-  "memApplyDiffTitle": "Apply to {target} on server",
-  "@memApplyDiffTitle": {
-    "placeholders": {
-      "target": {
-        "type": "String"
-      }
-    }
-  },
-  "memNoDiff": "(no changes)",
-  "memLoadedFromServer": "Loaded from server ({bytes} bytes)",
-  "@memLoadedFromServer": {
-    "placeholders": {
-      "bytes": {
-        "type": "String"
-      }
-    }
-  },
-  "memFileNotOnServer": "File does not exist on server yet",
-  "memBridgeError": "Bridge: {message}",
-  "@memBridgeError": {
-    "placeholders": {
-      "message": {
-        "type": "String"
-      }
-    }
-  },
-  "memLoadFailed": "Could not load: {error}",
-  "@memLoadFailed": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "memApplyFailed": "Could not apply: {error}",
-  "@memApplyFailed": {
-    "placeholders": {
-      "error": {
-        "type": "String"
-      }
-    }
-  },
-  "memApplyReason": "Apply memory to server",
-  "memApplied": "Applied to server",
-  "memAppliedWithBackup": "Applied to server · backup {backup}",
-  "@memAppliedWithBackup": {
-    "placeholders": {
-      "backup": {
-        "type": "String"
-      }
-    }
-  },
-  "memBridgeConnectedSnack": "Bridge connected · write: {write}",
-  "@memBridgeConnectedSnack": {
-    "placeholders": {
-      "write": {
-        "type": "String"
-      }
-    }
-  },
-  "memBridgeInvalidToken": "Bridge detected but token is invalid",
-  "memBridgeConnFailed": "Could not connect to bridge at {url}",
-  "@memBridgeConnFailed": {
-    "placeholders": {
-      "url": {
-        "type": "String"
-      }
-    }
-  },
-  "memBridgeConnectedRW": "Mobile Bridge connected: you edit live server content; «apply» saves with backup and diff.",
-  "memBridgeConnectedRO": "Mobile Bridge connected read-only: you can load and view server content, but not apply.",
-  "memBridgeNeedsToken": "Bridge detected at {url}. Tap the cloud icon and paste the token to read/edit the live file.",
-  "@memBridgeNeedsToken": {
-    "placeholders": {
-      "url": {
-        "type": "String"
-      }
-    }
-  },
-  "memBridgeAuthFailed": "Bridge detected but token is invalid. Check it in the cloud icon.",
-  "memBridgeUnreachable": "Bridge not enabled at {url}. Using local draft in the meantime. Enable it on the server to read/apply.",
-  "@memBridgeUnreachable": {
-    "placeholders": {
-      "url": {
-        "type": "String"
-      }
-    }
-  },
-  "memBridgeNotConfigured": "The API does not support remote memory saving. Local draft only; configure Mobile Bridge (cloud icon) for the server.",
-  "memBadgeBridge": "bridge",
   "memBadgeDraft": "local draft",
-  "memConfigureBridge": "Configure Mobile Bridge",
   "memEditorHint": "# Notes for {filename}.md…\n\nWrite here what you want to apply later on the server (copy → paste via CLI).",
   "@memEditorHint": {
     "placeholders": {
@@ -2814,10 +2717,6 @@
       }
     }
   },
-  "memButtonLoading": "loading…",
-  "memButtonReload": "reload",
-  "memButtonApplying": "applying…",
-  "memButtonApply": "apply",
   "memButtonCopy": "copy",
   "memButtonExport": "export",
   "memButtonDiscard": "discard",
@@ -2838,8 +2737,6 @@
       }
     }
   },
-  "memYes": "yes",
-  "memNo": "no",
   "sesScreenTitle": "session",
   "sesTabSummary": "summary",
   "sesTabMessages": "messages",
@@ -6908,7 +6805,6 @@
   "aboutSectionApp": "App",
   "aboutSectionLegal": "Licenses and privacy",
   "aboutSectionLinks": "Links",
-  "memDetailFile": "File",
   "designDetails": "Details",
   "cphTitle": "Capabilities",
   "cphSegCatalog": "Catalog",
@@ -8361,5 +8257,46 @@
   "inicioStarterReview": "Review “{name}”",
   "inicioRoomNews": "{count} new",
   "inicioNext": "Next: {name}, {when}",
-  "inicioFailed": "“{name}” failed"
+  "inicioFailed": "“{name}” failed",
+  "memEditEntries": "Edit entries",
+  "memEntriesLocked": "Unlock the app to see this memory.",
+  "memEntriesUnsupported": "This server cannot edit memory entries. Update Hermes to edit them from here.",
+  "memEntriesLoadFailed": "Couldn't load the memory entries.",
+  "memEntriesEmpty": "No entries yet. The agent adds them as it learns.",
+  "memEntryHint": "Entry text",
+  "memEntrySave": "Save",
+  "memEntryDelete": "Delete",
+  "memEntrySaveTitle": "Save this entry?",
+  "memEntrySaveBody": "It replaces the entry in {file} of profile {profile} on the server.",
+  "@memEntrySaveBody": {
+    "placeholders": {
+      "file": {
+        "type": "String"
+      },
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "memEntryDeleteTitle": "Delete this entry?",
+  "memEntryDeleteBody": "The agent will no longer remember it. This cannot be undone.",
+  "memEntryLockReason": "Edit memory on the server",
+  "memEntryConflictTitle": "Changed elsewhere",
+  "memEntryConflictBody": "Since you opened it, this entry was changed or removed elsewhere (another device or the agent). Nothing was saved.",
+  "memEntryConflictReload": "See the current version",
+  "memEntryConflictKeep": "Keep editing",
+  "memEntryGone": "This entry no longer exists as it was. Go back to see the current list.",
+  "memEntryTooLarge": "This entry is too long to save.",
+  "memEntryRejected": "The server did not save it: {detail}",
+  "@memEntryRejected": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "memEntryFailed": "Couldn't reach the server. Nothing was saved.",
+  "memEntrySaved": "Entry saved",
+  "memEntryDeleted": "Entry deleted",
+  "memDraftLegacyNote": "Local draft from an earlier version. It is not on the server: copy what you need into an entry, then discard it."
 }
