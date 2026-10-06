@@ -1245,6 +1245,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             approval: chat.pendingApproval,
             model: session?.model,
             settledAt: chat.lastTerminalAt,
+            botChat: chat.sessionId == 'mob-bot-$profile',
           );
         })
         .toList(growable: false);

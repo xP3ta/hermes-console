@@ -241,7 +241,12 @@ void main() {
         activeChats: chats,
         snapshot: _snapshot(
           profiles: const [
-            AgentProfile(name: 'infra'),
+            // The running chat is infra's canonical Bot Chat: only that chat
+            // lights the avatar.
+            AgentProfile(
+              name: 'infra',
+              canonicalSession: AgentProfileSessionSummary(id: 's-infra'),
+            ),
             AgentProfile(name: 'quality_assurance'),
           ],
           sessions: [infraSession],
@@ -269,7 +274,7 @@ void main() {
   });
 
   testWidgets(
-    'Working bot row is alive with its worker title; idle face stays calm',
+    'A fresh worker alone leaves the avatar calm, like an idle bot face',
     (tester) async {
       debugLivingBotFacesStill = false;
       addTearDown(() => debugLivingBotFacesStill = true);
@@ -292,19 +297,16 @@ void main() {
       await tester.pumpWidget(_host(manager: manager, snapshot: snapshot));
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pump(const Duration(milliseconds: 300));
+      // The avatar opens the Bot Chat, so its aura reflects that chat only;
+      // a background worker is other work (Desktop's canonical-chat rule).
       final row = find.byKey(const ValueKey('mission-bot-row-forja'));
-      expect(find.text('Trabajando · Revisando PR #38'), findsOneWidget);
-      final working = tester.widget<HermesBotFace>(
-        find.descendant(of: row, matching: find.byType(HermesBotFace)),
-      );
-      expect(working.animate, isTrue);
-      expect(working.clock, isNotNull, reason: 'one shared ticker per face');
+      expect(find.text('Trabajando · Revisando PR #38'), findsNothing);
       expect(
         find.descendant(
           of: row,
           matching: find.byKey(const ValueKey('living-face-ring-working')),
         ),
-        findsOneWidget,
+        findsNothing,
       );
       final idle = find.byKey(const ValueKey('mission-bot-row-idle'));
       expect(
@@ -334,7 +336,7 @@ void main() {
   );
 
   testWidgets(
-    'Bot row attention comes from server room state, not local unread marks',
+    'Room attention marks the room row, not the bots seated in that room',
     (tester) async {
       final manager = await _manager();
       final log = HostedGroupLogPage.append(
@@ -371,16 +373,16 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // radar (failed room turn) and astra (@user mention) both carry the
-      // single attention signal and sit under "Needs you" — server state,
-      // no local unread watermark, no dots.
+      // radar (failed room turn) and astra (@user mention) need the user in
+      // the room: the room sits under "Needs you", while their avatars stay
+      // calm because their Bot Chats wait on nothing.
       for (final name in const ['radar', 'astra']) {
         expect(
           find.descendant(
             of: find.byKey(ValueKey('mission-bot-row-$name')),
             matching: find.byKey(const ValueKey('living-face-ring-attention')),
           ),
-          findsOneWidget,
+          findsNothing,
         );
       }
       expect(
