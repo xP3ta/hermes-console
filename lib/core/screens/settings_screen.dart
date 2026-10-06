@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import '../services/startup_destination.dart';
+import '../config/feature_flags.dart';
 import '../services/dock_preferences_store.dart';
 
 import 'package:http/http.dart' as http;
@@ -48,6 +49,7 @@ import 'permissions_screen.dart';
 import 'security_info_screen.dart';
 import 'themes_screen.dart';
 import 'dock_settings_screen.dart';
+import 'gesture_dock_settings_screen.dart';
 import 'embed_settings_screen.dart';
 import 'notification_settings_screen.dart';
 import 'voice_settings_screen.dart';
@@ -256,6 +258,7 @@ class SettingsScreen extends StatelessWidget {
             _HeaderTitleField(),
             _UseDockTile(),
             _DockTile(),
+            const GestureDockFlagTile(),
             _StartupDestinationTile(),
           ],
         ),
@@ -1074,7 +1077,49 @@ class _DockTile extends StatelessWidget {
       subtitle: Strings.of(context).dockSettingsSubtitle,
       onTap: () => Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => const DockSettingsScreen()),
+        MaterialPageRoute(
+          // The gesture dock has its own settings (hide mode, gestures,
+          // tricks); the classic catalog editor does not apply to it.
+          builder: (_) => FeatureFlags.instance.gestureDock.value
+              ? const GestureDockSettingsScreen()
+              : const DockSettingsScreen(),
+        ),
+      ),
+    );
+  }
+}
+
+/// Experimental switch for the floating gesture dock. Off by default; this
+/// row is the only place that turns it on.
+class GestureDockFlagTile extends StatefulWidget {
+  const GestureDockFlagTile({super.key});
+
+  @override
+  State<GestureDockFlagTile> createState() => _GestureDockFlagTileState();
+}
+
+class _GestureDockFlagTileState extends State<GestureDockFlagTile> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(FeatureFlags.instance.ensureLoaded());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    return ValueListenableBuilder<bool>(
+      valueListenable: FeatureFlags.instance.gestureDock,
+      builder: (context, enabled, _) => Material(
+        type: MaterialType.transparency,
+        child: HermesSwitchTile(
+          controlKey: const ValueKey('settings-gesture-dock-flag'),
+          title: strings.gdExperimentalTitle,
+          subtitle: strings.gdExperimentalSubtitle,
+          value: enabled,
+          onChanged: (value) =>
+              unawaited(FeatureFlags.instance.setGestureDock(value)),
+        ),
       ),
     );
   }

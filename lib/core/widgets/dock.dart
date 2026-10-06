@@ -4,7 +4,11 @@ import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../config/feature_flags.dart';
 import '../models/dock_config.dart';
+import '../services/connection_manager.dart';
+import '../shell/gesture_dock_host.dart';
+import '../shell/gesture_dock_state.dart' show GestureDockTab;
 import '../services/dock_preferences_store.dart';
 import '../theme/app_theme.dart';
 import '../utils/responsive.dart';
@@ -160,6 +164,17 @@ class Dock extends StatefulWidget {
   /// bottom bar at every width.
   final bool adaptive;
 
+  /// Only read while the gesture dock flag is on (General profile): the
+  /// tab this screen is, when [actions] cannot tell (Proyectos).
+  final GestureDockTab? gestureTab;
+
+  /// Only read while the gesture dock flag is on: where Proyectos and
+  /// Ajustes go, and what "Nuevo" opens. Home passes none of them and the
+  /// gesture dock reads the app's active connection instead.
+  final SavedConnection? connection;
+  final ConnectionManager? connManager;
+  final VoidCallback? onNewChat;
+
   const Dock({
     required this.profileId,
     required this.actions,
@@ -169,6 +184,10 @@ class Dock extends StatefulWidget {
     this.createOrbits = const [],
     this.coordinator,
     this.adaptive = false,
+    this.gestureTab,
+    this.connection,
+    this.connManager,
+    this.onNewChat,
     super.key,
   });
 
@@ -208,6 +227,7 @@ class _DockState extends State<Dock>
     _controller = AnimationController(vsync: this, duration: Duration.zero);
     if (_hasOrbits) _attachOrbitMachinery();
     unawaited(DockPreferencesController.instance.ensureLoaded());
+    unawaited(FeatureFlags.instance.ensureLoaded());
   }
 
   /// Observador de ciclo de vida + coordinador: solo hacen falta con órbitas
@@ -362,7 +382,10 @@ class _DockState extends State<Dock>
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: DockPreferencesController.instance.listenable,
+    listenable: Listenable.merge([
+      DockPreferencesController.instance.listenable,
+      FeatureFlags.instance.gestureDock,
+    ]),
     builder: (context, _) {
       final prefs = DockPreferencesController.instance.value;
       // Interruptor global "Usar dock flotante" (Ajustes): con él apagado
@@ -371,9 +394,35 @@ class _DockState extends State<Dock>
       // dock por su cuenta (antes había que repetir esta guarda en los dos
       // widgets de dock y además en `GeneralDockShell`).
       if (!prefs.useDock) return const SizedBox.shrink();
+      if (_usesGestureDock(context)) return _buildGestureDock();
       return _buildWithProfile(context, prefs.profile(widget.profileId));
     },
   );
+
+  /// The owner's floating gesture dock replaces the General bar on phones
+  /// while its flag is on. Bots and the tablet rail keep the classic dock.
+  bool _usesGestureDock(BuildContext context) =>
+      FeatureFlags.instance.gestureDock.value &&
+      widget.profileId == DockProfileId.general &&
+      !(widget.adaptive && Responsive.usesRail(context));
+
+  Widget _buildGestureDock() {
+    final actions = widget.actions;
+    final current =
+        widget.gestureTab ??
+        (actions[DockItemId.home]?.selected == true
+            ? GestureDockTab.home
+            : actions[DockItemId.settings]?.selected == true
+            ? GestureDockTab.settings
+            : null);
+    return GestureDockHost(
+      current: current,
+      actions: actions,
+      connection: widget.connection,
+      connManager: widget.connManager,
+      onNewChat: widget.onNewChat,
+    );
+  }
 
   Widget _buildWithProfile(BuildContext context, DockProfileConfig profile) {
     final colors = Theme.of(context).hermes;
