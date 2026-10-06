@@ -146,6 +146,7 @@ void main() {
     required int gatewayStatus,
     int Function()? gatewayStatusNow,
     int dashboardStatus = 200,
+    Future<http.Response> Function(http.Request request)? dashboardHandler,
     Future<void> Function()? gatewayGate,
   }) {
     final gateway401s = <Uri>[];
@@ -177,6 +178,7 @@ void main() {
         manualToken: 'dashboard-token',
         httpClientOverride: MockClient((request) async {
           dashboardReads.add(request.url);
+          if (dashboardHandler != null) return dashboardHandler(request);
           if (dashboardStatus != 200) {
             return http.Response('{}', dashboardStatus);
           }
@@ -299,6 +301,7 @@ void main() {
   >
   openedThen401({
     int dashboardStatus = 200,
+    Future<http.Response> Function(http.Request request)? dashboardHandler,
     Future<void> Function()? gatewayGate,
   }) async {
     var status = 200;
@@ -306,6 +309,7 @@ void main() {
       gatewayStatus: 200,
       gatewayStatusNow: () => status,
       dashboardStatus: dashboardStatus,
+      dashboardHandler: dashboardHandler,
       gatewayGate: gatewayGate,
     );
     addTearDown(harness.chat.dispose);
@@ -558,5 +562,117 @@ void main() {
       );
       expect(h.chat.profileTranscriptAccessBlocked, isFalse);
     });
+  });
+
+  group('a Dashboard that fails without refusing access', () {
+    // Only an authentication refusal means "this profile needs Dashboard
+    // access". A dropped connection, a timeout or a server error is a
+    // transient read failure: no latch, no access notice, the next read
+    // asks again.
+    Future<void> expectTransient(
+      Future<http.Response> Function(http.Request request) handler,
+    ) async {
+      final h = await openedThen401(dashboardHandler: handler);
+      final events = <ActiveChatEvent>[];
+      final sub = h.chat.changes.listen(events.add);
+      addTearDown(sub.cancel);
+
+      await expectLater(
+        h.chat.loadChildTranscript('child-1'),
+        throwsA(isNot(isA<ProfileTranscriptAccessRequired>())),
+      );
+      expect(h.chat.profileTranscriptAccessBlocked, isFalse);
+      await expectLater(
+        h.chat.loadChildTranscript('child-1'),
+        throwsA(isNot(isA<ProfileTranscriptAccessRequired>())),
+      );
+      await pumpEventQueue();
+      expect(h.chat.profileTranscriptAccessBlocked, isFalse);
+      expect(h.dashboardReads, hasLength(2));
+      expect(
+        events.where((e) => e == ActiveChatEvent.dashboardAuthChanged),
+        isEmpty,
+      );
+      expectSingleGateway401(h.gateway401s);
+    }
+
+    test('a dropped connection', () async {
+      await expectTransient(
+        (_) async => throw http.ClientException('connection reset'),
+      );
+    });
+
+    test('a server error', () async {
+      await expectTransient((_) async => http.Response('{}', 503));
+    });
+
+    test('a rate limit', () async {
+      await expectTransient((_) async => http.Response('{}', 429));
+    });
+
+    test('a sign-in that failed or was throttled on the server', () async {
+      for (final code in [
+        DashboardAuthFailureCode.loginFailed,
+        DashboardAuthFailureCode.rateLimited,
+      ]) {
+        await expectTransient(
+          (_) async => throw DashboardAuthException(code, statusCode: 502),
+        );
+      }
+    });
+
+    test('a refusal is still an access problem', () async {
+      for (final status in [401, 403]) {
+        final h = await openedThen401(dashboardStatus: status);
+        await expectLater(
+          h.chat.loadChildTranscript('child-1'),
+          throwsA(isA<ProfileTranscriptAccessRequired>()),
+        );
+        expect(
+          h.chat.profileTranscriptAccessBlocked,
+          isTrue,
+          reason: '$status',
+        );
+      }
+    });
+
+    test('a Dashboard sign-in refusal is an access problem', () async {
+      for (final code in [
+        DashboardAuthFailureCode.loginRequired,
+        DashboardAuthFailureCode.invalidCredentials,
+        DashboardAuthFailureCode.sessionCookieMissing,
+      ]) {
+        final h = await openedThen401(
+          dashboardHandler: (_) async => throw DashboardAuthException(code),
+        );
+        await expectLater(
+          h.chat.loadChildTranscript('child-1'),
+          throwsA(isA<ProfileTranscriptAccessRequired>()),
+        );
+        expect(h.chat.profileTranscriptAccessBlocked, isTrue, reason: '$code');
+      }
+    });
+
+    test(
+      'the transient failure of a paged open is not reported as access',
+      () async {
+        final harness = build(
+          gatewayStatus: 401,
+          dashboardHandler: (_) async => http.Response('{}', 502),
+        );
+        addTearDown(harness.chat.dispose);
+
+        Object? error;
+        try {
+          await harness.chat
+              .loadMessages(expectedMessageCount: 2, profile: 'research')
+              .timeout(const Duration(seconds: 5));
+        } catch (e) {
+          error = e;
+        }
+        expect(error, isNot(isA<ProfileTranscriptAccessRequired>()));
+        expect(harness.chat.profileTranscriptAccessBlocked, isFalse);
+      },
+    );
   });
 }

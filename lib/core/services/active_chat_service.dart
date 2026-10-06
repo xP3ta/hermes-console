@@ -302,6 +302,24 @@ final class ProfileTranscriptAccessRequired implements Exception {
   String toString() => 'ProfileTranscriptAccessRequired: $marker';
 }
 
+/// The Dashboard refused to authenticate this client: a 401/403 answer, a
+/// sign-in it requires, rejected credentials or a sign-in that set no
+/// session. A dropped connection, a timeout, a missing session (404), a
+/// server error, a throttled or failed sign-in is not a refusal: it is
+/// transient and must not be reported as missing Dashboard access.
+bool isDashboardAccessRefusal(Object error) => switch (error) {
+  DashboardAuthException(:final code) => switch (code) {
+    DashboardAuthFailureCode.loginRequired ||
+    DashboardAuthFailureCode.invalidCredentials ||
+    DashboardAuthFailureCode.sessionCookieMissing => true,
+    DashboardAuthFailureCode.rateLimited ||
+    DashboardAuthFailureCode.loginFailed => false,
+  },
+  DashboardHttpException(:final statusCode) =>
+    statusCode == 401 || statusCode == 403,
+  _ => false,
+};
+
 /// Bounded display-safe summary of durable passive work.
 ///
 /// Opaque tool-call identities stay private to [ActiveChat]. The UI receives
@@ -11556,16 +11574,16 @@ class ActiveChat {
   }
 
   /// Runs a Dashboard read for a named profile whose gateway route is
-  /// unauthorized. A missing session (404) keeps its own meaning; any other
-  /// failure blocks further reads and is reported once.
+  /// unauthorized. Only a refusal to authenticate blocks further reads and
+  /// is reported (once) as missing Dashboard access. A missing session (404),
+  /// a dropped connection, a timeout or a server error keeps its own meaning:
+  /// the caller sees a transient read failure and the next read asks again.
   Future<T> _readProfileDashboard<T>(Future<T> Function() read) async {
     _throwIfProfileTranscriptAccessBlocked();
     try {
       return await read();
-    } on DashboardHttpException catch (error) {
-      if (error.statusCode == 404) rethrow;
-      _blockProfileTranscriptAccess();
-    } on Object {
+    } on Object catch (error) {
+      if (!isDashboardAccessRefusal(error)) rethrow;
       _blockProfileTranscriptAccess();
     }
     throw const ProfileTranscriptAccessRequired();
