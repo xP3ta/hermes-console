@@ -10,7 +10,7 @@ import '../../utils/ansi_text.dart';
 import '../../utils/unified_diff.dart';
 
 /// Tool output cards for the chat transcript (Desktop parity:
-/// `tool/fallback.tsx` FileDiffPanel + AnsiText, `thread/changed-files-card`).
+/// `tool/fallback.tsx` FileDiffPanel + AnsiText, `thread/changed-files`).
 ///
 /// Every card is collapsed by default and builds its heavy body (parsed diff
 /// lines, ANSI spans) only once the user expands it, so a long transcript
@@ -548,14 +548,19 @@ Widget? toolOutputCard(ToolOutputRecord? record) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// One row per edited file of a turn, first-touched order, edits of the same
-/// file concatenated (Desktop `deriveChangedFiles`).
+/// file concatenated in order (Desktop `deriveChangedFiles`). The same edit
+/// reported twice (a replayed tool id, or an identical diff of the same
+/// file) counts once.
 List<FileDiff> aggregateChangedFiles(Iterable<ToolOutputRecord?> records) {
   final byPath = <String, List<String>>{};
+  final seenTools = <String>{};
   for (final record in records) {
     if (record == null || !record.hasDiff) continue;
+    if (!seenTools.add(record.toolId)) continue;
     for (final file in record.files) {
       if (file.path.isEmpty) continue;
-      (byPath[file.path] ??= <String>[]).add(file.diff);
+      final edits = byPath[file.path] ??= <String>[];
+      if (!edits.contains(file.diff)) edits.add(file.diff);
     }
   }
   return [
@@ -564,61 +569,13 @@ List<FileDiff> aggregateChangedFiles(Iterable<ToolOutputRecord?> records) {
   ];
 }
 
-/// «N files changed» closing out a turn; unfolds into per-file diff cards.
-class ChangedFilesCard extends StatefulWidget {
-  const ChangedFilesCard({required this.files, super.key});
-
-  final List<FileDiff> files;
-
-  @override
-  State<ChangedFilesCard> createState() => _ChangedFilesCardState();
-}
-
-class _ChangedFilesCardState extends State<ChangedFilesCard> {
-  bool _expanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    final files = widget.files;
-    if (files.isEmpty) return const SizedBox.shrink();
-    var added = 0;
-    var removed = 0;
-    for (final file in files) {
-      added += file.stats.added;
-      removed += file.stats.removed;
-    }
-    final label = s.tc1215FilesChanged(files.length);
-    return Container(
-      key: const ValueKey('changed-files-card'),
-      margin: const EdgeInsets.only(top: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _FoldRow(
-            rowKey: const ValueKey('changed-files-row'),
-            icon: Icons.edit_note_rounded,
-            label: label,
-            expanded: _expanded,
-            semanticsLabel: s.tc1215DiffSemantics(label, added, removed),
-            trailing: Text.rich(
-              _diffCountSpan(DiffStats(added, removed), colors),
-              maxLines: 1,
-            ),
-            onTap: () => setState(() => _expanded = !_expanded),
-          ),
-          if (_expanded)
-            for (final file in files)
-              FileDiffCard(key: ValueKey('changed-${file.path}'), file: file),
-        ],
-      ),
-    );
+/// Lines added and removed across a turn's changed files.
+DiffStats turnChangeTotals(List<FileDiff> files) {
+  var added = 0;
+  var removed = 0;
+  for (final file in files) {
+    added += file.stats.added;
+    removed += file.stats.removed;
   }
+  return DiffStats(added, removed);
 }

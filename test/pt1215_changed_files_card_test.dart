@@ -1,11 +1,12 @@
 // pt1215: «N files changed» per turn (Desktop `thread/changed-files.ts`
-// `deriveChangedFiles`, `changed-files-card.tsx`).
+// `deriveChangedFiles`); the turn closes with a «Δ N files» chip.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/tool_output.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/utils/unified_diff.dart';
 import 'package:hermes_android/core/widgets/chat/tool_output_cards.dart';
+import 'package:hermes_android/core/widgets/chat/turn_changes_sheet.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 ToolOutputRecord _edit(String id, String path, String diff) =>
@@ -37,24 +38,20 @@ void main() {
   });
 
   testWidgets('nothing changed, nothing shown', (tester) async {
-    await tester.pumpWidget(_host(const ChangedFilesCard(files: [])));
-    expect(find.byKey(const ValueKey('changed-files-card')), findsNothing);
+    await tester.pumpWidget(_host(const TurnChangesChip(files: [])));
+    expect(find.byKey(const ValueKey('turn-changes-chip')), findsNothing);
   });
 
-  testWidgets('scroll guard: 50 files stay one row until unfolded', (
+  testWidgets('scroll guard: 50 files stay one chip until opened', (
     tester,
   ) async {
     final files = [
       for (var i = 0; i < 50; i++) FileDiff('f$i.dart', '@@ -1 +1 @@\n-a\n+b'),
     ];
-    await tester.pumpWidget(_host(ChangedFilesCard(files: files)));
-    expect(find.text('50 archivos cambiados'), findsOneWidget);
-    expect(find.text('+50 −50'), findsOneWidget);
+    await tester.pumpWidget(_host(TurnChangesChip(files: files)));
+    expect(find.text('Δ 50 archivos · +50 −50'), findsOneWidget);
     expect(find.byType(FileDiffCard), findsNothing);
-
-    await tester.tap(find.byKey(const ValueKey('changed-files-row')));
-    await tester.pump();
-    expect(find.byType(FileDiffCard, skipOffstage: false), findsNWidgets(50));
-    expect(find.byType(FileDiffBody, skipOffstage: false), findsNothing);
+    expect(find.byType(FileDiffBody), findsNothing);
+    expect(find.byKey(const ValueKey('turn-changes-sheet')), findsNothing);
   });
 }

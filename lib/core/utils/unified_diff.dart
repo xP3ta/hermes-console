@@ -213,3 +213,170 @@ List<DiffLine> parseDiffLines(String diff) {
   }
   return out;
 }
+
+/// Half-open character range `[start, end)` inside a line's text.
+typedef DiffSpan = ({int start, int end});
+
+/// A diff line placed in its file: the text without its `+`/`-`/space
+/// marker, the old/new line numbers taken from the hunk headers and, on
+/// paired `-`/`+` lines, the span that actually changed.
+final class NumberedDiffLine {
+  final DiffLineKind kind;
+
+  /// Source text without the marker; the raw `@@` header for hunk rows.
+  final String text;
+  final int? oldLine;
+  final int? newLine;
+
+  /// New-side line range a hunk row covers (null when the header has none).
+  final int? hunkStart;
+  final int? hunkEnd;
+
+  /// Changed span on a paired removed/added line (null: no highlight).
+  final DiffSpan? change;
+
+  const NumberedDiffLine(
+    this.kind,
+    this.text, {
+    this.oldLine,
+    this.newLine,
+    this.hunkStart,
+    this.hunkEnd,
+    this.change,
+  });
+
+  /// The number shown in the gutter: removed lines keep their old number,
+  /// everything else shows where it sits in the new file.
+  int? get gutter => switch (kind) {
+    DiffLineKind.remove => oldLine,
+    DiffLineKind.hunk => null,
+    _ => newLine,
+  };
+}
+
+final RegExp _hunkRange = RegExp(
+  r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@',
+);
+
+/// [parseDiffLines] with line numbers and intra-line change spans. Lines
+/// before any numbered hunk header get no numbers.
+List<NumberedDiffLine> numberDiffLines(String diff) {
+  final raw = parseDiffLines(diff);
+  final out = <NumberedDiffLine>[];
+  int? oldNo;
+  int? newNo;
+  var i = 0;
+  while (i < raw.length) {
+    final line = raw[i];
+    if (line.kind == DiffLineKind.hunk) {
+      final m = _hunkRange.firstMatch(line.text);
+      int? start;
+      int? end;
+      if (m != null) {
+        oldNo = int.parse(m.group(1)!);
+        newNo = int.parse(m.group(3)!);
+        final count = int.parse(m.group(4) ?? '1');
+        start = newNo;
+        end = newNo + (count > 0 ? count - 1 : 0);
+      } else {
+        oldNo = null;
+        newNo = null;
+      }
+      out.add(
+        NumberedDiffLine(
+          DiffLineKind.hunk,
+          line.text,
+          hunkStart: start,
+          hunkEnd: end,
+        ),
+      );
+      i++;
+      continue;
+    }
+    if (line.kind == DiffLineKind.context) {
+      out.add(
+        NumberedDiffLine(
+          DiffLineKind.context,
+          line.text.startsWith(' ') ? line.text.substring(1) : line.text,
+          oldLine: oldNo,
+          newLine: newNo,
+        ),
+      );
+      if (oldNo != null) oldNo++;
+      if (newNo != null) newNo++;
+      i++;
+      continue;
+    }
+    // A block of removed lines followed by added lines: pair them in order
+    // for the intra-line highlight.
+    final removed = <String>[];
+    while (i < raw.length && raw[i].kind == DiffLineKind.remove) {
+      removed.add(raw[i].text.substring(1));
+      i++;
+    }
+    final added = <String>[];
+    while (i < raw.length && raw[i].kind == DiffLineKind.add) {
+      added.add(raw[i].text.substring(1));
+      i++;
+    }
+    final changes = <int, ({DiffSpan a, DiffSpan b})>{};
+    for (var k = 0; k < removed.length && k < added.length; k++) {
+      final c = intraLineChange(removed[k], added[k]);
+      if (c != null) changes[k] = c;
+    }
+    for (var k = 0; k < removed.length; k++) {
+      out.add(
+        NumberedDiffLine(
+          DiffLineKind.remove,
+          removed[k],
+          oldLine: oldNo,
+          change: changes[k]?.a,
+        ),
+      );
+      if (oldNo != null) oldNo++;
+    }
+    for (var k = 0; k < added.length; k++) {
+      out.add(
+        NumberedDiffLine(
+          DiffLineKind.add,
+          added[k],
+          newLine: newNo,
+          change: changes[k]?.b,
+        ),
+      );
+      if (newNo != null) newNo++;
+    }
+  }
+  return out;
+}
+
+/// The differing middle of two versions of a line (common prefix and
+/// suffix trimmed). Null when the lines are equal or share nothing, where
+/// a highlight would only repeat the row colour.
+({DiffSpan a, DiffSpan b})? intraLineChange(String a, String b) {
+  if (a == b) return null;
+  final shorter = a.length < b.length ? a.length : b.length;
+  var prefix = 0;
+  while (prefix < shorter && a.codeUnitAt(prefix) == b.codeUnitAt(prefix)) {
+    prefix++;
+  }
+  // Never split a surrogate pair.
+  if (prefix > 0 && _isHighSurrogate(a.codeUnitAt(prefix - 1))) prefix--;
+  var suffix = 0;
+  while (suffix < shorter - prefix &&
+      a.codeUnitAt(a.length - 1 - suffix) ==
+          b.codeUnitAt(b.length - 1 - suffix)) {
+    suffix++;
+  }
+  if (suffix > 0 && _isLowSurrogate(a.codeUnitAt(a.length - suffix))) {
+    suffix--;
+  }
+  if (prefix == 0 && suffix == 0) return null;
+  return (
+    a: (start: prefix, end: a.length - suffix),
+    b: (start: prefix, end: b.length - suffix),
+  );
+}
+
+bool _isHighSurrogate(int unit) => unit >= 0xD800 && unit <= 0xDBFF;
+bool _isLowSurrogate(int unit) => unit >= 0xDC00 && unit <= 0xDFFF;

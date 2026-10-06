@@ -199,6 +199,7 @@ import '../utils/unified_diff.dart';
 import '../widgets/chat_connection_card.dart';
 import '../widgets/chat_event_cards.dart';
 import '../widgets/chat/tool_output_cards.dart';
+import '../widgets/chat/turn_changes_sheet.dart';
 import '../widgets/chat_control_sheet.dart';
 import '../widgets/hermes_drawer.dart';
 import '../widgets/profile_scope.dart' show appActiveProfileScope;
@@ -21584,8 +21585,9 @@ class _AssistantMessage extends StatelessWidget {
   /// (Desktop «copy message» vs «copy full response»). Read at copy time.
   final String Function()? latestReplyText;
 
-  /// Close the turn with its «N files changed» card (Desktop shows it only
-  /// on the newest settled reply).
+  /// Close the turn with its «Δ N files» chip, which opens the review of
+  /// every file it changed (Desktop shows the summary only on the newest
+  /// settled reply).
   final bool showChangedFiles;
 
   const _AssistantMessage({
@@ -22023,7 +22025,7 @@ class _AssistantMessage extends StatelessWidget {
         if (showHeader && metaLines.isNotEmpty)
           _MetaBlock(lines: metaLines, onDark: false),
         if (answer.isNotEmpty) ...answerWidgets(),
-        if (changedFiles.isNotEmpty) ChangedFilesCard(files: changedFiles),
+        if (changedFiles.isNotEmpty) TurnChangesChip(files: changedFiles),
         if (showFooter && technicalDetails.isNotEmpty)
           _AssistantTechnicalDetails(details: technicalDetails),
         if (showFooter && suggestionProjection.hasSuggestions)

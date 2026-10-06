@@ -10220,5 +10220,15 @@
   "rpl1215ReplySummarize": "Resúmelo",
   "rpl1215SmartSuggest": "Sugerir respuestas con IA",
   "rpl1215SettingTitle": "Respuestas rápidas",
-  "rpl1215SettingSubtitle": "Propuestas de respuesta al terminar cada turno. ✨ solo consulta al modelo si la tocas."
+  "rpl1215SettingSubtitle": "Propuestas de respuesta al terminar cada turno. ✨ solo consulta al modelo si la tocas.",
+  "tc1215TurnChangesChip": "{count, plural, =1{1 archivo} other{{count} archivos}}",
+  "@tc1215TurnChangesChip": {"placeholders": {"count": {"type": "int"}}},
+  "tc1215DiffHunkLines": "Líneas {start}–{end}",
+  "@tc1215DiffHunkLines": {"placeholders": {"start": {"type": "int"}, "end": {"type": "int"}}},
+  "tc1215DiffHunkLine": "Línea {line}",
+  "@tc1215DiffHunkLine": {"placeholders": {"line": {"type": "int"}}},
+  "tc1215DiffViewed": "Visto",
+  "tc1215DiffViewedSemantics": "Marcar {name} como visto",
+  "@tc1215DiffViewedSemantics": {"placeholders": {"name": {"type": "String"}}},
+  "tc1215TurnChangesDone": "Hecho"
 }
