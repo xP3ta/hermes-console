@@ -14,6 +14,7 @@ import '../theme/app_theme.dart';
 import '../utils/byte_bounded_lru_cache.dart';
 import '../utils/short_server_path.dart';
 import '../widgets/adaptive_list_detail.dart';
+import '../shell/gesture_dock_state.dart' show GestureDockTab;
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart'
@@ -601,6 +602,7 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
       body: GeneralDockShell(
         connection: widget.connection,
         connManager: widget.connectionManager,
+        gestureTab: GestureDockTab.projects,
         // Tablets: the open project lives beside the list (expanded) or in
         // place of it (medium) instead of on a route of its own.
         paneLayout: true,

@@ -94,6 +94,7 @@ import 'core/widgets/attachment_source_sheet.dart';
 import 'core/widgets/chat/embeds/embed_consent_store.dart';
 import 'core/widgets/frosted_backdrop.dart';
 import 'core/widgets/hermes_notice.dart';
+import 'core/shell/gesture_dock_scroll_relay.dart';
 import 'core/widgets/hermes_premium_ui.dart';
 import 'core/services/notifications/ui_notification_actions.dart';
 import 'l10n/app_localizations.dart';
@@ -2875,7 +2876,8 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                     child: AppLockGate(
                       lock: widget.appLock,
                       navigatorKey: _navigatorKey,
-                      child: navChild!,
+                      // Inert unless the gesture dock flag is on (auto mode).
+                      child: GestureDockScrollRelay(child: navChild!),
                     ),
                   ),
                 ),

@@ -3,11 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../config/feature_flags.dart';
 import '../screens/chat_screen.dart';
 import '../screens/mission_control_screen.dart';
 import '../screens/settings_screen.dart';
 import '../services/connection_manager.dart';
 import '../services/dock_preferences_store.dart';
+import '../shell/gesture_dock.dart' show gestureDockFootprint;
+import '../shell/gesture_dock_state.dart' show GestureDockTab;
 import '../utils/responsive.dart';
 import 'dock.dart';
 import 'dock_shortcuts.dart';
@@ -62,6 +65,10 @@ class GeneralDockShell extends StatefulWidget {
   /// of centring it at [Responsive.maxContentWidth].
   final bool paneLayout;
 
+  /// Gesture dock only: the tab this screen is when neither
+  /// [currentDestination] nor the include flags say so (Proyectos).
+  final GestureDockTab? gestureTab;
+
   const GeneralDockShell({
     required this.body,
     required this.connection,
@@ -72,6 +79,7 @@ class GeneralDockShell extends StatefulWidget {
     this.includeSessionsAction = true,
     this.currentDestination,
     this.paneLayout = false,
+    this.gestureTab,
     super.key,
   });
 
@@ -94,6 +102,7 @@ class _GeneralDockShellState extends State<GeneralDockShell> {
   void initState() {
     super.initState();
     unawaited(DockPreferencesController.instance.ensureLoaded());
+    unawaited(FeatureFlags.instance.ensureLoaded());
   }
 
   void _handleCreate() {
@@ -165,7 +174,10 @@ class _GeneralDockShellState extends State<GeneralDockShell> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: DockPreferencesController.instance.listenable,
+      listenable: Listenable.merge([
+        DockPreferencesController.instance.listenable,
+        FeatureFlags.instance.gestureDock,
+      ]),
       builder: (context, _) {
         // Interruptor global "Usar dock flotante" (Ajustes): cuando está
         // apagado, esta pantalla es simplemente su `body`, sin el `Stack`
@@ -181,10 +193,18 @@ class _GeneralDockShellState extends State<GeneralDockShell> {
         return Stack(
           fit: StackFit.expand,
           children: [
-            _AdaptiveDockBody(paneLayout: widget.paneLayout, body: widget.body),
+            _AdaptiveDockBody(
+              paneLayout: widget.paneLayout,
+              gestureDock: FeatureFlags.instance.gestureDock.value,
+              body: widget.body,
+            ),
             Dock(
               profileId: DockProfileId.general,
               adaptive: true,
+              gestureTab: widget.gestureTab,
+              connection: widget.connection,
+              connManager: widget.connManager,
+              onNewChat: _defaultCreate,
               showBackContext: _isSubscreen,
               onBack: () => Navigator.of(context).maybePop(),
               // Qué sabe hacer el perfil "General" desde una pantalla
@@ -262,9 +282,14 @@ class _GeneralDockShellState extends State<GeneralDockShell> {
 /// keyboard animation never rebuilds this (see #141).
 class _AdaptiveDockBody extends StatelessWidget {
   final bool paneLayout;
+  final bool gestureDock;
   final Widget body;
 
-  const _AdaptiveDockBody({required this.paneLayout, required this.body});
+  const _AdaptiveDockBody({
+    required this.paneLayout,
+    required this.body,
+    this.gestureDock = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -278,7 +303,11 @@ class _AdaptiveDockBody extends StatelessWidget {
         context: context,
         removeBottom: true,
         child: Padding(
-          padding: EdgeInsets.only(bottom: dockFootprint(context)),
+          padding: EdgeInsets.only(
+            bottom: gestureDock
+                ? gestureDockFootprint(context)
+                : dockFootprint(context),
+          ),
           child: body,
         ),
       );
