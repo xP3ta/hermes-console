@@ -128,9 +128,9 @@ void main() {
 
       // Tapping a message moves focus to its selection region: the
       // keyboard closes, as it should.
-      await tester.tap(
-        find.textContaining('question 29', findRichText: true).first,
-      );
+      // Exact text: the reply's quote chip («You: question 29») contains it
+      // too, and tapping the chip is not tapping the message.
+      await tester.tap(find.text('question 29', findRichText: true).first);
       await tester.pump();
       expect(_composerFocused(tester), isFalse);
       expect(tester.testTextInput.isVisible, isFalse);
@@ -153,9 +153,7 @@ void main() {
       await _pump(tester, _longRoom(EventSeq()));
       await tester.tap(_field);
       await tester.pump();
-      await tester.tap(
-        find.textContaining('question 29', findRichText: true).first,
-      );
+      await tester.tap(find.text('question 29', findRichText: true).first);
       await tester.pump();
       expect(tester.testTextInput.isVisible, isFalse);
 
@@ -208,7 +206,15 @@ void main() {
               (w.key! as ValueKey<String>).value.startsWith('room-reply-'),
         );
         expect(icons, findsWidgets);
-        await tester.tapAt(tester.getCenter(icons.first));
+        // An icon the finger can reach: rows slide under the floating
+        // composer, and a tap there lands on the composer instead.
+        final composerTop = tester.getRect(find.byType(ConsoleComposer)).top;
+        final reachable = [
+          for (var i = 0; i < icons.evaluate().length; i++)
+            tester.getCenter(icons.at(i)),
+        ].where((c) => c.dy < composerTop - 24).toList();
+        expect(reachable, isNotEmpty, reason: 'precondition: icon on screen');
+        await tester.tapAt(reachable.first);
         await tester.pumpAndSettle();
         expect(find.byKey(const ValueKey('room-thread-banner')), findsNothing);
         expect(_composerFocused(tester), isFalse);

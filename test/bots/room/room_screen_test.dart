@@ -1703,7 +1703,7 @@ void main() {
 
       final target = find.byKey(ValueKey('room-message-${first['event_id']}'));
       final highlight = find.byKey(
-        ValueKey('room-message-highlight-${first['event_id']}'),
+        ValueKey('room-highlight-${first['event_id']}'),
       );
       final lateQuote = find.byKey(ValueKey('room-quote-${late['event_id']}'));
       await tester.ensureVisible(lateQuote);
@@ -1731,5 +1731,6 @@ void main() {
       expect(wash().a, 0, reason: 'the wash fades by itself');
       expect(tester.takeException(), isNull);
     });
+
   });
 }

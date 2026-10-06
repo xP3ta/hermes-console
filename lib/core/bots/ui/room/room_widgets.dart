@@ -488,7 +488,7 @@ class RoomMessageTile extends StatelessWidget {
         // rp1215: brief accent wash when a quote chip brought the reader
         // here. Always mounted, so marking it never remounts the bubble.
         child: AnimatedContainer(
-          key: ValueKey('room-message-highlight-${event.eventId}'),
+          key: ValueKey('room-highlight-${event.eventId}'),
           duration: reduceMotion
               ? Duration.zero
               : const Duration(milliseconds: 220),
