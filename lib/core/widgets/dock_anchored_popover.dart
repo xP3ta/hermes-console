@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../design/modal.dart' show releaseTextFocusIfKeyboardHidden;
+
 /// Abre una superficie modal anclada a la posición actual de [anchorKey], en
 /// vez de centrada como [showHermesFloatingSurface] (`hermes_premium_ui.dart`).
 ///
@@ -38,6 +40,7 @@ Future<T?> showDockAnchoredPopover<T>({
       : null;
   final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
   final focusScopeNode = FocusScopeNode(debugLabel: 'DockAnchoredPopover');
+  releaseTextFocusIfKeyboardHidden(context);
   return Navigator.of(context).push<T>(
     _DockAnchoredPopoverRoute<T>(
       anchor: anchorBox,

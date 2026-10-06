@@ -18,6 +18,7 @@ import '../models/attachment_draft.dart';
 import '../services/connection_manager.dart';
 import '../services/generated_media_service.dart';
 import '../theme/app_theme.dart';
+import '../design/modal.dart' show releaseTextFocusIfKeyboardHidden;
 import 'hermes_notice.dart';
 
 /// Tipo visual de adjunto, derivado del mime/extensión. Gobierna el badge de
@@ -2032,6 +2033,7 @@ String _formatAudioDuration(Duration value) {
 /// Abre la imagen [file] a pantalla completa con zoom (pinch/double-tap),
 /// fondo negro y cierre por toque/atrás. Visor ligero, sin dependencias extra.
 Future<void> showImageViewer(BuildContext context, File file) {
+  releaseTextFocusIfKeyboardHidden(context);
   return Navigator.of(context).push(
     PageRouteBuilder<void>(
       opaque: false,

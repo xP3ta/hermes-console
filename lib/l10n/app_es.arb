@@ -3224,7 +3224,7 @@
   "mdlRemoveFallback": "Quitar fallback",
   "mdlAuxSection": "Modelos por función",
   "mdlAuxAllAuto": "todas en automático",
-  "mdlAuxCustomized": "{customized} personalizada(s) · {total} funciones",
+  "mdlAuxCustomized": "{customized, plural, =1{1 personalizada} other{{customized} personalizadas}} · {total, plural, =1{1 función} other{{total} funciones}}",
   "@mdlAuxCustomized": {
     "placeholders": {
       "customized": {
@@ -3239,7 +3239,7 @@
   "mdlAuxAutoMain": "automático (modelo principal)",
   "mdlMainProviders": "Modelo principal · proveedores",
   "mdlUnconfiguredProviders": "Proveedores sin configurar",
-  "mdlUnconfiguredHint": "{count} disponibles · pulsa para configurar",
+  "mdlUnconfiguredHint": "{count, plural, =1{1 disponible} other{{count} disponibles}} · pulsa para configurar",
   "@mdlUnconfiguredHint": {
     "placeholders": {
       "count": {
@@ -3247,7 +3247,7 @@
       }
     }
   },
-  "mdlModelCount": "{count} modelos",
+  "mdlModelCount": "{count, plural, =1{1 modelo} other{{count} modelos}}",
   "@mdlModelCount": {
     "placeholders": {
       "count": {
@@ -10243,7 +10243,10 @@
   "cs1215PinnedPromptYou": "Tú",
   "cs1215PinnedPromptHide": "Ocultar en este chat",
   "cs1215PinnedPromptSetting": "Fijar tu pregunta arriba",
-  "cs1215PinnedPromptSettingSubtitle": "Una línea arriba del chat con la pregunta de la respuesta que estás leyendo.",
+  "cs1215PinnedPromptSettingSubtitle": "Una línea arriba del chat con la pregunta de la respuesta que estás leyendo. Al activarlo vuelve a aparecer en los chats donde la ocultaste.",
+  "q90PinnedPromptHidden": "Oculta en este chat",
+  "q90PinnedPromptUndo": "Deshacer",
+  "q90PinnedPromptShow": "Mostrar tu pregunta fijada",
   "cs1215LoadingEarlier": "Cargando mensajes anteriores…",
   "tabletPickConversation": "Elige una conversación para abrirla aquí"
 }
