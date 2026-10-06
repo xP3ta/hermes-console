@@ -64,7 +64,7 @@ print("hola")
     final colors = AppTheme.hermesRedDark.hermes;
 
     expect(_leafStyle(tester, 'Título')?.fontSize, 16.5);
-    expect(_leafStyle(tester, 'inline')?.fontFamily, 'monospace');
+    expect(_leafStyle(tester, 'inline')?.fontFamily, 'JetBrainsMono');
     expect(_leafStyle(tester, 'enlace')?.color, colors.secondary);
     expect(find.text('•'), findsNWidgets(2));
     expect(find.text('python'), findsOneWidget);
@@ -118,7 +118,7 @@ print("hola")
         ),
       ),
     );
-    expect(_leafStyle(tester, 'a_1 * b_2')?.fontFamily, 'monospace');
+    expect(_leafStyle(tester, 'a_1 * b_2')?.fontFamily, 'JetBrainsMono');
     expect(find.textContaining(r'$5 and $10'), findsOneWidget);
   });
 }

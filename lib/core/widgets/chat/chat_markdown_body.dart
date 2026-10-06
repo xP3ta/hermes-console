@@ -677,7 +677,7 @@ class ChatCodeBlockBuilder extends MarkdownElementBuilder {
     if (!texty.contains(l)) return false;
     if (code.trim().isEmpty) return false;
     final codeSignals = RegExp(
-      r'[{};]|=>|=&|\|\||&&|</?[a-zA-Z]|^\s*[#$>]\s',
+      r'[{};\t\u2500-\u257F]|=>|=&|\|\||&&|</?[a-zA-Z]|^\s*[#$>]\s',
       multiLine: true,
     );
     for (final line in code.split('\n')) {
@@ -708,6 +708,74 @@ class ChatCodeBlockBuilder extends MarkdownElementBuilder {
   }
 }
 
+/// Monospace family of chat code. Bundled (SIL OFL) so every phone gets the
+/// same advances: Android's system `monospace` has no box-drawing glyphs and
+/// borrowed them from a full-width fallback, which broke trees and diagrams.
+const String kChatCodeFontFamily = 'JetBrainsMono';
+
+/// Tab stops of chat code, in columns.
+const int kChatCodeTabWidth = 4;
+
+/// Lines shown before a long block collapses behind "Show all".
+const int kChatCodeCollapsedLines = 18;
+
+/// Blocks with more lines than this get a line-number gutter.
+const int kChatCodeGutterAfterLines = 5;
+
+/// Expands tabs to the next [kChatCodeTabWidth] stop and drops `\r`, so the
+/// painted columns match what an editor shows. Copy keeps the original text.
+String expandChatCodeTabs(String code) {
+  if (!code.contains('\t') && !code.contains('\r')) return code;
+  final out = StringBuffer();
+  var column = 0;
+  for (final rune in code.runes) {
+    if (rune == 0x0D) continue;
+    if (rune == 0x0A) {
+      out.writeCharCode(rune);
+      column = 0;
+    } else if (rune == 0x09) {
+      final pad = kChatCodeTabWidth - column % kChatCodeTabWidth;
+      out.write(' ' * pad);
+      column += pad;
+    } else {
+      out.writeCharCode(rune);
+      column++;
+    }
+  }
+  return out.toString();
+}
+
+/// Text style of chat code. Every metric that could shift a column is pinned:
+/// no inherited letter/word spacing, weight or ligatures, tabular figures.
+TextStyle chatCodeTextStyle(Color color, {double fontSize = 13}) => TextStyle(
+  fontFamily: kChatCodeFontFamily,
+  fontFamilyFallback: const ['monospace'],
+  fontSize: fontSize,
+  height: 1.45,
+  leadingDistribution: TextLeadingDistribution.even,
+  letterSpacing: 0,
+  wordSpacing: 0,
+  fontWeight: FontWeight.w400,
+  fontStyle: FontStyle.normal,
+  decoration: TextDecoration.none,
+  fontFeatures: const [
+    FontFeature.tabularFigures(),
+    FontFeature.disable('liga'),
+    FontFeature.disable('calt'),
+  ],
+  color: color,
+);
+
+/// One line box for every line, whatever font draws an emoji or CJK glyph.
+const StrutStyle kChatCodeStrut = StrutStyle(
+  fontFamily: kChatCodeFontFamily,
+  fontFamilyFallback: ['monospace'],
+  fontSize: 13,
+  height: 1.45,
+  leadingDistribution: TextLeadingDistribution.even,
+  forceStrutHeight: true,
+);
+
 class _CodeBlockWrapper extends StatefulWidget {
   final String code;
 
@@ -720,23 +788,28 @@ class _CodeBlockWrapper extends StatefulWidget {
   State<_CodeBlockWrapper> createState() => _CodeBlockWrapperState();
 }
 
+/// A highlighted run: text plus the hljs class that styles it.
+typedef _CodeRun = ({String text, String? cls});
+
 class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
   static const int _maxSyntaxHighlightChars = 16000;
   static const int _maxHighlightCacheEntries = 32;
-  // Claves y spans son código de conversaciones privadas: se vacía con los
+  // Claves y runs son código de conversaciones privadas: se vacía con los
   // cambios de autoridad (borrar conexión, revocar keys, cambiar perfil).
-  static final LinkedHashMap<(String, String), List<TextSpan>?>
+  // Guarda clases hljs, no colores: el color sale del tema en cada build.
+  static final LinkedHashMap<(String, String), List<_CodeRun>?>
   _highlightCache = _createHighlightCache();
 
-  static LinkedHashMap<(String, String), List<TextSpan>?>
+  static LinkedHashMap<(String, String), List<_CodeRun>?>
   _createHighlightCache() {
     // ignore: prefer_collection_literals
-    final cache = LinkedHashMap<(String, String), List<TextSpan>?>();
+    final cache = LinkedHashMap<(String, String), List<_CodeRun>?>();
     PrivateRenderCaches.register(cache.clear);
     return cache;
   }
 
   bool _copied = false;
+  bool _expanded = false;
   Timer? _resetTimer;
 
   void _copy() {
@@ -784,102 +857,177 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
-    final isDiff = _isDiff;
-    final spans = isDiff ? null : _highlightSpans();
-    // Texto resaltado (tema oscuro) o plano: el plano conserva el look ámbar
-    // actual; si el resaltado falla, NUNCA se rompe el render.
-    final TextStyle baseStyle = TextStyle(
-      // Monoespaciado: el código/comando se lee como en una terminal y, sobre
-      // todo, las columnas (logs, tablas ascii) quedan alineadas.
-      fontFamily: 'monospace',
-      fontSize: 13,
-      height: 1.45,
-      color: spans == null
-          ? colors.textPrimary.withValues(alpha: 0.92)
-          : const Color(0xFFE6E6E6),
-    );
-    final Widget codeText = spans == null
-        ? Text(widget.code, style: baseStyle)
-        : Text.rich(TextSpan(style: baseStyle, children: spans));
+    final strings = Strings.of(context);
+    final surface = colors.surfaceVariant;
 
-    final bool highlighted = spans != null;
-    // Fondo del cuerpo: editor oscuro cuando hay resaltado real; si no, hereda
-    // el surfaceVariant del marco sin teñir el texto con el acento del tema.
-    final Color bodyColor = highlighted
-        ? const Color(0xFF1E1E1E)
-        : colors.surfaceVariant;
-
-    final Widget body = isDiff
-        ? FileDiffBody(diff: widget.code)
-        : ColoredBox(
-            color: bodyColor,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-              child: codeText,
+    final Widget body;
+    Widget? footer;
+    if (_isDiff) {
+      body = FileDiffBody(diff: widget.code);
+    } else {
+      final display = expandChatCodeTabs(widget.code);
+      final lineCount = '\n'.allMatches(display).length + 1;
+      final collapsible = lineCount > kChatCodeCollapsedLines;
+      final collapsed = collapsible && !_expanded;
+      final visibleLines = collapsed ? kChatCodeCollapsedLines : lineCount;
+      final visibleChars = collapsed
+          ? _offsetOfLine(display, kChatCodeCollapsedLines) - 1
+          : display.length;
+      final base = chatCodeTextStyle(colors.textPrimary);
+      final runs = _highlightRuns(display);
+      final Widget codeText = Text.rich(
+        TextSpan(
+          children: runs == null
+              ? [TextSpan(text: display.substring(0, visibleChars))]
+              : _spansFor(runs, visibleChars, colors, surface),
+        ),
+        key: const ValueKey('chat-code-text'),
+        style: base,
+        strutStyle: kChatCodeStrut,
+        softWrap: false,
+      );
+      final gutter = lineCount > kChatCodeGutterAfterLines;
+      body = Stack(
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (gutter)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 2, 0, 14),
+                  // Fuera de la selección: copiar un trozo no arrastra números.
+                  child: SelectionContainer.disabled(
+                    child: Text(
+                      [for (var i = 1; i <= visibleLines; i++) '$i'].join('\n'),
+                      key: const ValueKey('chat-code-gutter'),
+                      textAlign: TextAlign.right,
+                      strutStyle: kChatCodeStrut,
+                      softWrap: false,
+                      style: base.copyWith(
+                        color: colors.textSecondary.withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: EdgeInsets.fromLTRB(gutter ? 12 : 16, 2, 16, 14),
+                  child: codeText,
+                ),
+              ),
+            ],
+          ),
+          if (collapsed)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 40,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [surface.withValues(alpha: 0), surface],
+                    ),
+                  ),
+                ),
+              ),
             ),
-          );
+        ],
+      );
+      if (collapsible) {
+        footer = InkWell(
+          key: const ValueKey('chat-code-expand'),
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 44),
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: colors.divider.withValues(alpha: 0.35)),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    _expanded
+                        ? strings.cb1215ShowLess
+                        : strings.cb1215ShowAllLines(lineCount),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: colors.accent,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  _expanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  size: 18,
+                  color: colors.accent,
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    }
 
-    // Cabecera: etiqueta del lenguaje + botón copiar (estilo editor/terminal).
-    final Widget header = Container(
-      padding: const EdgeInsets.fromLTRB(12, 0, 0, 0),
-      color: highlighted
-          ? const Color(0xFF161616)
-          : colors.surfaceVariant.withValues(alpha: 0.6),
+    // Cabecera de una fila: lenguaje + abrir en el visor + copiar (iconos).
+    final Widget header = Padding(
+      padding: const EdgeInsets.only(left: 16, right: 4),
       child: Row(
         children: [
-          Text(
-            _languageLabel,
-            style: TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 11,
-              letterSpacing: 0.5,
-              color: colors.textSecondary,
+          Expanded(
+            child: Text(
+              _languageLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.2,
+                color: colors.textSecondary,
+              ),
             ),
           ),
-          const Spacer(),
-          IconButton(
-            key: const ValueKey('chat-code-open-viewer'),
-            tooltip: Strings.of(context).mc1215OpenInViewer,
-            onPressed: _openInViewer,
-            iconSize: 16,
-            color: colors.textSecondary,
-            icon: const Icon(Icons.open_in_full_rounded),
+          // Objetivos táctiles de 48dp en cualquier densidad del tema.
+          SizedBox.square(
+            dimension: 48,
+            child: IconButton(
+              key: const ValueKey('chat-code-open-viewer'),
+              tooltip: strings.mc1215OpenInViewer,
+              onPressed: _openInViewer,
+              iconSize: 17,
+              color: colors.textSecondary,
+              icon: const Icon(Icons.open_in_full_rounded),
+            ),
           ),
-          Tooltip(
-            message: Strings.of(context).chaCodeCopyTooltip,
-            child: GestureDetector(
-              onTap: _copy,
-              behavior: HitTestBehavior.opaque,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                child: Center(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 150),
-                        transitionBuilder: (child, anim) =>
-                            ScaleTransition(scale: anim, child: child),
-                        child: Icon(
-                          _copied ? Icons.check : Icons.content_copy,
-                          key: ValueKey<bool>(_copied),
-                          size: 14,
-                          color: _copied ? colors.accent : colors.textSecondary,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _copied
-                            ? Strings.of(context).chaCodeCopied
-                            : Strings.of(context).chaCodeCopy,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: _copied ? colors.accent : colors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
+          SizedBox.square(
+            dimension: 48,
+            child: IconButton(
+              key: const ValueKey('chat-code-copy'),
+              tooltip: _copied
+                  ? strings.chaCodeCopied
+                  : strings.chaCodeCopyTooltip,
+              onPressed: _copy,
+              iconSize: 17,
+              icon: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 150),
+                transitionBuilder: (child, anim) =>
+                    ScaleTransition(scale: anim, child: child),
+                child: Icon(
+                  _copied ? Icons.check : Icons.content_copy,
+                  key: ValueKey<bool>(_copied),
+                  color: _copied ? colors.accent : colors.textSecondary,
                 ),
               ),
             ),
@@ -888,21 +1036,50 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
       ),
     );
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [header, body],
+    // El código nunca se refleja dentro de un mensaje RTL.
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: SizedBox(
+        key: const ValueKey('chat-code-block'),
+        width: double.infinity,
+        child: DecoratedBox(
+          position: DecorationPosition.foreground,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: colors.divider.withValues(alpha: 0.35)),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: ColoredBox(
+              color: surface,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [header, body, ?footer],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
 
+  /// Offset just past the [n]-th newline (start of line n, 0-based).
+  static int _offsetOfLine(String text, int n) {
+    var offset = 0;
+    for (var i = 0; i < n; i++) {
+      final next = text.indexOf('\n', offset);
+      if (next < 0) return text.length + 1;
+      offset = next + 1;
+    }
+    return offset;
+  }
+
   /// Etiqueta legible del lenguaje para la cabecera. Sin lenguaje declarado
-  /// muestra "texto" (no inventa nada).
+  /// muestra "texto"/"text" (no inventa nada).
   String get _languageLabel {
     final raw = widget.lang?.trim();
-    if (raw == null || raw.isEmpty) return 'texto';
+    if (raw == null || raw.isEmpty) return Strings.of(context).cb1215PlainCode;
     return raw.toLowerCase();
   }
 
@@ -924,9 +1101,9 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
     'kt': 'kotlin',
   };
 
-  /// Devuelve los spans coloreados del código, o null si no hay lenguaje
+  /// Runs resaltados del código ya expandido, o null si no hay lenguaje
   /// inferible o el parser falla (se cae a texto plano sin romper el render).
-  List<TextSpan>? _highlightSpans() {
+  List<_CodeRun>? _highlightRuns(String display) {
     final raw = widget.lang;
     if (raw == null) return null;
     final lang =
@@ -934,43 +1111,83 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
     if (lang.isEmpty) return null;
     // highlight.parse es síncrono. En un bloque enorme el color no compensa
     // bloquear el hilo UI; se conserva el código completo como texto mono.
-    if (widget.code.length > _maxSyntaxHighlightChars) return null;
-    final key = (lang, widget.code);
+    if (display.length > _maxSyntaxHighlightChars) return null;
+    final key = (lang, display);
     if (_highlightCache.containsKey(key)) {
       final cached = _highlightCache.remove(key);
       _highlightCache[key] = cached;
       return cached;
     }
-    List<TextSpan>? spans;
+    List<_CodeRun>? runs;
     try {
-      final result = highlight.parse(widget.code, language: lang);
+      final result = highlight.parse(display, language: lang);
       final nodes = result.nodes;
-      if (nodes != null && nodes.isNotEmpty) spans = _spansForNodes(nodes);
+      if (nodes != null && nodes.isNotEmpty) {
+        runs = <_CodeRun>[];
+        _flatten(nodes, null, runs);
+      }
     } catch (_) {}
-    _highlightCache[key] = spans;
+    _highlightCache[key] = runs;
     while (_highlightCache.length > _maxHighlightCacheEntries) {
       _highlightCache.remove(_highlightCache.keys.first);
     }
-    return spans;
+    return runs;
   }
 
-  List<TextSpan> _spansForNodes(List<Node> nodes) {
-    final out = <TextSpan>[];
+  static void _flatten(List<Node> nodes, String? cls, List<_CodeRun> out) {
     for (final n in nodes) {
-      final color = _classColor(n.className);
-      final style = color == null ? null : TextStyle(color: color);
+      final own = n.className ?? cls;
       final children = n.children;
       if (n.value != null) {
-        out.add(TextSpan(text: n.value, style: style));
+        out.add((text: n.value!, cls: own));
       } else if (children != null && children.isNotEmpty) {
-        out.add(TextSpan(style: style, children: _spansForNodes(children)));
+        _flatten(children, own, out);
       }
+    }
+  }
+
+  /// Spans of the first [limit] characters, coloured from the theme.
+  static List<TextSpan> _spansFor(
+    List<_CodeRun> runs,
+    int limit,
+    HermesThemeColors colors,
+    Color background,
+  ) {
+    final palette = _CodePalette(colors, background);
+    final out = <TextSpan>[];
+    var used = 0;
+    for (final run in runs) {
+      if (used >= limit) break;
+      final take = math.min(run.text.length, limit - used);
+      final color = palette.colorFor(run.cls);
+      out.add(
+        TextSpan(
+          text: take == run.text.length
+              ? run.text
+              : run.text.substring(0, take),
+          style: color == null ? null : TextStyle(color: color),
+        ),
+      );
+      used += take;
     }
     return out;
   }
+}
 
-  /// Mapea la clase hljs a un color del tema oscuro simple.
-  static Color? _classColor(String? cls) {
+/// Restrained syntax colours from the app theme: three roles on top of the
+/// text colour (keywords, literals, comments), each nudged toward the text
+/// colour until it reads at 4.5:1 on the block surface in every theme.
+class _CodePalette {
+  _CodePalette(HermesThemeColors colors, Color background)
+    : keyword = _readable(colors.accent, colors.textPrimary, background),
+      literal = _readable(colors.secondary, colors.textPrimary, background),
+      comment = _readable(colors.textSecondary, colors.textPrimary, background);
+
+  final Color keyword;
+  final Color literal;
+  final Color comment;
+
+  Color? colorFor(String? cls) {
     switch (cls) {
       case 'keyword':
       case 'built_in':
@@ -979,28 +1196,36 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
       case 'meta':
       case 'meta-keyword':
       case 'selector-tag':
-        return const Color(0xFFE8821C); // ámbar (keywords)
+        return keyword;
       case 'string':
       case 'regexp':
       case 'symbol':
       case 'template-string':
+      case 'number':
       case 'addition':
       case 'attr':
       case 'attribute':
-        return const Color(0xFF6BBF59); // verde (strings)
+        return literal;
       case 'comment':
       case 'quote':
       case 'deletion':
-        return const Color(0xFF7A7A7A); // gris (comentarios)
-      case 'number':
-        return const Color(0xFFB5CEA8); // verde suave (números)
-      case 'title':
-      case 'function':
-      case 'section':
-        return const Color(0xFFDCB67A); // ámbar suave (nombres/funciones)
+        return comment;
       default:
-        return null; // hereda el blanco base
+        return null; // hereda el color de texto
     }
+  }
+
+  static double _contrast(Color a, Color b) {
+    final la = a.computeLuminance(), lb = b.computeLuminance();
+    return (math.max(la, lb) + 0.05) / (math.min(la, lb) + 0.05);
+  }
+
+  static Color _readable(Color tint, Color text, Color background) {
+    for (var t = 0.0; t <= 1.0; t += 0.1) {
+      final c = Color.lerp(tint, text, t)!;
+      if (_contrast(c, background) >= 4.5) return c;
+    }
+    return text;
   }
 }
 
@@ -1072,16 +1297,21 @@ MarkdownStyleSheet assistantMarkdownStyleSheet(
     ),
     blockSpacing: 10,
     pPadding: const EdgeInsets.only(bottom: 2),
+    // Código inline: píldora sutil en la misma familia mono que los bloques;
+    // sin `height` propio, hereda la línea del párrafo y no la hace saltar.
     code: TextStyle(
-      backgroundColor: Colors.transparent,
-      fontFamily: 'monospace',
+      backgroundColor: colors.surfaceVariant.withValues(alpha: 0.85),
+      fontFamily: kChatCodeFontFamily,
+      fontFamilyFallback: const ['monospace'],
       fontSize: 13,
+      letterSpacing: 0,
       color: colors.textPrimary.withValues(alpha: 0.92),
     ),
+    // Sin borde: un borde aquí encoge el bloque 1px por lado; el bloque de
+    // código pinta el suyo encima y queda a ras del mensaje.
     codeblockDecoration: BoxDecoration(
       color: colors.surfaceVariant,
-      borderRadius: BorderRadius.circular(8),
-      border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
+      borderRadius: BorderRadius.circular(12),
     ),
     // El padding interno lo gestiona _CodeBlockWrapper (necesita que la
     // cabecera de lenguaje quede a ras del borde); aquí lo anulamos.
