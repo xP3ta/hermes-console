@@ -470,6 +470,25 @@ class HermesListRow extends StatelessWidget {
     super.key,
   });
 
+  /// Title text style of a list row. Rows that cannot be a
+  /// [HermesListRow] (e.g. an [ExpansionTile] header) use it so they match
+  /// their sibling rows.
+  static TextStyle? titleStyle(
+    ThemeData theme, {
+    required Color color,
+    bool selected = false,
+  }) => theme.textTheme.bodyLarge?.copyWith(
+    color: color,
+    fontSize: 15,
+    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+    height: 1.2,
+    letterSpacing: -0.1,
+  );
+
+  /// Subtitle text style of a list row; see [titleStyle].
+  static TextStyle? subtitleStyle(ThemeData theme, {required Color color}) =>
+      theme.textTheme.bodySmall?.copyWith(color: color, height: 1.3);
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -534,14 +553,10 @@ class HermesListRow extends StatelessWidget {
                           title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodyLarge?.copyWith(
+                          style: titleStyle(
+                            theme,
                             color: foreground,
-                            fontSize: 15,
-                            fontWeight: selected
-                                ? FontWeight.w600
-                                : FontWeight.w500,
-                            height: 1.2,
-                            letterSpacing: -0.1,
+                            selected: selected,
                           ),
                         ),
                         if (subtitle != null && subtitle!.isNotEmpty) ...[
@@ -550,10 +565,7 @@ class HermesListRow extends StatelessWidget {
                             subtitle!,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: secondary,
-                              height: 1.3,
-                            ),
+                            style: subtitleStyle(theme, color: secondary),
                           ),
                         ],
                       ],
