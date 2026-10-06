@@ -335,6 +335,40 @@ void main() {
     },
   );
 
+  testWidgets('Bots home with only idle bots stops producing frames', (
+    tester,
+  ) async {
+    debugLivingBotFacesStill = false;
+    addTearDown(() => debugLivingBotFacesStill = true);
+    final manager = await _manager();
+    addTearDown(manager.dispose);
+    final snapshot = _snapshot(
+      profiles: const [
+        AgentProfile(name: 'argos'),
+        AgentProfile(name: 'astra'),
+        AgentProfile(name: 'radar'),
+      ],
+    );
+    await tester.pumpWidget(_host(manager: manager, snapshot: snapshot));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.byType(LivingBotFace), findsWidgets);
+    expect(livingBotFaceActiveTickers, 0);
+    var busy = 0;
+    const steps = 200;
+    for (var i = 0; i < steps; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+      if (tester.binding.transientCallbackCount > 0) busy++;
+    }
+    expect(
+      busy,
+      lessThan(steps ~/ 4),
+      reason: 'idle Bots home kept ticking in $busy of $steps samples',
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets(
     'Room attention marks the room row, not the bots seated in that room',
     (tester) async {

@@ -128,6 +128,11 @@ class HermesBotFace extends StatefulWidget {
   /// move them more than the body.
   final double? eyeGain;
 
+  /// Idle living faces: when set and [animate] is false the face holds a
+  /// still, alive pose (catchlight kept) and closes its eyes once while this
+  /// animation runs 0→1. It is a one-shot blink, never a running clock.
+  final Animation<double>? blink;
+
   /// Period of the face clock; external clocks must use the same period so
   /// the seeded breath/blink/saccade periods stay continuous.
   static const clockDuration = Duration(days: 1);
@@ -142,6 +147,7 @@ class HermesBotFace extends StatefulWidget {
     this.clock,
     this.motionGain = 1,
     this.eyeGain,
+    this.blink,
   }) : assert(size > 0);
 
   @override
@@ -221,6 +227,7 @@ class _HermesBotFaceState extends State<HermesBotFace>
             motionState: widget.motionState,
             motionGain: widget.motionGain,
             eyeGain: widget.eyeGain ?? widget.motionGain,
+            blink: widget.blink,
           ),
         ),
       ),
@@ -240,6 +247,7 @@ final class _HermesBotFacePainter extends CustomPainter {
   final HermesBotFaceMotionState motionState;
   final double motionGain;
   final double eyeGain;
+  final Animation<double>? blink;
   final _BlobatarLayout? _blobatarLayout;
   final _BlobatarMotionProfile? _motionProfile;
 
@@ -251,6 +259,7 @@ final class _HermesBotFacePainter extends CustomPainter {
     required this.motionState,
     this.motionGain = 1,
     this.eyeGain = 1,
+    this.blink,
   }) : _blobatarLayout = switch (visual) {
          final HermesBlobatarFaceVisual face => _BlobatarLayout.create(
            face.seed,
@@ -263,7 +272,7 @@ final class _HermesBotFacePainter extends CustomPainter {
            _BlobatarMotionProfile.fromSeed(face.seed),
          _ => null,
        },
-       super(repaint: motionEnabled ? clock : null);
+       super(repaint: motionEnabled ? clock : blink);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -279,6 +288,8 @@ final class _HermesBotFacePainter extends CustomPainter {
                     state: motionState,
                   )
                   .scaled(motionGain, eyeGain: eyeGain)
+            : blink != null
+            ? _restPose(blink!.value)
             : HermesBotFaceMotionSnapshot.staticFrame;
         _paintBlobatar(canvas, size, _blobatarLayout!, frame);
       case final HermesClassicFaceVisual face:
@@ -292,7 +303,31 @@ final class _HermesBotFacePainter extends CustomPainter {
       oldDelegate.motionEnabled != motionEnabled ||
       oldDelegate.motionState != motionState ||
       oldDelegate.motionGain != motionGain ||
-      oldDelegate.eyeGain != eyeGain;
+      oldDelegate.eyeGain != eyeGain ||
+      oldDelegate.blink != blink;
+}
+
+/// Still idle pose of a living face: the reference frame with its eyes
+/// closed by a one-shot blink at [t] (0 and 1 = open, 0.5 = shut). It is
+/// never [HermesBotFaceMotionSnapshot.staticFrame] itself, so the eyes keep
+/// the living catchlight.
+HermesBotFaceMotionSnapshot _restPose(double t) {
+  final open = t <= 0 || t >= 1
+      ? 1.0
+      : t < .5
+      ? 1 - 0.92 * Curves.easeIn.transform(t / .5)
+      : 0.08 + 0.92 * Curves.easeOut.transform((t - .5) / .5);
+  return HermesBotFaceMotionSnapshot(
+    breatheScaleX: 1,
+    breatheScaleY: 1,
+    bobY: 0,
+    blinkScaleY: open,
+    eyeOffsetX: 0,
+    eyeOffsetY: 0,
+    eyeScaleX: 1,
+    eyeScaleY: 1,
+    headTiltRadians: 0,
+  );
 }
 
 /// Paints one static frame of [visual] into [canvas] (no ticker, no widget
