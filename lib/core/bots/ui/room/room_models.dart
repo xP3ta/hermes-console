@@ -10,6 +10,7 @@ import 'package:flutter/painting.dart' show Color, HSLColor;
 
 import '../../../models/agent_profile.dart';
 import '../../../models/hosted_groups.dart';
+import '../../../utils/unread_rules.dart';
 import '../../../models/room_member_status.dart' show resolveRoomRecipients;
 import '../../../widgets/mission_profile_avatar.dart'
     show MissionProfileAvatarCache;
@@ -354,11 +355,24 @@ List<HostedGroupEvent> roomThreadMessages(
     if (e.publicText != null && e.threadId == threadId) e,
 ];
 
+/// What a room log event is for the unread rules: the owner's messages
+/// (from any device) are their own, members' messages are news, the rest
+/// (turn lifecycle, activity) is quiet.
+UnreadRowKind roomEventUnreadKind(HostedGroupEvent e) {
+  if (e.publicText == null) return UnreadRowKind.quiet;
+  return switch (e.kind) {
+    'message.user' => UnreadRowKind.own,
+    'message.member' => UnreadRowKind.news,
+    _ => UnreadRowKind.quiet,
+  };
+}
+
 /// Builds the grouped group-chat transcript (oldest first).
 List<RoomTranscriptEntry> buildRoomTranscript({
   required List<HostedGroupEvent> events,
   required List<HostedGroupMember> members,
   int? lastSeenSeq,
+  int? arrivedThroughSeq,
   Duration runGap = const Duration(minutes: 5),
 }) {
   final messages = [
@@ -401,13 +415,22 @@ List<RoomTranscriptEntry> buildRoomTranscript({
   var breakRun = true;
   var newSinceShown = false;
   final seen = lastSeenSeq ?? 0;
-  final hasOlder = main.any((e) => e.sequence <= seen);
-  // What the user sent from this device is not news to them: the divider
-  // marks the first bot reply after the marker, never their own message.
-  final firstNewSeq = main
-      .where((e) => e.sequence > seen && e.kind != 'message.user')
-      .map((e) => e.sequence)
-      .fold<int?>(null, (a, b) => a == null || b < a ? b : a);
+  // One unread rule for every chat (unread_rules.dart): the divider marks
+  // the first reply from someone else that arrived while the reader was
+  // away (after the marker, up to what was there when they came back);
+  // never the owner's own messages, never what arrives while reading.
+  final firstNewIndex = seen <= 0
+      ? null
+      : unreadFirstAwayIndex<HostedGroupEvent>(
+          main,
+          seenThrough: seen,
+          arrivedThrough: arrivedThroughSeq ?? (1 << 62),
+          positionOf: (e) => e.sequence,
+          kindOf: roomEventUnreadKind,
+        );
+  final firstNewSeq = firstNewIndex == null
+      ? null
+      : main[firstNewIndex].sequence;
   final roundOf = <String, int>{};
   for (final e in main) {
     final at = roomEventTime(e);
@@ -415,11 +438,7 @@ List<RoomTranscriptEntry> buildRoomTranscript({
       out.add(RoomDaySeparator(DateTime(at.year, at.month, at.day)));
       breakRun = true;
     }
-    if (!newSinceShown &&
-        seen > 0 &&
-        hasOlder &&
-        firstNewSeq != null &&
-        e.sequence >= firstNewSeq) {
+    if (!newSinceShown && firstNewSeq != null && e.sequence >= firstNewSeq) {
       out.add(const RoomNewSinceDivider());
       newSinceShown = true;
       breakRun = true;
