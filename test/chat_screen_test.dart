@@ -7453,6 +7453,11 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('activity-pill')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
+      // dc1215: the card's bottom actions take room; scroll the row in.
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('activity-subagent-stable-refresh-child')),
+      );
+      await tester.pump();
       await tester.tap(
         find.byKey(const ValueKey('activity-subagent-stable-refresh-child')),
       );
@@ -32098,7 +32103,8 @@ void main() {
     );
     await tester.pump();
 
-    expect(tester.widget<AppBar>(find.byType(AppBar)).centerTitle, isFalse);
+    // dc1215: the Dots header is centred (face over the name pill).
+    expect(tester.widget<AppBar>(find.byType(AppBar)).centerTitle, isTrue);
     expect(find.byKey(const ValueKey('bot-chat-header')), findsOneWidget);
     expect(
       find.descendant(
@@ -32323,6 +32329,269 @@ void main() {
     expect(find.byKey(const ValueKey('voice')), findsNothing);
     expect(find.byKey(const ValueKey('send')), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  group('dc1215 Dots bot chat header and activity view', () {
+    const botSession = Session(
+      id: 'mob-bot-dots',
+      title: 'Bot Chat',
+      model: 'hermes-agent',
+      source: 'mobile-bot',
+      messageCount: 0,
+      isActive: false,
+      preview: '',
+      startedAt: 1,
+      profile: 'qa',
+    );
+    final pill = find.byKey(const ValueKey('bot-chat-header-pill'));
+    final status = find.byKey(const ValueKey('bot-chat-header-subtitle'));
+
+    Future<ActiveChat> startTurn(
+      WidgetTester tester,
+      ActiveChat chat,
+      _UiRewindGateway gateway,
+    ) async {
+      expect(
+        await chat.send(
+          fullText: 'PUBLIC_DOTS_PARENT',
+          model: 'hermes-agent',
+          history: chat.messages,
+        ),
+        isTrue,
+      );
+      gateway.emit('message.start');
+      gateway.emit('tool.start', const {
+        'tool_id': 'call-dots-1',
+        'name': 'terminal',
+        'args': {'command': 'sleep 30'},
+      });
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+      return chat;
+    }
+
+    Future<void> finishTurn(
+      WidgetTester tester,
+      _UiRewindGateway gateway,
+    ) async {
+      gateway.emit('tool.complete', const {
+        'tool_id': 'call-dots-1',
+        'name': 'terminal',
+      });
+      gateway.emit('message.complete', const {'text': 'PUBLIC_DOTS_DONE'});
+      await tester.pump();
+      await tester.pump(const Duration(minutes: 2));
+    }
+
+    testWidgets('bot chat: face centred over the name pill in a taller bar; '
+        'idle status says who and what', (tester) async {
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-dc1215-header'),
+        session: botSession,
+      );
+      expect(pill, findsOneWidget);
+      expect(
+        find.descendant(of: pill, matching: find.text('qa')),
+        findsOneWidget,
+      );
+      final face = tester.getRect(
+        find.byKey(const ValueKey('bot-chat-avatar-qa')),
+      );
+      final pillRect = tester.getRect(pill);
+      expect((face.center.dx - pillRect.center.dx).abs(), lessThan(1));
+      final bar = tester.getRect(find.byType(AppBar));
+      expect(
+        (pillRect.center.dx - bar.center.dx).abs(),
+        lessThan(1),
+        reason: 'centred in the bar',
+      );
+      expect(face.top, lessThan(pillRect.top));
+      expect(
+        tester.getSize(find.byType(AppBar)).height,
+        greaterThan(kToolbarHeight),
+      );
+      expect(tester.widget<Text>(status).data, '@qa');
+      // The existing actions stay.
+      expect(
+        find.byKey(const ValueKey('bot-chat-overflow-appbar')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a normal chat keeps its own header', (tester) async {
+      await pumpChat(tester, connection: _remoteConn('conn-dc1215-normal'));
+      expect(pill, findsNothing);
+      expect(find.byKey(const ValueKey('bot-chat-header')), findsNothing);
+      expect(find.byKey(const ValueKey('chat-new-session')), findsOneWidget);
+      expect(
+        tester.getSize(find.byType(AppBar)).height,
+        lessThanOrEqualTo(kToolbarHeight + 1),
+      );
+    });
+
+    testWidgets('waiting for an approval: amber status, the approval card '
+        'stays the primary action', (tester) async {
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-dc1215-wait'),
+        session: botSession,
+      );
+      chat.pendingApproval = {
+        'command': 'registry prune --older-than 30d',
+        'description': 'Borrar imágenes viejas',
+        'choices': ['once', 'deny'],
+      };
+      await tester.pump();
+      final text = tester.widget<Text>(status);
+      expect(text.data, 'Te espera: aprobación');
+      final context = tester.element(status);
+      expect(text.style!.color, Theme.of(context).hermes.warning);
+      expect(find.byType(ChatApprovalCard), findsOneWidget);
+      chat.pendingApproval = null;
+      await tester.pump();
+      expect(tester.widget<Text>(status).data, '@qa');
+    });
+
+    testWidgets('working: the header names the current step, the same as the '
+        'activity view', (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-dc1215-step'),
+        session: botSession,
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      await startTurn(tester, chat, gateway);
+      final line = tester.widget<Text>(status).data!;
+      expect(line, startsWith('terminal'));
+      await _openActivityPanel(tester);
+      final row = find.byKey(const ValueKey('activity-now-row'));
+      expect(
+        find.descendant(of: row, matching: find.text(line)),
+        findsOneWidget,
+      );
+      await tester.tapAt(const Offset(4, 4));
+      await tester.pump(const Duration(milliseconds: 400));
+      await finishTurn(tester, gateway);
+    });
+
+    testWidgets('scrolled away from the end the bot header compacts, and '
+        'expands back at the end', (tester) async {
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-dc1215-compact'),
+        session: botSession,
+        messages: [
+          for (var i = 0; i < 40; i++)
+            {
+              'role': i.isEven ? 'assistant' : 'user',
+              'content':
+                  'Mensaje de relleno número $i con texto suficiente '
+                  'para ocupar varias líneas en la conversación.',
+            },
+        ],
+      );
+      final tall = tester.getSize(find.byType(AppBar)).height;
+      final list = find.descendant(
+        of: find.byType(ChatScrollInteractionGuard),
+        matching: find.byType(ListView),
+      );
+      final controller = tester.widget<ListView>(list).controller!;
+      controller.jumpTo(controller.position.maxScrollExtent / 2);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.getSize(find.byType(AppBar)).height, lessThan(tall));
+      expect(pill, findsOneWidget);
+      controller.jumpTo(0);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.getSize(find.byType(AppBar)).height, tall);
+    });
+
+    testWidgets('«Parar todo» and the current step Stop call the existing '
+        'interrupt', (tester) async {
+      final gateway = _UiRewindGateway();
+      var cancelCalls = 0;
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-dc1215-stop'),
+        desktopGateway: gateway,
+        cancelStreamOverride: () async => cancelCalls++,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      await startTurn(tester, chat, gateway);
+      await _openActivityPanel(tester);
+      final stopAll = find.byKey(const ValueKey('activity-action-stop-all'));
+      await tester.ensureVisible(stopAll);
+      await tester.pump();
+      await tester.tap(stopAll);
+      await tester.pump();
+      expect(cancelCalls, 1);
+      final stopTurn = find.byKey(const ValueKey('activity-now-stop'));
+      await tester.ensureVisible(stopTurn);
+      await tester.pump();
+      await tester.tap(stopTurn);
+      await tester.pump();
+      expect(cancelCalls, 2);
+      await tester.pump(const Duration(milliseconds: 1300));
+      await tester.tapAt(const Offset(4, 4));
+      await tester.pump(const Duration(milliseconds: 400));
+      await finishTurn(tester, gateway);
+    });
+
+    testWidgets('«Añadir contexto» focuses the composer; «Cambiar rumbo» also '
+        'shows the steer hint until the next send', (tester) async {
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-dc1215-compose'),
+        desktopGateway: gateway,
+        messages: const [
+          {'role': 'user', 'content': 'PUBLIC_REQUEST'},
+        ],
+      );
+      await startTurn(tester, chat, gateway);
+      FocusNode composerFocus() =>
+          tester.widget<EditableText>(find.byType(EditableText).last).focusNode;
+      expect(composerFocus().hasFocus, isFalse);
+      await _openActivityPanel(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('activity-action-add-context')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('activity-panel')), findsNothing);
+      expect(composerFocus().hasFocus, isTrue);
+      String? hint() => tester
+          .widget<TextField>(find.byType(TextField).last)
+          .decoration
+          ?.hintText;
+      expect(
+        hint(),
+        isNot('Nuevo rumbo: irá a la cola y podrás «Redirigir ahora»'),
+      );
+
+      composerFocus().unfocus();
+      await tester.pump();
+      await _openActivityPanel(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('activity-action-change-course')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(composerFocus().hasFocus, isTrue);
+      expect(hint(), 'Nuevo rumbo: irá a la cola y podrás «Redirigir ahora»');
+      composerFocus().unfocus();
+      await tester.pump();
+      await finishTurn(tester, gateway);
+    });
   });
 
   testWidgets('fila de cola sin confirmar se puede dejar de esperar', (

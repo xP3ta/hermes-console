@@ -231,6 +231,7 @@ import '../design/modal.dart'
 import 'subagent_detail_screen.dart'
     show SubagentTranscriptPage, subagentIsLive;
 import '../widgets/activity_panel.dart';
+import '../widgets/bot_chat_header.dart';
 import '../widgets/activity_side_panel.dart';
 import '../widgets/activity_task_linger.dart';
 import '../widgets/compaction_dock.dart';
@@ -2836,6 +2837,7 @@ class _ChatScreenState extends State<ChatScreen>
     _sessionUsageSnapshot = widget.session;
     _compaction.addListener(_onCompactionChanged);
     _transcriptConcealed.addListener(_scheduleStickyPromptUpdate);
+    _scrollToBottomVisibility.addListener(_onBotHeaderCompactChanged);
     WidgetsBinding.instance.addObserver(this);
     unawaited(_loadSharedArchive());
     _loadPrefs();
@@ -6645,16 +6647,93 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// dc1215: the Bot Chat header's status line, from the same activity
+  /// snapshot as the pill and the panel.
+  BotChatHeaderStatus _botHeaderStatus(Strings str) => botChatHeaderStatus(
+    strings: str,
+    approvalPending: _chatBound && _chat.pendingApproval != null,
+    questionPending: _chatBound && _chat.pendingInteractivePrompt != null,
+    snapshot: _chatBound ? _buildActivitySnapshot() : ActivitySnapshot.idle,
+    idleText: _botIdleStatusText(str),
+  );
+
+  /// Idle: when the bot last did something, or (no time known) who it is
+  /// and its model, as before.
+  String? _botIdleStatusText(Strings str) {
+    final last = _chatBound ? _lastTranscriptActivity() : null;
+    if (last != null) {
+      final local = last.toLocal();
+      final now = DateTime.now();
+      final loc = MaterialLocalizations.of(context);
+      final sameDay =
+          local.year == now.year &&
+          local.month == now.month &&
+          local.day == now.day;
+      return str.dc1215LastActive(
+        sameDay
+            ? loc.formatTimeOfDay(TimeOfDay.fromDateTime(local))
+            : loc.formatShortMonthDay(local),
+      );
+    }
+    final profile = widget.missionBotProfile;
+    final name = profile != null && profile.name.isNotEmpty
+        ? profile.name
+        : Session.profileOwner(widget.session.profile);
+    final model = _headerModelId;
+    return [
+      '@$name',
+      ?(model == null ? _modelLabel(profile) : friendlyModelName(model)),
+    ].join(' · ');
+  }
+
+  /// The newest timestamp of the transcript (seconds or milliseconds since
+  /// the epoch, or an ISO date), or null.
+  DateTime? _lastTranscriptActivity() {
+    DateTime? newest;
+    for (final message in _messages) {
+      final raw = message['timestamp'];
+      DateTime? at;
+      if (raw is num && raw.isFinite && raw > 0) {
+        at = DateTime.fromMillisecondsSinceEpoch(
+          (raw < 1e11 ? raw * 1000 : raw).round(),
+          isUtc: true,
+        );
+      } else if (raw is String) {
+        final number = double.tryParse(raw);
+        at = number != null && number > 0
+            ? DateTime.fromMillisecondsSinceEpoch(
+                (number < 1e11 ? number * 1000 : number).round(),
+                isUtc: true,
+              )
+            : DateTime.tryParse(raw);
+      }
+      if (at != null && (newest == null || at.isAfter(newest))) newest = at;
+    }
+    return newest;
+  }
+
   ActivityPanelActions? _activityActions;
-  (bool, bool, bool)? _activityActionCapabilities;
+  (bool, bool, bool, bool, bool, bool)? _activityActionCapabilities;
+
+  /// dc1215: the composer can take a message now (not read-only, not
+  /// fenced by another owner).
+  bool get _composerWritable =>
+      !widget.connection.readOnly &&
+      !_cronRunReadOnly &&
+      !_chat.conflictReadOnly;
 
   /// Las acciones por elemento del panel: los mismos controladores que tenían
-  /// las hojas de segundo plano y de subagentes.
+  /// las hojas de segundo plano y de subagentes, más (dc1215) el Stop del
+  /// paso en curso, «Parar todo» y las acciones del compositor.
   ActivityPanelActions _buildActivityActions() {
+    final connected = _chat.gatewayConnected;
     final capabilities = (
       _chat.canStopBackgroundProcesses,
       _chat.canControlSessionActivity,
       _chat.canControlGoal,
+      connected,
+      connected && _chat.canStopSessionWork,
+      _composerWritable,
     );
     final cached = _activityActions;
     if (cached != null && _activityActionCapabilities == capabilities) {
@@ -6687,9 +6766,82 @@ class _ChatScreenState extends State<ChatScreen>
       },
       openSubagent: _subagentController.open,
       dismissSubagents: _dismissSubagentPill,
+      canStopTurn: capabilities.$4,
+      stopTurn: _interruptTurn,
+      canStopSubagent: _chat.canInterruptSubagent,
+      stopSubagent: (activity) async {
+        await _confirmInterruptSubagent(activity);
+      },
+      canStopAll: capabilities.$5,
+      stopAll: _cancelStream,
+      addContext: capabilities.$6
+          ? () => _focusComposerFromActivity(steer: false)
+          : null,
+      changeCourse: capabilities.$6
+          ? () => _focusComposerFromActivity(steer: true)
+          : null,
     );
     _activityActionCapabilities = capabilities;
     return _activityActions = actions;
+  }
+
+  /// dc1215: the Stop on the current step interrupts the turn only (the
+  /// composer's Stop, «Parar todo», also stops background work).
+  Future<void> _interruptTurn() async {
+    if (!_chat.gatewayConnected) return;
+    _recentInterrupt.markInterrupted();
+    try {
+      final override = widget.cancelStreamOverride;
+      if (override != null) {
+        await override();
+      } else {
+        await _chat.cancel();
+      }
+    } catch (_) {
+      if (mounted) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).chaStopFailed)),
+          kind: HermesNoticeKind.error,
+        );
+      }
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// dc1215: «Cambiar rumbo» shows the steer hint until the next send.
+  bool _steerHint = false;
+
+  /// dc1215: «Añadir contexto» / «Cambiar rumbo» focus the composer (the
+  /// user's explicit request). A message sent while the turn runs goes to
+  /// the queue, where «Redirigir ahora» steers it.
+  void _focusComposerFromActivity({required bool steer}) {
+    if (!mounted) return;
+    setState(() => _steerHint = steer);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_disposed) _textFocusNode.requestFocus();
+    });
+  }
+
+  /// dc1215: the Bot Chat header compacts while the reader is away from
+  /// the newest message. Never rebuilds inside a frame.
+  bool _botHeaderCompact = false;
+
+  void _onBotHeaderCompactChanged() {
+    if (!_isBotChatSurface) return;
+    final compact = _scrollToBottomVisibility.value;
+    if (compact == _botHeaderCompact) return;
+    void apply() {
+      if (!mounted || _disposed) return;
+      final now = _scrollToBottomVisibility.value;
+      if (now == _botHeaderCompact) return;
+      setState(() => _botHeaderCompact = now);
+    }
+
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle) {
+      apply();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => apply());
+    }
   }
 
   /// Sincroniza el seguimiento de compactación con el servicio. Barato e
@@ -6846,16 +6998,6 @@ class _ChatScreenState extends State<ChatScreen>
         observedFirstTokenLatencyMs: current.observedFirstTokenLatencyMs,
       ),
     );
-  }
-
-  /// La cabecera del Bot Chat («@nombre · Pensando») y la pastilla de actividad
-  /// narraban el mismo estado a la vez (reportado en dispositivo real). Antes de
-  /// que la pastilla se revele —los 2 s del antiparpadeo— la cabecera sigue
-  /// siendo la única señal de un turno recién empezado; después se calla.
-  bool get _turnActivityPillRevealed {
-    final startedAt = _turnActivityStartedAt;
-    if (!_turnLive || startedAt == null) return false;
-    return _chat.wallNow().difference(startedAt) >= const Duration(seconds: 2);
   }
 
   void _syncTurnActivityClock() {
@@ -8906,6 +9048,7 @@ class _ChatScreenState extends State<ChatScreen>
     // Claim the in-flight slot BEFORE any await: two same-tick sends (double
     // tap) must never both pass the guard above and submit twice.
     _composerSubmissionInFlight = true;
+    _steerHint = false;
     final claim = ++_composerSubmissionClaim;
     try {
       // Queuing behind a compression must never interrupt it.
@@ -13315,8 +13458,16 @@ class _ChatScreenState extends State<ChatScreen>
                 ),
               ),
         appBar: HermesAppBar(
-          centerTitle: !dedicatedChrome,
+          centerTitle: !dedicatedChrome || botSurface,
           titleSpacing: 0,
+          // dc1215: the Dots header (face over a name pill) needs a taller
+          // bar, and a standard one while the reader is away from the end.
+          toolbarHeight: botSurface && !showVoiceSurface
+              ? BotChatDotsHeader.heightFor(
+                  MediaQuery.textScalerOf(context),
+                  compact: _botHeaderCompact,
+                )
+              : null,
           // Cabecera plana: sin línea/sombra de elevación al hacer scroll del
           // transcript por debajo (Material 3 la añade por defecto vía
           // `scrolledUnderElevation`). Se funde con el chat en vez de
@@ -13353,11 +13504,13 @@ class _ChatScreenState extends State<ChatScreen>
                   key: const ValueKey('bot-chat-header'),
                   profile: widget.missionBotProfile,
                   fallbackName: Session.profileOwner(widget.session.profile),
-                  activity: _chatBound && !_turnActivityPillRevealed
-                      ? _chat.activityKind
-                      : null,
+                  activity: _chatBound ? _chat.activityKind : null,
                   avatarCache: widget.missionAvatarCache,
-                  sessionModel: _headerModelId,
+                  status: _botHeaderStatus(str),
+                  compact: _botHeaderCompact,
+                  attention:
+                      _chat.pendingApproval != null ||
+                      _chat.pendingInteractivePrompt != null,
                 )
               : Semantics(
                   button: !showVoiceSurface,
@@ -16764,6 +16917,8 @@ class _ChatScreenState extends State<ChatScreen>
       dictation: _composerDictation(dictationInteractive: dictationInteractive),
       hintText: _attachmentSubmitting
           ? Strings.of(context).chaUploadingAttachment
+          : _steerHint
+          ? Strings.of(context).dc1215SteerHint
           : _pendingAttachments.isNotEmpty
           ? Strings.of(context).chaHintSystem
           : _botDisplayName != null
@@ -18596,109 +18751,72 @@ String? _modelLabel(AgentProfile? profile) {
   return model.isEmpty ? null : model;
 }
 
+/// dc1215: the canonical Bot Chat header in the Dots style: the bot's
+/// living face centred over a pill with its name and one status line.
 class _BotChatAppBarTitle extends StatelessWidget {
   final AgentProfile? profile;
   final String fallbackName;
   final ChatActivityKind? activity;
   final MissionProfileAvatarCache? avatarCache;
+  final BotChatHeaderStatus status;
+  final bool compact;
 
-  /// Model of this session as the regular chat header shows it; the profile
-  /// default is only a fallback before the session reports one.
-  final String? sessionModel;
+  /// An approval or a question waits for the user: the face asks for
+  /// attention.
+  final bool attention;
 
   const _BotChatAppBarTitle({
     required this.profile,
     required this.fallbackName,
     required this.activity,
     required this.avatarCache,
-    this.sessionModel,
+    required this.status,
+    this.compact = false,
+    this.attention = false,
     super.key,
   });
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final english = Localizations.localeOf(context).languageCode == 'en';
     final profile = this.profile;
     final name = profile != null && profile.name.isNotEmpty
         ? profile.name
         : fallbackName;
     final displayName = profile?.botTitle ?? name;
-    final statusLabel = switch (activity) {
-      ChatActivityKind.thinking => english ? 'Thinking' : 'Pensando',
-      ChatActivityKind.usingTools => english ? 'Working' : 'Trabajando',
-      ChatActivityKind.responding => english ? 'Responding' : 'Respondiendo',
-      ChatActivityKind.awaitingApproval =>
-        english ? 'Approval required' : 'Aprobación requerida',
-      null => null,
-    };
+    final signal = attention
+        ? BotFaceSignal.attention
+        : switch (activity) {
+            ChatActivityKind.thinking => BotFaceSignal.thinking,
+            ChatActivityKind.usingTools => BotFaceSignal.working,
+            ChatActivityKind.responding => BotFaceSignal.speaking,
+            ChatActivityKind.awaitingApproval => BotFaceSignal.attention,
+            null => BotFaceSignal.idle,
+          };
     return Padding(
-      padding: const EdgeInsetsDirectional.only(start: 4, end: 4),
-      child: Row(
-        children: [
-          profile == null
-              ? MissionProfileAvatar(
-                  key: ValueKey('bot-chat-avatar-$name'),
-                  profileName: name,
-                  hasAvatar: false,
-                  cache: avatarCache,
-                  size: 32,
-                )
-              // The same living face as the roster: it breathes, blinks and
-              // looks around; it reads a line while the bot works.
-              : LivingBotFace(
-                  key: ValueKey('bot-chat-avatar-$name'),
-                  profileName: profile.name,
-                  profile: profile,
-                  avatarCache: avatarCache,
-                  signal: switch (activity) {
-                    ChatActivityKind.thinking => BotFaceSignal.thinking,
-                    ChatActivityKind.usingTools => BotFaceSignal.working,
-                    ChatActivityKind.responding => BotFaceSignal.speaking,
-                    ChatActivityKind.awaitingApproval =>
-                      BotFaceSignal.attention,
-                    null => BotFaceSignal.idle,
-                  },
-                  size: 32,
-                  entrance: false,
-                ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 17.5,
-                    letterSpacing: -0.15,
-                  ),
-                ),
-                Text(
-                  [
-                    if (displayName != name || statusLabel == null) '@$name',
-                    ?statusLabel ??
-                        (sessionModel == null
-                            ? _modelLabel(profile)
-                            : friendlyModelName(sessionModel!)),
-                  ].join(' · '),
-                  key: const ValueKey('bot-chat-header-subtitle'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colors.textSecondary,
-                    fontSize: 11.5,
-                    height: 1.15,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: BotChatDotsHeader(
+        name: displayName,
+        status: status,
+        compact: compact,
+        faceBuilder: (size) => profile == null
+            ? MissionProfileAvatar(
+                key: ValueKey('bot-chat-avatar-$name'),
+                profileName: name,
+                hasAvatar: false,
+                cache: avatarCache,
+                size: size,
+              )
+            // The same living face as the roster: it breathes, blinks and
+            // looks around; it reads a line while the bot works.
+            : LivingBotFace(
+                key: ValueKey('bot-chat-avatar-$name'),
+                profileName: profile.name,
+                profile: profile,
+                avatarCache: avatarCache,
+                signal: signal,
+                size: size,
+                entrance: false,
+              ),
       ),
     );
   }
