@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'transcript_directive_parser.dart';
@@ -117,6 +117,29 @@ class GeneratedMediaService {
   static const int maxAutoVideoBytes = 60 * 1024 * 1024;
   static const int maxConcurrentAutoLoads = 2;
   static const int _maxCacheBytes = 512 * 1024 * 1024;
+
+  /// Overrides the disk cache byte cap in tests.
+  @visibleForTesting
+  static int? maxCacheBytesForTesting;
+
+  static int get _cacheCap => maxCacheBytesForTesting ?? _maxCacheBytes;
+
+  /// App-support root, remembered after its first async resolution so a
+  /// row can look up the disk cache synchronously on its first frame.
+  static Directory? _cacheRoot;
+
+  @visibleForTesting
+  static set cacheRootForTesting(Directory? root) => _cacheRoot = root;
+
+  /// Resolves the cache root ahead of the first chat (startup).
+  static Future<void> warmCacheRoot() async {
+    try {
+      _cacheRoot = await getApplicationSupportDirectory();
+    } catch (_) {
+      // No path provider (tests, early startup): lookups stay async.
+    }
+  }
+
   static const int _maxRedirects = 3;
 
   static const Set<String> _imageExtensions = {
@@ -367,6 +390,13 @@ class GeneratedMediaService {
     } finally {
       _releaseAutoLoadSlot();
     }
+  }
+
+  /// Drops slots held by loads a previous widget test abandoned.
+  @visibleForTesting
+  static void resetAutoLoadsForTesting() {
+    _activeAutoLoads = 0;
+    _autoLoadWaiters.clear();
   }
 
   static void _releaseAutoLoadSlot() {
@@ -802,6 +832,67 @@ class GeneratedMediaService {
       .map((segment) => segment.text)
       .join();
 
+  /// Where the private copy of [reference] lives for [connectionId]: keyed
+  /// by connection scope, server path, size and mtime.
+  static File _cacheTarget(
+    Directory root,
+    String connectionId,
+    GeneratedMediaReference reference,
+  ) {
+    final connectionHash = sha256.convert(utf8.encode(connectionId)).toString();
+    final cacheIdentity = [
+      reference.source,
+      reference.sizeBytes?.toString() ?? '',
+      reference.modifiedAt?.toUtc().microsecondsSinceEpoch.toString() ?? '',
+    ].join('\u0000');
+    final sourceHash = sha256.convert(utf8.encode(cacheIdentity)).toString();
+    final suffix = _extensionFor(reference.displayName, reference.kind);
+    return File(
+      '${root.path}/generated_media/$connectionHash/$sourceHash$suffix',
+    );
+  }
+
+  /// The verified private copy of [reference], synchronously and without any
+  /// network: null when it is not cached yet or the cache root is unknown.
+  /// A hit counts as a use for the LRU cleanup.
+  static File? cachedFileSync(
+    String connectionId,
+    GeneratedMediaReference reference, {
+    Directory? baseDir,
+  }) {
+    final root = baseDir ?? _cacheRoot;
+    if (root == null) return null;
+    final target = _cacheTarget(root, connectionId, reference);
+    RandomAccessFile? handle;
+    try {
+      if (!target.existsSync()) return null;
+      final length = target.lengthSync();
+      if (length <= 0 || length > _maxBytes(reference.kind)) return null;
+      handle = target.openSync();
+      if (!validateBytes(handle.readSync(32), reference.kind)) return null;
+      try {
+        target.setLastModifiedSync(DateTime.now());
+      } catch (_) {}
+      return target;
+    } catch (_) {
+      return null;
+    } finally {
+      try {
+        handle?.closeSync();
+      } catch (_) {}
+    }
+  }
+
+  /// Identity of a reference's ready copy within a cache scope; shared by
+  /// the row memo and the prefetcher so both name the same file.
+  static String readyKey(String scope, GeneratedMediaReference reference) => [
+    scope,
+    reference.source,
+    reference.kind.name,
+    reference.sizeBytes?.toString() ?? '',
+    reference.modifiedAt?.toUtc().microsecondsSinceEpoch.toString() ?? '',
+  ].join('\u0000');
+
   static Future<File> ensureDownloaded(
     String connectionId,
     GeneratedMediaReference reference, {
@@ -859,18 +950,11 @@ class GeneratedMediaService {
     if (isCancelled?.call() ?? false) {
       throw const GeneratedMediaDownloadCancelled();
     }
-    final root = baseDir ?? await getApplicationSupportDirectory();
-    final connectionHash = sha256.convert(utf8.encode(connectionId)).toString();
-    final cacheIdentity = [
-      reference.source,
-      reference.sizeBytes?.toString() ?? '',
-      reference.modifiedAt?.toUtc().microsecondsSinceEpoch.toString() ?? '',
-    ].join('\u0000');
-    final sourceHash = sha256.convert(utf8.encode(cacheIdentity)).toString();
-    final suffix = _extensionFor(reference.displayName, reference.kind);
-    final directory = Directory('${root.path}/generated_media/$connectionHash');
+    final root =
+        baseDir ?? (_cacheRoot = await getApplicationSupportDirectory());
+    final target = _cacheTarget(root, connectionId, reference);
+    final directory = target.parent;
     await directory.create(recursive: true);
-    final target = File('${directory.path}/$sourceHash$suffix');
 
     if (await target.exists()) {
       try {
@@ -1184,10 +1268,11 @@ class GeneratedMediaService {
         // A concurrent cleanup may already have removed it.
       }
     }
-    if (total <= _maxCacheBytes) return;
+    final cap = _cacheCap;
+    if (total <= cap) return;
     entries.sort((a, b) => a.modified.compareTo(b.modified));
     for (final entry in entries) {
-      if (total <= _maxCacheBytes) break;
+      if (total <= cap) break;
       try {
         await entry.file.delete();
         total -= entry.bytes;

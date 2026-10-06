@@ -41,6 +41,9 @@ import 'package:image_picker_platform_interface/image_picker_platform_interface.
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:record/record.dart';
 
+import 'package:hermes_android/core/services/generated_media_service.dart';
+import 'package:hermes_android/core/services/media_dimensions.dart';
+import 'package:hermes_android/core/services/media_prefetcher.dart';
 import 'package:hermes_android/main.dart';
 import 'package:hermes_android/core/companion/models/companion_presence_level.dart';
 import 'package:hermes_android/core/companion/render/companion_status_indicator.dart';
@@ -2759,6 +2762,7 @@ void main() {
     int Function()? wallClockMs,
     Future<void> Function(String path, File destination)?
     userServerMediaFetcher,
+    Future<void> Function(String path, File destination)? generatedMediaFetcher,
     String? newChatWorkspace,
     Map<ModelPickerSource, ModelPickerFallback>? modelPickerFallbacks,
     DashboardClient Function(SavedConnection)? providerReauthClientFactory,
@@ -2910,6 +2914,7 @@ void main() {
           missionAvatarCache: missionAvatarCache,
           draftStoreOverride: draftStore,
           userServerMediaFetcher: userServerMediaFetcher,
+          generatedMediaFetcher: generatedMediaFetcher,
           newChatWorkspace: newChatWorkspace,
           modelPickerFallbacks: modelPickerFallbacks,
           providerReauthClientFactory: providerReauthClientFactory,
@@ -9730,6 +9735,89 @@ void main() {
       expect(find.text('Descargar'), findsNothing);
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
       expect(find.textContaining(source), findsNothing);
+      expect(find.textContaining('MEDIA:'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'MEDIA de imagen recién llegada se precarga antes de construir su fila '
+    'y la fila se sirve de esa misma descarga',
+    (tester) async {
+      const source = '/workspace/generated/fresh-render.png';
+      final support = Directory.systemTemp.createTempSync('chat-prefetch-');
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (call) async => support.path);
+      addTearDown(() {
+        TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null);
+        if (support.existsSync()) support.deleteSync(recursive: true);
+      });
+      MediaPrefetcher.instance.resetForTesting();
+      MediaDimensionsCache.clearForTesting();
+      GeneratedMediaAttachmentCard.clearReadyMemoForTesting();
+      // Earlier tests leave auto-loads hanging on fake Dashboard clients.
+      GeneratedMediaService.resetAutoLoadsForTesting();
+      addTearDown(MediaPrefetcher.instance.resetForTesting);
+      final png = await tester.runAsync(() async {
+        final recorder = ui.PictureRecorder();
+        Canvas(recorder).drawRect(
+          const Rect.fromLTWH(0, 0, 400, 200),
+          Paint()..color = const Color(0xff2255aa),
+        );
+        final image = await recorder.endRecording().toImage(400, 200);
+        final data = await image.toByteData(format: ui.ImageByteFormat.png);
+        return data!.buffer.asUint8List();
+      });
+      var fetches = 0;
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-prefetch-media'),
+        desktopGateway: gateway,
+        messagesLoaded: false,
+        generatedMediaFetcher: (path, destination) async {
+          expect(path, source);
+          fetches++;
+          await destination.writeAsBytes(png!, flush: true);
+        },
+      );
+      expect(
+        await chat.send(
+          fullText: 'Genera la imagen',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+
+      gateway.emit('message.complete', const {'text': 'MEDIA:$source'});
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.microtask(() {});
+      }
+      // The fetch is queued from the arriving event, before any frame has
+      // built the row.
+      expect(find.byType(GeneratedMediaAttachmentCard), findsNothing);
+      expect(
+        MediaPrefetcher.instance.trackedKeysForTesting.where(
+          (key) => key.contains(source),
+        ),
+        hasLength(1),
+      );
+
+      final thumbnail = find.byKey(const ValueKey('generated-image-thumbnail'));
+      for (var i = 0; i < 100 && thumbnail.evaluate().isEmpty; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(thumbnail, findsOneWidget);
+      expect(fetches, 1);
+      expect(find.text('fresh-render.png'), findsNothing);
       expect(find.textContaining('MEDIA:'), findsNothing);
       expect(tester.takeException(), isNull);
     },

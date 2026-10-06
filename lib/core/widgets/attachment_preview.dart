@@ -158,6 +158,19 @@ class AttachmentPreview extends StatelessWidget {
             image: CoverResizeImage(FileImage(file), target: target),
             fit: BoxFit.cover,
             gaplessPlayback: true,
+            // A bitmap decoded ahead paints at once; otherwise it fades in
+            // over the reserved box instead of popping.
+            frameBuilder: (_, child, frame, synchronous) => synchronous
+                ? child
+                : AnimatedOpacity(
+                    opacity: frame == null ? 0 : 1,
+                    duration:
+                        MediaQuery.maybeDisableAnimationsOf(context) ?? false
+                        ? Duration.zero
+                        : const Duration(milliseconds: 150),
+                    curve: Curves.easeOut,
+                    child: child,
+                  ),
             errorBuilder: (_, _, _) => Center(child: typeCard()),
           ),
         ),
