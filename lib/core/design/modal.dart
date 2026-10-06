@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../theme/motion.dart';
 import '../theme/scroll_behavior.dart';
 import 'tokens.dart';
 
@@ -110,22 +111,25 @@ class _HermesSurfaceRoute<T> extends PageRouteBuilder<T> {
          reverseTransitionDuration: reduceMotion
              ? Duration.zero
              : const Duration(milliseconds: 150),
-         pageBuilder: (context, animation, secondaryAnimation) => PopScope(
-           canPop: systemDismissible,
-           child: FocusScope(
-             node: focusScopeNode,
-             child: HermesModalScrollScope(
-               child: _HermesSurfaceFrame(
-                 surfaceKey: surfaceKey,
-                 maxWidth: maxWidth,
-                 maxHeightFactor: maxHeightFactor,
-                 reduceMotion: reduceMotion,
-                 origin: origin,
-                 child: Builder(builder: builder),
+         pageBuilder: (context, animation, secondaryAnimation) =>
+             CoveredRouteMediaQueryFreeze(
+               child: PopScope(
+                 canPop: systemDismissible,
+                 child: FocusScope(
+                   node: focusScopeNode,
+                   child: HermesModalScrollScope(
+                     child: _HermesSurfaceFrame(
+                       surfaceKey: surfaceKey,
+                       maxWidth: maxWidth,
+                       maxHeightFactor: maxHeightFactor,
+                       reduceMotion: reduceMotion,
+                       origin: origin,
+                       child: Builder(builder: builder),
+                     ),
+                   ),
+                 ),
                ),
              ),
-           ),
-         ),
          transitionsBuilder: (context, animation, secondaryAnimation, child) {
            if (reduceMotion) return child;
            final curved = CurvedAnimation(

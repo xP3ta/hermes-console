@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_localizations.dart';
 import '../services/app_lock.dart';
 import '../theme/app_theme.dart';
+import '../theme/motion.dart';
 
 /// Pantalla de desbloqueo: PIN propio + biometría opcional.
 ///
@@ -38,8 +39,9 @@ class LockScreen extends StatefulWidget {
         opaque: false,
         barrierColor: Colors.black54,
         fullscreenDialog: true,
-        pageBuilder: (_, _, _) =>
-            LockScreen(lock: lock, verifyMode: true, reason: reason),
+        pageBuilder: (_, _, _) => CoveredRouteMediaQueryFreeze(
+          child: LockScreen(lock: lock, verifyMode: true, reason: reason),
+        ),
         transitionsBuilder: (_, anim, _, child) =>
             FadeTransition(opacity: anim, child: child),
       ),
@@ -342,7 +344,8 @@ class _AppLockGateState extends State<AppLockGate>
         opaque: true,
         barrierDismissible: false,
         transitionDuration: const Duration(milliseconds: 200),
-        pageBuilder: (_, _, _) => LockScreen(lock: widget.lock),
+        pageBuilder: (_, _, _) =>
+            CoveredRouteMediaQueryFreeze(child: LockScreen(lock: widget.lock)),
         transitionsBuilder: (_, anim, _, child) =>
             FadeTransition(opacity: anim, child: child),
       );

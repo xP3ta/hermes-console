@@ -18,6 +18,7 @@ import '../models/attachment_draft.dart';
 import '../services/connection_manager.dart';
 import '../services/generated_media_service.dart';
 import '../theme/app_theme.dart';
+import '../theme/motion.dart';
 import 'hermes_notice.dart';
 
 /// Tipo visual de adjunto, derivado del mime/extensión. Gobierna el badge de
@@ -2038,9 +2039,11 @@ Future<void> showImageViewer(BuildContext context, File file) {
       barrierColor: Colors.black,
       barrierDismissible: true,
       transitionDuration: const Duration(milliseconds: 180),
-      pageBuilder: (_, anim, _) => FadeTransition(
-        opacity: anim,
-        child: _GeneratedImageViewer(file: file),
+      pageBuilder: (_, anim, _) => CoveredRouteMediaQueryFreeze(
+        child: FadeTransition(
+          opacity: anim,
+          child: _GeneratedImageViewer(file: file),
+        ),
       ),
     ),
   );
