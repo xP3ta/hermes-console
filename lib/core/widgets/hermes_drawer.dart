@@ -775,8 +775,7 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
           !archive.isSessionDeleted(session) &&
           !archive.isSessionHidden(session) &&
           !archive.isHidden(session.id) &&
-          !session.isJob &&
-          !session.isKanbanJob &&
+          !session.isAutomation &&
           session.listsAsOwnRow;
       // Four rows need one Desktop-sized page, not the whole history.
       final sessions = await client.getSessions(

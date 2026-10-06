@@ -670,15 +670,19 @@ void main() {
       expect(order, isNot(contains('chat-1')));
     });
 
-    test(
-      'un informe programado se detecta por el id aunque cambie el origen',
-      () {
-        // Las compactaciones de Hermes conservan el id `cron_<job>_…` pero no
-        // siempre el `source`.
-        expect(isAutomationSessionRow(row('cron_job_a_1', source: '')), isTrue);
-        expect(isAutomationSessionRow(row('chat-1')), isFalse);
-      },
-    );
+    test('la automatización se decide solo por el source del servidor', () {
+      // Same field the Automation tab filters on: an id or title never moves
+      // a row between the cleanup scopes and the lists.
+      expect(
+        isAutomationSessionRow(row('cron_job_a_1', source: 'cron')),
+        isTrue,
+      );
+      expect(
+        isAutomationSessionRow(row('cron_job_a_1', source: 'desktop')),
+        isFalse,
+      );
+      expect(isAutomationSessionRow(row('chat-1')), isFalse);
+    });
 
     test('el recuento por ámbito coincide con lo que se borraría', () {
       final rows = [

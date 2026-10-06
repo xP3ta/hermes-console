@@ -12,7 +12,6 @@ import '../services/dock_preferences_store.dart';
 import 'package:http/http.dart' as http;
 
 import '../app_header_title.dart';
-import '../models/session_category.dart';
 import '../services/chat_draft_store.dart';
 import '../services/connection_manager.dart';
 
@@ -1549,14 +1548,11 @@ final class HistoryCleanupSelection {
       );
 }
 
-/// Una sesión cuenta como automatización si Hermes Agent la publica con un
-/// origen de automatización o si es un informe programado (`cron_<job>_…`).
-/// Se reutiliza el mismo criterio que la biblioteca de conversaciones
-/// ([SessionCategoryScope]) para que el filtro "Automatización" de la lista y
-/// esta limpieza no puedan discrepar.
+/// Una sesión cuenta como automatización solo por su `source` del servidor
+/// ([Session.isAutomation]): el mismo campo por el que filtra la pestaña
+/// "Automatización", así que la limpieza borra justo lo que esa lista enseña.
 @visibleForTesting
-bool isAutomationSessionRow(Session session) =>
-    session.isJob || AutomationSessionSources.contains(session.source);
+bool isAutomationSessionRow(Session session) => session.isAutomation;
 
 /// IDs a borrar en el servidor, hojas primero.
 ///
