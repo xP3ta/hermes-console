@@ -18,6 +18,7 @@ import '../models/mission_control.dart';
 import '../navigation/chat_route.dart';
 import '../navigation/enclosing_route.dart';
 import '../services/active_chat_service.dart';
+import '../services/active_profile_scope.dart';
 import '../services/cold_start_store.dart';
 import '../services/chat_draft_store.dart';
 import '../services/connection_manager.dart';
@@ -294,6 +295,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Duration _kanbanReconnectDelay = const Duration(seconds: 3);
   int _kanbanEventCursor = 0;
   int _loadGeneration = 0;
+
+  /// The connection's one active-profile source (no copy is kept here). A
+  /// switch starts a new read, whose generation voids any read still on the
+  /// wire for the previous profile, so a late answer never paints.
+  late final ActiveProfileScope _profileScope;
   bool _lifecyclePaused = false;
   bool _disposed = false;
   MissionControlOpenTarget? _pendingTarget;
@@ -347,6 +353,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       _profileAssetsGateway = lease.client;
     }
     _organizations = _organizationStore.load(widget.connection.id);
+    _profileScope = ActiveProfileScope.of(
+      widget.connManager,
+      widget.connection.id,
+    )..addListener(_onActiveProfileChanged);
     WidgetsBinding.instance.addObserver(this);
     _scheduleRosterRefresh();
     _watchLiveChanges();
@@ -453,8 +463,14 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (!identical(next, current)) setState(() => _snapshot = next);
   }
 
+  void _onActiveProfileChanged() {
+    if (_disposed || !mounted) return;
+    unawaited(_load(refresh: _snapshot != null, quiet: true));
+  }
+
   @override
   void dispose() {
+    _profileScope.removeListener(_onActiveProfileChanged);
     _rosterStore.removeListener(_onSharedRoster);
     _disposed = true;
     _live.remove(this);
