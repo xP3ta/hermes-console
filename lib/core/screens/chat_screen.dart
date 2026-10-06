@@ -7998,6 +7998,10 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _loadEarlierMessages() async {
     if (_loadingEarlierMessages.value || !_chat.hasEarlierMessages) return;
     if (_appLocked) return;
+    // Any load (automatic, retry or find paging) disarms the automatic one
+    // until the next pointer down, so a programmatic scroll that follows it
+    // (e.g. revealing a find hit near the top) never fetches another page.
+    _earlierAutoArmed = false;
     _loadingEarlierMessages.value = true;
     if (_coreReadCoverageNoticeDismissed) {
       setState(() => _coreReadCoverageNoticeDismissed = false);
