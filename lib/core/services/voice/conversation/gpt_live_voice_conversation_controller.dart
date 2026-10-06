@@ -67,12 +67,22 @@ class GptLiveVoiceConversationController extends ChangeNotifier
   static const String _noSpokenResult =
       'Hermes finished that request without a spoken result.';
   static final RegExp _sentenceEnd = RegExp(r'(?:[.!?…]["”’)\]]*|\n)(?:\s|$)');
+
+  /// Application-authored instruction that interrupts the voice model's
+  /// current speech. GPT-Live has no `response.cancel` or output-buffer
+  /// clear: the vendor's documented way to stop speech in progress is an
+  /// appended instruction.
+  static const String _hush =
+      'Stop speaking immediately. Do not continue or repeat the previous '
+      'answer. Stay quiet and wait for the user to speak again.';
+
+  /// A whole utterance that ends the conversation (Desktop parity: a bare
+  /// "stop" ends it). "Enough" / "basta" ask for silence instead and go
+  /// through the detector.
   static const Set<String> _bareStopWords = {
     'stop',
     'stop it',
-    'enough',
     'para',
-    'basta',
     'detente',
   };
 
@@ -116,6 +126,10 @@ class GptLiveVoiceConversationController extends ChangeNotifier
   String _partial = '';
   String _userTranscript = '';
   VoiceLiveSpeaker? _lastSpeaker;
+
+  /// The current user utterance already silenced the reply (the delegation
+  /// and the quiet window can both report the same "stop talking").
+  bool _hushedUtterance = false;
 
   @override
   bool active = false;
@@ -437,6 +451,10 @@ class GptLiveVoiceConversationController extends ChangeNotifier
       pauseConversation();
       return;
     }
+    if (command == LocalVoiceCommand.silenceCurrent) {
+      _interruptReply();
+      return;
+    }
     unawaited(_runDelegation(id, text, prompt.voiceContext));
   }
 
@@ -446,14 +464,22 @@ class GptLiveVoiceConversationController extends ChangeNotifier
         .replaceAll(RegExp(r'[^\p{L}\p{N} ]', unicode: true), '')
         .trim();
     if (_bareStopWords.contains(lower)) return LocalVoiceCommand.end;
-    final command = const LocalVoiceCommandDetector().detect(
+    return const LocalVoiceCommandDetector().detect(
       text,
       language: _languageCode(),
     );
-    return switch (command) {
-      LocalVoiceCommand.silenceCurrent => LocalVoiceCommand.end,
-      _ => command,
-    };
+  }
+
+  /// "Stop talking": silences the current reply and keeps the session, the
+  /// microphone and the Hermes turn running. The unspoken rest of the
+  /// current answer is dropped; the next request is spoken normally.
+  void _interruptReply() {
+    final session = _session;
+    if (session == null || _hushedUtterance) return;
+    _hushedUtterance = true;
+    session.instruct(_hush);
+    _clearDelegation();
+    _notify();
   }
 
   Future<void> _runDelegation(
@@ -618,12 +644,16 @@ class GptLiveVoiceConversationController extends ChangeNotifier
     _partial = '';
     _userTranscript = '';
     _lastSpeaker = null;
+    _hushedUtterance = false;
   }
 
   void _onFragment(VoiceLiveFragment fragment) {
     if (!active || _disposed) return;
     if (fragment.speaker == VoiceLiveSpeaker.user) {
-      if (_lastSpeaker != VoiceLiveSpeaker.user) _partial = '';
+      if (_lastSpeaker != VoiceLiveSpeaker.user) {
+        _partial = '';
+        _hushedUtterance = false;
+      }
       _partial += fragment.text;
       _userTranscript = _partial;
       _lastSpeaker = VoiceLiveSpeaker.user;
@@ -641,7 +671,14 @@ class GptLiveVoiceConversationController extends ChangeNotifier
     if (!active || _disposed) return;
     final text = collapseWhitespace(_userTranscript);
     if (text.isEmpty) return;
-    if (_commandFor(text) == LocalVoiceCommand.end) unawaited(exit());
+    switch (_commandFor(text)) {
+      case LocalVoiceCommand.end:
+        unawaited(exit());
+      case LocalVoiceCommand.silenceCurrent:
+        _interruptReply();
+      case LocalVoiceCommand.pause || null:
+        break;
+    }
   }
 
   void _cancelStopTimer() {
