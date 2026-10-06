@@ -32,9 +32,24 @@ Future<void> expectRejected(Future<Object?> write) =>
     expectLater(write, throwsA(isA<LocalConversationWriteRejected>()));
 
 void main() {
-  test('las cuatro superficies delegan en el coordinador compartido', () {
-    const paths = [
+  test('las superficies que borran delegan en el coordinador compartido', () {
+    // Inicio v3 ya no ofrece borrar chats (sin acciones en las filas de
+    // Retomar); no debe tener un camino de borrado propio que se salte el
+    // coordinador.
+    for (final path in const [
       'lib/core/screens/home_dashboard_screen.dart',
+      'lib/core/home/home_now_view.dart',
+      'lib/core/home/home_now.dart',
+      'lib/core/home/home_sources.dart',
+    ]) {
+      final source = File(path).readAsStringSync();
+      expect(
+        source,
+        isNot(matches(RegExp(r'\.deleteSession(WithLinkedCron)?\('))),
+        reason: '$path no debe borrar sesiones por su cuenta',
+      );
+    }
+    const paths = [
       'lib/core/screens/session_list_screen.dart',
       'lib/core/screens/session_detail_screen.dart',
       'lib/core/screens/chat_screen.dart',
@@ -92,19 +107,8 @@ void main() {
     expect(chat, contains('localRecoverySessionId: widget.session.id'));
     expect(chat, contains('clearLocalRecovery: _clearDeletedChatRecovery'));
 
-    final home = File(
-      'lib/core/screens/home_dashboard_screen.dart',
-    ).readAsStringSync();
-    expect(home, isNot(contains('deleteSession: client.deleteSession')));
-    expect(
-      home,
-      contains('final ownerProfile = Session.profileOwner(session.profile);'),
-    );
-    expect(
-      home,
-      contains('client.deleteSession(sessionId, profile: ownerProfile)'),
-    );
-    expect(home, contains('profile: ownerProfile'));
+    // Home (Inicio v3) has no delete path any more; the loop at the top
+    // pins that it never deletes on its own.
 
     final detail = File(
       'lib/core/screens/session_detail_screen.dart',
