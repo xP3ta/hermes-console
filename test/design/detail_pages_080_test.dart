@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/design/hermes_design.dart';
 import 'package:hermes_android/core/screens/memory_screen.dart';
-import 'package:hermes_android/core/screens/skills_screen.dart';
 
 import '../support/design_shots.dart';
 import 'detail_single_scroll_contract_test.dart' show nestedVerticalScrollables;
@@ -25,38 +24,6 @@ const _diff = '''--- a/MEMORY.md
 ''';
 
 void main() {
-  testWidgets('installed skill detail: page, inline status, one scroll', (
-    tester,
-  ) async {
-    final copied = <String>[];
-    await pumpDesignScreen(
-      tester,
-      InstalledSkillDetailPage(
-        name: 'github-pr-workflow',
-        enabled: true,
-        description:
-            'GitHub PR lifecycle: create a branch, commit, open the pull '
-            'request, watch CI and merge. ${'Long description. ' * 30}',
-        category: 'github',
-        bridgeManaged: true,
-        onCopy: (text, _) => copied.add(text),
-      ),
-    );
-    expect(nestedVerticalScrollables(tester), isEmpty);
-    expect(find.text('Activa'), findsNothing); // inside HermesStatusText
-    expect(find.text('Ver todo'), findsOneWidget);
-    await saveDesignShot(tester, 'skill_detail');
-    await tester.tap(find.text('Ver todo'));
-    await tester.pumpAndSettle();
-    expect(nestedVerticalScrollables(tester), isEmpty);
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('installed-skill-copy-remove')),
-      200,
-    );
-    await tester.tap(find.byKey(const ValueKey('installed-skill-copy-remove')));
-    expect(copied, ['npx skills remove github-pr-workflow']);
-  });
-
   testWidgets('memory file detail: page with one primary action', (
     tester,
   ) async {

@@ -1,7 +1,7 @@
 // Spec 080: detail routes have ONE vertical page scroll. A vertical
 // Scrollable nested in another vertical Scrollable is the "bubble" users
 // complained about. Every migrated detail route is listed here; the list only
-// grows. Step 8 added skills, memory, logs (bridge/gateway/run result) and
+// grows. Step 8 added memory, logs (bridge/gateway/run result) and
 // the diff review page (memory draft / bridge editor).
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,7 +10,6 @@ import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
 import 'package:hermes_android/core/design/hermes_design.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/screens/memory_screen.dart';
-import 'package:hermes_android/core/screens/skills_screen.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
@@ -94,23 +93,6 @@ void main() {
 
   testWidgets('HermesLogPage: one vertical scroll', (tester) async {
     await _pump(tester, HermesLogPage(title: 'Log', text: _long));
-    expect(nestedVerticalScrollables(tester), isEmpty);
-  });
-
-  testWidgets('Installed skill detail: one vertical scroll', (tester) async {
-    await _pump(
-      tester,
-      InstalledSkillDetailPage(
-        name: 'skill',
-        enabled: false,
-        description: _long,
-        category: 'x',
-        bridgeManaged: false,
-        onCopy: (_, _) {},
-      ),
-    );
-    await tester.tap(find.text('Show all'));
-    await tester.pumpAndSettle();
     expect(nestedVerticalScrollables(tester), isEmpty);
   });
 

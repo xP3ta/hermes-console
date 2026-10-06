@@ -2825,200 +2825,6 @@
       }
     }
   },
-  "sklStatsApi": "{enabled} activas · {total} total · /api/skills",
-  "@sklStatsApi": {
-    "placeholders": {
-      "enabled": {
-        "type": "int"
-      },
-      "total": {
-        "type": "int"
-      }
-    }
-  },
-  "sklStatsSource": "{total} total · {source}",
-  "@sklStatsSource": {
-    "placeholders": {
-      "total": {
-        "type": "int"
-      },
-      "source": {
-        "type": "String"
-      }
-    }
-  },
-  "sklTabInstalled": "instaladas",
-  "sklTabDiscover": "descubrir",
-  "sklBridgeActiveTooltip": "Gestión nativa activa (bridge)",
-  "sklBridgeDetectedTooltip": "Bridge detectado · pulsa para conectar",
-  "sklBridgeUnavailableTooltip": "Bridge no disponible (gestión solo por comando)",
-  "sklProfileBlockMsg": "Editar skills con el perfil «{profile}» activo tocaría el config global. Cambia al perfil por defecto para editar.",
-  "@sklProfileBlockMsg": {
-    "placeholders": {
-      "profile": {
-        "type": "String"
-      }
-    }
-  },
-  "sklUseDefault": "Usar default",
-  "sklActivate": "Activar skill",
-  "sklDeactivate": "Desactivar skill",
-  "sklActivated": "Skill activada: {name} · reinicia el agente para aplicarlo",
-  "@sklActivated": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklDeactivated": "Skill desactivada: {name} · reinicia el agente para aplicarlo",
-  "@sklDeactivated": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklToggleFailed": "No se pudo cambiar «{name}»",
-  "@sklToggleFailed": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklBridgeError": "Bridge: {msg}",
-  "@sklBridgeError": {
-    "placeholders": {
-      "msg": {
-        "type": "String"
-      }
-    }
-  },
-  "sklError": "Error: {msg}",
-  "@sklError": {
-    "placeholders": {
-      "msg": {
-        "type": "String"
-      }
-    }
-  },
-  "sklRemoveTitle": "Quitar skill",
-  "sklRemoveConfirm": "¿Quitar «{name}» del servidor? Se puede reinstalar luego desde Descubrir.",
-  "@sklRemoveConfirm": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklCancel": "Cancelar",
-  "sklRemove": "Quitar",
-  "sklRemoveNeedsBridge": "Quitar skills requiere el agente local (bridge) conectado.",
-  "sklNoBridgeConnection": "No hay conexión con el agente local (bridge).",
-  "sklBuiltinArchived": "Skill builtin archivada: {name}",
-  "@sklBuiltinArchived": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklRemoved": "Skill quitada: {name}",
-  "@sklRemoved": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklRemoveFailed": "No se pudo quitar «{name}» (rc {rc})",
-  "@sklRemoveFailed": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      },
-      "rc": {
-        "type": "String"
-      }
-    }
-  },
-  "sklNoInstallSource": "Esta skill no tiene un origen owner/repo instalable.",
-  "sklInstallTitle": "Instalar {name}",
-  "@sklInstallTitle": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklInstallWarning": "⚠ Una skill puede ejecutar código en tu servidor. Instala solo skills de fuentes en las que confíes.\n\n{cmd}",
-  "@sklInstallWarning": {
-    "placeholders": {
-      "cmd": {
-        "type": "String"
-      }
-    }
-  },
-  "sklInstall": "Instalar",
-  "sklInstalled": "Skill instalada: {name}",
-  "@sklInstalled": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklInstallFailed": "Falló la instalación (rc {rc})",
-  "@sklInstallFailed": {
-    "placeholders": {
-      "rc": {
-        "type": "String"
-      }
-    }
-  },
-  "sklDetailHintBridge": "Activa/desactiva con el interruptor de la lista y bórrala con el icono de papelera. También puedes copiar los comandos.",
-  "sklDetailHintNoBridge": "/api/skills es GET-only. Conecta el Mobile Bridge (icono nube) para activar/desactivar, instalar y borrar nativamente, o copia los comandos abajo.",
-  "sklModeNative": "gestión nativa (bridge)",
-  "sklModeCli": "gestión via CLI",
-  "sklRecommended": "recomendadas · más usadas en skills.sh",
-  "sklDiscoverTitle": "descubrir skills",
-  "sklSearchHintBridge": "busca skills por nombre (ej: git, pdf, search)",
-  "sklSearchHintCli": "busca en el registro de skills.sh",
-  "sklWebOnlyTitle": "catálogo solo vía web",
-  "sklWebOnlyBody": "skills.sh no ofrece API pública — no necesitas ninguna clave.\nExplora el catálogo en el navegador y copia el comando\nde instalación para ejecutarlo en tu gateway.",
-  "sklOpenSkillsSh": "abrir skills.sh",
-  "sklNoResultsTitle": "sin resultados",
-  "sklNoResultsFor": "no se encontraron skills para \"{query}\"",
-  "@sklNoResultsFor": {
-    "placeholders": {
-      "query": {
-        "type": "String"
-      }
-    }
-  },
-  "sklSearchOnline": "buscar en skills.sh",
-  "sklInstalling": "instalando…",
-  "sklInstallButton": "instalar",
-  "sklCommandButton": "comando",
-  "sklPendingReload": "Cambios de skills pendientes. Reinicia el agente en Ajustes › Mantenimiento para aplicarlos.",
-  "sklNoApiNote": "skills.sh no tiene API pública (no hace falta ninguna clave). Explora el catálogo en el navegador.",
-  "sklOpen": "abrir",
-  "sklBridgeDetectedTitle": "Mobile Bridge detectado",
-  "sklBridgeDisabledTitle": "Gestión de skills desde el móvil desactivada",
-  "sklBridgeCanView": "Puedes ver la lista de skills instaladas en el gateway.",
-  "sklBridgeNoActions": "Sin el bridge NO puedes activar/desactivar, instalar ni quitar skills desde la app (solo copiar los comandos).",
-  "sklBridgeRunningNote": "El bridge se autoconecta cuando la instancia tiene el token del gateway (API_SERVER_KEY). Si no, púlsalo para conectarlo a mano.",
-  "sklBridgeNotRunningNote": "El Mobile Bridge es el puente que da control de skills a la app; requiere el agente local Hermes configurado desde esta app.",
-  "sklBridgeConnect": "Conectar bridge",
-  "sklBridgeConfigure": "Configurar bridge",
-  "sklCliCatalogIntro": "skills.sh funciona como catálogo web — no requiere API key. Explora en el navegador y genera aquí el comando de instalación para tu servidor.",
-  "sklRepoLabel": "owner/repo del skill",
-  "sklRepoHint": "p.ej. vercel-labs/agent-skills",
-  "sklCopyCommand": "Copiar comando",
-  "sklCommandCopied": "Comando copiado — ejecútalo en el servidor Hermes",
-  "sklCliOnlyNote": "Solo copia de comando: el gateway no expone un endpoint seguro de instalación remota (verificado), así que la app no envía nada al servidor.",
-  "sklSecurityWarning": "Los skills ejecutan código en tu servidor con los permisos del agente. Revisa el repositorio antes de instalar nada.",
   "mdlVision": "Visión (imágenes)",
   "mdlWebExtract": "Extracción web",
   "mdlCompression": "Compresión de contexto",
@@ -7599,13 +7405,6 @@
   "installCustomModel": "Modelo personalizado",
   "installUseCloudApi": "Usar API en la nube",
   "installStartWithoutLocalModel": "Arrancar sin modelo local",
-  "skillsRefreshInstalled": "Actualizar instaladas",
-  "skillsNoneFound": "no se encontraron skills",
-  "skillsNoneInstalled": "no hay skills instaladas en este gateway",
-  "skillsSearchInstalledHint": "buscar skills instaladas…",
-  "skillsNoMatch": "sin coincidencias",
-  "skillsNoMatchBody": "ninguna skill coincide con tu búsqueda",
-  "skillsSearchHubHint": "buscar en skills.sh…",
   "liveCompacting": "Compactando",
   "liveWaitingForUser": "Esperando tu respuesta",
   "liveMoreBackground": "+{count} en segundo plano",
@@ -8648,12 +8447,6 @@
   "aboutSectionApp": "App",
   "aboutSectionLegal": "Licencias y privacidad",
   "aboutSectionLinks": "Enlaces",
-  "designEnabled": "Activa",
-  "designDisabled": "Desactivada",
-  "sklDetailWhat": "Qué hace",
-  "sklDetailManage": "Gestión",
-  "sklCopyInstallCmd": "Copiar comando de instalación",
-  "sklCopyRemoveCmd": "Copiar comando para quitarla",
   "memDetailFile": "Archivo",
   "designDetails": "Detalles",
   "cphTitle": "Capacidades",
@@ -8692,7 +8485,6 @@
   "cphMore": "Más opciones",
   "cphMenuUpdateSkills": "Actualizar skills",
   "cphMenuAdvanced": "Ajustes avanzados",
-  "cphMenuClassicSkills": "Skills clásicas",
   "cphEmptyCatalog": "Ninguna capacidad coincide",
   "cphEmptyCatalogBody": "Prueba otra búsqueda o quita los filtros.",
   "cphEmptyInstalled": "Aún no hay nada instalado",
