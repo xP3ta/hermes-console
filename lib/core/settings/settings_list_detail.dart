@@ -3,6 +3,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../theme/motion.dart';
 import '../utils/responsive.dart';
 import 'settings_deep_link.dart';
 import 'settings_search.dart';
@@ -101,7 +102,8 @@ class SettingsListDetailState extends State<SettingsListDetail> {
           return [
             PageRouteBuilder<void>(
               settings: const RouteSettings(name: 'settings-category'),
-              pageBuilder: (_, _, _) => const _CategoryPage(),
+              pageBuilder: (_, _, _) =>
+                  const CoveredRouteMediaQueryFreeze(child: _CategoryPage()),
               transitionDuration: Duration.zero,
               reverseTransitionDuration: Duration.zero,
             ),
