@@ -94,17 +94,15 @@ void main() {
         ),
       ),
     );
-    await tester.tap(
-      find.byKey(const ValueKey('room-attachment-download-/srv/photo.png')),
-    );
+    // The thumbnail is fetched on its own: no tap needed.
     await tester.pump();
     await tester.pump();
 
     final thumb = tester.widget<Image>(find.byType(Image));
-    // 48 logical px × 3 = 144 physical px for the short side.
-    expect(thumb.image, CoverResizeImage(FileImage(file), target: 144));
+    // 160 logical px × 3 = 480 physical px for the short side.
+    expect(thumb.image, CoverResizeImage(FileImage(file), target: 480));
     final box = tester.getSize(find.byType(Image));
-    expect(box, const Size(48, 48));
+    expect(box, const Size(160, 160));
   });
 
   testWidgets('lo1216 a pending room message shows the sent-style '
@@ -149,9 +147,9 @@ void main() {
     final thumb = tester.widget<Image>(find.byType(Image));
     expect(
       thumb.image,
-      CoverResizeImage(FileImage(File(photo.localPath)), target: 144),
+      CoverResizeImage(FileImage(File(photo.localPath)), target: 480),
     );
-    expect(tester.getSize(find.byType(Image)), const Size(48, 48));
+    expect(tester.getSize(find.byType(Image)), const Size(160, 160));
     expect(find.text('notes.pdf'), findsOneWidget);
     // Nothing is on the server yet: no download/open/share to offer.
     expect(

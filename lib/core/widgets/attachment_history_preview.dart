@@ -13,6 +13,7 @@ import '../services/generated_media_service.dart';
 import '../theme/app_theme.dart';
 import 'artifact_viewer/artifact_viewer_screen.dart';
 import 'attachment_card.dart';
+import 'attachment_preview.dart';
 import 'hermes_app_bar.dart';
 import 'hermes_notice.dart';
 
@@ -148,6 +149,14 @@ class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
     );
   }
 
+  bool get _playsInline => switch (attachmentPreviewKindFor(
+    widget.name,
+    widget.reference.mimeType,
+  )) {
+    AttachmentPreviewKind.video || AttachmentPreviewKind.audio => true,
+    _ => false,
+  };
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<File?>(
@@ -156,6 +165,16 @@ class _AttachmentHistoryCardState extends State<AttachmentHistoryCard> {
       builder: (context, snapshot) {
         final file = snapshot.data;
         final available = file != null;
+        if (file != null && _playsInline) {
+          // Videos and audio play in place (poster frame, play, duration)
+          // instead of opening a byte dump.
+          return AttachmentPreview(
+            name: widget.name,
+            mimeType: widget.reference.mimeType,
+            sizeLabel: widget.sizeLabel,
+            file: file,
+          );
+        }
         final thumbnail =
             available && widget.reference.type == AttachmentType.image
             ? file

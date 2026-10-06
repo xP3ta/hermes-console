@@ -18,10 +18,35 @@ String _formatPlaybackTime(Duration d) {
 
 /// Inline, non-autoplaying player for generated videos cached in app-private
 /// storage. Playback is paused whenever the app leaves the foreground.
+///
+/// Every mount owns a fresh [VideoPlayerController]: the lazy transcript
+/// disposes and rebuilds rows freely (leaving the chat, scrolling, a new turn
+/// shifting rows), so nothing may keep using a controller after its card is
+/// gone. The last position per file is remembered so a remounted row resumes
+/// where the user left it instead of jumping back to the first frame.
 class GeneratedVideoCard extends StatefulWidget {
   final File file;
 
   const GeneratedVideoCard({super.key, required this.file});
+
+  static const int _positionMemoCapacity = 24;
+
+  /// Insertion-ordered: the first entry is the least recently used.
+  static final Map<String, Duration> _positions = <String, Duration>{};
+
+  @visibleForTesting
+  static void clearPlaybackMemoryForTesting() => _positions.clear();
+
+  static Duration? _recallPosition(String path) => _positions[path];
+
+  static void _rememberPosition(String path, Duration position) {
+    _positions.remove(path);
+    if (position <= Duration.zero) return;
+    _positions[path] = position;
+    while (_positions.length > _positionMemoCapacity) {
+      _positions.remove(_positions.keys.first);
+    }
+  }
 
   @override
   State<GeneratedVideoCard> createState() => _GeneratedVideoCardState();
@@ -48,9 +73,7 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.file.path != widget.file.path) {
       _generation++;
-      final previous = _controller;
-      _controller = null;
-      if (previous != null) unawaited(previous.dispose());
+      _releaseController(rememberAs: oldWidget.file.path);
       _error = null;
       _initializing = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -59,12 +82,41 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
     }
   }
 
+  /// Detaches and disposes the current controller, remembering where it was.
+  void _releaseController({String? rememberAs}) {
+    final previous = _controller;
+    _controller = null;
+    if (previous == null) return;
+    previous.removeListener(_onControllerValue);
+    if (previous.value.isInitialized) {
+      GeneratedVideoCard._rememberPosition(
+        rememberAs ?? widget.file.path,
+        previous.value.position,
+      );
+    }
+    unawaited(previous.dispose());
+  }
+
+  /// A platform failure after initialization (decoder or surface lost, e.g.
+  /// on resume) turns the value erroneous. Without this the card kept the
+  /// dead frame and its play button did nothing visible.
+  void _onControllerValue() {
+    final controller = _controller;
+    if (controller == null || !mounted || !controller.value.hasError) return;
+    _generation++;
+    controller.removeListener(_onControllerValue);
+    _controller = null;
+    unawaited(controller.dispose());
+    setState(() {
+      _error = controller.value.errorDescription ?? 'playback error';
+      _initializing = false;
+    });
+  }
+
   Future<void> _initialize({bool autoplay = true}) async {
     if (_initializing) return;
     final generation = ++_generation;
-    final previous = _controller;
-    _controller = null;
-    await previous?.dispose();
+    _releaseController();
     if (!mounted || generation != _generation) return;
     setState(() {
       _initializing = true;
@@ -78,10 +130,17 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
         return;
       }
       await controller.setLooping(false);
+      final resumeAt = GeneratedVideoCard._recallPosition(widget.file.path);
+      if (resumeAt != null &&
+          resumeAt > Duration.zero &&
+          resumeAt < controller.value.duration) {
+        await controller.seekTo(resumeAt);
+      }
       if (!mounted || generation != _generation) {
         await controller.dispose();
         return;
       }
+      controller.addListener(_onControllerValue);
       setState(() {
         _controller = controller;
         _initializing = false;
@@ -109,9 +168,30 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _generation++;
-    final controller = _controller;
-    if (controller != null) unawaited(controller.dispose());
+    _releaseController();
     super.dispose();
+  }
+
+  /// Full screen gets its own controller (see [showVideoViewer]); the inline
+  /// one only hands over its position and picks it back up on return.
+  Future<void> _openFullscreen() async {
+    final controller = _controller;
+    final path = widget.file.path;
+    var startAt = Duration.zero;
+    if (controller != null && controller.value.isInitialized) {
+      startAt = controller.value.position;
+      await controller.pause();
+    }
+    if (!mounted) return;
+    final endedAt = await showVideoViewer(
+      context,
+      widget.file,
+      startAt: startAt,
+    );
+    if (endedAt != null) GeneratedVideoCard._rememberPosition(path, endedAt);
+    final current = _controller;
+    if (!mounted || endedAt == null || current == null) return;
+    if (current.value.isInitialized) await current.seekTo(endedAt);
   }
 
   Future<void> _togglePlayback() async {
@@ -257,11 +337,7 @@ class _GeneratedVideoCardState extends State<GeneratedVideoCard>
                           _VideoOverlayIconButton(
                             icon: Icons.fullscreen_rounded,
                             tooltip: strings.genVideoFullscreen,
-                            onPressed: () => showVideoViewer(
-                              context,
-                              widget.file,
-                              controller,
-                            ),
+                            onPressed: () => unawaited(_openFullscreen()),
                           ),
                         ],
                       ),
@@ -402,100 +478,174 @@ class _VideoOverlayIconButton extends StatelessWidget {
 /// floating playback bar (play/pause, accent scrubber, times) over black,
 /// with no extra container.
 ///
-/// Reuses the [controller] the card already created and initialized —
-/// playback/decoding is entirely owned by [GeneratedVideoCard]; this route
-/// only reads its [ValueListenableBuilder] state and calls the same
-/// play/pause/seekTo controls the card's own toggle already uses.
-Future<void> showVideoViewer(
+/// The route creates, plays and disposes its OWN controller. It used to
+/// borrow the inline card's controller, and the lazy transcript disposes
+/// that card whenever it rebuilds or recycles the row underneath the open
+/// viewer, which left the viewer driving a disposed player: play did nothing.
+/// Completes with the last position so the caller can resume from there.
+Future<Duration?> showVideoViewer(
   BuildContext context,
-  File file,
-  VideoPlayerController controller,
-) {
-  return Navigator.of(context).push(
-    PageRouteBuilder<void>(
+  File file, {
+  Duration startAt = Duration.zero,
+}) {
+  return Navigator.of(context).push<Duration>(
+    PageRouteBuilder<Duration>(
       opaque: false,
       barrierColor: Colors.black,
       barrierDismissible: true,
       transitionDuration: const Duration(milliseconds: 180),
       pageBuilder: (ctx, anim, _) => FadeTransition(
         opacity: anim,
-        child: Scaffold(
-          backgroundColor: Colors.black,
-          body: SafeArea(
-            child: Stack(
-              key: const ValueKey<String>('generated-video-viewer-safe-area'),
-              children: [
-                Positioned.fill(
-                  child: GestureDetector(
-                    onTap: () {
-                      if (controller.value.isPlaying) {
-                        controller.pause();
-                      } else {
-                        controller.play();
-                      }
-                    },
-                    child: Center(
-                      child: AspectRatio(
-                        aspectRatio: controller.value.aspectRatio,
-                        child: VideoPlayer(controller),
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  left: 8,
-                  child: Row(
-                    children: [
-                      Builder(
-                        builder: (innerCtx) => IconButton(
-                          icon: const Icon(
-                            Icons.download_rounded,
-                            color: Colors.white,
-                          ),
-                          tooltip: Strings.of(innerCtx).imgSaveToGallery,
-                          onPressed: () =>
-                              saveMediaToGallery(innerCtx, file, isVideo: true),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(
-                          Icons.share_outlined,
-                          color: Colors.white,
-                        ),
-                        tooltip: Strings.of(ctx).commonShare,
-                        onPressed: () => shareMediaFile(file),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white),
-                        tooltip: Strings.of(ctx).commonClose,
-                        onPressed: () => Navigator.of(ctx).pop(),
-                      ),
-                    ],
-                  ),
-                ),
-                Positioned(
-                  left: 20,
-                  right: 20,
-                  bottom: 20,
-                  child: _VideoViewerPlaybackBar(controller: controller),
-                ),
-              ],
-            ),
-          ),
-        ),
+        child: _GeneratedVideoViewer(file: file, startAt: startAt),
       ),
     ),
   );
+}
+
+class _GeneratedVideoViewer extends StatefulWidget {
+  const _GeneratedVideoViewer({required this.file, required this.startAt});
+
+  final File file;
+  final Duration startAt;
+
+  @override
+  State<_GeneratedVideoViewer> createState() => _GeneratedVideoViewerState();
+}
+
+class _GeneratedVideoViewerState extends State<_GeneratedVideoViewer> {
+  late final VideoPlayerController _controller = VideoPlayerController.file(
+    widget.file,
+  );
+  bool _ready = false;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_start());
+  }
+
+  Future<void> _start() async {
+    try {
+      await _controller.initialize();
+      if (!mounted) return;
+      if (widget.startAt > Duration.zero &&
+          widget.startAt < _controller.value.duration) {
+        await _controller.seekTo(widget.startAt);
+      }
+      if (!mounted) return;
+      setState(() => _ready = true);
+      await _controller.play();
+    } catch (error) {
+      if (mounted) setState(() => _error = error);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_controller.value.isInitialized) {
+      GeneratedVideoCard._rememberPosition(
+        widget.file.path,
+        _controller.value.position,
+      );
+    }
+    unawaited(_controller.dispose());
+    super.dispose();
+  }
+
+  void _close() {
+    Navigator.of(
+      context,
+    ).pop(_controller.value.isInitialized ? _controller.value.position : null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    final controller = _controller;
+    final file = widget.file;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          key: const ValueKey<String>('generated-video-viewer-safe-area'),
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () {
+                  if (!_ready) return;
+                  if (controller.value.isPlaying) {
+                    controller.pause();
+                  } else {
+                    controller.play();
+                  }
+                },
+                child: Center(
+                  child: _error != null
+                      ? Icon(
+                          Icons.error_outline_rounded,
+                          color: Colors.white70,
+                          semanticLabel: strings.genMediaError,
+                        )
+                      : !_ready
+                      ? const CircularProgressIndicator(strokeWidth: 2)
+                      : AspectRatio(
+                          aspectRatio: controller.value.aspectRatio,
+                          child: VideoPlayer(controller),
+                        ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              left: 8,
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(
+                      Icons.download_rounded,
+                      color: Colors.white,
+                    ),
+                    tooltip: strings.imgSaveToGallery,
+                    onPressed: () =>
+                        saveMediaToGallery(context, file, isVideo: true),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.share_outlined, color: Colors.white),
+                    tooltip: strings.commonShare,
+                    onPressed: () => shareMediaFile(file),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    tooltip: strings.commonClose,
+                    onPressed: _close,
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              left: 20,
+              right: 20,
+              bottom: 20,
+              child: _VideoViewerPlaybackBar(
+                key: const ValueKey<String>('generated-video-viewer-playback'),
+                controller: controller,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// Floating playback bar for the fullscreen viewer: play/pause, an
 /// accent-colored scrubber and elapsed/total times — no background
 /// container, just white/accent controls over the black viewer.
 class _VideoViewerPlaybackBar extends StatelessWidget {
-  const _VideoViewerPlaybackBar({required this.controller});
+  const _VideoViewerPlaybackBar({super.key, required this.controller});
 
   final VideoPlayerController controller;
 

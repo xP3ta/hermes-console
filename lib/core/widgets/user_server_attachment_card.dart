@@ -11,6 +11,7 @@ import '../services/generated_media_service.dart';
 import 'artifact_viewer/artifact_viewer_screen.dart';
 import 'attachment_card.dart';
 import 'attachment_history_preview.dart';
+import 'attachment_preview.dart';
 import 'hermes_notice.dart';
 
 /// One `@image:<path>` / `@file:<path>` directive line that Hermes persists in
@@ -126,6 +127,21 @@ class _UserServerAttachmentCardState extends State<UserServerAttachmentCard> {
       widget.localReference?.type == AttachmentType.image ||
       (widget.localReference == null && widget.serverRef.isImage);
 
+  String get _mimeType =>
+      widget.localReference?.mimeType ??
+      widget.serverRef.fetchReference?.mimeType ??
+      '';
+
+  /// Videos (and audio) preview in place like images do, so they are
+  /// fetched eagerly through the same bounded slots.
+  bool get _isPlayable =>
+      switch (attachmentPreviewKindFor(widget.name, _mimeType)) {
+        AttachmentPreviewKind.video || AttachmentPreviewKind.audio => true,
+        _ => false,
+      };
+
+  bool get _isEager => _isImage || _isPlayable;
+
   String get _memoKey => '${widget.cacheScope}\u0000${widget.serverRef.path}';
 
   @override
@@ -185,7 +201,7 @@ class _UserServerAttachmentCardState extends State<UserServerAttachmentCard> {
         ? _ServerAttachmentStatus.serverOnly
         : _failed.contains(_memoKey)
         ? _ServerAttachmentStatus.unavailable
-        : _isImage
+        : _isEager
         ? _ServerAttachmentStatus.loading
         : _ServerAttachmentStatus.idle;
     unawaited(_resolveAsync(generation, reference));
@@ -212,7 +228,7 @@ class _UserServerAttachmentCardState extends State<UserServerAttachmentCard> {
       }
     }
     if (reference == null ||
-        !_isImage ||
+        !_isEager ||
         _status != _ServerAttachmentStatus.loading) {
       return;
     }
@@ -369,6 +385,14 @@ class _UserServerAttachmentCardState extends State<UserServerAttachmentCard> {
         strings.cm1215AttachmentUnavailable,
       _ServerAttachmentStatus.serverOnly => strings.cm1215AttachmentServerOnly,
     };
+    if (ready && _isPlayable) {
+      return AttachmentPreview(
+        name: widget.name,
+        mimeType: _mimeType,
+        sizeLabel: widget.sizeLabel,
+        file: file,
+      );
+    }
     final mayOpen = ready || _status == _ServerAttachmentStatus.idle;
     final card = AttachmentCard(
       name: widget.name,
