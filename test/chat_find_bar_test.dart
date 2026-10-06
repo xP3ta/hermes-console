@@ -24,7 +24,6 @@ import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/main.dart';
-import 'support/chat_header_menu.dart';
 
 SavedConnection _connection() => SavedConnection(
   id: 'conn-chat-find',

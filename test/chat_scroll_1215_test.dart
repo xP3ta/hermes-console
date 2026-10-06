@@ -30,7 +30,6 @@ import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/main.dart';
 import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 
-import 'support/chat_header_menu.dart';
 
 // ignore: unused_element
 ScrollPosition _primaryVerticalScrollPosition(

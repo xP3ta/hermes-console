@@ -7109,9 +7109,9 @@ class _ChatScreenState extends State<ChatScreen>
   /// pill with the face sitting on it. The pill names what is live
   /// («Pensando… 0:54», «terminal · flutter test 0:44 3/5»), «Te necesita»
   /// in amber, «Sin conexión» in red, or the name with a chevron when idle.
-  /// A tap opens the activity panel (idle: the chat menu with search, model
-  /// and controls, which the header no longer shows as buttons); a long
-  /// press always opens that menu.
+  /// A tap opens the activity panel. Search and conversation settings live
+  /// in the notch on the composer, the model in the bottom status pill (Bot
+  /// Chat: in the notch sheet), so the pill opens no menu of its own.
   Widget _buildFloatingHeader(Strings str, ConnectionManager? connManager) {
     final botSurface = _isBotChatSurface;
     final navigator = Navigator.of(context);
@@ -7196,15 +7196,13 @@ class _ChatScreenState extends State<ChatScreen>
             ValueListenableBuilder<ChatTransportStatus>(
               valueListenable: _chat.transportStatusListenable,
               builder: (context, transport, _) {
-                final menu = _showHeaderMenu;
                 if (transport.state == ChatTransportState.offline) {
                   return FloatingHeaderPill(
                     key: const ValueKey('chat-header-pill'),
                     text: str.fh1215Offline,
                     tone: FloatingHeaderTone.offline,
                     semanticsLabel: '$name, ${str.fh1215Offline}',
-                    onTap: openPanel ?? menu,
-                    onLongPress: menu,
+                    onTap: openPanel,
                   );
                 }
                 if (attention) {
@@ -7214,8 +7212,7 @@ class _ChatScreenState extends State<ChatScreen>
                     tone: FloatingHeaderTone.waiting,
                     semanticsLabel: '$name, ${str.roomStateNeedsYou}',
                     hint: str.liveShowActivity,
-                    onTap: openPanel ?? menu,
-                    onLongPress: menu,
+                    onTap: openPanel,
                   );
                 }
                 if (model != null) {
@@ -7223,7 +7220,6 @@ class _ChatScreenState extends State<ChatScreen>
                     model: model,
                     now: now,
                     onTap: openPanel,
-                    onLongPress: menu,
                     inHeader: true,
                   );
                 }
@@ -7231,106 +7227,13 @@ class _ChatScreenState extends State<ChatScreen>
                   key: const ValueKey('chat-header-pill'),
                   text: name,
                   semanticsLabel: name,
-                  hint: str.chaControlTitle,
-                  onTap: menu,
-                  onLongPress: menu,
+                  hint: openPanel == null ? null : str.liveShowActivity,
+                  onTap: openPanel,
                 );
               },
             ),
       ),
     );
-  }
-
-  /// fh1215: the model entry of the header menu names the model in use.
-  Widget _modelMenuLabel(Strings str) {
-    final colors = Theme.of(context).hermes;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          str.chaModelSheetTitle,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        Text(
-          _activeModelLabel,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
-        ),
-      ],
-    );
-  }
-
-  /// fh1215: the chat menu that replaces the header's search, model and
-  /// ⋮ buttons until the notch sheet hosts them.
-  Future<void> _showHeaderMenu() async {
-    final str = Strings.of(context);
-    releaseTextFocusIfKeyboardHidden(context);
-    final size = MediaQuery.sizeOf(context);
-    final top = _floatingTopInset > 0
-        ? _floatingTopInset - 6
-        : MediaQuery.viewPaddingOf(context).top + 56;
-    final action = await showMenu<_BotChatHeaderAction>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        size.width / 2 - 110,
-        top,
-        size.width / 2 - 110,
-        0,
-      ),
-      items: [
-        for (final (action, key, icon, label) in [
-          (
-            _BotChatHeaderAction.find,
-            'chat-menu-find',
-            Icons.search_rounded,
-            str.cs1215FindAction,
-          ),
-          (
-            _BotChatHeaderAction.model,
-            'chat-menu-model',
-            Icons.tune_rounded,
-            str.chaModelSheetTitle,
-          ),
-          (
-            _BotChatHeaderAction.controls,
-            'chat-menu-controls',
-            Icons.settings_outlined,
-            str.chaControlTitle,
-          ),
-        ])
-          PopupMenuItem(
-            key: ValueKey(key),
-            value: action,
-            child: Row(
-              children: [
-                Icon(icon, size: 20),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: action == _BotChatHeaderAction.model
-                      ? _modelMenuLabel(str)
-                      : Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-    if (!mounted || action == null) return;
-    switch (action) {
-      case _BotChatHeaderAction.find:
-        _openFind();
-      case _BotChatHeaderAction.model:
-        _showModelSheet();
-      case _BotChatHeaderAction.controls:
-        unawaited(_showChatControlSheet());
-    }
   }
 
   void _onBotHeaderCompactChanged() {
@@ -14078,84 +13981,6 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
-  /// The Bot Chat overflow (find, model, controls). [floating] gives it the
-  /// round surface-tinted look of the floating header.
-  Widget _botOverflowMenu(Strings str, {bool floating = false}) =>
-      PopupMenuButton<_BotChatHeaderAction>(
-        key: const ValueKey('bot-chat-overflow-appbar'),
-        tooltip: str.chaControlTitle,
-        icon: Icon(
-          floating ? Icons.more_horiz_rounded : Icons.more_vert_rounded,
-          size: floating ? 20 : null,
-        ),
-        style: floating
-            ? FloatingChatHeader.buttonStyle(Theme.of(context).hermes)
-            : null,
-        onSelected: (action) {
-          switch (action) {
-            case _BotChatHeaderAction.find:
-              _openFind();
-            case _BotChatHeaderAction.model:
-              _showModelSheet();
-            case _BotChatHeaderAction.controls:
-              unawaited(_showChatControlSheet());
-          }
-        },
-        itemBuilder: (context) => [
-          PopupMenuItem(
-            key: const ValueKey('bot-chat-find-action'),
-            value: _BotChatHeaderAction.find,
-            child: Row(
-              children: [
-                const Icon(Icons.search_rounded, size: 20),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    str.cs1215FindAction,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          PopupMenuItem(
-            key: const ValueKey('bot-chat-model-action'),
-            value: _BotChatHeaderAction.model,
-            child: Row(
-              children: [
-                const Icon(Icons.tune_rounded, size: 20),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    str.chaModelSheetTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          PopupMenuItem(
-            key: const ValueKey('bot-chat-control-action'),
-            value: _BotChatHeaderAction.controls,
-            child: Row(
-              children: [
-                const Icon(Icons.settings_outlined, size: 20),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    str.chaControlTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      );
-
   @override
   Widget build(BuildContext context) {
     widget.performanceProbe?.screenBuilds++;
@@ -19227,8 +19052,6 @@ class _UserTurnGroup {
 
   _UserTurnGroup(this.primary);
 }
-
-enum _BotChatHeaderAction { find, model, controls }
 
 /// Cabecera del Bot Chat: avatar + nombre del bot + estado vivo, con el mismo
 /// protagonismo que la cabecera de una Room. El modelo y los controles viven

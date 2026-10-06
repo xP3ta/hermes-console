@@ -151,7 +151,6 @@ import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
 
 import 'support/inter_font.dart';
 import 'support/provider_logo_probe.dart';
-import 'support/chat_header_menu.dart';
 
 AgentProfileAvatar _testProfileAvatar() => AgentProfileAvatar.fromDataUri(
   'data:image/png;base64,'
@@ -14944,10 +14943,6 @@ void main() {
               await tester.pump();
               expect(focus.hasFocus, isTrue);
 
-              // fh1215: model and controls live in the header pill's menu.
-              if (trigger().evaluate().isEmpty) {
-                await openChatHeaderMenu(tester);
-              }
               await tester.tap(trigger());
               await settle(tester);
               expect(surface(), findsWidgets);
@@ -21394,19 +21389,33 @@ void main() {
           await tester.pump(const Duration(milliseconds: 240));
         }
         expect(chat.hasDesktopRuntime, isTrue);
-        // fh1215: the model left the header; the pill's menu shows it.
+        // fh1215 + notch: the model left the header; Bot Chat has no status
+        // pill, so its model sheet opens from the notch sheet and names the
+        // model in use.
         Future<String> subtitle() async {
-          await openChatHeaderMenu(tester);
+          await tester.tap(find.byKey(const ValueKey('chat-notch')));
+          await tester.pump();
+          await tester.pump(kChatNotchSheetOpen);
+          final row = find.byKey(const ValueKey('chat-control-model'));
+          await tester.ensureVisible(row);
+          await tester.pump();
+          await tester.tap(row);
+          for (var frame = 0; frame < 8; frame++) {
+            await tester.pump(const Duration(milliseconds: 50));
+          }
           final text = tester
               .widgetList<Text>(
                 find.descendant(
-                  of: find.byKey(const ValueKey('chat-menu-model')),
+                  of: find.byKey(const ValueKey('chat-model-dialog')),
                   matching: find.byType(Text),
                 ),
               )
               .map((t) => t.data ?? '')
               .join(' ');
-          await closeChatHeaderMenu(tester);
+          await tester.binding.handlePopRoute();
+          for (var frame = 0; frame < 8; frame++) {
+            await tester.pump(const Duration(milliseconds: 50));
+          }
           return text;
         }
 
@@ -32780,8 +32789,8 @@ void main() {
     await tester.pump();
 
     // Spec 070 S2: face + name, and the composer speaks to the bot. fh1215:
-    // the model left the header (the bottom status pill takes it); it stays
-    // one tap away in the header pill's menu.
+    // the model left the header; Bot Chat has no status pill, so it stays
+    // one tap away in the notch sheet. The idle header pill opens no menu.
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('chat-header-pill')),
@@ -32789,10 +32798,11 @@ void main() {
       ),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(const ValueKey('chat-header-pill')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('chat-menu-model')), findsOneWidget);
-    await tester.tapAt(const Offset(4, 400));
+    await tester.tap(find.byKey(const ValueKey('chat-notch')));
+    await tester.pump();
+    await tester.pump(kChatNotchSheetOpen);
+    expect(find.byKey(const ValueKey('chat-control-model')), findsOneWidget);
+    await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
     final field = tester.widget<TextField>(
       find.descendant(
@@ -32961,18 +32971,17 @@ void main() {
         find.byKey(const ValueKey('chat-new-session')),
       );
       expect(plus.dx, greaterThan(tester.getRect(pill).right));
-      // Search, model and controls stay one tap away on the idle pill.
+      // One entry each: the idle pill opens no menu; search and controls
+      // live in the notch, the model in the bottom status pill.
       await tester.tap(pill);
       await tester.pumpAndSettle();
-      for (final key in [
-        'chat-menu-find',
-        'chat-menu-model',
-        'chat-menu-controls',
-      ]) {
-        expect(find.byKey(ValueKey(key)), findsOneWidget, reason: key);
-      }
-      await tester.tap(find.byKey(const ValueKey('chat-menu-controls')));
-      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('chat-control-dialog')), findsNothing);
+      expect(find.byKey(const ValueKey('chat-model-dialog')), findsNothing);
+      expect(find.byKey(const ValueKey('status-pill-model')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('chat-notch')));
+      await tester.pump();
+      await tester.pump(kChatNotchSheetOpen);
+      expect(find.byKey(const ValueKey('chat-control-find')), findsOneWidget);
       expect(find.text('Ajustes de esta conversación'), findsWidgets);
       expect(tester.takeException(), isNull);
     });
