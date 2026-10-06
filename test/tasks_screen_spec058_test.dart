@@ -14,6 +14,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/core/widgets/console_loader.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'support/pump_until_loaded.dart';
 
 void main() {
   final connection = SavedConnection(
@@ -53,7 +54,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
   }
 
   testWidgets(
@@ -134,7 +135,7 @@ void main() {
       );
 
       firstDetail.complete(http.Response('{}', 500));
-      await tester.pumpAndSettle();
+      await pumpUntilLoaded(tester);
       expect(
         find.byKey(const ValueKey('kanban-task-detail-surface')),
         findsOneWidget,
@@ -145,7 +146,7 @@ void main() {
       );
 
       await tester.tap(find.byKey(const ValueKey('kanban-task-detail-retry')));
-      await tester.pumpAndSettle();
+      await pumpUntilLoaded(tester);
 
       expect(find.text('Full body from task detail'), findsOneWidget);
       expect(
@@ -220,13 +221,13 @@ void main() {
     expect(boardReads, 1);
 
     await tester.tap(find.byKey(const ValueKey('kanban-filter-button')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.enterText(
       find.byKey(const ValueKey('kanban-search-field')),
       'needle',
     );
     await tester.tap(find.byKey(const ValueKey('kanban-filter-all')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
 
     expect(find.byKey(const ValueKey('kanban-task-needle')), findsOneWidget);
     expect(find.byKey(const ValueKey('kanban-task-other')), findsNothing);
@@ -235,9 +236,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('kanban-clear-filters')));
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('kanban-filter-button')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(find.byKey(const ValueKey('kanban-filter-archived')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
 
     expect(boardReads, 2);
     expect(find.byKey(const ValueKey('kanban-task-old')), findsOneWidget);
@@ -351,7 +352,7 @@ void main() {
     await pumpScreen(tester, httpClient: client, events: events.stream);
     final profilesBeforeHelp = profileReads;
     await tester.tap(find.byTooltip('How it works'));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
 
     expect(orchestrationReads, 1);
     expect(profileReads, profilesBeforeHelp + 1);
@@ -396,12 +397,12 @@ void main() {
 
     await pumpScreen(tester, httpClient: client, events: events.stream);
     await tester.tap(find.byTooltip('New task'));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     expect(find.byKey(const ValueKey('kanban-create-model')), findsOneWidget);
     expect(optionReads, 0);
 
     await tester.tap(find.byKey(const ValueKey('kanban-create-model')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     expect(optionReads, 1);
     expect(
       find.byKey(const ValueKey('kanban-create-model-openai-gpt-5.6')),
@@ -463,20 +464,20 @@ void main() {
 
     await pumpScreen(tester, httpClient: client, events: events.stream);
     await tester.tap(find.byTooltip('How it works'));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(find.byKey(const ValueKey('kanban-orchestration-row')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(find.byKey(const ValueKey('kanban-orchestrator-profile')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(
       find.descendant(
         of: find.byKey(const ValueKey('kanban-option-surface')),
         matching: find.text('lead'),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(find.byKey(const ValueKey('kanban-auto-decompose')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
 
     expect(writes, [
       {'orchestrator_profile': 'lead'},
@@ -548,27 +549,27 @@ void main() {
 
     await pumpScreen(tester, httpClient: client, events: events.stream);
     await tester.tap(find.byTooltip('How it works'));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(find.byKey(const ValueKey('kanban-orchestration-row')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(find.byKey(const ValueKey('kanban-orchestrator-profile')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(
       find.descendant(
         of: find.byKey(const ValueKey('kanban-option-surface')),
         matching: find.text('lead'),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     // The orchestrator reply is still held; the user flips the toggle.
     expect(writes, [
       {'orchestrator_profile': 'lead'},
     ]);
     await tester.tap(find.byKey(const ValueKey('kanban-auto-decompose')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
 
     orchestratorGate.complete();
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
 
     expect(writes, [
       {'orchestrator_profile': 'lead'},
@@ -646,27 +647,27 @@ void main() {
 
     await pumpScreen(tester, httpClient: client, events: events.stream);
     await tester.tap(find.byTooltip('How it works'));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(find.byKey(const ValueKey('kanban-orchestration-row')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(find.byKey(const ValueKey('kanban-orchestrator-profile')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(
       find.descendant(
         of: find.byKey(const ValueKey('kanban-option-surface')),
         matching: find.text('lead'),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     // The toggle queues behind the orchestrator write that is about to fail.
     await tester.tap(find.byKey(const ValueKey('kanban-auto-decompose')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     expect(writes, [
       {'orchestrator_profile': 'lead'},
     ]);
 
     orchestratorGate.complete();
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
 
     expect(writes, [
       {'orchestrator_profile': 'lead'},
