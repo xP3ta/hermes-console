@@ -63,6 +63,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var pcmStreamHandler: HermesPcmStreamHandler? = null
     private var fullDuplexCaptureHandler: HermesFullDuplexCaptureHandler? = null
     private var documentPreviewHandler: HermesDocumentPreviewHandler? = null
+    private var clipboardImageHandler: HermesClipboardImageHandler? = null
     private var pendingShare: Map<String, Any?>? = null
     private var pendingNewSessionLaunch: Map<String, Any?>? = null
     private var pendingExternalDataSyncStop = false
@@ -147,6 +148,13 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        clipboardImageHandler?.close()
+        clipboardImageHandler = HermesClipboardImageHandler(applicationContext).also { handler ->
+            MethodChannel(
+                flutterEngine.dartExecutor.binaryMessenger,
+                HermesClipboardImageHandler.CHANNEL_NAME,
+            ).setMethodCallHandler(handler)
+        }
         documentPreviewHandler?.close()
         documentPreviewHandler = HermesDocumentPreviewHandler(applicationContext).also { handler ->
             MethodChannel(
@@ -471,6 +479,8 @@ class MainActivity : FlutterFragmentActivity() {
         stopNetworkAvailabilityEvents()
         documentPreviewHandler?.close()
         documentPreviewHandler = null
+        clipboardImageHandler?.close()
+        clipboardImageHandler = null
         fullDuplexCaptureHandler?.close()
         fullDuplexCaptureHandler = null
         pcmStreamHandler?.close()

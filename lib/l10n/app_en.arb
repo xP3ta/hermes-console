@@ -8520,5 +8520,9 @@
   "tc1215DiffViewed": "Viewed",
   "tc1215DiffViewedSemantics": "Mark {name} as viewed",
   "@tc1215DiffViewedSemantics": {"placeholders": {"name": {"type": "String"}}},
-  "tc1215TurnChangesDone": "Done"
+  "tc1215TurnChangesDone": "Done",
+  "cmp1215PasteImage": "Paste image",
+  "@cmp1215PasteImage": {
+    "description": "Composer long-press menu item that pastes an image from the system clipboard."
+  }
 }

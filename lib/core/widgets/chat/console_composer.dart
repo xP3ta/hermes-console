@@ -14,6 +14,7 @@ import '../../theme/app_theme.dart';
 import '../attachment_card.dart';
 import '../attachment_source_sheet.dart';
 import '../hermes_premium_ui.dart';
+import 'composer_clipboard_menu.dart';
 import 'composer_pasted_image.dart';
 
 /// Dictado del composer. El host conserva el motor de voz; aquí solo se pinta
@@ -463,6 +464,13 @@ class ConsoleComposer extends StatelessWidget {
     );
   }
 
+  static Widget _defaultContextMenu(
+    BuildContext context,
+    EditableTextState editableTextState,
+  ) => AdaptiveTextSelectionToolbar.editableText(
+    editableTextState: editableTextState,
+  );
+
   Widget _buildField(
     BuildContext context,
     HermesThemeColors colors, {
@@ -502,6 +510,14 @@ class ConsoleComposer extends StatelessWidget {
           ? null
           : ContentInsertionConfiguration(
               allowedMimeTypes: kComposerInsertableImageMimeTypes,
+              onContentInserted: onContentInserted,
+            ),
+      // Long-press "Paste image": Flutter's Paste reads text only, so an
+      // image copied in another app comes through the native clipboard.
+      contextMenuBuilder: onContentInserted == null
+          ? _defaultContextMenu
+          : (context, editableTextState) => ComposerClipboardMenu(
+              editableTextState: editableTextState,
               onContentInserted: onContentInserted,
             ),
       textInputAction: TextInputAction.newline,

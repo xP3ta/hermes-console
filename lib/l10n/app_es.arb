@@ -10230,5 +10230,6 @@
   "tc1215DiffViewed": "Visto",
   "tc1215DiffViewedSemantics": "Marcar {name} como visto",
   "@tc1215DiffViewedSemantics": {"placeholders": {"name": {"type": "String"}}},
-  "tc1215TurnChangesDone": "Hecho"
+  "tc1215TurnChangesDone": "Hecho",
+  "cmp1215PasteImage": "Pegar imagen"
 }
