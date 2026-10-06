@@ -144,7 +144,6 @@ import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/core/widgets/mission_profile_avatar.dart';
 import 'package:hermes_android/core/widgets/motion_entrance.dart';
 import 'package:hermes_android/core/widgets/chat_status_pill.dart';
-import 'package:hermes_android/core/widgets/session_context_usage.dart';
 import 'package:hermes_android/core/widgets/stacked_image_cards.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
