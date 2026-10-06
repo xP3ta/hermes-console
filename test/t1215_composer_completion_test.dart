@@ -359,7 +359,8 @@ void main() {
       expect(typeSpace('see @lib/a.dart'), 'see @file:`lib/a.dart` ');
       expect(typeSpace('@src/'), '@folder:`src` ');
       expect(typeSpace('@url:https://x.io/a'), '@url:`https://x.io/a` ');
-      expect(typeSpace('go https://x.io/a.'), 'go @url:`https://x.io/a`. ');
+      // A bare link stays a link; only an explicit `@url:` becomes a reference.
+      expect(typeSpace('go https://x.io/a.'), isNull);
       expect(typeSpace('@alice'), isNull);
       expect(typeSpace('`https://x.io'), isNull);
       expect(typeSpace('@file:`a.dart`'), isNull);

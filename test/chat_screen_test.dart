@@ -19530,6 +19530,49 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('user bubble shows @ references as chips and copies the original', (
+    tester,
+  ) async {
+    const raw = 'mira @url:`https://x.com/a/b` y @file:`lib/core/main.dart`:3-9';
+    await pumpChat(
+      tester,
+      messages: [
+        {'role': 'user', 'content': raw},
+      ],
+    );
+    final bubble = find.byKey(const ValueKey('user-message-bubble'));
+    expect(
+      find.descendant(
+        of: bubble,
+        matching: find.byKey(const ValueKey('user-reference-chip-url')),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: bubble, matching: find.text('x.com/a/b')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: bubble, matching: find.text('main.dart:3-9')),
+      findsOneWidget,
+    );
+    final painted = tester
+        .widgetList<RichText>(
+          find.descendant(of: bubble, matching: find.byType(RichText)),
+        )
+        .map((r) => r.text.toPlainText())
+        .join('|');
+    expect(painted, isNot(contains('`')));
+    expect(painted, isNot(contains('@url')));
+    expect(painted, isNot(contains('@file')));
+    await tester.tap(find.byIcon(Icons.copy_rounded).first);
+    await tester.pump();
+    final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
+    expect(clipboard?.text, raw);
+    await tester.pump(const Duration(seconds: 2));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('oculta el snapshot interno de tareas tras compactar', (
     tester,
   ) async {
