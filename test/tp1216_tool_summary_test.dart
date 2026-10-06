@@ -178,7 +178,7 @@ void main() {
     expect(find.byKey(const ValueKey('tool-run-summary')), findsNothing);
   });
 
-  testWidgets('running group: "Trabajando…" plus the settled tools so far', (
+  testWidgets('running group: "Trabajando…" plus the latest settled step', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -188,12 +188,9 @@ void main() {
       find.byKey(const ValueKey('thinking-trace-live-in-pill')),
       findsOneWidget,
     );
-    // The running call is the activity pill's to name; here only what
-    // already finished (no call without a result is reconstructed).
-    expect(
-      _summaryText(tester),
-      contains('github-pr-workflow · terminal ×2 · read_file ×2'),
-    );
+    // The running call is the activity pill's to name; here only the last
+    // step that already finished (QA 9489: it replaces, never piles up).
+    expect(_summaryText(tester), 'read_file');
   });
 
   testWidgets('a call without a result never reaches the summary', (
