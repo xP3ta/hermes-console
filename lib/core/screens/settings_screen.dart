@@ -22,6 +22,7 @@ import '../services/active_profile_scope.dart';
 import '../services/server_config_repository.dart';
 import '../settings/server_config_pages.dart';
 import '../settings/settings_deep_link.dart';
+import '../settings/settings_list_detail.dart';
 import '../settings/settings_search.dart';
 import '../services/session_deletion.dart';
 import '../services/turn_outbox_store.dart';
@@ -209,9 +210,8 @@ class _TerminalEntryState extends State<_TerminalEntry> {
                     onOpenSecurity: () => Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => SecurityInfoScreen(
-                          connManager: widget.connManager,
-                        ),
+                        builder: (_) =>
+                            SecurityInfoScreen(connManager: widget.connManager),
                       ),
                     ),
                   ),
@@ -282,10 +282,13 @@ class SettingsScreen extends StatelessWidget {
                       (candidate) => candidate.id == id,
                     );
                     final conn = matches.isEmpty ? connection : matches.first;
-                    return SettingsDeepLinkScope(
-                      sections: SettingsSection.values.toSet(),
-                      builder: (context, scroll) =>
-                          _buildBody(context, conn, scroll),
+                    return SettingsListDetail(
+                      rowsFor: (context, section) =>
+                          _sectionRows(context, conn, section),
+                      scaffold: (context, body) =>
+                          _buildScaffold(context, conn, body),
+                      list: (context, scroll) =>
+                          _buildList(context, conn, scroll),
                     );
                   },
                 );
@@ -297,10 +300,10 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBody(
+  Widget _buildScaffold(
     BuildContext context,
     SavedConnection conn,
-    ScrollController scroll,
+    Widget body,
   ) {
     return Scaffold(
       appBar: HermesAppBar(title: Text(Strings.of(context).setTitle)),
@@ -313,114 +316,187 @@ class SettingsScreen extends StatelessWidget {
         connection: conn,
         connManager: connManager,
         includeSettingsAction: false,
-        // El dock se pinta ENCIMA de este cuerpo, así que la lista tiene que
-        // reservar su hueco o la última sección ("Acerca de") queda detrás de
-        // la barra. `ListenableBuilder` es necesario porque el interruptor
-        // "Usar dock flotante" vive en esta misma pantalla: al apagarlo la
-        // reserva debe desaparecer sin salir y volver a entrar.
-        body: ListenableBuilder(
-          listenable: DockPreferencesController.instance.listenable,
-          builder: (context, _) => ListView(
-            controller: scroll,
-            padding: EdgeInsets.fromLTRB(
-              16,
-              0,
-              16,
-              dockScrollReservation(
+        // Expanded windows: categories and page side by side over the full
+        // width beside the rail.
+        paneLayout: true,
+        body: body,
+      ),
+    );
+  }
+
+  /// The rows of one Settings category, exactly as the phone list shows
+  /// them. The tablet list-detail shows one category at a time with the same
+  /// rows, built with the right pane's context so their pages open there.
+  List<Widget> _sectionRows(
+    BuildContext context,
+    SavedConnection conn,
+    SettingsSection section,
+  ) => switch (section) {
+    SettingsSection.connection => [
+      _SectionHeader(Strings.of(context).setSecConnection),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.connection,
+        child: _ConnectionCard(connection: conn, connManager: connManager),
+      ),
+    ],
+    SettingsSection.appearance => [
+      _SectionHeader(Strings.of(context).setSecAppearance),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.appearance,
+        child: HermesGroup(
+          children: [
+            _ThemesEntry(),
+            _FontStyleEntry(),
+            _LanguageEntry(),
+            _HeaderTitleField(),
+            _UseDockTile(),
+            _DockTile(),
+            _StartupDestinationTile(),
+          ],
+        ),
+      ),
+    ],
+    SettingsSection.chat => [
+      _SectionHeader(Strings.of(context).setSecChat),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.chat,
+        child: HermesGroup(
+          children: [
+            _ActiveModelTile(key: ValueKey(conn.id), connection: conn),
+            HermesNavRow(
+              key: const ValueKey('settings-rich-embeds'),
+              icon: Icons.play_circle_outline_rounded,
+              title: Strings.of(context).embedSettingsTitle,
+              subtitle: Strings.of(context).embedSettingsSubtitle,
+              onTap: () => Navigator.push(
                 context,
-                useDock: DockPreferencesController.instance.value.useDock,
+                MaterialPageRoute(builder: (_) => const EmbedSettingsScreen()),
               ),
             ),
-            children: [
-              // Orden de secciones: de lo esencial (a qué instancia hablas) a lo
-              // avanzado, con voz y notificaciones como apartados propios en vez
-              // de filas sueltas dentro de "chat" (spec 028 U-08).
-              _SectionHeader(Strings.of(context).setSecConnection),
-              SettingsDeepLinkTarget(
-                section: SettingsSection.connection,
-                child: _ConnectionCard(
-                  connection: conn,
-                  connManager: connManager,
+            ListenableBuilder(
+              listenable: MessageReactionPrefs.shared,
+              builder: (context, _) => HermesToggleRow(
+                key: const ValueKey('settings-reactions'),
+                icon: Icons.add_reaction_outlined,
+                title: Strings.of(context).reactSettingsTitle,
+                subtitle: Strings.of(context).reactSettingsSubtitle,
+                value: MessageReactionPrefs.shared.enabled,
+                onChanged: MessageReactionPrefs.shared.setEnabled,
+              ),
+            ),
+            ListenableBuilder(
+              listenable: QuickReplyPrefs.shared,
+              builder: (context, _) => HermesToggleRow(
+                key: const ValueKey('settings-quick-replies'),
+                icon: Icons.quickreply_outlined,
+                title: Strings.of(context).rpl1215SettingTitle,
+                subtitle: Strings.of(context).rpl1215SettingSubtitle,
+                value: QuickReplyPrefs.shared.enabled,
+                onChanged: QuickReplyPrefs.shared.setEnabled,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+    SettingsSection.voice => [
+      _SectionHeader(Strings.of(context).voiceTitle),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.voice,
+        child: HermesGroup(children: [_VoiceTile(connection: conn)]),
+      ),
+    ],
+    SettingsSection.notifications => [
+      _SectionHeader(Strings.of(context).notifTitle),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.notifications,
+        child: HermesGroup(children: [_NotificationsTile()]),
+      ),
+    ],
+    SettingsSection.security => [
+      _SectionHeader(Strings.of(context).setSecSecurity),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.security,
+        child: HermesGroup(
+          children: [
+            HermesNavRow(
+              icon: Icons.shield_outlined,
+              title: Strings.of(context).setSecurity,
+              subtitle: Strings.of(context).setSecuritySub,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SecurityInfoScreen(connManager: connManager),
                 ),
               ),
-              _SectionHeader(Strings.of(context).setSecAppearance),
-              SettingsDeepLinkTarget(
-                section: SettingsSection.appearance,
-                child: HermesGroup(
-                  children: [
-                    _ThemesEntry(),
-                    _FontStyleEntry(),
-                    _LanguageEntry(),
-                    _HeaderTitleField(),
-                    _UseDockTile(),
-                    _DockTile(),
-                    _StartupDestinationTile(),
-                  ],
+            ),
+            HermesNavRow(
+              icon: Icons.verified_user_outlined,
+              title: Strings.of(context).setPermissions,
+              subtitle: Strings.of(context).setPermissionsSub,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PermissionsScreen(connection: conn),
                 ),
               ),
-              _SectionHeader(Strings.of(context).setSecChat),
-              SettingsDeepLinkTarget(
-                section: SettingsSection.chat,
-                child: HermesGroup(
-                  children: [
-                    _ActiveModelTile(key: ValueKey(conn.id), connection: conn),
-                    HermesNavRow(
-                      key: const ValueKey('settings-rich-embeds'),
-                      icon: Icons.play_circle_outline_rounded,
-                      title: Strings.of(context).embedSettingsTitle,
-                      subtitle: Strings.of(context).embedSettingsSubtitle,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const EmbedSettingsScreen(),
-                        ),
+            ),
+          ],
+        ),
+      ),
+    ],
+    SettingsSection.system => [
+      _SectionHeader(Strings.of(context).setSecSystem),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.system,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _MaintenanceSection(
+              key: ValueKey('maint-${conn.id}'),
+              connection: conn,
+              connManager: connManager,
+            ),
+            _AdvancedEntry(
+              key: ValueKey('advanced-${conn.id}'),
+              connection: conn,
+              connManager: connManager,
+              storeFor: advancedStoreFor,
+              repositoryFor: advancedRepositoryFor,
+            ),
+          ],
+        ),
+      ),
+      _TerminalEntry(connection: conn, connManager: connManager),
+    ],
+    SettingsSection.bridge => [
+      _SectionHeader(Strings.of(context).setSecBridge),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.bridge,
+        child: HermesGroup(children: [_BridgeAutoUpdateTile(connection: conn)]),
+      ),
+    ],
+    SettingsSection.data => [
+      _SectionHeader(Strings.of(context).setSecData),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.data,
+        child: HermesGroup(
+          children: [
+            if (!conn.readOnly)
+              HermesNavRow(
+                key: const ValueKey('settings-backup'),
+                icon: Icons.settings_backup_restore_rounded,
+                title: Strings.of(context).backupTitle,
+                subtitle: Strings.of(context).backupSubtitle,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => BackupRestoreScreen(
+                      connection: conn,
+                      profile: Session.profileOwner(
+                        connManager.activeProfileFor(conn.id),
                       ),
-                    ),
-                    ListenableBuilder(
-                      listenable: MessageReactionPrefs.shared,
-                      builder: (context, _) => HermesToggleRow(
-                        key: const ValueKey('settings-reactions'),
-                        icon: Icons.add_reaction_outlined,
-                        title: Strings.of(context).reactSettingsTitle,
-                        subtitle: Strings.of(context).reactSettingsSubtitle,
-                        value: MessageReactionPrefs.shared.enabled,
-                        onChanged: MessageReactionPrefs.shared.setEnabled,
-                      ),
-                    ),
-                    ListenableBuilder(
-                      listenable: QuickReplyPrefs.shared,
-                      builder: (context, _) => HermesToggleRow(
-                        key: const ValueKey('settings-quick-replies'),
-                        icon: Icons.quickreply_outlined,
-                        title: Strings.of(context).rpl1215SettingTitle,
-                        subtitle: Strings.of(context).rpl1215SettingSubtitle,
-                        value: QuickReplyPrefs.shared.enabled,
-                        onChanged: QuickReplyPrefs.shared.setEnabled,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              _SectionHeader(Strings.of(context).voiceTitle),
-              SettingsDeepLinkTarget(
-                section: SettingsSection.voice,
-                child: HermesGroup(children: [_VoiceTile(connection: conn)]),
-              ),
-              _SectionHeader(Strings.of(context).notifTitle),
-              SettingsDeepLinkTarget(
-                section: SettingsSection.notifications,
-                child: HermesGroup(children: [_NotificationsTile()]),
-              ),
-              _SectionHeader(Strings.of(context).setSecSecurity),
-              SettingsDeepLinkTarget(
-                section: SettingsSection.security,
-                child: HermesGroup(
-                  children: [
-                    HermesNavRow(
-                      icon: Icons.shield_outlined,
-                      title: Strings.of(context).setSecurity,
-                      subtitle: Strings.of(context).setSecuritySub,
-                      onTap: () => Navigator.push(
+                      onOpenSecurity: () => Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (_) =>
@@ -428,106 +504,65 @@ class SettingsScreen extends StatelessWidget {
                         ),
                       ),
                     ),
-                    HermesNavRow(
-                      icon: Icons.verified_user_outlined,
-                      title: Strings.of(context).setPermissions,
-                      subtitle: Strings.of(context).setPermissionsSub,
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => PermissionsScreen(connection: conn),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-              _SectionHeader(Strings.of(context).setSecSystem),
-              SettingsDeepLinkTarget(
-                section: SettingsSection.system,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _MaintenanceSection(
-                      key: ValueKey('maint-${conn.id}'),
-                      connection: conn,
-                      connManager: connManager,
-                    ),
-                    _AdvancedEntry(
-                      key: ValueKey('advanced-${conn.id}'),
-                      connection: conn,
-                      connManager: connManager,
-                      storeFor: advancedStoreFor,
-                      repositoryFor: advancedRepositoryFor,
-                    ),
-                  ],
-                ),
-              ),
-              _TerminalEntry(connection: conn, connManager: connManager),
-              _SectionHeader(Strings.of(context).setSecBridge),
-              SettingsDeepLinkTarget(
-                section: SettingsSection.bridge,
-                child: HermesGroup(
-                  children: [_BridgeAutoUpdateTile(connection: conn)],
-                ),
-              ),
-              _SectionHeader(Strings.of(context).setSecData),
-              SettingsDeepLinkTarget(
-                section: SettingsSection.data,
-                child: HermesGroup(
-                  children: [
-                    if (!conn.readOnly)
-                      HermesNavRow(
-                        key: const ValueKey('settings-backup'),
-                        icon: Icons.settings_backup_restore_rounded,
-                        title: Strings.of(context).backupTitle,
-                        subtitle: Strings.of(context).backupSubtitle,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => BackupRestoreScreen(
-                              connection: conn,
-                              profile: Session.profileOwner(
-                                connManager.activeProfileFor(conn.id),
-                              ),
-                              onOpenSecurity: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => SecurityInfoScreen(
-                                    connManager: connManager,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    DiagnosticBundleTile(
-                      controller: DiagnosticBundleController(
-                        manager: connManager,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              HistoryCleanupSection(
-                key: ValueKey('history-cleanup-${conn.id}'),
-                connection: conn,
-                connManager: connManager,
-                verifyHistoryCleanupForTesting: verifyHistoryCleanupForTesting,
-              ),
-              _OrphanDataTile(connManager: connManager),
-              _SectionHeader(Strings.of(context).setSecAbout),
-              SettingsDeepLinkTarget(
-                section: SettingsSection.about,
-                child: _AboutCard(),
-              ),
-              const SizedBox(height: 10),
-              const InstallSourceSection(),
-              const SizedBox(height: 24),
-            ],
+            DiagnosticBundleTile(
+              controller: DiagnosticBundleController(manager: connManager),
+            ),
+          ],
+        ),
+      ),
+      HistoryCleanupSection(
+        key: ValueKey('history-cleanup-${conn.id}'),
+        connection: conn,
+        connManager: connManager,
+        verifyHistoryCleanupForTesting: verifyHistoryCleanupForTesting,
+      ),
+      _OrphanDataTile(connManager: connManager),
+    ],
+    SettingsSection.about => [
+      _SectionHeader(Strings.of(context).setSecAbout),
+      SettingsDeepLinkTarget(
+        section: SettingsSection.about,
+        child: _AboutCard(),
+      ),
+      const SizedBox(height: 10),
+      const InstallSourceSection(),
+      const SizedBox(height: 24),
+    ],
+  };
+
+  Widget _buildList(
+    BuildContext context,
+    SavedConnection conn,
+    ScrollController scroll,
+  ) {
+    // El dock se pinta ENCIMA de este cuerpo, así que la lista tiene que
+    // reservar su hueco o la última sección ("Acerca de") queda detrás de
+    // la barra. `ListenableBuilder` es necesario porque el interruptor
+    // "Usar dock flotante" vive en esta misma pantalla: al apagarlo la
+    // reserva debe desaparecer sin salir y volver a entrar.
+    return ListenableBuilder(
+      listenable: DockPreferencesController.instance.listenable,
+      builder: (context, _) => ListView(
+        controller: scroll,
+        padding: EdgeInsets.fromLTRB(
+          16,
+          0,
+          16,
+          dockScrollReservation(
+            context,
+            useDock: DockPreferencesController.instance.value.useDock,
           ),
         ),
+        // Orden de secciones: de lo esencial (a qué instancia hablas) a lo
+        // avanzado, con voz y notificaciones como apartados propios en vez
+        // de filas sueltas dentro de "chat" (spec 028 U-08).
+        children: [
+          for (final section in SettingsSection.values)
+            ..._sectionRows(context, conn, section),
+        ],
       ),
     );
   }
@@ -2926,18 +2961,15 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
         context: context,
         title: Strings.of(context).setUpdateHermes,
         message: Strings.of(
-                    context,
-                  ).setUpdateBody(behind > 0 ? ' ($behind commits)' : '', method),
+          context,
+        ).setUpdateBody(behind > 0 ? ' ($behind commits)' : '', method),
         actions: [
           HermesDialogAction(
             label: Strings.of(context).commonCancel,
             value: false,
             style: HermesDialogActionStyle.cancel,
           ),
-          HermesDialogAction(
-            label: Strings.of(context).setUpdate,
-            value: true,
-          ),
+          HermesDialogAction(label: Strings.of(context).setUpdate, value: true),
         ],
       );
       if (confirm != true || !mounted) return;
@@ -3115,10 +3147,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
           value: false,
           style: HermesDialogActionStyle.cancel,
         ),
-        HermesDialogAction(
-          label: Strings.of(context).setRestart,
-          value: true,
-        ),
+        HermesDialogAction(label: Strings.of(context).setRestart, value: true),
       ],
     );
     if (confirm != true || !mounted) return;
@@ -3177,10 +3206,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
           value: false,
           style: HermesDialogActionStyle.cancel,
         ),
-        HermesDialogAction(
-          label: Strings.of(context).setUpdate,
-          value: true,
-        ),
+        HermesDialogAction(label: Strings.of(context).setUpdate, value: true),
       ],
     );
     if (confirm != true || !mounted) return;

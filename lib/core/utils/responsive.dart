@@ -28,6 +28,9 @@ class Responsive {
   /// Width of the list pane in a list-detail layout.
   static const double listPaneWidth = 360;
 
+  /// Width of the categories pane of Settings in expanded windows.
+  static const double settingsCategoryPaneWidth = 320;
+
   static WindowSizeClass sizeClassForWidth(double width) {
     if (width >= expandedBreakpoint) return WindowSizeClass.expanded;
     if (width >= tabletBreakpoint) return WindowSizeClass.medium;
