@@ -8548,5 +8548,38 @@
   "tabletPickProject": "Pick a project to open it here",
   "@tabletPickProject": {
     "description": "Placeholder in the tablet detail pane of the Projects list before one is opened."
-  }
+  },
+  "au1215CleanupChats": "{count, plural, =0{No conversations} one{1 conversation} other{{count} conversations}}",
+  "@au1215CleanupChats": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "au1215CleanupRuns": "{count, plural, =0{No automation runs} one{1 automation run} other{{count} automation runs}}",
+  "@au1215CleanupRuns": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "au1215CleanupWillDelete": "{count, plural, =0{Nothing will be deleted from the server.} one{1 item will be deleted from the server. Scheduled jobs and the outputs of their script runs are kept: the server cannot delete them.} other{{count} items will be deleted from the server. Scheduled jobs and the outputs of their script runs are kept: the server cannot delete them.}}",
+  "@au1215CleanupWillDelete": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "au1215CleanupRunsDeleted": "{count, plural, one{1 automation run deleted} other{{count} automation runs deleted}}",
+  "@au1215CleanupRunsDeleted": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "au1215ScheduledRunsHint": "Each job's runs, newest first"
 }

@@ -1486,16 +1486,23 @@ class ApiClient {
           (pagination is Map ? positivePageInt(pagination['limit']) : null) ??
           pageLimit;
       final total = data['total'];
-      final hasMore = dashboard != null
+      final serverSaysMore = dashboard != null
           ? (total is int
                 ? offset + rawRows.length < total
                 : rawRows.length >= pageLimitPublished)
           : data['has_more'] == true ||
                 (pagination is Map && pagination['has_more'] == true);
+      // The Gateway derives `has_more` from the UNPINNED rows of the window
+      // only, so pinned chats among the newest rows report `false` on a full
+      // page and every older row (automation runs first) went unread. A full
+      // page always asks for the next one; that page ends the listing.
+      final hasMore =
+          serverSaysMore ||
+          (dashboard == null && rawRows.length >= pageLimitPublished);
       final signature = rawRows
           .map((row) => row is Map ? row['id']?.toString() ?? '' : '')
           .join('\u001f');
-      if (hasMore && !pageSignatures.add(signature)) {
+      if (serverSaysMore && !pageSignatures.add(signature)) {
         throw const CoreReadException(CoreReadErrorKind.paginationStalled);
       }
 
@@ -1528,6 +1535,9 @@ class ApiClient {
       pagesRead += 1;
       if (enough != null && enough(sessions)) return sessions;
       if (maxPages != null && pagesRead >= maxPages) return sessions;
+      // An inferred extra page that brings nothing new (back-filled pins, a
+      // repeated page) is the end of the listing, not a stalled server.
+      if (added == 0 && !serverSaysMore) return sessions;
       if (added == 0 || pageLimitPublished <= 0) {
         throw const CoreReadException(CoreReadErrorKind.paginationStalled);
       }

@@ -13,6 +13,8 @@ import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/new_session_launch_coordinator.dart';
+import 'package:hermes_android/core/services/notifications/background_listener.dart';
+import 'package:hermes_android/core/services/notifications/notification_delivery_store.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/run_registry.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
@@ -382,5 +384,91 @@ void main() {
     expect(cron.connection.id, 'notification-race-connection');
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  DurableDiscoveryNotification cronRunEvent() => DurableDiscoveryNotification(
+    identity: const NotificationEventIdentity(
+      connId: 'notification-race-connection',
+      profile: 'radar',
+      sourceKind: 'cron',
+      objectId: 'exec-9',
+      eventKind: 'terminal',
+      sourceVersion: 'exec-9:completed',
+    ),
+    destinationKind: 'cron_terminal',
+    kind: NotificationKind.run,
+    title: 'Automation finished',
+    body: 'Result',
+    sessionId: 'cron_job-r_20261006_081500',
+  );
+
+  Future<void> disposeApp(WidgetTester tester) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  }
+
+  testWidgets(
+    'in-app "Ir" of another profile\'s cron run opens that run, not the list',
+    (tester) async {
+      final lookups = <String>[];
+      final harness = await _pumpHarness(
+        tester,
+        externalLookup: (_, sessionId, profile) async {
+          lookups.add('$profile/$sessionId');
+          return null;
+        },
+      );
+      addTearDown(harness.activeChats.dispose);
+      final notice = BackgroundListener.automationNoticeFromData(
+        BackgroundListener.automationNoticeEnvelope(
+          'notification-race-connection',
+          cronRunEvent(),
+        ),
+      )!;
+
+      final outcome = harness.state.debugOpenNotification(notice.open);
+      await tester.pump();
+      await tester.pump();
+      expect(await outcome, NavigationDeliveryOutcome.delivered);
+      await tester.pump(const Duration(milliseconds: 350));
+
+      final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
+      expect(chat.session.id, 'cron_job-r_20261006_081500');
+      expect(chat.session.profile, 'radar');
+      expect(lookups, isEmpty, reason: 'never resolved in the active profile');
+      await disposeApp(tester);
+    },
+  );
+
+  testWidgets('locked: a cron run notification opens the run after unlock', (
+    tester,
+  ) async {
+    final harness = await _pumpHarness(tester, appLockEnabled: true);
+    addTearDown(harness.activeChats.dispose);
+    await tester.pump(const Duration(milliseconds: 250));
+    const open = NotificationOpen(
+      connId: 'notification-race-connection',
+      sessionId: 'cron_job-r_20261006_081500',
+      profile: 'radar',
+    );
+    expect(
+      await harness.notifications.deliverOpenForTesting(
+        NotificationOpen.tryParse(open.toPayload())!,
+      ),
+      NavigationDeliveryOutcome.deferred,
+    );
+    expect(find.byType(ChatScreen), findsNothing);
+    expect(harness.notifications.hasPendingOpenForTesting, isTrue);
+
+    harness.appLock.unlock();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(harness.notifications.hasPendingOpenForTesting, isFalse);
+    final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
+    expect(chat.session.id, 'cron_job-r_20261006_081500');
+    expect(chat.session.profile, 'radar');
+    await disposeApp(tester);
   });
 }

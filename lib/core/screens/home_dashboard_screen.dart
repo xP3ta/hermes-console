@@ -15,7 +15,6 @@ import '../models/core_read.dart';
 import '../models/desktop_active_session.dart';
 import '../models/home_widget_snapshot.dart';
 import '../models/session_live_status.dart';
-import '../models/session_category.dart';
 import '../navigation/chat_route.dart';
 import '../navigation/enclosing_route.dart';
 import '../services/active_profile_scope.dart';
@@ -1527,9 +1526,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       !archive.isHidden(s.id);
 
   static bool _isHomeRecentKind(Session s) =>
-      !s.isJob &&
-      SessionCategory.chats.includesSource(s.source) &&
-      s.listsAsOwnRow;
+      !s.isAutomation && s.listsAsOwnRow;
 
   /// Recents as painted: the retained page filtered by the shared local
   /// archive store (archive, hidden).

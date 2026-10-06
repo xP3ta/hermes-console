@@ -2971,6 +2971,10 @@ class BackgroundListener {
     if (event.sessionId?.isNotEmpty == true) 'sid': event.sessionId!,
     if (event.jobId?.isNotEmpty == true) 'jid': event.jobId!,
     if (event.taskId?.isNotEmpty == true) 'tid': event.taskId!,
+    // The owner profile of the run/job. Without it "Ir" resolved the run in
+    // the ACTIVE profile, so another profile's run opened nothing useful.
+    if (event.identity.profile.trim().isNotEmpty)
+      'profile': event.identity.profile.trim(),
   };
 
   /// Decodes [automationNoticeEnvelope]; null for any other envelope.
@@ -2999,6 +3003,7 @@ class BackgroundListener {
         sessionId: opt('sid') ?? '',
         jobId: opt('jid'),
         taskId: opt('tid'),
+        profile: opt('profile'),
       ),
     );
   }
