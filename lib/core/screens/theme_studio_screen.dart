@@ -444,7 +444,7 @@ class _ThemeStudioScreenState extends State<ThemeStudioScreen> {
         Text(
           s.themesDerivedHint,
           style: TextStyle(
-            color: Theme.of(context).hermes.textDisabled,
+            color: Theme.of(context).hermes.textTertiary,
             fontSize: 11.5,
             height: 1.35,
           ),
@@ -875,7 +875,7 @@ class _ColorTile extends StatelessWidget {
                 Text(
                   _displayHex,
                   style: TextStyle(
-                    color: colors.textDisabled,
+                    color: colors.textTertiary,
                     fontSize: 10,
                     fontFamily: 'monospace',
                     letterSpacing: 0,
@@ -1438,7 +1438,7 @@ class _FullPreview extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: colors.textDisabled,
+                    color: colors.textTertiary,
                     fontSize: 9.5,
                     letterSpacing: 0,
                   ),

@@ -641,7 +641,7 @@ class _LocalUninstallScreenState extends State<LocalUninstallScreen>
                     style: TextStyle(
                       fontSize: 13,
                       color: state == -1
-                          ? colors.textDisabled
+                          ? colors.textTertiary
                           : colors.textPrimary,
                       fontWeight: state == 0
                           ? FontWeight.w600
@@ -665,7 +665,7 @@ class _LocalUninstallScreenState extends State<LocalUninstallScreen>
             ),
             label: Text(
               Strings.of(context).lunCancelProcess,
-              style: TextStyle(color: colors.textDisabled),
+              style: TextStyle(color: colors.textTertiary),
             ),
             onPressed: _cancel,
           ),
@@ -924,7 +924,7 @@ class _LocalUninstallScreenState extends State<LocalUninstallScreen>
               str.lunTerminalLabel,
               style: TextStyle(
                 fontSize: 11,
-                color: colors.textDisabled,
+                color: colors.textTertiary,
                 letterSpacing: 0.5,
               ),
             ),
@@ -946,7 +946,7 @@ class _LocalUninstallScreenState extends State<LocalUninstallScreen>
                     str.lunTerminalWaiting,
                     style: TextStyle(
                       fontSize: 11,
-                      color: colors.textDisabled,
+                      color: colors.textTertiary,
                       fontFamily: 'monospace',
                     ),
                   ),

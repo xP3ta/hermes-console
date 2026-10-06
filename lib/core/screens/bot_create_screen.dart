@@ -952,7 +952,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                       Text(
                         _text('opcional', 'optional'),
                         style: TextStyle(
-                          color: colors.textDisabled,
+                          color: colors.textTertiary,
                           fontSize: 12.5,
                           fontWeight: FontWeight.w600,
                         ),
@@ -1151,7 +1151,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
                                   ? Strings.of(context).botCloneCredentialsHint
                                   : copy.shareAuthHint,
                               style: TextStyle(
-                                color: colors.textDisabled,
+                                color: colors.textTertiary,
                                 fontSize: 11.5,
                               ),
                             ),
@@ -1800,7 +1800,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
         const SizedBox(height: 4),
         Text(
           copy.skillsFromSource(_catalogSource),
-          style: TextStyle(color: colors.textDisabled, fontSize: 11.5),
+          style: TextStyle(color: colors.textTertiary, fontSize: 11.5),
         ),
       ],
     );

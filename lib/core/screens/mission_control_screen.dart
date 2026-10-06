@@ -3625,7 +3625,7 @@ class _HostedGroupChosenStrip extends StatelessWidget {
       return Text(
         extra.noMembersChosen,
         key: const ValueKey('mission-hosted-create-chosen-empty'),
-        style: TextStyle(fontSize: 12.5, color: colors.textDisabled),
+        style: TextStyle(fontSize: 12.5, color: colors.textTertiary),
       );
     }
     return Wrap(

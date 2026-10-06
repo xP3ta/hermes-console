@@ -112,7 +112,7 @@ class RosterBotRow extends StatelessWidget {
                               rosterTime(context, at, now: now),
                               key: ValueKey('roster-time-${profile.name}'),
                               style: TextStyle(
-                                color: colors.textDisabled,
+                                color: colors.textTertiary,
                                 fontSize: 11.5,
                                 fontFeatures: const [
                                   FontFeature.tabularFigures(),
@@ -417,7 +417,7 @@ class RosterRoomRow extends StatelessWidget {
                             child: Text(
                               rosterTime(context, at, now: now),
                               style: TextStyle(
-                                color: colors.textDisabled,
+                                color: colors.textTertiary,
                                 fontSize: 11.5,
                                 fontFeatures: const [
                                   FontFeature.tabularFigures(),
@@ -448,7 +448,7 @@ class RosterRoomRow extends StatelessWidget {
                             Text(
                               ' · ',
                               style: TextStyle(
-                                color: colors.textDisabled,
+                                color: colors.textTertiary,
                                 fontSize: 13,
                               ),
                             ),

@@ -435,7 +435,7 @@ class _InstanceCard extends StatelessWidget {
         InstanceStatus.syncing => c.accent,
         InstanceStatus.readOnly => c.warning,
         InstanceStatus.error => c.error,
-        InstanceStatus.offline => c.textDisabled,
+        InstanceStatus.offline => c.textTertiary,
         InstanceStatus.unknown => c.textSecondary,
         InstanceStatus.checking => c.accent,
       };

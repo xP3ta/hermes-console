@@ -506,7 +506,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                         Strings.of(context).memoryNoMatches(_filter),
                         style: TextStyle(
                           fontSize: 13,
-                          color: colors.textDisabled,
+                          color: colors.textTertiary,
                         ),
                       ),
                     ),
@@ -599,7 +599,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                       Strings.of(context).memReadOnlyNote,
                       style: TextStyle(
                         fontSize: 11,
-                        color: colors.textDisabled,
+                        color: colors.textTertiary,
                       ),
                     ),
                   ),
@@ -843,7 +843,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                           _statusLabel(provider)!,
                           style: TextStyle(
                             fontSize: 10,
-                            color: colors.textDisabled,
+                            color: colors.textTertiary,
                           ),
                         ),
                     ],

@@ -816,7 +816,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
             },
             child: Text(
               str.lisFallbackWait,
-              style: TextStyle(color: colors.textDisabled),
+              style: TextStyle(color: colors.textTertiary),
             ),
           ),
           FilledButton.icon(
@@ -1600,7 +1600,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
             child: Text(
               str.lisStartingDesc,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: colors.textDisabled),
+              style: TextStyle(fontSize: 12, color: colors.textTertiary),
             ),
           ),
         ] else if (_installedNotRunning) ...[
@@ -1621,7 +1621,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
             child: Text(
               str.lisModelLaterHint,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11, color: colors.textDisabled),
+              style: TextStyle(fontSize: 11, color: colors.textTertiary),
             ),
           ),
         ] else if (_failed || _canceled) ...[
@@ -1921,7 +1921,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 13,
-                  color: state == -1 ? colors.textDisabled : colors.textPrimary,
+                  color: state == -1 ? colors.textTertiary : colors.textPrimary,
                   fontWeight: state == 0 ? FontWeight.w600 : FontWeight.normal,
                 ),
               ),
@@ -1946,7 +1946,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
           ? Center(
               child: Text(
                 str.lisTerminalWaiting,
-                style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                style: TextStyle(fontSize: 11, color: colors.textTertiary),
               ),
             )
           : ListView(
@@ -2303,7 +2303,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
                   hintText: hint,
                   hintStyle: TextStyle(
                     fontSize: 12,
-                    color: colors.textDisabled,
+                    color: colors.textTertiary,
                   ),
                 ),
           ),
@@ -2591,7 +2591,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
                           model.params,
                           style: TextStyle(
                             fontSize: 10,
-                            color: colors.textDisabled,
+                            color: colors.textTertiary,
                           ),
                         ),
                       ),
@@ -2672,7 +2672,7 @@ class _LocalInstallScreenState extends State<LocalInstallScreen>
                   _ollamaSubLabel.isNotEmpty
                       ? _ollamaSubLabel
                       : str.lisOllamaStepOf(_ollamaPhase, 3),
-                  style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                  style: TextStyle(fontSize: 11, color: colors.textTertiary),
                 ),
               ),
               TextButton(

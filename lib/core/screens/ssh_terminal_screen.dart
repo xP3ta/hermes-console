@@ -415,7 +415,7 @@ class _CommandsEditorState extends State<_CommandsEditor> {
                       Strings.of(context).sshNoCommands,
                       style: TextStyle(
                         fontSize: 13,
-                        color: colors.textDisabled,
+                        color: colors.textTertiary,
                       ),
                     ),
                   )

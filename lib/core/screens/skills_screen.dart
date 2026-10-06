@@ -1236,7 +1236,7 @@ class _DiscoverTab extends StatelessWidget {
                   const SizedBox(width: 6),
                   Text(
                     Strings.of(context).sklRecommended,
-                    style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                    style: TextStyle(fontSize: 11, color: colors.textTertiary),
                   ),
                 ],
               ),
@@ -1390,7 +1390,7 @@ class _StoreSkillCard extends StatelessWidget {
                   const SizedBox(width: 4),
                   Text(
                     _formatInstalls(skill.installs),
-                    style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                    style: TextStyle(fontSize: 11, color: colors.textTertiary),
                   ),
                 ],
               ),
@@ -1552,7 +1552,7 @@ class _EmptyState extends StatelessWidget {
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: colors.textDisabled),
+              style: TextStyle(fontSize: 12, color: colors.textTertiary),
             ),
             if (action != null) ...[const SizedBox(height: 20), action!],
           ],
@@ -1592,7 +1592,7 @@ class _StoreUnavailableState extends StatelessWidget {
             Text(
               Strings.of(context).sklWebOnlyBody,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: colors.textDisabled),
+              style: TextStyle(fontSize: 12, color: colors.textTertiary),
             ),
             const SizedBox(height: 20),
             OutlinedButton.icon(
@@ -1967,7 +1967,7 @@ class _SkillsCliCatalogPanelState extends State<_SkillsCliCatalogPanel> {
           style: TextStyle(
             fontSize: 11,
             height: 1.45,
-            color: colors.textDisabled,
+            color: colors.textTertiary,
           ),
         ),
         const SizedBox(height: 8),

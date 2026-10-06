@@ -764,7 +764,7 @@ class _ExternalProviderScreenState extends State<ExternalProviderScreen> {
     style: TextStyle(
       fontSize: 11,
       fontWeight: FontWeight.w600,
-      color: colors.textDisabled,
+      color: colors.textTertiary,
       letterSpacing: 1.2,
     ),
   );

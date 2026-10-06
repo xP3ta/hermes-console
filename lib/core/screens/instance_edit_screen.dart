@@ -1176,11 +1176,11 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
         letterSpacing: 0.1,
         color: colors.textSecondary,
       ),
-      hintStyle: TextStyle(fontSize: 14, color: colors.textDisabled),
+      hintStyle: TextStyle(fontSize: 14, color: colors.textTertiary),
       helperStyle: TextStyle(
         fontSize: 11.5,
         height: 1.35,
-        color: colors.textDisabled,
+        color: colors.textTertiary,
       ),
       border: InputBorder.none,
       enabledBorder: InputBorder.none,
@@ -1261,7 +1261,7 @@ class _InstanceEditScreenState extends State<InstanceEditScreen> {
     style: TextStyle(
       fontSize: 11.5,
       height: 1.4,
-      color: Theme.of(context).hermes.textDisabled,
+      color: Theme.of(context).hermes.textTertiary,
     ),
   );
 
@@ -2217,7 +2217,7 @@ class _DiagnosticServiceRow extends StatelessWidget {
       _DiagnosticSurfaceState.offline => (s.ieServiceOffline, colors.error),
       _DiagnosticSurfaceState.unchecked => (
         s.diagStatusSkipped,
-        colors.textDisabled,
+        colors.textTertiary,
       ),
     };
     return Padding(
@@ -2360,7 +2360,7 @@ class _TechnicalDiagnosticsDisclosure extends StatelessWidget {
                       snapshot.report!.ranAt,
                     ).format(context),
                   ),
-                  style: TextStyle(fontSize: 10.5, color: colors.textDisabled),
+                  style: TextStyle(fontSize: 10.5, color: colors.textTertiary),
                 ),
               ),
               HermesSecondaryButton(
@@ -2487,7 +2487,7 @@ class _ProbeResultCard extends StatelessWidget {
                         '${r.latencyMs}ms',
                         style: TextStyle(
                           fontSize: 10,
-                          color: colors.textDisabled,
+                          color: colors.textTertiary,
                         ),
                       ),
                     ),
@@ -2507,7 +2507,7 @@ class _ProbeResultCard extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 4),
               child: Text(
                 '${r.localizedName(s)}: ${r.localizedDetail(s)}',
-                style: TextStyle(fontSize: 10.5, color: colors.textDisabled),
+                style: TextStyle(fontSize: 10.5, color: colors.textTertiary),
               ),
             ),
         ],
@@ -2518,7 +2518,7 @@ class _ProbeResultCard extends StatelessWidget {
   static Color _statusColor(ProbeStatus s, HermesThemeColors c) => switch (s) {
     ProbeStatus.ok => c.success,
     ProbeStatus.notFound || ProbeStatus.methodNotAllowed => c.textSecondary,
-    ProbeStatus.skipped => c.textDisabled,
+    ProbeStatus.skipped => c.textTertiary,
     ProbeStatus.authInvalid || ProbeStatus.authRequired => c.warning,
     _ => c.error,
   };
@@ -2663,7 +2663,7 @@ class _CapabilitySummaryCard extends StatelessWidget {
               final color = state.isYes
                   ? colors.success
                   : state.isNo
-                  ? colors.textDisabled
+                  ? colors.textTertiary
                   : colors.warning;
               return HermesBadge(
                 // '·srv' = lo declaró /v1/capabilities; sin marca = probe.
@@ -2680,7 +2680,7 @@ class _CapabilitySummaryCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             Strings.of(context).ieDiagSrvNote,
-            style: TextStyle(fontSize: 9.5, color: colors.textDisabled),
+            style: TextStyle(fontSize: 9.5, color: colors.textTertiary),
           ),
         ],
       ),

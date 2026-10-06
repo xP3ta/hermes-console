@@ -56,7 +56,7 @@ void main() {
       expect(_lineColor(tester, '-removed old line'), colors.error);
       expect(_lineColor(tester, '+added new line'), colors.success);
       expect(_lineColor(tester, ' keep this line'), colors.textSecondary);
-      expect(_lineColor(tester, '@@ -1,3 +1,3 @@'), colors.textDisabled);
+      expect(_lineColor(tester, '@@ -1,3 +1,3 @@'), colors.textTertiary);
       // Language label and copy button stay; copy keeps the raw fence.
       expect(find.text(lang), findsOneWidget);
       String? copied;

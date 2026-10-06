@@ -578,7 +578,7 @@ class _ProfileEditorScreenState extends State<ProfileEditorScreen> {
                         'The @$_profileName identifier does not change',
                       ),
                       style: TextStyle(
-                        color: colors.textDisabled,
+                        color: colors.textTertiary,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),

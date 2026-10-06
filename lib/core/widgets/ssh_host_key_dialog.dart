@@ -55,7 +55,7 @@ Future<bool> showSshHostKeyDialog(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('${prompt.type} · fingerprint',
-                    style: TextStyle(fontSize: 11, color: colors.textDisabled)),
+                    style: TextStyle(fontSize: 11, color: colors.textTertiary)),
                 const SizedBox(height: 4),
                 SelectableText(
                   prompt.fingerprint,
@@ -76,7 +76,7 @@ Future<bool> showSshHostKeyDialog(
                 fontSize: 10.5,
                 height: 1.4,
                 fontFamily: 'monospace',
-                color: colors.textDisabled),
+                color: colors.textTertiary),
           ),
         ],
       ),

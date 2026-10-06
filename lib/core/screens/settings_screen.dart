@@ -3537,7 +3537,7 @@ class _MaintenanceSectionState extends State<_MaintenanceSection> {
                 padding: const EdgeInsets.only(top: 6),
                 child: Text(
                   Strings.of(context).setAddsNewOptions,
-                  style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                  style: TextStyle(fontSize: 11, color: colors.textTertiary),
                 ),
               ),
             ],
@@ -3856,7 +3856,7 @@ class _HeaderTitleEditScreenState extends State<_HeaderTitleEditScreen> {
           style: TextStyle(color: colors.textPrimary),
           decoration: InputDecoration(
             hintText: 'HERMES CONSOLE',
-            hintStyle: TextStyle(color: colors.textDisabled),
+            hintStyle: TextStyle(color: colors.textTertiary),
             counterStyle: TextStyle(color: colors.textSecondary),
             enabledBorder: UnderlineInputBorder(
               borderSide: BorderSide(color: colors.divider),

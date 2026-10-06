@@ -588,7 +588,7 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
                         hintText: s.memEditorHint(widget.fileName),
                         hintStyle: TextStyle(
                           fontSize: 12.5,
-                          color: colors.textDisabled,
+                          color: colors.textTertiary,
                         ),
                       ),
                     ),
@@ -633,7 +633,7 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
                               style: TextStyle(
                                 fontSize: 10,
                                 letterSpacing: 0.4,
-                                color: colors.textDisabled,
+                                color: colors.textTertiary,
                               ),
                             ),
                           ],

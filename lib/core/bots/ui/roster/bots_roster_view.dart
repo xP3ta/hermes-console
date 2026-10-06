@@ -521,7 +521,7 @@ class _SectionHeader extends StatelessWidget {
                     '$count',
                     key: const ValueKey('roster-section-count'),
                     style: style.copyWith(
-                      color: colors.textDisabled,
+                      color: colors.textTertiary,
                       fontWeight: FontWeight.w600,
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),

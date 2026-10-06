@@ -226,7 +226,7 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
               decoration: InputDecoration(
                 hintText: Strings.of(context).petdexSearchHint,
                 hintStyle: TextStyle(
-                  color: colors.textDisabled,
+                  color: colors.textTertiary,
                   fontSize: 13.5,
                 ),
                 prefixIcon: Icon(

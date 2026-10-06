@@ -177,7 +177,7 @@ class _ChatFindBarState extends State<ChatFindBar> {
                             style: TextStyle(
                               color: hasMatches
                                   ? colors.textSecondary
-                                  : colors.textDisabled,
+                                  : colors.textTertiary,
                               fontSize: 12.5,
                               fontFeatures: const [
                                 FontFeature.tabularFigures(),

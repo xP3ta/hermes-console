@@ -554,7 +554,7 @@ class _Intro extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: colors.textDisabled,
+                color: colors.textTertiary,
                 fontSize: 10.5,
                 letterSpacing: 0,
               ),

@@ -267,7 +267,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
         Text(
           _errorDetail!,
           textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 11, color: colors.textDisabled),
+          style: TextStyle(fontSize: 11, color: colors.textTertiary),
         ),
       ],
       const SizedBox(height: 16),

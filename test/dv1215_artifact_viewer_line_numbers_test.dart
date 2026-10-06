@@ -54,7 +54,7 @@ void main() {
     }
     final number = tester.widget<Text>(gutter(9));
     expect(number.style?.fontFamily, 'monospace');
-    expect(number.style?.color, theme.hermes.textDisabled);
+    expect(number.style?.color, theme.hermes.textTertiary);
     // Fixed width: one- and two-digit numbers end at the same x.
     expect(tester.getTopRight(gutter(0)).dx, tester.getTopRight(gutter(11)).dx);
     // Text columns line up regardless of the number's width.

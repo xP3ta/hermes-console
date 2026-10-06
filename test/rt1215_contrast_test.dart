@@ -8,11 +8,15 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/bots/ui/room_avatar_tile.dart';
+import 'package:hermes_android/core/bots/ui/roster/roster_model.dart';
+import 'package:hermes_android/core/bots/ui/roster/roster_rows.dart';
 import 'package:hermes_android/core/design/content.dart';
 import 'package:hermes_android/core/models/activity_snapshot.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/theme/theme_contrast.dart';
 import 'package:hermes_android/core/widgets/activity_sections.dart';
+import 'package:hermes_android/core/widgets/chat/chat_markdown_body.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 const double _aa = 4.5;
@@ -218,4 +222,100 @@ void main() {
     }
     expect(fails, isEmpty, reason: fails.join('\n'));
   });
+
+  // Tertiary text (timestamps, separators, diff hunk headers) is read, not
+  // disabled: it must reach AA on every surface in every theme too.
+  testWidgets('tertiary metadata paints readable ink in every theme', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(480, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final fails = <String>[];
+    final now = DateTime(2026, 10, 6, 12);
+    final room = RoomRosterEntry(
+      roomKey: 'desktop:r1',
+      title: 'Design Review',
+      members: const [RoomRosterMember('builder', null)],
+      preview: 'ok',
+      at: now.subtract(const Duration(hours: 2)),
+    );
+    for (final preset in AppTheme.presets) {
+      final theme = AppTheme.fromId(preset.id);
+      final c = theme.hermes;
+      await tester.pumpWidget(
+        MaterialApp(
+          key: ValueKey(preset.id),
+          locale: const Locale('en'),
+          localizationsDelegates: Strings.localizationsDelegates,
+          supportedLocales: Strings.supportedLocales,
+          theme: theme,
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: Column(
+                children: [
+                  RosterRoomRow(
+                    entry: room,
+                    avatarCache: null,
+                    onTap: () {},
+                    now: now,
+                  ),
+                  const ChatMarkdownBody(data: '```diff\n$_diff\n```'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(seconds: 1));
+      final surfaces = [c.background, c.surface, c.surfaceVariant];
+      final seen = <String>{};
+      final rich = find.descendant(
+        of: find.byType(Scaffold),
+        matching: find.byType(RichText),
+      );
+      final inAvatar = find
+          .descendant(
+            of: find.byType(RoomAvatarTile),
+            matching: find.byType(RichText),
+          )
+          .evaluate()
+          .toSet();
+      for (final element in rich.evaluate()) {
+        if (inAvatar.contains(element)) continue;
+        final widget = element.widget as RichText;
+        void visit(InlineSpan span, TextStyle inherited) {
+          if (span is! TextSpan) return;
+          final style = inherited.merge(span.style);
+          final text = (span.text ?? '').trim();
+          final isIcon = (style.fontFamily ?? '').contains('MaterialIcons');
+          if (_tertiary.contains(text) && !isIcon && style.color != null) {
+            seen.add(text);
+            final ink = ThemeContrast.composite(style.color!, c.background);
+            for (final bg in surfaces) {
+              final r = ThemeContrast.ratio(ink, bg);
+              if (r < _aa) {
+                fails.add('${preset.id} "$text" ${r.toStringAsFixed(2)}');
+                break;
+              }
+            }
+          }
+          for (final child in span.children ?? const <InlineSpan>[]) {
+            visit(child, style);
+          }
+        }
+
+        visit(widget.text, const TextStyle());
+      }
+      // The metadata under test really rendered in this theme.
+      expect(seen, _tertiary, reason: preset.id);
+    }
+    expect(fails, isEmpty, reason: fails.join('\n'));
+  });
 }
+
+const String _diff = '@@ -1,2 +1,2 @@\n keep\n-old\n+new';
+
+/// Tertiary runs of the fixture: the room timestamp, the "·" separator of a
+/// Desktop room and the diff hunk header.
+const Set<String> _tertiary = {'10:00', '·', '@@ -1,2 +1,2 @@'};
