@@ -2614,6 +2614,26 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// Starts fetching the newest images of the room log as soon as the log
+  /// changes, before their rows are built (lazy list), so a row scrolled
+  /// into view paints from the private cache. Bounded per pass; the
+  /// prefetcher dedupes, caps concurrency and waits while App Lock is on.
+  void _prefetchRoomMedia(List<RoomTranscriptEntry> transcript) {
+    final actions = widget.attachmentActions;
+    if (actions == null || actions is! RoomAttachmentCache) return;
+    final cache = actions as RoomAttachmentCache;
+    var queued = 0;
+    for (var i = transcript.length - 1; i >= 0 && queued < 12; i--) {
+      final entry = transcript[i];
+      if (entry is! RoomMessageEntry) continue;
+      for (final ref in entry.body.attachments) {
+        if (!ref.isImage || !actions.canFetch(ref)) continue;
+        cache.prefetch(ref);
+        queued++;
+      }
+    }
+  }
+
   ({Widget widget, int unread}) _transcriptView(
     Strings s,
     HermesThemeColors colors,
@@ -2628,6 +2648,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       lastSeenSeq: _lastSeenLoaded ? _lastSeenSeq : null,
       arrivedThroughSeq: _arrivedThroughSeq,
     );
+    _prefetchRoomMedia(transcript);
     final handles = _openableHandles();
     // Chronological items (oldest first), each with a stable identity.
     final items = <_RoomItem>[

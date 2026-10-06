@@ -17,9 +17,12 @@ import '../../l10n/app_localizations.dart';
 import '../models/attachment_draft.dart';
 import '../services/connection_manager.dart';
 import '../services/generated_media_service.dart';
+import '../services/media_dimensions.dart';
+import '../services/media_prefetcher.dart';
 import '../theme/app_theme.dart';
 import '../design/modal.dart' show releaseTextFocusIfKeyboardHidden;
 import '../theme/motion.dart';
+import 'generated_image_card.dart';
 import 'hermes_notice.dart';
 
 /// Tipo visual de adjunto, derivado del mime/extensión. Gobierna el badge de
@@ -772,21 +775,43 @@ class _GeneratedMediaAttachmentCardState
   String? get _memoKey {
     final scope = widget.readyMemoKey;
     if (scope == null) return null;
-    final reference = widget.reference;
-    return [
-      scope,
-      reference.source,
-      reference.kind.name,
-      reference.sizeBytes?.toString() ?? '',
-      reference.modifiedAt?.toUtc().microsecondsSinceEpoch.toString() ?? '',
-    ].join('\u0000');
+    return GeneratedMediaService.readyKey(scope, widget.reference);
   }
 
-  /// Synchronous so the very first frame is already the ready card.
+  /// Images (and other inline media) are painted in a reserved box instead
+  /// of a file card while their bytes are on their way.
+  bool get _presizedImage =>
+      widget.reference.kind == GeneratedMediaKind.image &&
+      !widget.reference.htmlPreview;
+
+  /// Synchronous so the very first frame is already the ready card: the
+  /// in-process memo, then a finished prefetch, then the private disk cache
+  /// (reopen / app restart), none of which touch the network.
   void _restoreRemembered() {
     final key = _memoKey;
     if (key == null) return;
-    final remembered = GeneratedMediaAttachmentCard._recallReady(key);
+    var remembered = GeneratedMediaAttachmentCard._recallReady(key);
+    if (remembered == null &&
+        widget.reference.kind != GeneratedMediaKind.file) {
+      // Files (text/PDF) keep the async inline-safety check of a real load.
+      final cached =
+          MediaPrefetcher.instance.readyFile(key) ??
+          GeneratedMediaService.cachedFileSync(
+            widget.readyMemoKey!,
+            widget.reference,
+          );
+      if (cached != null) {
+        try {
+          final length = cached.lengthSync();
+          if (length > 0 && length <= _autoLimit) {
+            GeneratedMediaAttachmentCard._rememberReady(key, cached, length);
+            remembered = (file: cached, length: length);
+          }
+        } catch (_) {
+          // Evicted meanwhile: load normally.
+        }
+      }
+    }
     if (remembered == null) return;
     _file = remembered.file;
     _text = _readTextPreview(remembered.file, remembered.length);
@@ -972,8 +997,8 @@ class _GeneratedMediaAttachmentCardState
         }
       }
 
-      final file = automatic
-          ? await GeneratedMediaService.runAutoLoad(
+      Future<File> slottedLoad() => automatic
+          ? GeneratedMediaService.runAutoLoad(
               performLoadWithRetry,
               cancellation: cancellation,
               isCancelled: () =>
@@ -982,7 +1007,16 @@ class _GeneratedMediaAttachmentCardState
                   !_visible ||
                   generation != _generation,
             )
-          : await performLoadWithRetry();
+          : performLoadWithRetry();
+      // A background prefetch of this very file is running: join it rather
+      // than taking a second slot or issuing a second request.
+      final memoKey = _memoKey;
+      final prefetching = memoKey == null
+          ? null
+          : MediaPrefetcher.instance.pending(memoKey);
+      final file = prefetching != null
+          ? (await prefetching) ?? await slottedLoad()
+          : await slottedLoad();
       if (!mounted || generation != _generation || _cancelled) return;
       final length = file.lengthSync();
       if (!mounted || generation != _generation || _cancelled) return;
@@ -1008,7 +1042,6 @@ class _GeneratedMediaAttachmentCardState
       }
       final text = _readTextPreview(file, length);
       if (!mounted || generation != _generation || _cancelled) return;
-      final memoKey = _memoKey;
       if (memoKey != null) {
         GeneratedMediaAttachmentCard._rememberReady(memoKey, file, length);
       }
@@ -1178,6 +1211,57 @@ class _GeneratedMediaAttachmentCardState
     );
   }
 
+  /// Skeleton or thumbnail of an image in one size-animated frame. Known
+  /// dimensions make the skeleton exactly as tall as the thumbnail, so the
+  /// row never moves; unknown ones reserve 16:9 and animate once. Null when
+  /// the regular file card applies (over the cap, error, offline).
+  Widget? _buildPresizedImage(BuildContext context, File? file) {
+    Widget? child;
+    if (_status == GeneratedFileStatus.ready && file != null) {
+      child = widget.readyBuilder?.call(
+        context,
+        file,
+        _receivedBytes,
+        _openExternal,
+        _share,
+        _save,
+      );
+    } else {
+      final knownSize = widget.reference.sizeBytes;
+      final waitsForAutoLoad =
+          _mayAutoLoad &&
+          !_autoLimitExceeded &&
+          (knownSize == null || knownSize <= _autoLimit) &&
+          (_totalBytes == null || _totalBytes! <= _autoLimit);
+      if (waitsForAutoLoad &&
+          (_status == GeneratedFileStatus.consent ||
+              _status == GeneratedFileStatus.downloading)) {
+        final memoKey = _memoKey;
+        final total = _totalBytes;
+        child = KeyedSubtree(
+          key: ValueKey<String>('generated-${widget.reference.kind.name}-card'),
+          child: GeneratedImageSkeleton(
+            intrinsicSize: memoKey == null
+                ? null
+                : MediaDimensionsCache.lookup(memoKey),
+            loading: _status == GeneratedFileStatus.downloading,
+            progress: total != null && total > 0 && _receivedBytes > 0
+                ? (_receivedBytes / total).clamp(0.0, 1.0)
+                : null,
+          ),
+        );
+      }
+    }
+    if (child == null) return null;
+    if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) return child;
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      alignment: Alignment.topLeft,
+      child: child,
+    );
+  }
+
   void _showActionError() {
     HermesNotice.of(context).showSnackBar(
       SnackBar(content: Text(Strings.of(context).genMediaError)),
@@ -1206,6 +1290,10 @@ class _GeneratedMediaAttachmentCardState
           file,
           mimeType: widget.reference.mimeType,
         );
+    if (_presizedImage) {
+      final image = _buildPresizedImage(context, file);
+      if (image != null) return image;
+    }
     if (_status == GeneratedFileStatus.ready && file != null) {
       if (_text != null) {
         return GeneratedTextPreviewCard(

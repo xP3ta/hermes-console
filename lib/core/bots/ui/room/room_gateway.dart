@@ -7,6 +7,7 @@ import '../../../services/artifact_export_service.dart';
 import '../../../services/attachment_uploader.dart';
 import '../../../services/connection_manager.dart';
 import '../../../services/generated_media_service.dart';
+import '../../../services/media_prefetcher.dart';
 import '../../../widgets/attachment_card.dart'
     show openGeneratedMediaExternally, shareMediaFile;
 import 'room_models.dart';
@@ -119,6 +120,16 @@ abstract interface class RoomAttachmentActions {
   Future<ArtifactSaveResult> save(RoomAttachmentRef ref, File file);
 }
 
+/// Optional private-cache capabilities of [RoomAttachmentActions].
+abstract interface class RoomAttachmentCache {
+  /// The cached copy, synchronously and without network, or null.
+  File? cachedFile(RoomAttachmentRef ref);
+
+  /// Starts fetching [ref] in the background (images only), so its row
+  /// paints from the cache when it scrolls into view.
+  void prefetch(RoomAttachmentRef ref);
+}
+
 /// Real uploader: Console's existing `AttachmentUploader` (Dashboard
 /// `files/upload` under `hermes_home/uploads`).
 final class DashboardRoomAttachmentUploader implements RoomAttachmentUploader {
@@ -134,7 +145,8 @@ final class DashboardRoomAttachmentUploader implements RoomAttachmentUploader {
 
 /// Real actions over the Dashboard `files/download` route, cached with the
 /// same service the chat uses for generated media.
-final class DashboardRoomAttachmentActions implements RoomAttachmentActions {
+final class DashboardRoomAttachmentActions
+    implements RoomAttachmentActions, RoomAttachmentCache {
   final SavedConnection connection;
   final String profile;
   final ArtifactExportActions exporter;
@@ -155,14 +167,54 @@ final class DashboardRoomAttachmentActions implements RoomAttachmentActions {
         reference.sourceKind == GeneratedMediaSourceKind.serverPath;
   }
 
+  String get _scope => '${connection.id}\u0000$profile';
+
   @override
-  Future<File> fetch(RoomAttachmentRef ref) {
+  File? cachedFile(RoomAttachmentRef ref) {
+    final reference = _reference(ref);
+    if (reference == null ||
+        reference.sourceKind != GeneratedMediaSourceKind.serverPath) {
+      return null;
+    }
+    return MediaPrefetcher.instance.readyFile(
+          GeneratedMediaService.readyKey(_scope, reference),
+        ) ??
+        GeneratedMediaService.cachedFileSync(_scope, reference);
+  }
+
+  @override
+  void prefetch(RoomAttachmentRef ref) {
+    final reference = _reference(ref);
+    if (reference == null || reference.kind != GeneratedMediaKind.image) {
+      return;
+    }
+    MediaPrefetcher.instance.prefetch(
+      key: GeneratedMediaService.readyKey(_scope, reference),
+      reference: reference,
+      load: () => _download(reference),
+    );
+  }
+
+  @override
+  Future<File> fetch(RoomAttachmentRef ref) async {
     final reference = _reference(ref);
     if (reference == null) {
       throw const FormatException('unsupported room attachment');
     }
+    // A running prefetch of this file: join it instead of fetching again.
+    final pending = MediaPrefetcher.instance.pending(
+      GeneratedMediaService.readyKey(_scope, reference),
+    );
+    if (pending != null) {
+      final file = await pending;
+      if (file != null) return file;
+    }
+    return _download(reference);
+  }
+
+  Future<File> _download(GeneratedMediaReference reference) {
     return GeneratedMediaService.ensureDownloaded(
-      '${connection.id}\u0000$profile',
+      _scope,
       reference,
       fetchServerPathToFileWithProgress:
           (path, destination, reportProgress, cancelled) async {

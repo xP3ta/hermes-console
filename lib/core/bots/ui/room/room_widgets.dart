@@ -1847,8 +1847,17 @@ enum _AttachmentOp { preview, download, open, share }
 
 class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
   bool _busy = false;
-  late File? _file = widget.localFile;
+
+  /// A cached copy (reopened room, app restart, finished prefetch) paints on
+  /// the first frame without any network.
+  late File? _file = widget.localFile ?? _cachedCopy();
   bool _previewFailed = false;
+
+  File? _cachedCopy() {
+    final actions = widget.actions;
+    if (!_hasMediaPreview || actions is! RoomAttachmentCache) return null;
+    return (actions as RoomAttachmentCache).cachedFile(widget.attachment);
+  }
 
   /// Bounded preview fetches across every room card on screen: a long room
   /// full of photos must not open dozens of downloads at once.
@@ -1953,13 +1962,28 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
     final unavailable =
         _previewFailed ||
         (_hasMediaPreview && file == null && !enabled && !_busy);
-    final preview = file != null && _hasMediaPreview && !_previewFailed
+    final Widget? preview = file != null && _hasMediaPreview && !_previewFailed
         ? AttachmentPreview(
             key: ValueKey('room-attachment-media-${ref.path}'),
             name: ref.name,
             mimeType: '',
             sizeLabel: '',
             file: file,
+          )
+        : _kind == AttachmentPreviewKind.image &&
+              file == null &&
+              !_previewFailed &&
+              (widget.actions?.canFetch(ref) ?? false)
+        // The image's box is reserved while its bytes arrive, so the card
+        // does not grow under the reader when they land.
+        ? Container(
+            key: ValueKey('room-attachment-skeleton-${ref.path}'),
+            width: AttachmentPreview.imageExtent,
+            height: AttachmentPreview.imageExtent,
+            decoration: BoxDecoration(
+              color: colors.surfaceVariant,
+              borderRadius: BorderRadius.circular(12),
+            ),
           )
         : null;
     Widget action(String key, IconData icon, String label, _AttachmentOp op) =>
