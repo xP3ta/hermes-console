@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
+import 'package:hermes_android/core/bots/ui/room/room_header.dart';
 import 'package:hermes_android/core/bots/ui/room/room_models.dart';
 import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
@@ -14,9 +15,9 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import '../../support/inter_font.dart';
 import 'room_fixtures.dart';
 
-/// Bot Mode polish, direction A (fixed status strip):
-/// the room's status area never changes height, never pushes what the user
-/// is reading, and no card is ever left without a way out.
+/// Bot Mode polish, direction A (fixed status line, now inside the one-layer
+/// room header): the room's status area never changes height, never pushes
+/// what the user is reading, and no card is ever left without a way out.
 final class _FakeTimer implements Timer {
   bool cancelled = false;
   @override
@@ -167,7 +168,8 @@ List<Map<String, dynamic>> _longRoom(EventSeq seq, {int rounds = 12}) {
   return out;
 }
 
-Finder get _strip => find.byKey(const ValueKey('room-status-strip'));
+Finder get _strip => find.byKey(const ValueKey('room-header'));
+Finder get _bar => find.byType(AppBar);
 Finder get _transcript => find.byKey(const ValueKey('room-transcript'));
 
 /// Top edge (global y) of the first message tile visible in the transcript.
@@ -199,8 +201,8 @@ double _topOf(WidgetTester tester, String key) =>
 void main() {
   setUpAll(loadInterFont);
 
-  group('A · fixed status strip', () {
-    testWidgets('C4 strip has the same height in every room state', (
+  group('A · fixed status line in the header', () {
+    testWidgets('C4 header has the same height in every room state', (
       tester,
     ) async {
       final heights = <String, double>{};
@@ -211,7 +213,7 @@ void main() {
       ) async {
         await _pump(tester, events: events, status: status);
         expect(_strip, findsOneWidget, reason: label);
-        heights[label] = tester.getSize(_strip).height;
+        heights[label] = tester.getSize(_bar).height;
       }
 
       var seq = EventSeq();
@@ -261,7 +263,7 @@ void main() {
       await measure('empty', const [], null);
 
       expect(heights.values.toSet(), {
-        RoomStatusStrip.height,
+        RoomHeaderBar.expandedHeight,
       }, reason: '$heights');
     });
 
@@ -276,11 +278,11 @@ void main() {
         status: driver(working: true),
       );
       expect(find.byKey(const ValueKey('room-round-panel')), findsNothing);
-      // The strip is outside the scrollable transcript.
+      // The status line is outside the scrollable transcript.
       expect(find.descendant(of: _transcript, matching: _strip), findsNothing);
     });
 
-    testWidgets('strip shows one face per member with its state dot', (
+    testWidgets('header faces carry a dot only for states that matter', (
       tester,
     ) async {
       final seq = EventSeq();
@@ -302,23 +304,36 @@ void main() {
       );
       for (final (id, state) in const [
         ('m-builder', 'working'),
-        ('m-review', 'queued'),
         ('m-lead', 'needsYou'),
-        ('m-radar', 'passed'),
       ]) {
         expect(
           find.descendant(
             of: _strip,
-            matching: find.byKey(ValueKey('room-strip-dot-$id-$state')),
+            matching: find.byKey(ValueKey('room-header-dot-$id-$state')),
           ),
           findsOneWidget,
           reason: '$id should be $state',
         );
       }
+      // Queued and passed faces stay plain: the header stays calm; the
+      // round detail lists every state.
+      for (final id in ['m-review', 'm-radar']) {
+        expect(
+          find.byWidgetPredicate(
+            (w) =>
+                w.key is ValueKey<String> &&
+                (w.key! as ValueKey<String>).value.startsWith(
+                  'room-header-dot-$id-',
+                ),
+          ),
+          findsNothing,
+          reason: id,
+        );
+      }
       // Needs-you wins the one-line summary.
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('room-strip-summary')))
+            .widget<Text>(find.byKey(const ValueKey('room-header-status')))
             .data,
         'console-lead needs you',
       );
@@ -347,36 +362,26 @@ void main() {
       );
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('room-strip-summary')))
+            .widget<Text>(find.byKey(const ValueKey('room-header-status')))
             .data,
         'console-radar is replying · $elapsed',
       );
-      expect(
-        tester.widget<Text>(find.byKey(const ValueKey('room-strip-next'))).data,
-        'Next: console-review, console-lead',
-      );
       // The one replying is marked and leads the faces.
-      final working = find.byKey(const ValueKey('room-strip-face-now-m-radar'));
-      expect(working, findsOneWidget);
-      final x = tester.getTopLeft(working).dx;
+      expect(
+        find.byKey(const ValueKey('room-header-dot-m-radar-working')),
+        findsOneWidget,
+      );
+      final x = tester
+          .getTopLeft(find.byKey(const ValueKey('room-header-face-m-radar')))
+          .dx;
       for (final id in ['m-review', 'm-lead', 'm-builder']) {
         expect(
-          tester
-              .getTopLeft(
-                find.byWidgetPredicate(
-                  (w) =>
-                      w.key is ValueKey<String> &&
-                      (w.key! as ValueKey<String>).value.startsWith(
-                        'room-strip-dot-$id-',
-                      ),
-                ),
-              )
-              .dx,
+          tester.getTopLeft(find.byKey(ValueKey('room-header-face-$id'))).dx,
           greaterThan(x),
           reason: '$id must sit after the one replying',
         );
       }
-      expect(tester.getSize(_strip).height, RoomStatusStrip.height);
+      expect(tester.getSize(_bar).height, RoomHeaderBar.expandedHeight);
     });
 
     testWidgets('typing: the replying bot shows under the last message', (
@@ -453,17 +458,16 @@ void main() {
       );
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('room-strip-summary')))
+            .widget<Text>(find.byKey(const ValueKey('room-header-status')))
             .data,
         'console-builder and console-lead are replying',
       );
-      expect(find.byKey(const ValueKey('room-strip-next')), findsNothing);
       expect(
-        find.byKey(const ValueKey('room-strip-face-now-m-builder')),
+        find.byKey(const ValueKey('room-header-dot-m-builder-working')),
         findsOneWidget,
       );
       expect(
-        find.byKey(const ValueKey('room-strip-face-now-m-lead')),
+        find.byKey(const ValueKey('room-header-dot-m-lead-working')),
         findsOneWidget,
       );
     });
@@ -499,8 +503,8 @@ void main() {
         return (box.decoration as BoxDecoration).color!;
       }
 
-      expect(dot('room-strip-dot-m-radar-failed'), colors.error);
-      expect(dot('room-strip-dot-m-lead-needsYou'), colors.warning);
+      expect(dot('room-header-dot-m-radar-failed'), colors.error);
+      expect(dot('room-header-dot-m-lead-needsYou'), colors.warning);
       for (final state in RoomTurnState.values.where(
         (s) => s != RoomTurnState.failed,
       )) {
@@ -512,7 +516,7 @@ void main() {
       }
     });
 
-    testWidgets('tapping the strip opens a floating detail, not a push', (
+    testWidgets('tapping the header opens a floating detail, not a push', (
       tester,
     ) async {
       final seq = EventSeq();
@@ -789,31 +793,34 @@ void main() {
       expect(find.text('Blocked — retry'), findsOneWidget);
     });
 
-    testWidgets('C6 dismiss removes the card and the strip alert, and sticks', (
-      tester,
-    ) async {
-      final prefs = MemoryRoomPrefs();
-      await failedRoom(tester, prefs: prefs);
-      expect(
-        find.byKey(const ValueKey('room-strip-dot-m-radar-failed')),
-        findsOneWidget,
-      );
-      await tester.tap(find.byKey(const ValueKey('room-retry-task-r-dismiss')));
-      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
-      await _frames(tester);
-      expect(find.byKey(const ValueKey('room-retry-task-r')), findsNothing);
-      expect(
-        tester
-            .widget<Text>(find.byKey(const ValueKey('room-strip-summary')))
-            .data,
-        isNot(contains('failed')),
-      );
+    testWidgets(
+      'C6 dismiss removes the card and the header alert, and sticks',
+      (tester) async {
+        final prefs = MemoryRoomPrefs();
+        await failedRoom(tester, prefs: prefs);
+        expect(
+          find.byKey(const ValueKey('room-header-dot-m-radar-failed')),
+          findsOneWidget,
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('room-retry-task-r-dismiss')),
+        );
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        await _frames(tester);
+        expect(find.byKey(const ValueKey('room-retry-task-r')), findsNothing);
+        expect(
+          tester
+              .widget<Text>(find.byKey(const ValueKey('room-header-status')))
+              .data,
+          isNot(contains('failed')),
+        );
 
-      // Reopening the room with the same device prefs keeps it dismissed.
-      await tester.pumpWidget(const SizedBox());
-      await failedRoom(tester, prefs: prefs);
-      expect(find.byKey(const ValueKey('room-retry-task-r')), findsNothing);
-    });
+        // Reopening the room with the same device prefs keeps it dismissed.
+        await tester.pumpWidget(const SizedBox());
+        await failedRoom(tester, prefs: prefs);
+        expect(find.byKey(const ValueKey('room-retry-task-r')), findsNothing);
+      },
+    );
 
     testWidgets('C6 with server retry: Retry and Dismiss both work', (
       tester,

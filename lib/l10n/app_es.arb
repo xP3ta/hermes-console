@@ -7738,17 +7738,6 @@
   },
   "settingsStartupBotsTitle": "Abrir Bots al iniciar",
   "settingsStartupBotsSubtitle": "Arranca la app en Modo Bot en vez de Inicio. Las notificaciones siguen abriendo su pantalla.",
-  "roomViewAvailability": "{available} de {total} disponibles",
-  "@roomViewAvailability": {
-    "placeholders": {
-      "available": {
-        "type": "int"
-      },
-      "total": {
-        "type": "int"
-      }
-    }
-  },
   "roomRoundLabel": "Ronda {round}",
   "@roomRoundLabel": {
     "placeholders": {
@@ -7767,14 +7756,6 @@
   },
   "roomRoundQueued": "{count} en cola",
   "@roomRoundQueued": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "roomRoundNeedsYou": "{count, plural, =1{1 te necesita} other{{count} te necesitan}}",
-  "@roomRoundNeedsYou": {
     "placeholders": {
       "count": {
         "type": "int"
@@ -7838,25 +7819,6 @@
   "roomStatusRecovering": "Comprobando una respuesta interrumpida…",
   "@roomStatusRecovering": {
     "description": "Room header while the server re-checks a reply interrupted by a restart or lost connection; not a failure"
-  },
-  "roomStatusRoundFinished": "Ronda {round} terminada · {ago}",
-  "@roomStatusRoundFinished": {
-    "placeholders": {
-      "round": {
-        "type": "int"
-      },
-      "ago": {
-        "type": "String"
-      }
-    }
-  },
-  "roomStatusLastActivity": "Última actividad {ago}",
-  "@roomStatusLastActivity": {
-    "placeholders": {
-      "ago": {
-        "type": "String"
-      }
-    }
   },
   "roomAgoNow": "ahora mismo",
   "roomAgoMinutes": "hace {count} min",
@@ -7984,14 +7946,6 @@
       }
     }
   },
-  "roomStripNext": "Después: {names}",
-  "@roomStripNext": {
-    "placeholders": {
-      "names": {
-        "type": "String"
-      }
-    }
-  },
   "roomTypingLabel": "{name} está respondiendo…",
   "@roomTypingLabel": {
     "placeholders": {
@@ -8008,7 +7962,6 @@
       }
     }
   },
-  "roomStripDetail": "Ver qué hace cada perfil",
   "roomActionFailed": "Hermes rechazó la acción. Inténtalo de nuevo.",
   "roomActivityTitle": "Actividad",
   "roomActivityEmpty": "Aún no hay pases, fallos ni reintentos.",
@@ -10101,5 +10054,66 @@
       }
     }
   },
-  "au1215ScheduledRunsHint": "Ejecuciones de cada tarea, de la más reciente a la más antigua"
+  "au1215ScheduledRunsHint": "Ejecuciones de cada tarea, de la más reciente a la más antigua",
+  "rhdrBots": "{count, plural, =1{1 bot} other{{count} bots}}",
+  "@rhdrBots": {
+    "description": "Room header status: how many bots are in the room.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "rhdrBotsAvailable": "{available} de {total} bots",
+  "@rhdrBotsAvailable": {
+    "description": "Room header status when some bots are unavailable.",
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "rhdrRoundFinished": "ronda terminada {ago}",
+  "@rhdrRoundFinished": {
+    "description": "Room header status after the presence part, e.g. '4 bots · round finished 5 min ago'.",
+    "placeholders": {
+      "ago": {
+        "type": "String"
+      }
+    }
+  },
+  "rhdrLastActivity": "activa {ago}",
+  "@rhdrLastActivity": {
+    "description": "Room header status after the presence part when there is no round.",
+    "placeholders": {
+      "ago": {
+        "type": "String"
+      }
+    }
+  },
+  "rhdrNeedsYouMany": "Te esperan {count}",
+  "@rhdrNeedsYouMany": {
+    "description": "Room header status when several bots wait on the user.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "rhdrOpenDetailHint": "Ver miembros y ronda",
+  "@rhdrOpenDetailHint": {
+    "description": "Accessibility hint of the room header; tapping opens the members/round detail."
+  },
+  "rhdrMoreMembers": "{count} más",
+  "@rhdrMoreMembers": {
+    "description": "Accessibility: members not shown in the header face cluster.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

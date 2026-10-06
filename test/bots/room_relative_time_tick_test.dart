@@ -89,7 +89,7 @@ void main() {
 
   String line(WidgetTester tester) => tester
       .widget<Text>(
-        find.byKey(const ValueKey('room-strip-summary'), skipOffstage: false),
+        find.byKey(const ValueKey('room-header-status'), skipOffstage: false),
       )
       .data!;
 
@@ -118,30 +118,30 @@ void main() {
     tester,
   ) async {
     await pumpIdleRoom(tester);
-    expect(line(tester), 'Round 1 finished · 8 min ago');
+    expect(line(tester), '4 bots · round finished 8 min ago');
     // Not before the minute turns.
     await advance(tester, const Duration(seconds: 50));
-    expect(line(tester), 'Round 1 finished · 8 min ago');
+    expect(line(tester), '4 bots · round finished 8 min ago');
     await advance(tester, const Duration(seconds: 10));
-    expect(line(tester), 'Round 1 finished · 9 min ago');
+    expect(line(tester), '4 bots · round finished 9 min ago');
     await advance(tester, const Duration(minutes: 2));
-    expect(line(tester), 'Round 1 finished · 11 min ago');
+    expect(line(tester), '4 bots · round finished 11 min ago');
   });
 
   testWidgets('past an hour the label changes once per hour', (tester) async {
     await pumpIdleRoom(tester);
     await advance(tester, const Duration(minutes: 52));
-    expect(line(tester), 'Round 1 finished · 1 h ago');
+    expect(line(tester), '4 bots · round finished 1 h ago');
     // 1 h 0 min 5 s old: the next label is 2 h, one repaint away.
     expect(delay(tester), const Duration(minutes: 59, seconds: 55));
     final ticks = ageTicks(tester);
     for (var i = 0; i < 58; i++) {
       await advance(tester, const Duration(minutes: 1));
-      expect(line(tester), 'Round 1 finished · 1 h ago');
+      expect(line(tester), '4 bots · round finished 1 h ago');
     }
     expect(ageTicks(tester), ticks, reason: 'no repaint inside the hour');
     await advance(tester, const Duration(minutes: 2));
-    expect(line(tester), 'Round 1 finished · 2 h ago');
+    expect(line(tester), '4 bots · round finished 2 h ago');
     expect(ageTicks(tester), ticks + 1);
     expect(delay(tester), const Duration(minutes: 59, seconds: 55));
   });
@@ -150,19 +150,19 @@ void main() {
     await pumpIdleRoom(tester);
     // 23 h 59 min 5 s old.
     await advance(tester, const Duration(hours: 23, minutes: 50, seconds: 60));
-    expect(line(tester), 'Round 1 finished · 23 h ago');
+    expect(line(tester), '4 bots · round finished 23 h ago');
     await advance(tester, const Duration(minutes: 1));
-    expect(line(tester), 'Round 1 finished · 1 d ago');
+    expect(line(tester), '4 bots · round finished 1 d ago');
     // 1 d 0 h 0 min 5 s old.
     expect(delay(tester), const Duration(hours: 23, minutes: 59, seconds: 55));
     final ticks = ageTicks(tester);
     for (var i = 0; i < 23; i++) {
       await advance(tester, const Duration(hours: 1));
-      expect(line(tester), 'Round 1 finished · 1 d ago');
+      expect(line(tester), '4 bots · round finished 1 d ago');
     }
     expect(ageTicks(tester), ticks, reason: 'no repaint inside the day');
     await advance(tester, const Duration(hours: 1));
-    expect(line(tester), 'Round 1 finished · 2 d ago');
+    expect(line(tester), '4 bots · round finished 2 d ago');
     expect(ageTicks(tester), ticks + 1);
     expect(delay(tester), const Duration(hours: 23, minutes: 59, seconds: 55));
   });
@@ -178,15 +178,15 @@ void main() {
     await tester.pump();
     expect(armed(tester), isFalse);
     await advance(tester, const Duration(minutes: 5));
-    expect(line(tester), 'Round 1 finished · 8 min ago');
+    expect(line(tester), '4 bots · round finished 8 min ago');
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
-    expect(line(tester), 'Round 1 finished · 13 min ago');
+    expect(line(tester), '4 bots · round finished 13 min ago');
     expect(armed(tester), isTrue);
     await advance(tester, const Duration(minutes: 1));
-    expect(line(tester), 'Round 1 finished · 14 min ago');
+    expect(line(tester), '4 bots · round finished 14 min ago');
   });
 
   testWidgets('no tick while another route covers the room', (tester) async {

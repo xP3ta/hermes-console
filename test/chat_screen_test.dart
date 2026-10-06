@@ -13849,13 +13849,15 @@ void main() {
     final inputRow = find.byKey(const ValueKey('composer-input-row'));
     final cardRect = tester.getRect(card);
     final rowRect = tester.getRect(inputRow);
-    // One compact thumb in a full-width composer: it must sit at the start
-    // edge (behind the strip's 12 dp inset from the rounded surface), not
-    // float in the middle of the input.
+    final textRect = tester.getRect(
+      find.descendant(of: inputRow, matching: find.byType(EditableText)),
+    );
+    // One compact tile in a full-width composer: it starts where the text
+    // starts (one column with the text), not floating in the middle.
     expect(
       cardRect.left,
-      closeTo(rowRect.left + 12, 4),
-      reason: 'card.left=${cardRect.left} row.left=${rowRect.left}',
+      closeTo(textRect.left, 2),
+      reason: 'card.left=${cardRect.left} text.left=${textRect.left}',
     );
     expect(cardRect.center.dx, lessThan(rowRect.center.dx - 40));
     expect(tester.getRect(strip).width, closeTo(rowRect.width, 1));

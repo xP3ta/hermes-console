@@ -147,13 +147,21 @@ class AttachmentCard extends StatelessWidget {
   final VoidCallback? onRetry;
   final VoidCallback? onTap;
 
-  /// Composer variant: a smaller thumb ([compactThumbSize]) with 24 dp
-  /// remove/retry circles, so staged images fit inside the rounded input.
-  /// Chat bubbles keep the default 120 dp thumb.
+  /// Composer tray variant: every attachment is a [compactThumbSize] rounded
+  /// square (image thumb, or a kind icon plus a short name) with a small ×
+  /// inside its corner. Chat bubbles keep the default 120 dp thumb.
   final bool compact;
 
-  /// Side of the image thumb in the [compact] variant.
-  static const double compactThumbSize = 80;
+  /// Side of every tile in the [compact] variant.
+  static const double compactThumbSize = 60;
+
+  /// The 48 dp × / retry targets of a [compact] tile overhang it by this
+  /// much above and to the side. Their small badges then sit on the tile's
+  /// corners while the tile's centre stays free for the preview tap.
+  static const double compactTargetTop = 16;
+  static const double compactTargetSide = 20;
+
+  double get _radius => compact ? 14 : 12;
 
   const AttachmentCard({
     super.key,
@@ -177,6 +185,8 @@ class AttachmentCard extends StatelessWidget {
     final kind = attachmentKindFor(name, mimeType);
     final card = kind == AttachmentKind.image && _hasThumb
         ? _imageThumb(context, kind)
+        : compact
+        ? _fileTile(context, kind)
         : _fileCard(context, kind);
     return Stack(
       clipBehavior: Clip.none,
@@ -232,12 +242,13 @@ class AttachmentCard extends StatelessWidget {
             fit: BoxFit.cover,
             gaplessPlayback: true,
             cacheWidth: _thumbDecodeWidth,
-            errorBuilder: (_, _, _) => _fileCard(context, kind),
+            errorBuilder: (_, _, _) =>
+                compact ? _fileTile(context, kind) : _fileCard(context, kind),
           );
     return GestureDetector(
       onTap: onTap,
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(_radius),
         child: Container(
           width: _thumbSize,
           height: _thumbSize,
@@ -300,6 +311,71 @@ class AttachmentCard extends StatelessWidget {
       ),
     );
   }
+
+  /// Tray tile for a non-image attachment: the kind icon and a short name
+  /// inside the same rounded square as an image thumb.
+  Widget _fileTile(BuildContext context, AttachmentKind kind) {
+    final colors = Theme.of(context).hermes;
+    final failed = uploadState == AttachmentUploadState.error;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: compactThumbSize,
+        height: compactThumbSize,
+        padding: const EdgeInsets.fromLTRB(5, 8, 5, 6),
+        decoration: BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(_radius),
+          border: Border.all(
+            color: failed
+                ? colors.error
+                : colors.divider.withValues(alpha: 0.5),
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              _tileIcon(kind),
+              size: 22,
+              color: failed ? colors.error : _badgeColor(kind),
+            ),
+            const SizedBox(height: 4),
+            // Fixed tile: the name may grow a little with the text scale but
+            // never past the tile; the full name stays in semantics.
+            MediaQuery.withClampedTextScaling(
+              maxScaleFactor: 1.3,
+              child: Text(
+                name,
+                key: const ValueKey('attachment-tile-name'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontSize: 10,
+                  height: 1.1,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static IconData _tileIcon(AttachmentKind kind) => switch (kind) {
+    AttachmentKind.image => Icons.image_outlined,
+    AttachmentKind.video => Icons.movie_outlined,
+    AttachmentKind.audio => Icons.audiotrack_outlined,
+    AttachmentKind.archive => Icons.folder_zip_outlined,
+    AttachmentKind.other => Icons.insert_drive_file_outlined,
+    AttachmentKind.pdf ||
+    AttachmentKind.doc ||
+    AttachmentKind.sheet ||
+    AttachmentKind.code ||
+    AttachmentKind.text => Icons.description_outlined,
+  };
 
   String _fileSubtitle(BuildContext context, AttachmentKind kind) {
     if (!showUploadState) {
@@ -377,7 +453,7 @@ class AttachmentCard extends StatelessWidget {
 
   Widget _overlay(BuildContext context, {bool spinner = false}) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(_radius),
       child: Container(
         color: Colors.black.withValues(alpha: 0.45),
         alignment: Alignment.center,
@@ -395,8 +471,8 @@ class AttachmentCard extends StatelessWidget {
   Widget _removeButton(BuildContext context) {
     final colors = Theme.of(context).hermes;
     return Positioned(
-      top: -12,
-      right: -12,
+      top: compact ? -compactTargetTop : -12,
+      right: compact ? -compactTargetSide : -12,
       child: Semantics(
         button: true,
         label: Strings.of(context).chaRemoveAttachment,
@@ -411,7 +487,7 @@ class AttachmentCard extends StatelessWidget {
               height: 48,
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.all(3),
+                  padding: EdgeInsets.all(compact ? 2 : 3),
                   decoration: BoxDecoration(
                     color: colors.surface,
                     shape: BoxShape.circle,
@@ -419,7 +495,7 @@ class AttachmentCard extends StatelessWidget {
                   ),
                   child: Icon(
                     Icons.close,
-                    size: compact ? 16 : 14,
+                    size: 14,
                     color: colors.textSecondary,
                   ),
                 ),
@@ -434,8 +510,8 @@ class AttachmentCard extends StatelessWidget {
   Widget _retryButton(BuildContext context) {
     final colors = Theme.of(context).hermes;
     return Positioned(
-      top: -12,
-      left: -12,
+      top: compact ? -compactTargetTop : -12,
+      left: compact ? -compactTargetSide : -12,
       child: Semantics(
         button: true,
         label: Strings.of(context).chaRetryAttachment,
@@ -450,7 +526,7 @@ class AttachmentCard extends StatelessWidget {
               height: 48,
               child: Center(
                 child: Container(
-                  padding: EdgeInsets.all(compact ? 3 : 4),
+                  padding: EdgeInsets.all(compact ? 2 : 4),
                   decoration: BoxDecoration(
                     color: colors.surface,
                     shape: BoxShape.circle,
@@ -458,7 +534,7 @@ class AttachmentCard extends StatelessWidget {
                   ),
                   child: Icon(
                     Icons.refresh_rounded,
-                    size: compact ? 16 : 15,
+                    size: compact ? 14 : 15,
                     color: colors.textSecondary,
                   ),
                 ),

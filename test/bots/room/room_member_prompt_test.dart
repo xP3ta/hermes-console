@@ -301,7 +301,7 @@ Future<void> refresh(WidgetTester tester) async {
 }
 
 Future<void> openRoundDetail(WidgetTester tester) async {
-  await tester.tap(find.byKey(const ValueKey('room-status-strip')));
+  await tester.tap(find.byKey(const ValueKey('room-header')));
   await tester.pump(const Duration(milliseconds: 300));
 }
 
