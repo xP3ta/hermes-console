@@ -10251,5 +10251,80 @@
   "gdGestChatTitle": "Atajo del chat",
   "gdGestChatBody": "Toca o sube la rayita sobre el compositor",
   "gdExperimentalTitle": "Dock con gestos (experimental)",
-  "gdExperimentalSubtitle": "Dock flotante nuevo que se esconde y responde a gestos. En pruebas."
+  "gdExperimentalSubtitle": "Dock flotante nuevo que se esconde y responde a gestos. En pruebas.",
+  "mascotStateIdle": "{name} está en reposo",
+  "@mascotStateIdle": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateThinking": "{name} está pensando",
+  "@mascotStateThinking": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateTool": "{name} está usando una herramienta",
+  "@mascotStateTool": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateNeedsYou": "{name} te necesita",
+  "@mascotStateNeedsYou": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateDone": "{name} ha terminado",
+  "@mascotStateDone": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateOffline": "{name} está sin conexión",
+  "@mascotStateOffline": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateError": "{name} ha tenido un error",
+  "@mascotStateError": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotClusterMore": "{names} y {count} más",
+  "@mascotClusterMore": {
+    "description": "Screen-reader label of a room's mascot cluster when more bots than the visible faces are present.",
+    "placeholders": {
+      "names": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }
