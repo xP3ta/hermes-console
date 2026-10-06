@@ -46,6 +46,7 @@ import 'core/services/cold_start_store.dart';
 import 'core/services/android_launch_action_inbox.dart';
 import 'core/services/android_share_inbox.dart';
 import 'core/services/app_lock.dart';
+import 'core/services/clipboard_image_source.dart';
 import 'core/services/approval_policy.dart';
 import 'core/services/bridge_manager.dart';
 import 'core/services/chat_draft_store.dart';
@@ -309,6 +310,8 @@ Future<Widget> bootstrapHermesApp() async {
     ScreenSecurityService(prefs).apply(),
   ]);
   final appLock = AppLockService(prefs);
+  // Clipboard images are never probed or read while the app is locked.
+  ClipboardImageSource.appLocked = appLock.locked;
   final approvalPolicy = ApprovalPolicyService(prefs);
   final fontSize = FontSizeService(prefs);
   final bridgeManager = BridgeManager(SecureStorage(), connManager);
