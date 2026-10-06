@@ -15051,21 +15051,27 @@ class _ChatScreenState extends State<ChatScreen>
         if (info.model.isNotEmpty) setState(() => _activeModel = info);
       }).catchError((_) {});
     final strings = Strings.of(context);
-    final active = _activeModel;
+    // A picked model the server accepted but has not echoed in
+    // `session.info` yet is the one this session runs: the subtitle follows
+    // the pill, not the stale info.
+    final displayed = _displayedSessionModel;
+    final activeModel = displayed?.modelId ?? _activeModel?.model ?? '';
+    final activeProvider =
+        displayed?.providerSlug ?? _activeModel?.provider ?? '';
     showStatusPillSheet<void>(
       context: context,
       onRoute: _trackStatusSheet,
       surfaceKey: const ValueKey('chat-model-dialog'),
       title: strings.chaModelSheetTitle,
-      subtitle: active == null || active.model.isEmpty
+      subtitle: activeModel.isEmpty
           ? strings.chaModelSheetSubtitleDefault
-          : active.provider.isNotEmpty
+          : activeProvider.isNotEmpty
           ? strings.chaModelSheetSubtitleActive(
-              friendlyModelName(active.model),
-              active.provider,
+              friendlyModelName(activeModel),
+              activeProvider,
             )
           : strings.chaModelSheetSubtitleActiveOnly(
-              friendlyModelName(active.model),
+              friendlyModelName(activeModel),
             ),
       builder: (ctx) {
         final colors = Theme.of(ctx).hermes;
@@ -17250,6 +17256,28 @@ class _ChatScreenState extends State<ChatScreen>
         compressionCount: _chatBound ? _chat.desktopSessionCompressionCount : 0,
         modelLabel: _activeModelLabel,
         onOpenModel: _showModelSheet,
+        // fh1215 moved the model out of the header: its provider logo and
+        // the md1215 "applies on the next message" mark ride on the pill.
+        modelLeading: switch (_headerModelId) {
+          final model? => ProviderLogo(
+            key: const ValueKey('provider-logo-chat-header'),
+            provider: _headerProviderSlug,
+            model: model,
+            size: 14,
+          ),
+          null => null,
+        },
+        modelTrailing: _modelChangePending
+            ? Tooltip(
+                key: const ValueKey('md1215-model-pending'),
+                message: Strings.of(context).md1215ModelPending,
+                child: Icon(
+                  Icons.schedule_rounded,
+                  size: 12,
+                  color: colors.textSecondary,
+                ),
+              )
+            : null,
         // Hermes computes subscription limits (`agent/account_usage.py`)
         // but publishes them to clients only as rendered text lines; no
         // structured feed exists yet, so no dot and no block are shown.

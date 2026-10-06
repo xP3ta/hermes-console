@@ -45,6 +45,8 @@ class ChatStatusPill extends StatelessWidget {
     this.clock,
     this.modelLabel,
     this.onOpenModel,
+    this.modelLeading,
+    this.modelTrailing,
     this.limitLevel = SubscriptionLimitLevel.none,
     this.permissionsLabel,
     this.permissionsFlag,
@@ -69,6 +71,12 @@ class ChatStatusPill extends StatelessWidget {
   /// Friendly name of the model; null hides the model zone.
   final String? modelLabel;
   final VoidCallback? onOpenModel;
+
+  /// Shown before / after the model name (e.g. the provider logo and a
+  /// "change pending" mark), so the pill carries what the header's model
+  /// chip used to show.
+  final Widget? modelLeading;
+  final Widget? modelTrailing;
   final SubscriptionLimitLevel limitLevel;
 
   /// Effective permission mode, always announced. Null hides the zone.
@@ -111,9 +119,15 @@ class ChatStatusPill extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (modelLeading case final leading?) ...[
+                  leading,
+                  const SizedBox(width: 4),
+                ],
                 Flexible(
                   child: Text(
                     modelLabel!,
+                    // Keyed by the name: a model swap paints a new label.
+                    key: ValueKey(modelLabel),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -123,6 +137,10 @@ class ChatStatusPill extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (modelTrailing case final trailing?) ...[
+                  const SizedBox(width: 4),
+                  trailing,
+                ],
                 if (limitLevel != SubscriptionLimitLevel.none) ...[
                   const SizedBox(width: 4),
                   Container(

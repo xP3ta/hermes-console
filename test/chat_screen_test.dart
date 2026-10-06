@@ -20080,36 +20080,39 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('el encabezado conserva el modelo mientras Hermes ejecuta', (
-    tester,
-  ) async {
-    await pumpChat(
-      tester,
-      chatState: ChatPipelineState.executing,
-      messages: const [
-        {'role': 'assistant', 'content': '', '_pipeline': true},
-        {'role': 'user', 'content': 'trabaja'},
-      ],
-    );
+  testWidgets(
+    'la píldora inferior conserva el modelo mientras Hermes ejecuta',
+    (tester) async {
+      await pumpChat(
+        tester,
+        chatState: ChatPipelineState.executing,
+        messages: const [
+          {'role': 'assistant', 'content': '', '_pipeline': true},
+          {'role': 'user', 'content': 'trabaja'},
+        ],
+      );
 
-    // The header keeps its model; the status pill names it too.
-    expect(
-      find.descendant(
-        of: find.byType(AppBar),
-        matching: find.text('Modelo del servidor'),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('status-pill-model')),
-        matching: find.text('Modelo del servidor'),
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('ejecutando…'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
+      // fh1215: no app bar and no model in the floating header; the status
+      // pill keeps naming the model while Hermes runs.
+      expect(find.byType(AppBar), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('chat-header')),
+          matching: find.text('Modelo del servidor'),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('status-pill-model')),
+          matching: find.text('Modelo del servidor'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('ejecutando…'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'el composer conserva el placeholder normal mientras Hermes ejecuta',
@@ -20661,7 +20664,8 @@ void main() {
       });
       await tester.pump();
 
-      // Header pill: the running model's maker, in secondary text colour.
+      // Status pill (fh1215 took the model out of the header): the running
+      // model's maker, in secondary text colour.
       final header = find.byKey(const ValueKey('provider-logo-chat-header'));
       expect(header, findsOneWidget);
       final colors = Theme.of(tester.element(header)).hermes;
@@ -21402,6 +21406,8 @@ void main() {
           for (var frame = 0; frame < 8; frame++) {
             await tester.pump(const Duration(milliseconds: 50));
           }
+          // Only the sheet's "this session" line: the catalog below it
+          // lists every model, the previous one included.
           final text = tester
               .widgetList<Text>(
                 find.descendant(
@@ -21410,6 +21416,7 @@ void main() {
                 ),
               )
               .map((t) => t.data ?? '')
+              .where((line) => line.startsWith('Esta sesión'))
               .join(' ');
           await tester.binding.handlePopRoute();
           for (var frame = 0; frame < 8; frame++) {
