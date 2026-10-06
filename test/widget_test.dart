@@ -313,7 +313,7 @@ void main() {
         for (var attempt = 0; attempt < 40; attempt++) {
           await tester.pump(const Duration(milliseconds: 50));
           if (find
-              .byKey(const ValueKey('home-empty-conversations'))
+              .byKey(const ValueKey('home-hero-calm'))
               .evaluate()
               .isNotEmpty) {
             break;
@@ -321,23 +321,35 @@ void main() {
         }
         await tester.pump(const Duration(milliseconds: 100));
 
+        // Inicio v3 (#183): the useful empty Home is the calm card with its
+        // composer ready to start a chat, and nothing to resume — the old
+        // «Aún no hay conversaciones» block is gone by design.
+        final calm = find.byKey(const ValueKey('home-hero-calm'));
+        expect(calm, findsOneWidget);
         expect(
-          find.byKey(const ValueKey('home-empty-conversations')),
+          find.descendant(
+            of: calm,
+            matching: find.byWidgetPredicate(
+              (w) =>
+                  w.key is ValueKey<String> &&
+                  (w.key! as ValueKey<String>).value.startsWith(
+                    'home-prompt-composer-',
+                  ),
+            ),
+          ),
           findsOneWidget,
         );
-        expect(find.text('Aún no hay conversaciones'), findsOneWidget);
+        expect(
+          find.byWidgetPredicate(
+            (w) =>
+                w.key is ValueKey<String> &&
+                (w.key! as ValueKey<String>).value.startsWith('home-starter-'),
+          ),
+          findsNothing,
+          reason: 'auxiliary sessions are not offered as «Seguir con…»',
+        );
+        expect(find.byKey(const ValueKey('home-retomar')), findsNothing);
         expect(find.text('Nuevo chat'), findsNothing);
-        final emptyState = find.byKey(
-          const ValueKey('home-empty-conversations'),
-        );
-        expect(
-          find.descendant(of: emptyState, matching: find.byType(Icon)),
-          findsNothing,
-        );
-        expect(
-          find.descendant(of: emptyState, matching: find.byType(FilledButton)),
-          findsNothing,
-        );
         expect(find.text('Internal voice session'), findsNothing);
         expect(find.text('Informe cron interno'), findsNothing);
         expect(tester.takeException(), isNull);
