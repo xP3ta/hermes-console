@@ -32,7 +32,7 @@ class HermesExternalDataSyncService : Service() {
         val notification =
             NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_hermes)
-                .setContentTitle("Hermes Console")
+                .setContentTitle("Console")
                 .setContentText(getString(R.string.external_data_sync_active))
                 .setContentIntent(openAppIntent())
                 .addAction(

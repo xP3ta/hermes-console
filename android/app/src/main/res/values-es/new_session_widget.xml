@@ -20,7 +20,7 @@
     <string name="new_session_widget_voice_description">Abrir una conversación de voz nueva</string>
     <string name="hermes_widget_brand">HERMES</string>
     <string name="hermes_widget_not_configured">Sin configurar</string>
-    <string name="hermes_widget_no_instance">Elige una instancia en Hermes Console</string>
+    <string name="hermes_widget_no_instance">Elige una instancia en Console</string>
     <string name="hermes_widget_setup_action">Configurar Hermes</string>
     <string name="hermes_widget_new_chat">Nueva conversación</string>
     <string name="hermes_widget_new_short">Nuevo</string>

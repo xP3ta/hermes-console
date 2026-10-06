@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <application
-        android:label="Hermes Console QA"
+        android:label="Console QA"
         tools:replace="android:label">
         <!-- QA-only: renders the real Bot Mode widgets with sample data to PNG. -->
         <activity
