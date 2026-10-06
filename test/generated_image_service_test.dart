@@ -232,23 +232,6 @@ void main() {
     });
   });
 
-  group('bridgeSupportsImages — capacidad por versión (US2)', () {
-    test('1.11.4 → false (bridge viejo)', () {
-      expect(GeneratedImageService.bridgeSupportsImages('1.11.4'), isFalse);
-    });
-    test('1.12.0 → true', () {
-      expect(GeneratedImageService.bridgeSupportsImages('1.12.0'), isTrue);
-    });
-    test('1.12.1 / 2.0.0 → true', () {
-      expect(GeneratedImageService.bridgeSupportsImages('1.12.1'), isTrue);
-      expect(GeneratedImageService.bridgeSupportsImages('2.0.0'), isTrue);
-    });
-    test('null / vacío → false (sin bridge)', () {
-      expect(GeneratedImageService.bridgeSupportsImages(null), isFalse);
-      expect(GeneratedImageService.bridgeSupportsImages(''), isFalse);
-    });
-  });
-
   group('ensureDownloaded — caché local idempotente', () {
     late Directory tmp;
 

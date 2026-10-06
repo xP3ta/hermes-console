@@ -6,8 +6,6 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
-import 'bridge_version.dart';
-
 /// Detección y descarga de imágenes GENERADAS por el agente (spec 030).
 ///
 /// El toolset `image_gen` de Hermes guarda las imágenes en el directorio de
@@ -16,9 +14,9 @@ import 'bridge_version.dart';
 ///  1. segmenta el texto de un mensaje del asistente en trozos de texto e
 ///     imágenes detectadas (al RENDERIZAR, no al recibir: el historial viejo
 ///     también gana render);
-///  2. descarga los bytes vía `GET /bridge/image` (token del bridge, guard de
-///     basename en ambos lados) y los cachea en el almacenamiento privado de
-///     la app, idempotente.
+///  2. cachea en el almacenamiento privado de la app, de forma idempotente,
+///     los bytes que el llamante obtiene del Dashboard (`/api/media`, ver
+///     `GeneratedImageFetch`; guard de basename en ambos lados).
 ///
 /// Los resultados estructurados de Desktop también pueden entregar una URL
 /// HTTPS. En ese caso se descarga con redirects y límites estrictos y se
@@ -34,23 +32,12 @@ class GeneratedImageService {
 
   /// Ruta de imagen generada del servidor: home del usuario del agente +
   /// `.hermes/cache/images/` + basename con charset estricto y extensión de
-  /// imagen. El basename capturado es lo ÚNICO que viaja al bridge.
+  /// imagen. El basename capturado es lo ÚNICO que viaja al servidor.
   static final RegExp pathRe = RegExp(
     r'(?:/home/[A-Za-z0-9._-]+|/root|~)/\.hermes/cache/images/'
     r'([A-Za-z0-9._-]+\.(?:png|jpe?g|webp))',
     caseSensitive: false,
   );
-
-  /// Versión mínima del bridge que sirve `GET /bridge/image`.
-  static const String minBridgeVersion = '1.12.0';
-
-  /// True si un bridge con [runningVersion] puede servir imágenes generadas.
-  /// Null/vacío (sin bridge o versión desconocida) → false.
-  static bool bridgeSupportsImages(String? runningVersion) {
-    final v = (runningVersion ?? '').trim();
-    if (v.isEmpty) return false;
-    return BridgeVersion.compare(v, minBridgeVersion) >= 0;
-  }
 
   /// Segmenta [text] en texto e imágenes generadas, en orden. Sin matches
   /// devuelve un único [TextSegment] con el texto íntegro — el fallo de
