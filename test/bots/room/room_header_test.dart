@@ -388,7 +388,8 @@ void main() {
   group('room header · floating and scale', () {
     testWidgets('scrolling never changes the header; the oldest row is not '
         'hidden under it', (tester) async {
-      await _pump(tester, events: _longRoom(EventSeq()), status: driver());
+      final events = _longRoom(EventSeq());
+      await _pump(tester, events: events, status: driver());
       final before = tester.getRect(_header);
       await tester.drag(_transcript, const Offset(0, 500));
       await _frames(tester);
@@ -402,8 +403,19 @@ void main() {
           .position;
       position.jumpTo(position.maxScrollExtent);
       await _frames(tester);
-      final first = find.textContaining('question 0 @builder');
+      // The owner's own bubble, not the reply's quote chip (rp1215) that
+      // repeats its text one row below.
+      final first = find.byKey(
+        ValueKey('room-user-bubble-${events.first['event_id']}'),
+      );
       expect(first, findsOneWidget);
+      expect(
+        find.descendant(
+          of: first,
+          matching: find.textContaining('question 0 @builder'),
+        ),
+        findsOneWidget,
+      );
       expect(
         tester.getTopLeft(first).dy,
         greaterThan(tester.getBottomLeft(_header).dy),

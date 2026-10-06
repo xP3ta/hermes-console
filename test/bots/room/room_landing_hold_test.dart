@@ -393,7 +393,15 @@ void main() {
       );
       expect(newest, findsOneWidget);
       final p = _position(tester);
-      expect(p.pixels, lessThan(p.minScrollExtent + 120));
+      // The only shift allowed is the open anchor revealing the run header
+      // of the row cut by the top edge, never so far that the newest message
+      // leaves the screen. (A fixed pixel bound broke as soon as replies grew
+      // a quote chip, rp1215.)
+      expect(p.pixels, lessThan(p.minScrollExtent + p.viewportDimension));
+      expect(
+        tester.getRect(newest).top,
+        lessThan(tester.getRect(_transcript).bottom),
+      );
     });
   });
 }
