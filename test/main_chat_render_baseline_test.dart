@@ -24,6 +24,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/markdown_table.dart';
+import 'package:hermes_android/core/widgets/mascot/mascot.dart';
 import 'package:hermes_android/main.dart';
 
 class _IdleGateway
@@ -425,6 +426,14 @@ void main() {
   });
 
   testWidgets('T101 baseline: golden del chat principal', (tester) async {
+    // The header mascot paints its sprite atlas only once it is decoded
+    // (real I/O, outside fake time). Decode every atlas first so the golden
+    // always shows the mascot, whatever ran earlier in the process.
+    await tester.runAsync(() async {
+      for (final kind in MascotSpriteKind.values) {
+        await MascotAtlas.load(kind);
+      }
+    });
     await pumpChat(tester);
     await expectLater(
       find.byType(ChatScreen),
