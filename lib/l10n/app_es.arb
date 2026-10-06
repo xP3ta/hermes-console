@@ -10326,5 +10326,123 @@
         "type": "int"
       }
     }
+  },
+  "mascotOverlayLabel": "Mascota de {name}",
+  "@mascotOverlayLabel": {
+    "description": "Screen-reader label of the floating mascot button.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotPendingCount": "{count, plural, =1{1 permiso pendiente} other{{count} permisos pendientes}}",
+  "@mascotPendingCount": {
+    "description": "Floating mascot: number of pending permissions, read after its label.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mascotPermissionAllow": "Permitir",
+  "@mascotPermissionAllow": {
+    "description": "Floating mascot permission bubble: allow button."
+  },
+  "mascotPermissionDeny": "Rechazar",
+  "@mascotPermissionDeny": {
+    "description": "Floating mascot permission bubble: deny button."
+  },
+  "mascotPermissionOpenChat": "Ver el chat",
+  "@mascotPermissionOpenChat": {
+    "description": "Floating mascot permission bubble: open the chat that asks."
+  },
+  "mascotSuggestionNotNow": "Ahora no",
+  "@mascotSuggestionNotNow": {
+    "description": "Floating mascot suggestion bubble: dismiss once."
+  },
+  "mascotSuggestionNever": "No sugerirme esto",
+  "@mascotSuggestionNever": {
+    "description": "Floating mascot suggestion bubble: silence this kind of suggestion."
+  },
+  "mascotMenuTalk": "Hablar",
+  "@mascotMenuTalk": {
+    "description": "Floating mascot menu: start a new chat."
+  },
+  "mascotMenuWhatsUp": "¿Qué haces?",
+  "@mascotMenuWhatsUp": {
+    "description": "Floating mascot menu: say what Hermes is doing now."
+  },
+  "mascotMenuSuggest": "Sugiéreme algo",
+  "@mascotMenuSuggest": {
+    "description": "Floating mascot menu: show a server suggestion."
+  },
+  "mascotMenuFloat": "Dejarme flotar",
+  "@mascotMenuFloat": {
+    "description": "Floating mascot menu: leave the dock and float."
+  },
+  "mascotMenuDock": "Pegarme al dock",
+  "@mascotMenuDock": {
+    "description": "Floating mascot menu: go back to the dock."
+  },
+  "mascotMenuKnowledge": "Lo que sé de ti",
+  "@mascotMenuKnowledge": {
+    "description": "Floating mascot menu: open what Hermes remembers about the user."
+  },
+  "mascotMenuSettings": "Ajustes de la mascota",
+  "@mascotMenuSettings": {
+    "description": "Floating mascot menu: open its settings."
+  },
+  "mascotMenuHide": "Ocultarme",
+  "@mascotMenuHide": {
+    "description": "Floating mascot menu: turn the mascot off."
+  },
+  "mascotNothingRunning": "Nada ahora mismo. Estoy en reposo.",
+  "@mascotNothingRunning": {
+    "description": "Floating mascot: answer to 'What are you doing?' when nothing runs."
+  },
+  "mascotNoSuggestions": "No tengo sugerencias ahora.",
+  "@mascotNoSuggestions": {
+    "description": "Floating mascot: no server suggestion is available."
+  },
+  "mascotSettingsTitle": "Mascota",
+  "@mascotSettingsTitle": {
+    "description": "Mascot settings screen title and Settings row."
+  },
+  "mascotSettingsSubtitle": "Mascota flotante fuera de los chats",
+  "@mascotSettingsSubtitle": {
+    "description": "Settings row subtitle for the mascot settings."
+  },
+  "mascotSettingsEnabled": "Mostrar la mascota",
+  "@mascotSettingsEnabled": {
+    "description": "Mascot settings: on/off switch."
+  },
+  "mascotSettingsEnabledHint": "Si la apagas no se pierde nada: los permisos siguen apareciendo como tarjetas.",
+  "@mascotSettingsEnabledHint": {
+    "description": "Mascot settings: explains what happens when it is off."
+  },
+  "mascotSettingsPlacement": "Dónde vive",
+  "@mascotSettingsPlacement": {
+    "description": "Mascot settings: placement section."
+  },
+  "mascotPlacementDock": "Pegada al dock",
+  "@mascotPlacementDock": {
+    "description": "Mascot placement: stands on the dock."
+  },
+  "mascotPlacementFloat": "Flotando",
+  "@mascotPlacementFloat": {
+    "description": "Mascot placement: stays where the user drops it."
+  },
+  "mascotSettingsSprite": "Aspecto",
+  "@mascotSettingsSprite": {
+    "description": "Mascot settings: sprite section."
+  },
+  "mascotSettingsSpriteAuto": "Según el perfil",
+  "@mascotSettingsSpriteAuto": {
+    "description": "Mascot settings: sprite picked from the profile."
+  },
+  "mascotWelcomeNoMascot": "Prefiero sin mascota",
+  "@mascotWelcomeNoMascot": {
+    "description": "Gesture welcome in the mascot bubble: turn the mascot off."
   }
 }
