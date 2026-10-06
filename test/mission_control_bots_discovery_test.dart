@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
+import 'package:hermes_android/core/bots/ui/roster/roster_rows.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
@@ -365,6 +366,55 @@ void main() {
       busy,
       lessThan(steps ~/ 4),
       reason: 'idle Bots home kept ticking in $busy of $steps samples',
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  // QA 9491: each idle face blinked on its own 4.2-8 s timer, so ten bots
+  // interleaved into a near-continuous ~33 fps. A list now blinks one face
+  // every 12-20 s through one shared scheduler.
+  testWidgets('ten idle bots blink rarely, not ten interleaved blinks', (
+    tester,
+  ) async {
+    debugLivingBotFacesStill = false;
+    addTearDown(() => debugLivingBotFacesStill = true);
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final manager = await _manager();
+    addTearDown(manager.dispose);
+    final snapshot = _snapshot(
+      profiles: [
+        // Four pinned tiles and six rows: both roster shapes share the blink.
+        for (var i = 0; i < 10; i++)
+          AgentProfile(
+            name: 'quiet_bot_$i',
+            botModeUiMeta: {if (i < 4) 'pinned': true},
+          ),
+      ],
+    );
+    await tester.pumpWidget(_host(manager: manager, snapshot: snapshot));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.byType(LivingBotFace).evaluate().length, greaterThan(8));
+    expect(find.byType(RosterPinnedTile), findsNWidgets(4));
+    expect(find.byType(RosterBotRow), findsNWidgets(6));
+    expect(livingBotFaceActiveTickers, 0);
+    // Count wake-ups: rising edges of "a frame callback is pending" over one
+    // minute of fake time. One edge per blink (220 ms, sampled every 100 ms).
+    var wakeUps = 0;
+    var wasBusy = false;
+    for (var i = 0; i < 600; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+      final busy = tester.binding.transientCallbackCount > 0;
+      if (busy && !wasBusy) wakeUps++;
+      wasBusy = busy;
+    }
+    expect(
+      wakeUps,
+      lessThanOrEqualTo(6),
+      reason: 'idle Bots list woke up $wakeUps times in 60 s',
     );
     await tester.pumpWidget(const SizedBox.shrink());
   });

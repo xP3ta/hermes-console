@@ -76,6 +76,7 @@ class RosterBotRow extends StatelessWidget {
                   signal: entry.signal,
                   size: 48,
                   semanticLabel: entry.title,
+                  blink: LivingBotFaceBlink.shared,
                 ),
                 const SizedBox(width: 13),
                 Expanded(
@@ -225,6 +226,7 @@ class RosterPinnedTile extends StatelessWidget {
           avatarCache: avatarCache,
           signal: entry.signal,
           size: size,
+          blink: LivingBotFaceBlink.shared,
         ),
       ),
     );
