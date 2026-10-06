@@ -10249,5 +10249,37 @@
   "q90PinnedPromptShow": "Mostrar tu pregunta fijada",
   "cs1215LoadingEarlier": "Cargando mensajes anteriores…",
   "tabletPickConversation": "Elige una conversación para abrirla aquí",
-  "tabletPickProject": "Elige un proyecto para abrirlo aquí"
+  "tabletPickProject": "Elige un proyecto para abrirlo aquí",
+  "au1215CleanupChats": "{count, plural, =0{Ninguna conversación} one{1 conversación} other{{count} conversaciones}}",
+  "@au1215CleanupChats": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "au1215CleanupRuns": "{count, plural, =0{Ninguna ejecución de automatizaciones} one{1 ejecución de automatizaciones} other{{count} ejecuciones de automatizaciones}}",
+  "@au1215CleanupRuns": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "au1215CleanupWillDelete": "{count, plural, =0{No se borrará nada del servidor.} one{Se borrará 1 elemento del servidor. Las tareas programadas no se tocan.} other{Se borrarán {count} elementos del servidor. Las tareas programadas no se tocan.}}",
+  "@au1215CleanupWillDelete": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "au1215CleanupRunsDeleted": "{count, plural, one{1 ejecución de automatizaciones borrada} other{{count} ejecuciones de automatizaciones borradas}}",
+  "@au1215CleanupRunsDeleted": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

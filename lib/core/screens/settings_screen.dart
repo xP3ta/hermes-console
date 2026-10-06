@@ -1612,13 +1612,20 @@ final class RemoteConversationClearSummary {
   final int skipped;
   final bool cancelled;
 
+  /// Of [deleted], the automation runs (Cron, tools, webhooks…). The result
+  /// names them apart so the notice says what was really removed.
+  final int deletedAutomations;
+
   const RemoteConversationClearSummary({
     required this.deleted,
     required this.rejected,
     required this.failed,
     this.skipped = 0,
     this.cancelled = false,
+    this.deletedAutomations = 0,
   });
+
+  int get deletedChats => deleted - deletedAutomations;
 
   static const RemoteConversationClearSummary none =
       RemoteConversationClearSummary(deleted: 0, rejected: 0, failed: 0);
@@ -1646,8 +1653,10 @@ Future<RemoteConversationClearSummary> clearRemoteConversations({
   required Future<bool> Function(String sessionId) deleteSession,
   void Function(int done, int total)? onProgress,
   bool Function()? isCancelled,
+  bool Function(String sessionId)? isAutomation,
 }) async {
   var deleted = 0;
+  var deletedAutomations = 0;
   var rejected = 0;
   var failed = 0;
   var cancelled = false;
@@ -1663,6 +1672,9 @@ Future<RemoteConversationClearSummary> clearRemoteConversations({
     switch (result.status) {
       case RemoteSessionDeleteStatus.deleted:
         deleted += 1;
+        if (isAutomation?.call(deleteOrder[index]) ?? false) {
+          deletedAutomations += 1;
+        }
       case RemoteSessionDeleteStatus.rejected:
         rejected += 1;
       case RemoteSessionDeleteStatus.failed:
@@ -1676,6 +1688,27 @@ Future<RemoteConversationClearSummary> clearRemoteConversations({
     failed: failed,
     skipped: deleteOrder.length - (deleted + rejected + failed),
     cancelled: cancelled,
+    deletedAutomations: deletedAutomations,
+  );
+}
+
+/// What the cleanup would remove from the server for each scope, counted
+/// from the same listing the deletion then uses. The scope dialog shows
+/// these numbers, so the confirmation says exactly what goes.
+@visibleForTesting
+({int chats, int automations}) historyCleanupCounts(
+  Iterable<Session> sessions,
+) {
+  final all = sessions.toList(growable: false);
+  int count(HistoryCleanupSelection selection) =>
+      historyCleanupDeleteOrder(all, selection).length;
+  return (
+    chats: count(
+      const HistoryCleanupSelection(chats: true, automations: false),
+    ),
+    automations: count(
+      const HistoryCleanupSelection(chats: false, automations: true),
+    ),
   );
 }
 
@@ -1685,10 +1718,14 @@ Future<RemoteConversationClearSummary> clearRemoteConversations({
 class HistoryCleanupScopeDialog extends StatefulWidget {
   const HistoryCleanupScopeDialog({
     this.initial = HistoryCleanupSelection.chatsOnly,
+    this.counts,
     super.key,
   });
 
   final HistoryCleanupSelection initial;
+
+  /// Server rows per scope, read before asking. Null when unknown.
+  final ({int chats, int automations})? counts;
 
   @override
   State<HistoryCleanupScopeDialog> createState() =>
@@ -1702,6 +1739,7 @@ class _HistoryCleanupScopeDialogState extends State<HistoryCleanupScopeDialog> {
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
+    final counts = widget.counts;
     return AlertDialog(
       title: Text(s.setClearConvos),
       content: Column(
@@ -1714,6 +1752,16 @@ class _HistoryCleanupScopeDialogState extends State<HistoryCleanupScopeDialog> {
             controlAffinity: ListTileControlAffinity.leading,
             value: _selection.chats,
             title: Text(s.slFilterAll),
+            subtitle: counts == null
+                ? null
+                : Text(
+                    s.au1215CleanupChats(counts.chats),
+                    key: const ValueKey('history-cleanup-count-chats'),
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: colors.textSecondary,
+                    ),
+                  ),
             onChanged: (value) => setState(
               () => _selection = _selection.copyWith(chats: value ?? false),
             ),
@@ -1725,7 +1773,10 @@ class _HistoryCleanupScopeDialogState extends State<HistoryCleanupScopeDialog> {
             value: _selection.automations,
             title: Text(s.slFilterAutomation),
             subtitle: Text(
-              s.slFilterReports,
+              counts == null
+                  ? s.slFilterReports
+                  : s.au1215CleanupRuns(counts.automations),
+              key: const ValueKey('history-cleanup-count-automations'),
               style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
             ),
             onChanged: (value) => setState(
@@ -1733,6 +1784,17 @@ class _HistoryCleanupScopeDialogState extends State<HistoryCleanupScopeDialog> {
                   _selection = _selection.copyWith(automations: value ?? false),
             ),
           ),
+          if (counts != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              s.au1215CleanupWillDelete(
+                (_selection.chats ? counts.chats : 0) +
+                    (_selection.automations ? counts.automations : 0),
+              ),
+              key: const ValueKey('history-cleanup-will-delete'),
+              style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+            ),
+          ],
         ],
       ),
       actions: [
@@ -1818,7 +1880,12 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
       // leía como un fallo mudo.
       parts.add(s.slEmptyFilter);
     } else {
-      if (remote.deleted > 0) parts.add(s.setConvosCleared(remote.deleted));
+      if (remote.deletedChats > 0) {
+        parts.add(s.setConvosCleared(remote.deletedChats));
+      }
+      if (remote.deletedAutomations > 0) {
+        parts.add(s.au1215CleanupRunsDeleted(remote.deletedAutomations));
+      }
       if (remote.rejected > 0 || remote.failed > 0) {
         parts.add(
           s.crnCleanupPartial(remote.deleted, remote.rejected + remote.failed),
@@ -1887,58 +1954,46 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
     setState(() => _cancelRequested = true);
   }
 
-  /// Borra en el SERVIDOR las conversaciones del ámbito elegido.
+  /// Borra en el SERVIDOR las conversaciones del ámbito elegido, tomadas del
+  /// mismo listado [sessions] cuyo recuento mostró la confirmación.
   ///
   /// Esta es la mitad que faltaba: la acción solo limpiaba el estado local del
   /// perfil, así que las sesiones seguían en el servidor y volvían a aparecer
-  /// en la lista al refrescar ("no se suelen eliminar todas"). Se pide
-  /// `includeChildren` porque el servidor pliega las continuaciones dentro de
-  /// su padre y, sin verlas, quedaban huérfanas y reaparecían como filas
-  /// principales nuevas.
+  /// en la lista al refrescar ("no se suelen eliminar todas").
   Future<RemoteConversationClearSummary> _clearRemote({
-    required SavedConnection targetConnection,
+    required ApiClient client,
+    required List<Session> sessions,
     required String targetProfile,
     required HistoryCleanupSelection selection,
   }) async {
-    final override = widget.remoteClientOverride;
-    final client =
-        override ??
-        ApiClient(
-          baseUrl: targetConnection.baseUrl,
-          apiKey: targetConnection.apiKey,
-          connectionId: targetConnection.id,
-        );
-    try {
-      final sessions = await client.getSessions(
-        includeChildren: true,
-        profile: targetProfile,
-      );
-      final order = historyCleanupDeleteOrder(sessions, selection);
-      if (order.isEmpty) return RemoteConversationClearSummary.none;
-      if (mounted) {
-        setState(() {
-          _remoteDone = 0;
-          _remoteTotal = order.length;
-        });
-      }
-      return await clearRemoteConversations(
-        deleteOrder: order,
-        deleteSession: (sessionId) =>
-            client.deleteSession(sessionId, profile: targetProfile),
-        onProgress: (done, total) {
-          if (!mounted) return;
-          setState(() {
-            _remoteDone = done;
-            _remoteTotal = total;
-          });
-        },
-        // Cancelar desde la propia fila: mientras el lote avanza, el botón
-        // de la fila levanta esta bandera y el bucle deja de emitir DELETEs.
-        isCancelled: () => _cancelRequested || !mounted,
-      );
-    } finally {
-      if (override == null) client.close();
+    final order = historyCleanupDeleteOrder(sessions, selection);
+    if (order.isEmpty) return RemoteConversationClearSummary.none;
+    final automationIds = {
+      for (final session in sessions)
+        if (isAutomationSessionRow(session)) session.id,
+    };
+    if (mounted) {
+      setState(() {
+        _remoteDone = 0;
+        _remoteTotal = order.length;
+      });
     }
+    return await clearRemoteConversations(
+      deleteOrder: order,
+      deleteSession: (sessionId) =>
+          client.deleteSession(sessionId, profile: targetProfile),
+      onProgress: (done, total) {
+        if (!mounted) return;
+        setState(() {
+          _remoteDone = done;
+          _remoteTotal = total;
+        });
+      },
+      // Cancelar desde la propia fila: mientras el lote avanza, el botón
+      // de la fila levanta esta bandera y el bucle deja de emitir DELETEs.
+      isCancelled: () => _cancelRequested || !mounted,
+      isAutomation: automationIds.contains,
+    );
   }
 
   Future<void> _clearNormal() async {
@@ -1952,6 +2007,14 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
       _clearingNormal = true;
       _cancelRequested = false;
     });
+    final override = widget.remoteClientOverride;
+    final client =
+        override ??
+        ApiClient(
+          baseUrl: targetConnection.baseUrl,
+          apiKey: targetConnection.apiKey,
+          connectionId: targetConnection.id,
+        );
 
     try {
       if (!await _authorizeHistoryCleanup(
@@ -1961,11 +2024,26 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
         return;
       }
       if (!mounted) return;
+      // The server rows are listed BEFORE asking, and that same listing is
+      // what gets deleted: the dialog states exactly how many conversations
+      // and automation runs go, and the result counts the same rows.
+      // `includeChildren`: the server folds continuations into their parent
+      // and, unseen, they were left orphaned and came back as new rows.
+      final sessions = await client.getSessions(
+        includeChildren: true,
+        profile: targetProfile,
+      );
+      if (!mounted) return;
+      if (widget.connection.id != targetConnection.id) {
+        _showCleanupNotice(_connectionLostMessage());
+        return;
+      }
       // Elección explícita de ámbito: chats normales, automatizaciones (Cron)
       // o ambos. Antes la acción era única y Cron quedaba siempre fuera.
+      final counts = historyCleanupCounts(sessions);
       final selection = await showDialog<HistoryCleanupSelection>(
         context: context,
-        builder: (_) => const HistoryCleanupScopeDialog(),
+        builder: (_) => HistoryCleanupScopeDialog(counts: counts),
       );
       if (!mounted) return;
       // Cancelar en el diálogo (o no elegir ámbito) es una decisión del
@@ -1977,7 +2055,8 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
       }
 
       final remote = await _clearRemote(
-        targetConnection: targetConnection,
+        client: client,
+        sessions: sessions,
         targetProfile: targetProfile,
         selection: selection,
       );
@@ -2069,6 +2148,7 @@ class _HistoryCleanupSectionState extends State<HistoryCleanupSection> {
         kind: HermesNoticeKind.error,
       );
     } finally {
+      if (override == null) client.close();
       if (mounted) {
         setState(() {
           _clearingNormal = false;

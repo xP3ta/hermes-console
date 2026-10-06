@@ -606,8 +606,10 @@ void main() {
         source.indexOf('  @override\n  Widget build', normalStart),
       );
 
-      // El ámbito se elige antes de borrar nada.
-      expect(normalCleanup, contains('HistoryCleanupScopeDialog()'));
+      // El ámbito se elige antes de borrar nada, con el recuento del mismo
+      // listado que luego se borra.
+      expect(normalCleanup, contains('HistoryCleanupScopeDialog(counts:'));
+      expect(normalCleanup, contains('historyCleanupCounts(sessions)'));
       // Mitad remota: sin ella las sesiones seguían en el servidor y volvían
       // a la lista al refrescar ("no se borran todas").
       expect(normalCleanup, contains('.getSessions('));
@@ -677,6 +679,26 @@ void main() {
         expect(isAutomationSessionRow(row('chat-1')), isFalse);
       },
     );
+
+    test('el recuento por ámbito coincide con lo que se borraría', () {
+      final rows = [
+        row('chat-1'),
+        row('chat-child', parentSessionId: 'chat-1'),
+        row('cron_job_a_1', source: 'cron'),
+        row('webhook-1', source: 'webhook'),
+        row('draft', source: 'mobile-draft'),
+      ];
+      final counts = historyCleanupCounts(rows);
+      expect(counts.chats, 2);
+      expect(counts.automations, 2);
+      expect(
+        counts.automations,
+        historyCleanupDeleteOrder(
+          rows,
+          const HistoryCleanupSelection(chats: false, automations: true),
+        ).length,
+      );
+    });
 
     test('las continuaciones se borran antes que su raíz', () {
       final order = historyCleanupDeleteOrder([
@@ -1094,6 +1116,112 @@ void main() {
       expect(deletes, 0);
       expect(await snackBarText(tester), contains(s.slEmptyFilter));
     });
+
+    testWidgets(
+      'automatizaciones: la confirmación dice cuántas ejecuciones se borran, '
+      'borra esas mismas y avisa a la lista',
+      (tester) async {
+        final prefs = await SharedPreferences.getInstance();
+        final manager = await ConnectionManager.create(prefs);
+        final connection = connectionWith('instance-a');
+        final deleted = <String>[];
+        final invalidations = <HistoryCleanupInvalidation>[];
+        final sub = historyCleanupInvalidations.events.listen(
+          invalidations.add,
+        );
+        addTearDown(sub.cancel);
+        final remote = ApiClient(
+          baseUrl: connection.baseUrl,
+          apiKey: connection.apiKey,
+          connectionId: connection.id,
+          httpClient: MockClient((request) async {
+            if (request.method == 'GET' &&
+                request.url.path.endsWith('/api/sessions')) {
+              return http.Response(
+                jsonEncode({
+                  'data': [
+                    {'id': 'chat-1', 'source': 'desktop', 'title': 'chat'},
+                    {'id': 'cron_job_a_20260920_090000', 'source': 'cron'},
+                    {'id': 'cron_job_a_20260921_090000', 'source': 'cron'},
+                    {
+                      'id': 'tool-child',
+                      'source': 'tool',
+                      'parent_session_id': 'cron_job_a_20260921_090000',
+                    },
+                    {'id': 'oneshot-1', 'source': 'oneshot'},
+                  ],
+                }),
+                200,
+              );
+            }
+            if (request.method == 'DELETE') {
+              deleted.add(request.url.pathSegments.last);
+              return http.Response(jsonEncode({'deleted': true}), 200);
+            }
+            return http.Response('{}', 404);
+          }),
+        );
+        addTearDown(remote.close);
+        await tester.pumpWidget(
+          wrap(
+            HistoryCleanupSection(
+              connection: connection,
+              connManager: manager,
+              verifyHistoryCleanupForTesting: () async => true,
+              remoteClientOverride: remote,
+            ),
+          ),
+        );
+        final s = Strings.of(
+          tester.element(find.byType(HistoryCleanupSection)),
+        );
+
+        await tester.tap(find.byKey(const ValueKey('history-cleanup-normal')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(deleted, isEmpty, reason: 'nothing goes before confirming');
+        expect(find.text(s.au1215CleanupChats(1)), findsOneWidget);
+        expect(find.text(s.au1215CleanupRuns(4)), findsOneWidget);
+
+        await tester.tap(
+          find.byKey(const ValueKey('history-cleanup-scope-chats')),
+        );
+        await tester.pump();
+        await tester.tap(
+          find.byKey(const ValueKey('history-cleanup-scope-automations')),
+        );
+        await tester.pump();
+        expect(find.text(s.au1215CleanupWillDelete(4)), findsOneWidget);
+        await tester.tap(
+          find.byKey(const ValueKey('history-cleanup-scope-confirm')),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.pump(const Duration(milliseconds: 300));
+
+        // Exactly the announced rows, child before its run, no normal chat.
+        expect(deleted, hasLength(4));
+        expect(
+          deleted,
+          unorderedEquals([
+            'cron_job_a_20260920_090000',
+            'cron_job_a_20260921_090000',
+            'tool-child',
+            'oneshot-1',
+          ]),
+        );
+        expect(
+          deleted.indexOf('tool-child'),
+          lessThan(deleted.indexOf('cron_job_a_20260921_090000')),
+        );
+        final text = await snackBarText(tester);
+        expect(text, contains(s.au1215CleanupRunsDeleted(4)));
+        expect(text, isNot(contains(s.setConvosCleared(4))));
+        expect(invalidations.map((event) => event.connectionId), [
+          'instance-a',
+        ]);
+      },
+    );
 
     testWidgets('cambiar de instancia mientras autoriza se avisa', (
       tester,
