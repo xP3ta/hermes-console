@@ -8,6 +8,7 @@ import '../services/connection_manager.dart';
 import '../services/local_models_client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_notice.dart';
+import '../widgets/provider_logo.dart';
 import '../widgets/read_only.dart';
 
 /// Server local models: the Hermes-managed llama.cpp runtime that Desktop
@@ -688,8 +689,12 @@ class _LocalModelsScreenState extends State<LocalModelsScreen> {
     final busy = _busy.any((k) => k.endsWith(':${model.id}'));
     return HermesListRow(
       key: ValueKey('lm1215-model-${model.id}'),
-      icon: isActive ? Icons.check_circle_rounded : Icons.memory_outlined,
-      iconColor: isActive ? colors.accent : null,
+      leading: ProviderLogo(
+        key: ValueKey('provider-logo-local-${model.id}'),
+        model: model.id,
+        size: 20,
+        selected: isActive,
+      ),
       title: model.id,
       subtitle: subtitle,
       subtitleMaxLines: 2,

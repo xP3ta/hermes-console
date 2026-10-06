@@ -131,6 +131,43 @@ spritesheets locales se documentan en [`ASSET_PROVENANCE.md`](ASSET_PROVENANCE.m
 El texto legal completo CC0-1.0 aplicable a los companions está en
 [`assets/companions/CC0-1.0.txt`](assets/companions/CC0-1.0.txt).
 
+## Logos de proveedores (Simple Icons, CC0; LobeHub Icons, MIT)
+
+Las marcas monocromas de proveedores del selector de modelos y de Modelos usan
+los trazados vectoriales de Simple Icons 16.1.0 (`CC0-1.0`), sin sus colores.
+Las marcas que Simple Icons no incluye (OpenAI, DeepSeek, xAI, Nous Research,
+Moonshot AI, Z.ai, Microsoft, LM Studio) usan los trazados monocromos de
+LobeHub Icons, npm `@lobehub/icons-static-svg@1.95.1` (commit
+`49a2130df7bfa5eb1b088261bff20a37e2967789`), con licencia MIT, también sin colores.
+Detalle por proveedor en [`ASSET_PROVENANCE.md`](ASSET_PROVENANCE.md). Las
+marcas pertenecen a sus titulares y solo identifican al proveedor del modelo.
+
+Aviso de LobeHub Icons (https://github.com/lobehub/lobe-icons):
+
+```text
+MIT License
+
+Copyright (c) 2023 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Componentes Android transitivos relevantes
 
 - **ZXing Core 3.5.2** — Apache License 2.0; decodifica los QR íntegramente en

@@ -84,3 +84,66 @@ sha256sum assets/branding/hermes_logo.webp \
   assets/companions/*/pet.json \
   assets/companions/*/spritesheet.webp
 ```
+
+## Provider logos (model picker and Models)
+
+Models and providers are identified by a small monochrome mark. The path data
+in `lib/core/widgets/provider_logo_glyphs.dart` is copied unchanged from
+[Simple Icons](https://github.com/simple-icons/simple-icons) release 16.1.0
+(npm `simple-icons@16.1.0`, file `icons/<slug>.svg`), which is dedicated to
+the public domain under `CC0-1.0` (full text in
+[`LICENSES/CC0-1.0.txt`](LICENSES/CC0-1.0.txt)). Only the vector path is used;
+brand colours are not: the app tints every mark with its own theme colours.
+Hermes Desktop ships no provider logos (it uses Simple Icons only for MCP
+connector glyphs), so nothing is taken from it.
+
+| Provider | Simple Icons slug | License |
+|---|---|---|
+| Alibaba Cloud | `alibabacloud` | CC0-1.0 |
+| Anthropic | `anthropic` | CC0-1.0 |
+| Cloudflare | `cloudflare` | CC0-1.0 |
+| Google Gemini | `googlegemini` | CC0-1.0 |
+| GitHub Copilot | `githubcopilot` | CC0-1.0 |
+| Google | `google` | CC0-1.0 |
+| Hugging Face | `huggingface` | CC0-1.0 |
+| Meta | `meta` | CC0-1.0 |
+| MiniMax | `minimax` | CC0-1.0 |
+| Mistral AI | `mistralai` | CC0-1.0 |
+| NVIDIA | `nvidia` | CC0-1.0 |
+| Ollama | `ollama` | CC0-1.0 |
+| OpenRouter | `openrouter` | CC0-1.0 |
+| Perplexity | `perplexity` | CC0-1.0 |
+| Vercel | `vercel` | CC0-1.0 |
+
+Marks missing from Simple Icons come from
+[LobeHub Icons](https://github.com/lobehub/lobe-icons), npm
+`@lobehub/icons-static-svg@1.95.1` (tag `@lobehub/icons-static-svg@1.95.1`,
+commit `49a2130df7bfa5eb1b088261bff20a37e2967789`), released under the MIT License, Copyright (c) 2023 LobeHub
+([licence at that commit](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/LICENSE);
+full notice in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), text in
+[`LICENSES/MIT.txt`](LICENSES/MIT.txt)). Only the monochrome `icons/<file>.svg`
+variants are used, never the `-color` ones: the `d` attribute of each `<path>`
+is copied unchanged into `lib/core/widgets/provider_logo_glyphs_lobehub.dart`
+and filled in the app's theme colour (a test checks each glyph fills the same
+as under the source's even-odd rule). For
+LM Studio the translucent underlay path is omitted so the mark stays
+single-tone.
+
+| Provider | LobeHub Icons file | License | Copyright |
+|---|---|---|---|
+| OpenAI | [`icons/openai.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/openai.svg) | MIT | Copyright (c) 2023 LobeHub |
+| DeepSeek | [`icons/deepseek.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/deepseek.svg) | MIT | Copyright (c) 2023 LobeHub |
+| xAI | [`icons/xai.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/xai.svg) | MIT | Copyright (c) 2023 LobeHub |
+| Nous Research | [`icons/nousresearch.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/nousresearch.svg) | MIT | Copyright (c) 2023 LobeHub |
+| Moonshot AI | [`icons/moonshot.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/moonshot.svg) | MIT | Copyright (c) 2023 LobeHub |
+| Z.ai | [`icons/zai.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/zai.svg) | MIT | Copyright (c) 2023 LobeHub |
+| Microsoft | [`icons/microsoft.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/microsoft.svg) | MIT | Copyright (c) 2023 LobeHub |
+| LM Studio | [`icons/lmstudio.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/lmstudio.svg) | MIT | Copyright (c) 2023 LobeHub |
+
+llama.cpp has no permissively licensed mark in either set, so it, like any
+unknown or custom endpoint, is shown as a project-drawn monogram: the first
+letter of the provider name in a rounded square.
+
+The names and marks remain trademarks of their respective owners. They are
+used only to identify which company makes or serves a model; their use implies
+no affiliation or endorsement.

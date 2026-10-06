@@ -236,6 +236,7 @@ import '../widgets/read_aloud_button.dart';
 import '../widgets/session_deletion_dialogs.dart';
 import '../widgets/session_artifacts_sheet.dart';
 import '../widgets/session_context_usage.dart';
+import '../widgets/provider_logo.dart';
 import '../widgets/voice_disclosure_dialog.dart';
 import '../widgets/voice_stage.dart';
 import 'lock_screen.dart';
@@ -4562,6 +4563,12 @@ class _ChatScreenState extends State<ChatScreen>
     if (model == null) return Strings.of(context).chaModelServer;
     return friendlyModelName(model);
   }
+
+  /// Provider serving [_headerModelId], for its logo in the header pill.
+  String? get _headerProviderSlug =>
+      _displayedSessionModel?.providerSlug ??
+      _activeModel?.provider ??
+      _selectedProvider;
 
   /// Model id the session chrome paints, or null for the server default.
   String? get _headerModelId {
@@ -13187,6 +13194,16 @@ class _ChatScreenState extends State<ChatScreen>
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              if (_headerModelId case final model?) ...[
+                                ProviderLogo(
+                                  key: const ValueKey(
+                                    'provider-logo-chat-header',
+                                  ),
+                                  provider: _headerProviderSlug,
+                                  model: model,
+                                ),
+                                const SizedBox(width: 7),
+                              ],
                               Flexible(
                                 child: Text(
                                   _activeModelLabel,
@@ -14540,6 +14557,20 @@ class _ChatScreenState extends State<ChatScreen>
                                     ),
                                     child: Row(
                                       children: [
+                                        // Provider mark tinted like the
+                                        // header text: identity without
+                                        // brand colours.
+                                        ProviderLogo(
+                                          key: ValueKey(
+                                            'provider-logo-picker-provider-'
+                                            '${p.slug}',
+                                          ),
+                                          provider: p.slug,
+                                          providerName: p.name,
+                                          size: 16,
+                                          color: colors.accent,
+                                        ),
+                                        const SizedBox(width: 6),
                                         Text(
                                           (p.name.isNotEmpty ? p.name : p.slug)
                                               .toUpperCase(),
@@ -14547,9 +14578,6 @@ class _ChatScreenState extends State<ChatScreen>
                                             fontSize: 10.5,
                                             fontWeight: FontWeight.w700,
                                             letterSpacing: 0.8,
-                                            // Encabezado de proveedor en el color
-                                            // del tema; se distingue por el texto
-                                            // (mayúsculas + negrita), no por marca.
                                             color: colors.accent,
                                           ),
                                         ),
@@ -14609,28 +14637,24 @@ class _ChatScreenState extends State<ChatScreen>
         _modelSource != _ModelSource.desktop ||
         (desktopOption != null && !desktopOption.unavailable);
     final unavailableLabel = Strings.of(sheetCtx).chaModelUnavailable;
-    final dotColor = !isUsable
-        ? colors.textDisabled
-        : isActive
-        ? colors.accent
-        : colors.textSecondary;
     return ListTile(
       dense: true,
+      // The model's maker (Claude via OpenRouter shows Anthropic), tinted
+      // with the theme; the trailing check marks the active model.
       leading: SizedBox(
         width: 24,
         height: 24,
         child: Center(
-          child: Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: isActive && isUsable ? dotColor : Colors.transparent,
-              border: Border.all(
-                color: dotColor,
-                width: isActive && isUsable ? 0 : 1.5,
-              ),
+          child: ProviderLogo(
+            key: ValueKey(
+              'provider-logo-picker-model-${provider.slug}-$modelId',
             ),
+            provider: provider.slug,
+            providerName: provider.name,
+            model: modelId,
+            size: 20,
+            selected: isActive && isUsable,
+            color: isUsable ? null : colors.textDisabled,
           ),
         ),
       ),

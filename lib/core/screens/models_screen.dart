@@ -21,6 +21,7 @@ import '../widgets/read_only.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/bridge_update_banner.dart';
 import '../widgets/hermes_premium_ui.dart';
+import '../widgets/provider_logo.dart';
 import '../models/desktop_model_catalog.dart';
 import '../models/free_tier_status.dart';
 import '../models/model_identity.dart';
@@ -1214,10 +1215,10 @@ class _ModelsScreenState extends State<ModelsScreen>
       context: context,
       title: s.mdlDisconnectProviderTitle(provider.name),
       message: (provider.keyEnv.isNotEmpty && !isOAuth)
-                  ? s.mdlDisconnectApiKeyBody(provider.keyEnv) +
-                        (isActive ? s.mdlDisconnectActiveWarningModel : '')
-                  : s.mdlDisconnectOAuthBody(provider.name) +
-                        (isActive ? s.mdlDisconnectActiveWarning : ''),
+          ? s.mdlDisconnectApiKeyBody(provider.keyEnv) +
+                (isActive ? s.mdlDisconnectActiveWarningModel : '')
+          : s.mdlDisconnectOAuthBody(provider.name) +
+                (isActive ? s.mdlDisconnectActiveWarning : ''),
       actions: [
         HermesDialogAction(
           label: s.commonCancel,
@@ -2026,13 +2027,28 @@ class _ModelsScreenState extends State<ModelsScreen>
               ],
             ),
             const SizedBox(height: 10),
-            Text(
-              friendly,
-              key: const ValueKey('lm1215-active-model'),
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: colors.accentHover,
-              ),
+            Row(
+              children: [
+                ProviderLogo(
+                  key: const ValueKey('provider-logo-active-model'),
+                  provider: info.provider,
+                  providerName: row?.name,
+                  model: info.model,
+                  size: 20,
+                  selected: true,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    friendly,
+                    key: const ValueKey('lm1215-active-model'),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: colors.accentHover,
+                    ),
+                  ),
+                ),
+              ],
             ),
             if (friendly != info.model) ...[
               const SizedBox(height: 2),
@@ -2340,6 +2356,12 @@ class _ModelsScreenState extends State<ModelsScreen>
               : null,
           title: Row(
             children: [
+              ProviderLogo(
+                key: ValueKey('provider-logo-provider-${provider.slug}'),
+                provider: provider.slug,
+                providerName: provider.name,
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   provider.name,
@@ -2413,9 +2435,19 @@ class _ModelsScreenState extends State<ModelsScreen>
                   horizontal: 20,
                   vertical: 8,
                 ),
-                icon: hiddenModel
-                    ? Icons.visibility_off_outlined
-                    : Icons.memory_outlined,
+                icon: hiddenModel ? Icons.visibility_off_outlined : null,
+                leading: hiddenModel
+                    ? null
+                    : ProviderLogo(
+                        key: ValueKey(
+                          'provider-logo-model-${provider.slug}-$modelId',
+                        ),
+                        provider: provider.slug,
+                        providerName: provider.name,
+                        model: modelId,
+                        size: 20,
+                        selected: isActive,
+                      ),
                 title: modelId,
                 selected: isActive,
                 semanticHint: hiddenModel

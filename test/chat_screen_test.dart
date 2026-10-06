@@ -138,6 +138,7 @@ import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
 
 import 'support/inter_font.dart';
+import 'support/provider_logo_probe.dart';
 
 AgentProfileAvatar _testProfileAvatar() => AgentProfileAvatar.fromDataUri(
   'data:image/png;base64,'
@@ -20139,6 +20140,75 @@ void main() {
         reason: 'un rechazo conserva el último modelo efectivo',
       );
       expect(find.byKey(const ValueKey('bad-model')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'el selector y la cabecera muestran el logo monocromo del proveedor',
+    (tester) async {
+      final gateway = _ModelConfigGateway()
+        ..catalogOverride = DesktopModelCatalog.fromJson(const {
+          'model': 'anthropic/claude-sonnet-4.5',
+          'provider': 'openrouter',
+          'providers': [
+            {
+              'slug': 'openrouter',
+              'name': 'OpenRouter',
+              'is_current': true,
+              'models': ['anthropic/claude-sonnet-4.5', 'mystery-model'],
+            },
+          ],
+        });
+      final chat = await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-model-logos'),
+        messagesLoaded: false,
+      );
+      for (var frame = 0; !chat.hasDesktopRuntime && frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      gateway.emit('session.info', const {
+        'info': {
+          'model': 'anthropic/claude-sonnet-4.5',
+          'provider': 'openrouter',
+        },
+      });
+      await tester.pump();
+
+      // Header pill: the running model's maker, in secondary text colour.
+      final header = find.byKey(const ValueKey('provider-logo-chat-header'));
+      expect(header, findsOneWidget);
+      final colors = Theme.of(tester.element(header)).hermes;
+      expect(providerLogoId(tester, header), 'anthropic');
+      expect(providerLogoTint(tester, header), colors.textSecondary);
+
+      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 240));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byKey(const ValueKey('chat-model-dialog')), findsOneWidget);
+
+      final group = find.byKey(
+        const ValueKey('provider-logo-picker-provider-openrouter'),
+      );
+      expect(providerLogoId(tester, group), 'openrouter');
+      expect(providerLogoTint(tester, group), colors.accent);
+
+      final active = find.byKey(
+        const ValueKey(
+          'provider-logo-picker-model-openrouter-anthropic/claude-sonnet-4.5',
+        ),
+      );
+      expect(providerLogoId(tester, active), 'anthropic');
+      expect(providerLogoTint(tester, active), colors.accent);
+
+      final other = find.byKey(
+        const ValueKey('provider-logo-picker-model-openrouter-mystery-model'),
+      );
+      expect(providerLogoId(tester, other), 'openrouter');
+      expect(providerLogoTint(tester, other), colors.textSecondary);
       expect(tester.takeException(), isNull);
     },
   );
