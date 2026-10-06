@@ -9,14 +9,14 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-import '../../utils/markdown_clipboard.dart';
+import '../../utils/plain_preview.dart';
 import 'notification_service.dart';
 import 'notification_strings.dart';
 
 /// Short, human, plain text: no Markdown symbols, one line, bounded.
 String plainNotificationText(String? raw, {int max = 180}) {
   if (raw == null) return '';
-  var text = markdownToCompactText(raw);
+  var text = plainPreview(raw);
   // Residual inline markers some previews keep after flattening.
   text = text
       .replaceAll(RegExp(r'[`*_~]{1,3}'), '')

@@ -40,6 +40,7 @@ import '../widgets/hermes_premium_ui.dart'
 import '../widgets/hermes_ui.dart' show HermesField;
 import '../widgets/mission_profile_avatar.dart';
 import '../widgets/read_only.dart';
+import '../utils/plain_preview.dart';
 import 'bridge_file_editor_screen.dart';
 import 'cron_detail_page.dart';
 import 'chat_screen.dart';
@@ -1101,7 +1102,9 @@ class _CronJobRow extends StatelessWidget {
                         faceSize: 16,
                         trailing: job.preview.isEmpty
                             ? null
-                            : Session.stripCronPreamble(job.preview),
+                            : plainPreview(
+                                Session.stripCronPreamble(job.preview),
+                              ),
                       ),
                     ] else if (job.preview.isNotEmpty || showProfile) ...[
                       const SizedBox(height: 2),
@@ -1112,7 +1115,10 @@ class _CronJobRow extends StatelessWidget {
                               job.profile,
                               info: profileInfo(job.profile),
                             ),
-                          if (job.preview.isNotEmpty) job.preview,
+                          if (job.preview.isNotEmpty)
+                            plainPreview(
+                              Session.stripCronPreamble(job.preview),
+                            ),
                         ].join(' · '),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,

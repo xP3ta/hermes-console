@@ -3,6 +3,9 @@ import 'package:flutter/services.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../utils/markdown_clipboard.dart';
+import '../utils/plain_preview.dart';
+import '../widgets/compact_markdown.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
 import 'list.dart';
@@ -248,13 +251,21 @@ class _HermesTextBlockState extends State<HermesTextBlock> {
           0.0,
           double.infinity,
         );
+        // rt1215: agent text written in Markdown renders as compact
+        // Markdown (never raw `**`); plain or mono text stays a literal Text.
+        final markdown = !widget.mono && looksLikeMarkdown(widget.text);
         final painter = TextPainter(
-          text: TextSpan(text: widget.text, style: style),
+          text: TextSpan(
+            text: markdown ? markdownToClipboardText(widget.text) : widget.text,
+            style: style,
+          ),
           textDirection: Directionality.of(context),
           textScaler: MediaQuery.textScalerOf(context),
           maxLines: widget.collapsedLines,
         )..layout(maxWidth: width);
         final overflows = painter.didExceedMaxLines;
+        final foldedHeight =
+            painter.preferredLineHeight * widget.collapsedLines;
         painter.dispose();
         final collapsed = overflows && !_expanded;
         final actions = <Widget>[
@@ -307,13 +318,31 @@ class _HermesTextBlockState extends State<HermesTextBlock> {
                 HermesSpace.rowH,
                 actions.length > 1 ? 0 : HermesSpace.x3,
               ),
-              child: Text(
-                widget.text,
-                key: const ValueKey('hermes-text-block-text'),
-                style: style,
-                maxLines: collapsed ? widget.collapsedLines : null,
-                overflow: collapsed ? TextOverflow.fade : null,
-              ),
+              child: markdown
+                  ? KeyedSubtree(
+                      key: const ValueKey('hermes-text-block-text'),
+                      child: collapsed
+                          ? FoldedFadeBox(
+                              maxHeight: foldedHeight,
+                              child: CompactMarkdown(
+                                data: widget.text,
+                                tone: CompactMarkdownTone.body,
+                                fontSize: style.fontSize ?? 14,
+                              ),
+                            )
+                          : CompactMarkdown(
+                              data: widget.text,
+                              tone: CompactMarkdownTone.body,
+                              fontSize: style.fontSize ?? 14,
+                            ),
+                    )
+                  : Text(
+                      widget.text,
+                      key: const ValueKey('hermes-text-block-text'),
+                      style: style,
+                      maxLines: collapsed ? widget.collapsedLines : null,
+                      overflow: collapsed ? TextOverflow.fade : null,
+                    ),
             ),
             if (actions.length > 1)
               Padding(

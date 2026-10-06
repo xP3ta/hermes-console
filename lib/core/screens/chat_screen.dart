@@ -249,6 +249,7 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/chat_find_bar.dart';
 import '../widgets/chat_prompt_sheet.dart';
 import '../utils/transcript_search.dart';
+import '../utils/plain_preview.dart';
 
 /// El streaming sustituye mapas de mensaje completos. Esta caché usa identidad
 /// porque las anclas pertenecen al objeto renderizado, así que hay que retirar
@@ -11567,7 +11568,7 @@ class _ChatScreenState extends State<ChatScreen>
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      c.description,
+                      plainPreview(c.description),
                       style: TextStyle(
                         color: colors.textSecondary,
                         fontSize: 13,

@@ -8621,5 +8621,9 @@
         "type": "String"
       }
     }
+  },
+  "rt1215Thinking": "Thinking",
+  "@rt1215Thinking": {
+    "description": "Label of the block that shows the model's reasoning (rt1215)."
   }
 }
