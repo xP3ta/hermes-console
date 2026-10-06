@@ -12,8 +12,9 @@ import 'package:flutter_test/flutter_test.dart';
 /// control while it is disabled (`onTap == null`, `enabled: false`,
 /// `onChanged: null`). File → number of such styles.
 const Map<String, int> _disabledControlLabels = {
-  // Model row the active source cannot use (ListTile onTap: null).
-  'lib/core/screens/chat_screen.dart': 1,
+  // Model row the active source cannot use (InkWell onTap: null), in the
+  // session model sheet since the picker moved out of the chat screen.
+  'lib/core/widgets/session_model_sheet.dart': 1,
   // Loop switch label under reduce motion, Stop button while idle.
   'lib/core/screens/companion/mascotas_screen.dart': 2,
   // Stop-agent action while the local agent is not running.
