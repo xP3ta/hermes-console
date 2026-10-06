@@ -3,21 +3,23 @@ import 'package:flutter/material.dart';
 import '../../../../l10n/app_localizations.dart';
 import '../../../models/hosted_groups.dart';
 import '../../../theme/app_theme.dart';
+import '../../../widgets/floating_chat_header.dart';
 import '../../../widgets/mission_profile_avatar.dart';
 import 'room_models.dart';
 import 'room_widgets.dart';
 
-/// Room header in the Dots chat style: ONE calm layer. A round back button,
-/// a centred cluster of overlapping member faces next to the room name with
-/// one grey status line, and a round overflow button. Tapping the cluster or
-/// the status opens the room detail (round / members).
+/// Room header in the floating style of 1.2.15: no app bar band, the
+/// transcript scrolls under it. A round back button and, in the centre,
+/// the room's activity pill with 2–4 overlapping member faces (+N) sitting
+/// on its top edge. Idle, the pill shows the room name; while someone
+/// works, waits for you or failed it shows that one line («Forja está
+/// respondiendo · 0:42», amber when it needs you). The idle summary stays
+/// in the semantics label. Tapping the pill opens the room detail (round /
+/// members); a long press opens the room menu.
 ///
-/// While the reader is up in the history it collapses to the name only.
-/// Its height depends only on [collapsed], never on the room state, so a
-/// round starting or ending never moves the transcript.
-class RoomHeaderBar extends StatelessWidget implements PreferredSizeWidget {
-  static const double expandedHeight = 64;
-  static const double collapsedHeight = 48;
+/// Its extent ([FloatingChatHeader.insetFor]) never depends on the room
+/// state, so a round starting or ending never moves the transcript.
+class RoomHeaderBar extends StatelessWidget {
   static const int maxFaces = 4;
 
   final String title;
@@ -29,9 +31,12 @@ class RoomHeaderBar extends StatelessWidget implements PreferredSizeWidget {
 
   /// Room picture published by Desktop (`ui_meta`); replaces the cluster.
   final Widget? roomAvatar;
-  final bool collapsed;
   final VoidCallback? onOpenDetail;
   final VoidCallback onMore;
+
+  /// The tone of the room's own status line when no member state decides
+  /// it (an approval, a blocked or recovering reply, the room working).
+  final FloatingHeaderTone lineTone;
 
   const RoomHeaderBar({
     super.key,
@@ -43,112 +48,76 @@ class RoomHeaderBar extends StatelessWidget implements PreferredSizeWidget {
     required this.avatarCache,
     required this.onMore,
     this.roomAvatar,
-    this.collapsed = false,
     this.onOpenDetail,
+    this.lineTone = FloatingHeaderTone.idle,
   });
 
-  @override
-  Size get preferredSize =>
-      Size.fromHeight(collapsed ? collapsedHeight : expandedHeight);
+  /// What the pill's second line shows: who needs you or failed (amber),
+  /// who works, or nothing while the room is idle.
+  static FloatingHeaderTone toneOf(Map<String, RoomTurnState> states) {
+    final values = states.values;
+    if (values.any(
+      (s) => s == RoomTurnState.needsYou || s == RoomTurnState.failed,
+    )) {
+      return FloatingHeaderTone.waiting;
+    }
+    if (values.any((s) => s == RoomTurnState.working)) {
+      return FloatingHeaderTone.working;
+    }
+    return FloatingHeaderTone.idle;
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    final canPop = Navigator.of(context).canPop();
+    final navigator = Navigator.of(context);
     final name = colors.uppercaseTitles ? title.toUpperCase() : title;
-    final semantics = collapsed || status.isEmpty ? name : '$name. $status';
-    return AppBar(
-      toolbarHeight: preferredSize.height,
-      automaticallyImplyLeading: false,
-      scrolledUnderElevation: 0,
-      centerTitle: true,
-      titleSpacing: 0,
-      leadingWidth: 56,
-      leading: canPop
-          ? Center(
-              child: _RoundButton(
-                key: const ValueKey('room-back'),
-                icon: Icons.arrow_back_rounded,
-                tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-                onPressed: () => Navigator.of(context).maybePop(),
-              ),
+    final memberTone = toneOf(states);
+    final tone = memberTone == FloatingHeaderTone.idle ? lineTone : memberTone;
+    final idle = tone == FloatingHeaderTone.idle || status.isEmpty;
+    return FloatingChatHeader(
+      key: const ValueKey('room-header-bar'),
+      // Seam for the mascot engine's MascotCluster (review/1215-mascot).
+      mascot: roomAvatar != null
+          ? null
+          : HeaderMascotRequest(
+              identity: title,
+              members: [for (final m in members) m.memberId],
+              state: switch (tone) {
+                FloatingHeaderTone.idle => HeaderMascotState.idle,
+                FloatingHeaderTone.working => HeaderMascotState.working,
+                FloatingHeaderTone.waiting => HeaderMascotState.waiting,
+                FloatingHeaderTone.offline => HeaderMascotState.offline,
+              },
+            ),
+      leading: navigator.canPop()
+          ? FloatingHeaderButton(
+              key: const ValueKey('room-back'),
+              icon: Icons.arrow_back_rounded,
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+              onPressed: () => navigator.maybePop(),
             )
           : null,
-      actions: [
-        _RoundButton(
-          key: const ValueKey('room-overflow'),
-          icon: Icons.more_horiz_rounded,
-          tooltip: s.roomMoreActions,
-          onPressed: onMore,
-        ),
-        const SizedBox(width: 8),
-      ],
-      // AppBar clamps its title's text scale (to about 1.34×), which keeps
-      // the two lines inside the 64 dp bar at 2×; the full name and status
-      // stay in the semantics label.
-      title: Semantics(
-        button: onOpenDetail != null,
-        label: semantics,
-        hint: onOpenDetail == null ? null : s.rhdrOpenDetailHint,
-        excludeSemantics: true,
-        child: InkWell(
-          key: const ValueKey('room-header'),
-          onTap: onOpenDetail,
-          borderRadius: BorderRadius.circular(16),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (!collapsed) ...[
-                  roomAvatar ??
-                      RoomFaceCluster(
-                        members: members,
-                        states: states,
-                        profileFor: profileFor,
-                        avatarCache: avatarCache,
-                      ),
-                  const SizedBox(width: 10),
-                ],
-                Flexible(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: collapsed
-                        ? CrossAxisAlignment.center
-                        : CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        name,
-                        key: const ValueKey('room-title'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 15.5,
-                          height: 1.2,
-                          fontWeight: FontWeight.w700,
-                          color: colors.textPrimary,
-                        ),
-                      ),
-                      if (!collapsed && status.isNotEmpty)
-                        Text(
-                          status,
-                          key: const ValueKey('room-header-status'),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            height: 1.25,
-                            color: colors.textSecondary,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+      // A room cannot start a new chat: nothing on the right. Its menu
+      // (rename, members, leave…) opens with a long press on the pill until
+      // the notch sheet takes it over.
+      faces:
+          roomAvatar ??
+          RoomFaceCluster(
+            members: members,
+            states: states,
+            profileFor: profileFor,
+            avatarCache: avatarCache,
           ),
-        ),
+      pill: FloatingHeaderPill(
+        key: const ValueKey('room-header'),
+        text: idle ? name : status,
+        tone: idle ? FloatingHeaderTone.idle : tone,
+        semanticsLabel: status.isEmpty ? name : '$name. $status',
+        hint: onOpenDetail == null ? null : s.rhdrOpenDetailHint,
+        onTap: onOpenDetail,
+        onLongPress: onMore,
       ),
     );
   }
@@ -281,39 +250,6 @@ class RoomFaceCluster extends StatelessWidget {
               ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// Round side button of the Dots header: a 40 dp filled circle inside a
-/// 48 dp target.
-class _RoundButton extends StatelessWidget {
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onPressed;
-
-  const _RoundButton({
-    super.key,
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return IconButton(
-      tooltip: tooltip,
-      onPressed: onPressed,
-      icon: Icon(icon, size: 20),
-      style: IconButton.styleFrom(
-        fixedSize: const Size.square(40),
-        minimumSize: const Size.square(40),
-        tapTargetSize: MaterialTapTargetSize.padded,
-        backgroundColor: colors.surfaceVariant,
-        foregroundColor: colors.textPrimary,
-        shape: const CircleBorder(),
       ),
     );
   }

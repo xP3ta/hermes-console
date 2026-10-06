@@ -8,6 +8,7 @@ import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
 import 'package:hermes_android/core/bots/ui/room/room_widgets.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/bots/ui/room/room_header.dart';
 
 import 'room/room_fixtures.dart';
 
@@ -87,11 +88,11 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  // fh1215: the idle line lives in the floating header's semantics; the
+  // header widget carries it.
   String line(WidgetTester tester) => tester
-      .widget<Text>(
-        find.byKey(const ValueKey('room-header-status'), skipOffstage: false),
-      )
-      .data!;
+      .widget<RoomHeaderBar>(find.byType(RoomHeaderBar, skipOffstage: false))
+      .status;
 
   bool armed(WidgetTester tester) =>
       (tester.state(find.byType(RoomScreen, skipOffstage: false)) as dynamic)

@@ -8325,5 +8325,11 @@
   "chatNotchSearchChats": "Search chats",
   "chatNotchFindInChat": "Search this chat",
   "chatNotchPreviousChat": "Previous chat",
-  "chatNotchNextChat": "Next chat"
+  "chatNotchNextChat": "Next chat",
+  "fh1215ImageStackLabel": "Image {index} of {count}. Swipe for the next one",
+  "fh1215GalleryPosition": "{index} / {count}",
+  "fh1215Offline": "Offline",
+  "fh1215TasksDoneFlash": "{count, plural, =1{✓ 1 task} other{✓ {count} tasks}}",
+  "fh1215TasksCompleted": "{count} completed",
+  "fh1215TasksHideCompleted": "Hide completed"
 }

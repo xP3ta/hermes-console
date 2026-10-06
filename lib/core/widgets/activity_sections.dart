@@ -266,37 +266,116 @@ class ActivityTaskRow extends StatelessWidget {
       ),
     };
     final iconSize = dense ? 15.0 : 18.0;
+    final current = item.status == AgentTaskStatus.inProgress;
+    final row = Padding(
+      padding: EdgeInsets.only(
+        left: (depth > 3 ? 3 : depth) * 14.0,
+        top: dense ? 2 : 3.5,
+        bottom: dense ? 2 : 3.5,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: iconSize + 2,
+            height: 13 * 1.35 + 2,
+            child: Center(
+              child: _TaskStatusIcon(status: item.status, size: iconSize),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              plainPreview(item.content),
+              style: style.copyWith(fontSize: dense ? 12.5 : 13, height: 1.35),
+            ),
+          ),
+        ],
+      ),
+    );
     return Semantics(
       container: true,
       label: '${_taskStatusWord(s, item.status)}: ${item.content}',
       excludeSemantics: true,
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: (depth > 3 ? 3 : depth) * 14.0,
-          top: dense ? 2 : 3.5,
-          bottom: dense ? 2 : 3.5,
+      // fh1215: the task in progress is the one to find at a glance: a soft
+      // accent band behind it (same insets, so nothing shifts).
+      // The band is always there (transparent unless current) so a row
+      // keeps its element, and its check pop, when its status changes.
+      child: DecoratedBox(
+        key: const ValueKey('activity-task-band'),
+        decoration: BoxDecoration(
+          color: current
+              ? colors.accent.withValues(alpha: 0.12)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: iconSize + 2,
-              height: 13 * 1.35 + 2,
-              child: Center(
-                child: _TaskStatusIcon(status: item.status, size: iconSize),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                plainPreview(item.content),
-                style: style.copyWith(
-                  fontSize: dense ? 12.5 : 13,
-                  height: 1.35,
+        child: row,
+      ),
+    );
+  }
+}
+
+/// fh1215: the folded completed tasks («✓ 5 completadas ›»), dimmed; a tap
+/// shows them in place (and the row then offers to hide them again).
+class _DoneFoldRow extends StatelessWidget {
+  const _DoneFoldRow({
+    required this.folded,
+    required this.label,
+    required this.dense,
+    required this.onTap,
+  });
+
+  final bool folded;
+  final String label;
+  final bool dense;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final iconSize = dense ? 15.0 : 18.0;
+    final muted = colors.textSecondary.withValues(alpha: 0.85);
+    return Semantics(
+      button: true,
+      expanded: !folded,
+      child: InkWell(
+        key: const ValueKey('activity-tasks-done-toggle'),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 40),
+          child: Row(
+            children: [
+              SizedBox(
+                width: iconSize + 2,
+                child: Icon(
+                  Icons.check_circle_rounded,
+                  size: iconSize,
+                  color: colors.success.withValues(alpha: 0.7),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: dense ? 12.5 : 13,
+                    fontWeight: FontWeight.w600,
+                    color: muted,
+                  ),
+                ),
+              ),
+              Icon(
+                folded
+                    ? Icons.keyboard_arrow_down_rounded
+                    : Icons.keyboard_arrow_up_rounded,
+                size: 18,
+                color: muted,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -326,14 +405,33 @@ class ActivityTasksSection extends StatefulWidget {
 
 class _ActivityTasksSectionState extends State<ActivityTasksSection> {
   bool _expanded = false;
+  bool _showDone = false;
+
+  /// fh1215: more completed tasks than this fold into one «N completadas»
+  /// row, so the open work stays on top of a long list.
+  static const int foldDoneAbove = 3;
 
   @override
   Widget build(BuildContext context) {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
     final tasks = widget.tasks;
-    final rows = tasks.rows;
-    final overflow = rows.length > widget.maxRows;
+    final allRows = tasks.rows;
+    final doneRows = [
+      for (final row in allRows)
+        if (row.item.status == AgentTaskStatus.completed) row,
+    ];
+    final foldable = doneRows.length > foldDoneAbove;
+    final folded = foldable && !_showDone;
+    final rows = folded
+        ? [
+            for (final row in allRows)
+              if (row.item.status != AgentTaskStatus.completed) row,
+          ]
+        : allRows;
+    // Unfolding the completed tasks is an explicit ask to see the whole
+    // list: no window then (the panel scrolls).
+    final overflow = rows.length > widget.maxRows && !(foldable && _showDone);
     var visible = rows;
     var hidden = 0;
     if (overflow && !_expanded) {
@@ -376,6 +474,15 @@ class _ActivityTasksSectionState extends State<ActivityTasksSection> {
           ),
         ),
         const SizedBox(height: 6),
+        if (foldable)
+          _DoneFoldRow(
+            folded: folded,
+            label: folded
+                ? s.fh1215TasksCompleted(doneRows.length)
+                : s.fh1215TasksHideCompleted,
+            dense: widget.dense,
+            onTap: () => setState(() => _showDone = !_showDone),
+          ),
         for (final row in visible)
           ActivityTaskRow(
             key: ValueKey('activity-task-row-${row.item.id}'),
@@ -578,7 +685,11 @@ class _FoldedTextState extends State<_FoldedText> {
         widget.text,
         maxLines: _open ? null : 3,
         overflow: _open ? TextOverflow.visible : TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 12, height: 1.3, color: colors.textSecondary),
+        style: TextStyle(
+          fontSize: 12,
+          height: 1.3,
+          color: colors.textSecondary,
+        ),
       ),
     );
   }

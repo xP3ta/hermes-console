@@ -620,7 +620,7 @@ void main() {
         ),
       );
       final summary = tester.widget<Text>(
-        find.byKey(const ValueKey('room-header-status')),
+        find.descendant(of: find.byKey(const ValueKey('room-header')), matching: find.byKey(const ValueKey('floating-header-text'))),
       );
       // Someone needing you wins the one line.
       expect(summary.data, 'console-lead needs you');
@@ -814,7 +814,7 @@ void main() {
     expect(opened, ['builder']);
 
     // The thread page offers the same working links.
-    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.longPress(find.byKey(const ValueKey('room-header')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('room-menu-threads')));
     await tester.pumpAndSettle();
@@ -1141,7 +1141,7 @@ void main() {
   ) async {
     final seq = EventSeq();
     final gateway = await _pump(tester, events: [seq.user('hi')]);
-    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.longPress(find.byKey(const ValueKey('room-header')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('room-overflow-menu')), findsOneWidget);
     for (final item in [
@@ -1168,7 +1168,7 @@ void main() {
   testWidgets('notifications level persists per room', (tester) async {
     final prefs = MemoryRoomPrefs();
     await _pump(tester, events: const [], prefs: prefs);
-    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.longPress(find.byKey(const ValueKey('room-header')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('room-menu-notifications')));
     await tester.pumpAndSettle();
@@ -1189,7 +1189,7 @@ void main() {
       caps: RoomCapabilities.none,
       prefs: prefs,
     );
-    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.longPress(find.byKey(const ValueKey('room-header')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('room-menu-settings')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('room-menu-notifications')));
@@ -1223,7 +1223,7 @@ void main() {
       caps: _compressCaps,
       memberCompressor: compressor,
     );
-    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.longPress(find.byKey(const ValueKey('room-header')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
     await tester.pumpAndSettle();
@@ -1270,7 +1270,7 @@ void main() {
       caps: _compressCaps,
       memberCompressor: compressor,
     );
-    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.longPress(find.byKey(const ValueKey('room-header')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
     await tester.pumpAndSettle();
@@ -1288,7 +1288,7 @@ void main() {
       events: const [],
       caps: const RoomCapabilities(canRename: true),
     );
-    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.longPress(find.byKey(const ValueKey('room-header')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
     await tester.pumpAndSettle();
@@ -1302,7 +1302,7 @@ void main() {
       return const <String, dynamic>{};
     });
     await _pump(tester, events: const [], memberCompressor: compressor);
-    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.longPress(find.byKey(const ValueKey('room-header')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
     await tester.pumpAndSettle();
@@ -1330,7 +1330,7 @@ void main() {
       caps: _compressCaps,
       memberCompressor: compressor,
     );
-    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.longPress(find.byKey(const ValueKey('room-header')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
     await tester.pumpAndSettle();
@@ -1357,7 +1357,7 @@ void main() {
       caps: _compressCaps,
       memberCompressor: compressor,
     );
-    await tester.tap(find.byKey(const ValueKey('room-overflow')));
+    await tester.longPress(find.byKey(const ValueKey('room-header')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('room-menu-settings')));
     await tester.pumpAndSettle();

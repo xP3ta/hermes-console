@@ -134,19 +134,24 @@ import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/chat/tool_output_cards.dart';
 import 'package:hermes_android/core/widgets/chat/turn_changes_sheet.dart';
 import 'package:hermes_android/core/widgets/compaction_dock.dart';
+import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:hermes_android/core/widgets/generated_image_card.dart';
 import 'package:hermes_android/core/widgets/activity_panel.dart';
+import 'package:hermes_android/core/widgets/activity_pill.dart';
 import 'package:hermes_android/core/widgets/hermes_notice.dart';
 import 'package:hermes_android/core/widgets/reasoning_block.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/core/widgets/mission_profile_avatar.dart';
 import 'package:hermes_android/core/widgets/motion_entrance.dart';
 import 'package:hermes_android/core/widgets/chat_status_pill.dart';
+import 'package:hermes_android/core/widgets/session_context_usage.dart';
+import 'package:hermes_android/core/widgets/stacked_image_cards.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
 
 import 'support/inter_font.dart';
 import 'support/provider_logo_probe.dart';
+import 'support/chat_header_menu.dart';
 
 AgentProfileAvatar _testProfileAvatar() => AgentProfileAvatar.fromDataUri(
   'data:image/png;base64,'
@@ -5999,13 +6004,23 @@ void main() {
     /// The topmost history row painted inside the transcript viewport.
     Finder firstVisibleRow(WidgetTester tester) {
       final viewport = tester.getRect(list());
+      // fh1215: the transcript scrolls under the floating header, and the
+      // pinned prompt floats below it; the reader's first row is a list row
+      // below both.
+      final header = find.byKey(const ValueKey('floating-header'));
+      final readTop = header.evaluate().isEmpty
+          ? viewport.top
+          : tester.getRect(header).bottom - FloatingChatHeader.scrimTail;
       Finder? best;
       var bestTop = double.infinity;
       for (var index = 240; index >= 1; index--) {
-        final f = find.text('ANCLA_HISTORIAL_$index');
+        final f = find.descendant(
+          of: list(),
+          matching: find.text('ANCLA_HISTORIAL_$index'),
+        );
         if (f.evaluate().isEmpty) continue;
         final top = tester.getTopLeft(f).dy;
-        if (top >= viewport.top + 40 && top < bestTop) {
+        if (top >= readTop + 40 && top < bestTop) {
           bestTop = top;
           best = f;
         }
@@ -6823,45 +6838,12 @@ void main() {
         find.descendant(of: surface, matching: find.byType(Wrap)),
         findsNothing,
       );
-      final transcript = find.descendant(
-        of: find.byType(ChatRefreshStatusOverlay),
-        matching: find.byType(ListView),
-      );
-      final composer = find.byType(TextField).last;
-      // The activity pill is a fixed overlay pinned near the BOTTOM of the
-      // chat Stack, right above the composer (Positioned(bottom: 20, ...)
-      // — see chat_screen.dart), not floating over the middle of the
-      // transcript. Two invariants matter here:
-      //
-      // 1. It's anchored at the BOTTOM, close to the composer — `transcript`
-      //    (the reverse:true ListView) fills this whole Stack by
-      //    construction, so its outer rect always ends at the same `bottom`
-      //    as the pill's own Positioned band; we can't assert "zero overlap
-      //    with the full ListView box" without either resizing the Stack
-      //    (which the design explicitly avoids) or dynamically measuring the
-      //    pill's height to reserve exact space. What we *can* assert, and
-      //    what actually distinguishes this "glued to the composer" design
-      //    from an earlier top-anchored one, is that the pill sits right at
-      //    the transcript's bottom edge, not somewhere in the middle or top
-      //    of it. The transcript also reserves real bottom padding
-      //    (`_subagentActivityPillReservedSpace` in chat_screen.dart) so in
-      //    practice real message content stays above the pill at normal
-      //    text scale; that reservation is a best-effort estimate, not a
-      //    measured one, so it isn't re-asserted pixel-for-pixel here.
-      // 2. It must NEVER cover the composer — this is the one hard,
-      //    non-negotiable product rule, asserted with a small safety
-      //    margin so "touching" isn't considered acceptable either.
-      // The notch tab sits between the pill and the composer.
-      const bottomAnchorTolerance = 32.0 + kChatNotchHeight;
-      const clearanceMargin = 1.0;
-      expect(
-        tester.getRect(transcript).bottom -
-            tester.getRect(find.byKey(const ValueKey('activity-pill'))).bottom,
-        inInclusiveRange(0.0, bottomAnchorTolerance),
-      );
-      expect(
-        tester.getRect(find.byKey(const ValueKey('activity-pill'))).bottom,
-        lessThanOrEqualTo(tester.getRect(composer).top - clearanceMargin),
+      // fh1215: the pill moved from above the composer into the floating
+      // header; it must never cover the composer.
+      _expectPillInHeader(
+        tester,
+        find.byKey(const ValueKey('activity-pill')),
+        clearOf: [find.byType(TextField).last],
       );
 
       final semanticTree = tester
@@ -6883,10 +6865,11 @@ void main() {
       await tester.pump();
       expect(tester.element(surface), same(surfaceElement));
       // Same hard invariant after the keyboard opens and the composer
-      // rises: the floating pill must still clear it.
-      expect(
-        tester.getRect(find.byKey(const ValueKey('activity-pill'))).bottom,
-        lessThanOrEqualTo(tester.getRect(composer).top - clearanceMargin),
+      // rises: the header pill must still clear it.
+      _expectPillInHeader(
+        tester,
+        find.byKey(const ValueKey('activity-pill')),
+        clearOf: [find.byType(TextField).last],
       );
       expect(tester.takeException(), isNull);
       semantics.dispose();
@@ -9989,7 +9972,13 @@ void main() {
       ],
     );
 
-    expect(find.byType(GeneratedImageCard), findsNWidgets(2));
+    // fh1215: consecutive images of one reply form ONE stack; both calls
+    // keep their own card in it (the shared basename never merges them).
+    final stack = find.byType(StackedImageCards);
+    expect(stack, findsOneWidget);
+    final cards = tester.widget<StackedImageCards>(stack).children;
+    expect(cards, hasLength(2));
+    expect(cards.map((c) => c.key).toSet(), hasLength(2));
     expect(tester.takeException(), isNull);
   });
 
@@ -11975,33 +11964,20 @@ void main() {
       final pill = find.byKey(const ValueKey('activity-pill'));
       final stop = find.byKey(const ValueKey('stop'));
       expect(pill, findsOneWidget);
-      // La pastilla queda por encima del compositor y Stop no se mueve.
-      expect(
-        tester.getRect(pill).bottom,
-        lessThanOrEqualTo(tester.getRect(stop).top),
-      );
+      // fh1215: the pill sits in the floating header, far from Stop.
+      _expectPillInHeader(tester, pill, clearOf: [stop]);
 
-      // Al abrir la paleta de comandos, la pastilla cede su sitio (no se pinta
-      // ni recibe toques) para no solaparse con ella.
+      // The command palette opens above the composer; the header pill
+      // stays where it is and never overlaps it.
       await tester.enterText(find.byType(TextField), '/');
       await tester.pump(const Duration(milliseconds: 250));
       final palette = find.byKey(const ValueKey('chat-slash-palette'));
       expect(palette, findsOneWidget);
-      final opacity = tester.widget<Opacity>(
-        find.ancestor(of: pill, matching: find.byType(Opacity)).first,
-      );
-      expect(opacity.opacity, 0);
+      _expectPillInHeader(tester, pill, clearOf: [stop, palette]);
       await tester.enterText(find.byType(TextField), '');
       await tester.pump(const Duration(milliseconds: 250));
       expect(palette, findsNothing);
-      expect(
-        tester
-            .widget<Opacity>(
-              find.ancestor(of: pill, matching: find.byType(Opacity)).first,
-            )
-            .opacity,
-        1,
-      );
+      expect(pill, findsOneWidget);
 
       // Stop del compositor: sin cambios.
       await tester.tap(stop);
@@ -14968,6 +14944,10 @@ void main() {
               await tester.pump();
               expect(focus.hasFocus, isTrue);
 
+              // fh1215: model and controls live in the header pill's menu.
+              if (trigger().evaluate().isEmpty) {
+                await openChatHeaderMenu(tester);
+              }
               await tester.tap(trigger());
               await settle(tester);
               expect(surface(), findsWidgets);
@@ -18436,7 +18416,7 @@ void main() {
       );
       expect(message, findsOneWidget);
       expect(find.byTooltip('Menú').hitTestable(), findsOneWidget);
-      final appBar = find.byType(AppBar);
+      final appBar = find.byKey(const ValueKey('chat-activity-pill'));
       expect(
         tester.getTopLeft(message).dy,
         greaterThanOrEqualTo(tester.getBottomLeft(appBar).dy),
@@ -21386,7 +21366,7 @@ void main() {
     );
 
     testWidgets(
-      'md1215: Bot Chat header shows the session model, not the profile default',
+      'md1215: Bot Chat shows the session model, not the profile default',
       (tester) async {
         final gateway = _ModelConfigGateway();
         final chat = await pumpChat(
@@ -21414,18 +21394,29 @@ void main() {
           await tester.pump(const Duration(milliseconds: 240));
         }
         expect(chat.hasDesktopRuntime, isTrue);
-        String subtitle() => tester
-            .widget<Text>(
-              find.byKey(const ValueKey('bot-chat-header-subtitle')),
-            )
-            .data!;
+        // fh1215: the model left the header; the pill's menu shows it.
+        Future<String> subtitle() async {
+          await openChatHeaderMenu(tester);
+          final text = tester
+              .widgetList<Text>(
+                find.descendant(
+                  of: find.byKey(const ValueKey('chat-menu-model')),
+                  matching: find.byType(Text),
+                ),
+              )
+              .map((t) => t.data ?? '')
+              .join(' ');
+          await closeChatHeaderMenu(tester);
+          return text;
+        }
 
         gateway.emit('session.info', const {
           'info': {'model': 'old-model', 'provider': 'provider-a'},
         });
         await tester.pump();
-        expect(subtitle(), contains(friendlyModelName('old-model')));
-        expect(subtitle(), isNot(contains('profile-default-model')));
+        final before = await subtitle();
+        expect(before, contains(friendlyModelName('old-model')));
+        expect(before, isNot(contains('profile-default-model')));
 
         await chat.setSessionModel(
           DesktopModelSelection(
@@ -21434,8 +21425,9 @@ void main() {
           ),
         );
         await tester.pump();
-        expect(subtitle(), contains(friendlyModelName('new-model')));
-        expect(subtitle(), isNot(contains(friendlyModelName('old-model'))));
+        final after = await subtitle();
+        expect(after, contains(friendlyModelName('new-model')));
+        expect(after, isNot(contains(friendlyModelName('old-model'))));
         expect(tester.takeException(), isNull);
       },
     );
@@ -22925,6 +22917,10 @@ void main() {
       for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
         await tester.pump(const Duration(milliseconds: 33));
       }
+      // fh1215: with the keyboard gone the taller transcript (no app bar
+      // band) fits whole; the list settles back from the editor's offset.
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('Respuesta corregida Android'), findsOneWidget);
       expect(chat.isStreaming, isFalse);
       expect(tester.takeException(), isNull);
@@ -23495,11 +23491,20 @@ void main() {
       await enableFullCompanion(tester);
 
       expect(find.byType(ThinkingTraceCard), findsOneWidget);
-      expect(find.byType(CompanionStatusIndicator), findsOneWidget);
-      expect(find.byType(CompanionView), findsOneWidget);
-      final companion = tester.widget<CompanionStatusIndicator>(
-        find.byType(CompanionStatusIndicator),
+      expect(_messageFace(), findsOneWidget);
+      expect(
+        find.descendant(
+          of: _messageFace(),
+          matching: find.byType(CompanionView),
+        ),
+        findsOneWidget,
       );
+      // fh1215: the floating header carries its own face, a separate widget.
+      expect(
+        find.byKey(const ValueKey('chat-header-companion')),
+        findsOneWidget,
+      );
+      final companion = tester.widget<CompanionStatusIndicator>(_messageFace());
       expect(companion.size, 44);
       expect(companion.mood, HermesSparkMood.success);
       expect(companion.animate, isFalse);
@@ -23542,9 +23547,9 @@ void main() {
         find.byKey(const ValueKey('assistant-header-working')),
         findsOneWidget,
       );
-      expect(find.byType(CompanionStatusIndicator), findsOneWidget);
+      expect(_messageFace(), findsOneWidget);
       final waitingCompanion = tester.widget<CompanionStatusIndicator>(
-        find.byType(CompanionStatusIndicator),
+        _messageFace(),
       );
       expect(waitingCompanion.size, 44);
       expect(waitingCompanion.mood, HermesSparkMood.waiting);
@@ -23562,10 +23567,21 @@ void main() {
       await tester.pump(const Duration(milliseconds: 600));
 
       expect(find.byType(ThinkingTraceCard), findsOneWidget);
-      expect(find.byType(CompanionStatusIndicator), findsOneWidget);
-      expect(find.byType(CompanionView), findsOneWidget);
+      expect(_messageFace(), findsOneWidget);
+      expect(
+        find.descendant(
+          of: _messageFace(),
+          matching: find.byType(CompanionView),
+        ),
+        findsOneWidget,
+      );
+      // fh1215: the floating header carries its own face, a separate widget.
+      expect(
+        find.byKey(const ValueKey('chat-header-companion')),
+        findsOneWidget,
+      );
       final activeCompanion = tester.widget<CompanionStatusIndicator>(
-        find.byType(CompanionStatusIndicator),
+        _messageFace(),
       );
       expect(activeCompanion.size, 44);
       expect(activeCompanion.mood, HermesSparkMood.thinking);
@@ -23584,10 +23600,21 @@ void main() {
       gateway.emit('message.complete', const {'text': 'PUBLIC_ACTIVE_ANSWER'});
       await tester.pump(const Duration(milliseconds: 700));
 
-      expect(find.byType(CompanionStatusIndicator), findsOneWidget);
-      expect(find.byType(CompanionView), findsOneWidget);
+      expect(_messageFace(), findsOneWidget);
+      expect(
+        find.descendant(
+          of: _messageFace(),
+          matching: find.byType(CompanionView),
+        ),
+        findsOneWidget,
+      );
+      // fh1215: the floating header carries its own face, a separate widget.
+      expect(
+        find.byKey(const ValueKey('chat-header-companion')),
+        findsOneWidget,
+      );
       final finishedCompanion = tester.widget<CompanionStatusIndicator>(
-        find.byType(CompanionStatusIndicator),
+        _messageFace(),
       );
       expect(finishedCompanion.size, 44);
       expect(finishedCompanion.mood, HermesSparkMood.success);
@@ -23637,9 +23664,7 @@ void main() {
     );
     await enableFullCompanion(tester);
 
-    final companion = tester.widget<CompanionStatusIndicator>(
-      find.byType(CompanionStatusIndicator),
-    );
+    final companion = tester.widget<CompanionStatusIndicator>(_messageFace());
     expect(companion.size, 44);
     expect(companion.mood, HermesSparkMood.error);
     expect(companion.animate, isFalse);
@@ -23710,9 +23735,7 @@ void main() {
     await enableFullCompanion(tester);
 
     expect(find.text('Detenido'), findsOneWidget);
-    final companion = tester.widget<CompanionStatusIndicator>(
-      find.byType(CompanionStatusIndicator),
-    );
+    final companion = tester.widget<CompanionStatusIndicator>(_messageFace());
     expect(companion.mood, HermesSparkMood.idle);
     expect(companion.animate, isFalse);
     expect(tester.takeException(), isNull);
@@ -23917,10 +23940,7 @@ void main() {
         matching: find.byType(ChatAnswerAnchor),
       );
       final processPill = find.byKey(const ValueKey('activity-pill'));
-      expect(
-        tester.getRect(finalAnswer).bottom,
-        lessThanOrEqualTo(tester.getRect(processPill).top),
-      );
+      _expectPillInHeader(tester, processPill, clearOf: [finalAnswer]);
       final activeBottomPadding =
           (tester.widget<ListView>(chatListFinder()).padding! as EdgeInsets)
               .bottom;
@@ -23943,6 +23963,9 @@ void main() {
       final controller = tester.widget<ListView>(list).controller!;
       controller.jumpTo(controller.position.maxScrollExtent * 0.55);
       await tester.pump();
+      // Let the scroll-to-bottom arrow land (it pads the list bottom).
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       final viewport = tester.getRect(list);
       RenderBox? readerAnchor;
       for (final element
@@ -23984,8 +24007,11 @@ void main() {
       final idleBottomPadding =
           (tester.widget<ListView>(chatListFinder()).padding! as EdgeInsets)
               .bottom;
-      expect(idleBottomPadding, lessThan(readingBottomPadding));
-      expect(idleBottomPadding, lessThan(activeBottomPadding));
+      // fh1215: the pill lives in the header, so it never reserved room at
+      // the bottom: its leaving does not change the transcript's bottom
+      // padding at all (the arrow keeps its own 48 dp).
+      expect(idleBottomPadding, readingBottomPadding);
+      expect(activeBottomPadding, lessThan(readingBottomPadding));
       expect(
         readerAnchor.localToGlobal(Offset.zero).dy,
         closeTo(readerAnchorY, 1),
@@ -24144,10 +24170,7 @@ void main() {
     final processPill = find.byKey(const ValueKey('activity-pill'));
     expect(processPill, findsOneWidget);
     expect(find.byKey(const ValueKey('chat-subagent-status')), findsOneWidget);
-    expect(
-      tester.getRect(finalAnswer).bottom,
-      lessThanOrEqualTo(tester.getRect(processPill).top),
-    );
+    _expectPillInHeader(tester, processPill, clearOf: [finalAnswer]);
     expect(tester.takeException(), isNull);
   });
 
@@ -26204,14 +26227,10 @@ void main() {
       expect(find.text('0/3'), findsOneWidget);
 
       // Never overlaps the composer, and the last message stays clear above.
-      final pillRect = tester.getRect(pill);
-      final composerRect = tester.getRect(
-        find.byKey(const ValueKey('chat-composer-host')),
-      );
-      expect(pillRect.bottom, lessThanOrEqualTo(composerRect.top));
-      expect(
-        tester.getRect(find.text('PUBLIC_TASKS_PARENT')).bottom,
-        lessThanOrEqualTo(pillRect.top + 0.5),
+      _expectPillInHeader(
+        tester,
+        pill,
+        clearOf: [find.text('PUBLIC_TASKS_PARENT')],
       );
 
       // progress
@@ -26259,12 +26278,21 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(card, findsNothing);
 
-      // Finished tasks linger briefly so the completion remains visible.
+      // Finished tasks linger briefly so the completion remains visible;
+      // fh1215: as «Todo completado», without a lingering «3/3» counter.
       gateway.emit('message.complete', const {'text': 'PUBLIC_TASKS_DONE'});
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       expect(pill, findsOneWidget);
-      expect(find.text('3/3'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: pill,
+          matching: find.textContaining('Todo completado', findRichText: true),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('3/3'), findsNothing);
+      expect(find.byKey(const ValueKey('activity-task-chip')), findsNothing);
       await tester.pump(const Duration(seconds: 5));
       await tester.pump(const Duration(milliseconds: 400));
       expect(pill, findsNothing);
@@ -32572,8 +32600,8 @@ void main() {
     );
     await tester.pump();
 
-    // dc1215: the Dots header is centred (face over the name pill).
-    expect(tester.widget<AppBar>(find.byType(AppBar)).centerTitle, isTrue);
+    // fh1215: the floating header (face on the activity pill), no app bar.
+    expect(find.byType(AppBar), findsNothing);
     expect(find.byKey(const ValueKey('bot-chat-header')), findsOneWidget);
     expect(
       find.descendant(
@@ -32585,11 +32613,8 @@ void main() {
     // Spec 070 S2: the empty chat is attributed to the bot, never "Hermes".
     expect(find.text('Infra Bot'), findsNWidgets(2));
     expect(find.text('HERMES CONSOLE'), findsNothing);
-    expect(
-      find.byKey(const ValueKey('bot-chat-header-subtitle')),
-      findsOneWidget,
-    );
-    expect(find.text('@infra'), findsOneWidget);
+    // fh1215: idle, the header pill says the bot's name only.
+    expect(find.text('@infra'), findsNothing);
     final botAvatar = find.byKey(const ValueKey('bot-chat-avatar-infra'));
     expect(
       find.descendant(of: botAvatar, matching: find.byType(Image)),
@@ -32754,8 +32779,21 @@ void main() {
     );
     await tester.pump();
 
-    // Spec 070 S2: face + name + model, and the composer speaks to the bot.
-    expect(find.text('@infra · gpt-5.5'), findsOneWidget);
+    // Spec 070 S2: face + name, and the composer speaks to the bot. fh1215:
+    // the model left the header (the bottom status pill takes it); it stays
+    // one tap away in the header pill's menu.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('chat-header-pill')),
+        matching: find.text('Infra Bot'),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('chat-header-pill')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('chat-menu-model')), findsOneWidget);
+    await tester.tapAt(const Offset(4, 400));
+    await tester.pumpAndSettle();
     final field = tester.widget<TextField>(
       find.descendant(
         of: find.byType(ConsoleComposer),
@@ -32794,7 +32832,6 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.text('@qa'), findsOneWidget);
     expect(find.byKey(const ValueKey('voice')), findsNothing);
     expect(find.byKey(const ValueKey('send')), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -32812,8 +32849,11 @@ void main() {
       startedAt: 1,
       profile: 'qa',
     );
-    final pill = find.byKey(const ValueKey('bot-chat-header-pill'));
-    final status = find.byKey(const ValueKey('bot-chat-header-subtitle'));
+    final pill = find.byKey(const ValueKey('chat-header-pill'));
+    final pillText = find.descendant(
+      of: pill,
+      matching: find.byKey(const ValueKey('floating-header-text')),
+    );
 
     Future<ActiveChat> startTurn(
       WidgetTester tester,
@@ -32852,57 +32892,121 @@ void main() {
       await tester.pump(const Duration(minutes: 2));
     }
 
-    testWidgets('bot chat: face centred over the name pill in a taller bar; '
-        'idle status says who and what', (tester) async {
+    Finder transcriptList() => find.descendant(
+      of: find.byType(ChatScrollInteractionGuard),
+      matching: find.byType(ListView),
+    );
+
+    testWidgets('bot chat: floating header, the face sits on the pill, no app '
+        'bar band; idle says the bot name', (tester) async {
+      tester.view.viewPadding = const FakeViewPadding(top: 72);
+      tester.view.padding = const FakeViewPadding(top: 72);
+      addTearDown(tester.view.reset);
       await pumpChat(
         tester,
         connection: _remoteConn('conn-dc1215-header'),
         session: botSession,
+        // A transcript to run under the header (an empty chat has none).
+        messages: const [
+          {'role': 'assistant', 'content': 'Hola, aquí qa.'},
+          {'role': 'user', 'content': 'Hola'},
+        ],
       );
+      expect(find.byType(AppBar), findsNothing);
       expect(pill, findsOneWidget);
-      expect(
-        find.descendant(of: pill, matching: find.text('qa')),
-        findsOneWidget,
-      );
+      expect(tester.widget<Text>(pillText).data, 'qa');
       final face = tester.getRect(
         find.byKey(const ValueKey('bot-chat-avatar-qa')),
       );
       final pillRect = tester.getRect(pill);
       expect((face.center.dx - pillRect.center.dx).abs(), lessThan(1));
-      final bar = tester.getRect(find.byType(AppBar));
-      expect(
-        (pillRect.center.dx - bar.center.dx).abs(),
-        lessThan(1),
-        reason: 'centred in the bar',
-      );
       expect(face.top, lessThan(pillRect.top));
-      expect(
-        tester.getSize(find.byType(AppBar)).height,
-        greaterThan(kToolbarHeight),
-      );
-      expect(tester.widget<Text>(status).data, '@qa');
-      // No header actions: they live in the notch sheet.
+      expect(face.bottom, greaterThan(pillRect.top), reason: 'sits on it');
+      final screenWidth =
+          tester.view.physicalSize.width / tester.view.devicePixelRatio;
+      expect(pillRect.center.dx, closeTo(screenWidth / 2, 1));
+      // No ⋮, no search, no + in a Bot Chat header: they live in the notch
+      // sheet.
       expect(
         find.byKey(const ValueKey('bot-chat-overflow-appbar')),
         findsNothing,
       );
+      expect(find.byKey(const ValueKey('chat-find-trigger')), findsNothing);
+      expect(find.byKey(const ValueKey('chat-new-session')), findsNothing);
+      // The transcript runs under the header and reserves its height.
+      final list = tester.widget<ListView>(transcriptList());
+      final inset = FloatingChatHeader.insetFor(tester.element(pill));
+      expect(tester.getTopLeft(transcriptList()).dy, 0);
+      expect((list.padding! as EdgeInsets).top, inset);
+      expect(pillRect.bottom, lessThanOrEqualTo(inset));
+      expect(face.top, greaterThanOrEqualTo(24), reason: 'below status bar');
       expect(find.byKey(const ValueKey('chat-notch')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('a normal chat keeps its own header', (tester) async {
+    testWidgets('a normal chat gets the same floating header: menu left, + '
+        'right; no model selector, search or ⋮ in it', (tester) async {
       await pumpChat(tester, connection: _remoteConn('conn-dc1215-normal'));
-      expect(pill, findsNothing);
-      expect(find.byKey(const ValueKey('bot-chat-header')), findsNothing);
+      expect(find.byType(AppBar), findsNothing);
+      expect(find.byKey(const ValueKey('chat-header')), findsOneWidget);
+      expect(pill, findsOneWidget);
       expect(find.byKey(const ValueKey('chat-new-session')), findsOneWidget);
+      expect(find.byKey(const ValueKey('chat-find-trigger')), findsNothing);
+      expect(find.byKey(const ValueKey('chat-control-trigger')), findsNothing);
       expect(
-        tester.getSize(find.byType(AppBar)).height,
-        lessThanOrEqualTo(kToolbarHeight + 1),
+        find.byKey(const ValueKey('provider-logo-chat-header')),
+        findsNothing,
+      );
+      final plus = tester.getCenter(
+        find.byKey(const ValueKey('chat-new-session')),
+      );
+      expect(plus.dx, greaterThan(tester.getRect(pill).right));
+      // Search, model and controls stay one tap away on the idle pill.
+      await tester.tap(pill);
+      await tester.pumpAndSettle();
+      for (final key in [
+        'chat-menu-find',
+        'chat-menu-model',
+        'chat-menu-controls',
+      ]) {
+        expect(find.byKey(ValueKey(key)), findsOneWidget, reason: key);
+      }
+      await tester.tap(find.byKey(const ValueKey('chat-menu-controls')));
+      await tester.pumpAndSettle();
+      expect(find.text('Ajustes de esta conversación'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the oldest message is never hidden under the header', (
+      tester,
+    ) async {
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-fh1215-first'),
+        session: botSession,
+        messages: [
+          for (var i = 0; i < 30; i++)
+            {
+              'role': i.isEven ? 'user' : 'assistant',
+              'content': 'Fila $i con texto para llenar la conversación.',
+            },
+        ],
+      );
+      final controller = tester.widget<ListView>(transcriptList()).controller!;
+      controller.jumpTo(controller.position.maxScrollExtent);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      // pumpChat takes the newest message first: Fila 29 is the oldest.
+      final first = find.text('Fila 29 con texto para llenar la conversación.');
+      expect(first, findsOneWidget);
+      expect(
+        tester.getTopLeft(first).dy,
+        greaterThan(tester.getRect(pill).bottom),
       );
     });
 
-    testWidgets('waiting for an approval: amber status, the approval card '
-        'stays the primary action', (tester) async {
+    testWidgets('waiting for an approval: «Te necesita» in amber on the pill, '
+        'the approval card stays the primary action', (tester) async {
       final chat = await pumpChat(
         tester,
         connection: _remoteConn('conn-dc1215-wait'),
@@ -32914,18 +33018,17 @@ void main() {
         'choices': ['once', 'deny'],
       };
       await tester.pump();
-      final text = tester.widget<Text>(status);
-      expect(text.data, 'Te espera: aprobación');
-      final context = tester.element(status);
-      expect(text.style!.color, Theme.of(context).hermes.warning);
+      final text = tester.widget<Text>(pillText);
+      expect(text.data, 'Te necesita');
+      expect(text.style!.color, Theme.of(tester.element(pill)).hermes.warning);
       expect(find.byType(ChatApprovalCard), findsOneWidget);
       chat.pendingApproval = null;
       await tester.pump();
-      expect(tester.widget<Text>(status).data, '@qa');
+      expect(tester.widget<Text>(pillText).data, 'qa');
     });
 
-    testWidgets('working: the header names the current step, the same as the '
-        'activity view', (tester) async {
+    testWidgets('working: the header pill IS the activity pill (one, none '
+        'above the composer) and opens the activity view', (tester) async {
       final gateway = _UiRewindGateway();
       final chat = await pumpChat(
         tester,
@@ -32937,21 +33040,43 @@ void main() {
         ],
       );
       await startTurn(tester, chat, gateway);
-      final line = tester.widget<Text>(status).data!;
-      expect(line, startsWith('terminal'));
-      await _openActivityPanel(tester);
-      final row = find.byKey(const ValueKey('activity-now-row'));
+      final activity = find.byKey(const ValueKey('activity-pill'));
+      expect(activity, findsOneWidget);
       expect(
-        find.descendant(of: row, matching: find.text(line)),
+        find.descendant(
+          of: find.byKey(const ValueKey('bot-chat-header')),
+          matching: activity,
+        ),
         findsOneWidget,
       );
-      await tester.tapAt(const Offset(4, 4));
+      expect(
+        tester.getRect(activity).bottom,
+        lessThan(tester.getTopLeft(find.byType(ConsoleComposer)).dy - 200),
+        reason: 'at the top, not above the composer',
+      );
+      final line = tester
+          .widget<Text>(find.byKey(const ValueKey('activity-pill-text')))
+          .textSpan!
+          .toPlainText();
+      expect(line, startsWith('terminal'));
+      expect(
+        find.byKey(const ValueKey('activity-pill-elapsed')),
+        findsOneWidget,
+      );
+      await _openActivityPanel(tester);
+      final panel = find.byKey(const ValueKey('activity-panel'));
+      expect(panel, findsOneWidget);
+      expect(
+        tester.getTopLeft(panel).dy,
+        greaterThanOrEqualTo(tester.getTopLeft(activity).dy - 1),
+        reason: 'the card opens DOWN from the header',
+      );
+      await tester.tapAt(const Offset(4, 700));
       await tester.pump(const Duration(milliseconds: 400));
       await finishTurn(tester, gateway);
     });
 
-    testWidgets('scrolled away from the end the bot header compacts, and '
-        'expands back at the end', (tester) async {
+    testWidgets('scrolling never changes the header', (tester) async {
       await pumpChat(
         tester,
         connection: _remoteConn('conn-dc1215-compact'),
@@ -32966,21 +33091,50 @@ void main() {
             },
         ],
       );
-      final tall = tester.getSize(find.byType(AppBar)).height;
-      final list = find.descendant(
-        of: find.byType(ChatScrollInteractionGuard),
-        matching: find.byType(ListView),
-      );
-      final controller = tester.widget<ListView>(list).controller!;
+      final before = tester.getRect(pill);
+      final controller = tester.widget<ListView>(transcriptList()).controller!;
       controller.jumpTo(controller.position.maxScrollExtent / 2);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      expect(tester.getSize(find.byType(AppBar)).height, lessThan(tall));
-      expect(pill, findsOneWidget);
+      expect(tester.getRect(pill), before);
       controller.jumpTo(0);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      expect(tester.getSize(find.byType(AppBar)).height, tall);
+      expect(tester.getRect(pill), before);
+    });
+
+    testWidgets('two images in one reply stack; one image stays single', (
+      tester,
+    ) async {
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-fh1215-stack'),
+        messages: const [
+          {'role': 'user', 'content': 'Fotos'},
+          {
+            'role': 'assistant',
+            'content':
+                'Aquí van.\n\nMEDIA:/workspace/out/a.png\n'
+                'MEDIA:/workspace/out/b.png\n\nY una más:',
+          },
+          {'role': 'user', 'content': 'Otra'},
+          {
+            'role': 'assistant',
+            'content': 'Sola.\n\nMEDIA:/workspace/out/c.png',
+          },
+        ],
+      );
+      final stack = find.byType(StackedImageCards);
+      expect(stack, findsOneWidget);
+      expect(tester.widget<StackedImageCards>(stack).children, hasLength(2));
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('image-stack-count')),
+          matching: find.text('2'),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('«Parar todo» and the current step Stop call the existing '
@@ -35628,11 +35782,36 @@ void main() {
             await tester.pump();
             final goalActivity = find.byKey(const ValueKey('activity-pill'));
             expect(goalActivity, findsOneWidget);
+            // fh1215: in the narrow header slot the action may ellipsize
+            // (gracefully, never overflowing); the timer stays whole and
+            // inside the pill, and the semantics label keeps the full text.
+            expect(tester.takeException(), isNull);
+            final pillRect = tester.getRect(goalActivity);
+            final timer = find.descendant(
+              of: goalActivity,
+              matching: find.byKey(const ValueKey('activity-pill-elapsed')),
+            );
+            for (final element in timer.evaluate()) {
+              final paragraph = element.renderObject! as RenderParagraph;
+              expect(paragraph.didExceedMaxLines, isFalse);
+              final rect = tester.getRect(find.byWidget(element.widget));
+              expect(rect.right, lessThanOrEqualTo(pillRect.right));
+            }
+            final model = tester
+                .widget<ActivityPill>(
+                  find.ancestor(
+                    of: goalActivity,
+                    matching: find.byType(ActivityPill),
+                  ),
+                )
+                .model;
+            expect(model.semanticsLabel, contains(model.action));
             expectPillLabelsFit(
               tester,
-              find
-                  .descendant(of: goalActivity, matching: find.byType(Row))
-                  .first,
+              find.descendant(
+                of: goalActivity,
+                matching: find.byKey(const ValueKey('activity-pill-elapsed')),
+              ),
             );
           } else if (surface == 'background') {
             gateway.emit('background.complete', {
@@ -35741,8 +35920,9 @@ void main() {
     );
   }
 
-  /// La flecha tiene que quedar entera por encima de la pastilla: no vale
-  /// que asomen, ni que se toquen a medias.
+  /// fh1215: the pill lives in the floating header and the arrow keeps its
+  /// resting place at the bottom: they never touch, and nothing live pushes
+  /// the arrow up any more.
   void expectArrowClearOf(WidgetTester tester, Finder overlay) {
     final arrow = tester.getRect(scrollToBottomFinder());
     final pill = tester.getRect(overlay);
@@ -35756,14 +35936,11 @@ void main() {
       isFalse,
       reason: 'la flecha $arrow se solapa con la pastilla $pill',
     );
-    expect(arrow.bottom, lessThanOrEqualTo(pill.top));
-    // La pastilla sube lo que mide la rayita, que queda sobre el composer:
-    // 20 px + 22 dp por encima del borde inferior del transcript.
+    _expectPillInHeader(tester, overlay, clearOf: [scrollToBottomFinder()]);
+    expect(arrow.top, greaterThan(pill.bottom));
+    // The arrow rides above the notch tab on the composer's top edge.
     final body = tester.getRect(find.byKey(const ValueKey('chat-stable-body')));
-    expect(pill.bottom, closeTo(body.bottom - 20 - kChatNotchHeight, 0.01));
-    // Regla de diseño: las pastillas flotantes nunca tapan el composer.
-    final composer = tester.getRect(find.byType(TextField).first);
-    expect(pill.bottom, lessThanOrEqualTo(composer.top));
+    expect(arrow.bottom, closeTo(body.bottom - 8 - kChatNotchHeight, 0.01));
   }
 
   /// Pulsa la flecha y comprueba que el transcript vuelve de verdad al final.
@@ -35895,10 +36072,8 @@ void main() {
     final body = tester.getRect(find.byKey(const ValueKey('chat-stable-body')));
     expect(arrow.height, 48);
     expect(arrow.bottom, closeTo(body.bottom - 8 - kChatNotchHeight, 0.01));
-    expect(
-      tester.getRect(find.byKey(const ValueKey('chat-activity-pill'))).height,
-      0,
-    );
+    // fh1215: idle, the header shows the name pill, never an activity pill.
+    expect(find.byKey(const ValueKey('activity-pill')), findsNothing);
     expect(
       tester.getRect(find.byKey(const ValueKey('chat-subagent-status'))).height,
       0,
@@ -36037,14 +36212,15 @@ void main() {
     final arrow = tester.getRect(scrollToBottomFinder());
     final composer = composerHostRect(tester);
     expect(cardRect.height, greaterThan(0));
-    expect(notice.overlaps(cardRect), isFalse, reason: '$notice vs $cardRect');
+    // fh1215: a transient notice drops in over the floating header (as it
+    // did over the app bar) and stays clear of everything at the bottom.
     expect(notice.overlaps(arrow), isFalse, reason: '$notice vs $arrow');
     expect(notice.overlaps(composer), isFalse, reason: '$notice vs $composer');
-    expect(arrow.overlaps(cardRect), isFalse);
-    expect(cardRect.bottom, lessThanOrEqualTo(composer.top));
-    // Orden vertical del diseño: aviso (arriba) > flecha > tarjeta > composer.
+    _expectPillInHeader(tester, card, clearOf: [scrollToBottomFinder()]);
+    // Vertical order: notice/header (top) > arrow > composer.
     expect(notice.bottom, lessThanOrEqualTo(arrow.top));
-    expect(arrow.bottom, lessThanOrEqualTo(cardRect.top));
+    expect(cardRect.bottom, lessThanOrEqualTo(arrow.top));
+    expect(arrow.bottom, lessThanOrEqualTo(composer.top));
     expect(tester.takeException(), isNull);
 
     gateway.emit('subagent.complete', const {
@@ -36096,9 +36272,24 @@ void main() {
       const ValueKey('local-transcript-truncation-notice'),
     );
     expect(notice, findsOneWidget);
-    final body = tester.getRect(find.byKey(const ValueKey('chat-stable-body')));
-    // En flujo: nunca se solapa con el transcript ni con sus controles.
-    expect(tester.getRect(notice).bottom, lessThanOrEqualTo(body.top));
+    await tester.pump();
+    // fh1215: the notice floats under the header, and the transcript
+    // reserves both above its oldest row: it never covers a message.
+    final header = tester.getRect(
+      find.byKey(const ValueKey('floating-header')),
+    );
+    final noticeRect = tester.getRect(notice);
+    expect(
+      noticeRect.top,
+      greaterThanOrEqualTo(header.bottom - FloatingChatHeader.scrimTail - 0.5),
+    );
+    final list = tester.widget<ListView>(chatListFinder());
+    expect(
+      (list.padding! as EdgeInsets).top,
+      greaterThanOrEqualTo(
+        noticeRect.bottom - tester.getTopLeft(chatListFinder()).dy - 0.5,
+      ),
+    );
     // Superficie neutra del tema, sin relleno de color de aviso.
     final colors = Theme.of(tester.element(notice)).hermes;
     final decorations = find
@@ -37249,6 +37440,41 @@ class _EarlierHistoryPages {
       }),
       200,
       headers: const {'content-type': 'application/json'},
+    );
+  }
+}
+
+/// fh1215: the assistant message's own face. The floating header shows a
+/// second, separate face (`chat-header-companion`).
+Finder _messageFace() =>
+    find.byKey(const ValueKey('assistant-header-companion'));
+
+/// fh1215: the activity pill lives in the floating header: inside it, above
+/// the composer, and clear of every rect in [clearOf] (the newest answer,
+/// Stop, the command palette…).
+void _expectPillInHeader(
+  WidgetTester tester,
+  Finder pill, {
+  List<Finder> clearOf = const [],
+}) {
+  expect(
+    find.ancestor(of: pill, matching: find.byType(FloatingChatHeader)),
+    findsOneWidget,
+  );
+  final rect = tester.getRect(pill);
+  expect(
+    rect.bottom,
+    lessThanOrEqualTo(FloatingChatHeader.insetFor(tester.element(pill)) + 0.5),
+  );
+  final composer = find.byKey(const ValueKey('chat-composer-host'));
+  if (composer.evaluate().isNotEmpty) {
+    expect(rect.bottom, lessThan(tester.getRect(composer).top));
+  }
+  for (final other in clearOf) {
+    expect(
+      rect.overlaps(tester.getRect(other)),
+      isFalse,
+      reason: '$other is under the header pill $rect',
     );
   }
 }

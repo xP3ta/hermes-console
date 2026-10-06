@@ -12,8 +12,8 @@ class ActivityTaskLingerHost extends StatefulWidget {
     this.clock,
     this.revealAfter = const Duration(seconds: 2),
     this.suspended = false,
-    @visibleForTesting
-    this.lingerAfterFinished = const Duration(seconds: 4),
+    this.headerBuilder,
+    @visibleForTesting this.lingerAfterFinished = const Duration(seconds: 4),
     super.key,
   });
 
@@ -23,6 +23,9 @@ class ActivityTaskLingerHost extends StatefulWidget {
   final Duration revealAfter;
   final bool suspended;
   final Duration lingerAfterFinished;
+
+  /// fh1215: see [ActivityPillHost.headerBuilder].
+  final ActivityHeaderPillBuilder? headerBuilder;
 
   @override
   State<ActivityTaskLingerHost> createState() => _ActivityTaskLingerHostState();
@@ -78,6 +81,7 @@ class _ActivityTaskLingerHostState extends State<ActivityTaskLingerHost> {
       clock: widget.clock,
       revealAfter: widget.revealAfter,
       suspended: widget.suspended,
+      headerBuilder: widget.headerBuilder,
     );
   }
 }

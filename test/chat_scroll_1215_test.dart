@@ -28,6 +28,9 @@ import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/utils/unread_rules.dart';
 import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/main.dart';
+import 'package:hermes_android/core/widgets/floating_chat_header.dart';
+
+import 'support/chat_header_menu.dart';
 
 // ignore: unused_element
 ScrollPosition _primaryVerticalScrollPosition(
@@ -290,6 +293,12 @@ void main() {
     of: find.byType(ChatScrollInteractionGuard),
     matching: find.byType(ListView),
   );
+
+  /// fh1215: the transcript runs under the floating header; what the reader
+  /// can see starts below the header's inset.
+  double readableTop(WidgetTester tester) =>
+      tester.getRect(transcript()).top +
+      FloatingChatHeader.insetFor(tester.element(transcript()));
 
   ScrollController controllerOf(WidgetTester tester) =>
       tester.widget<ListView>(transcript()).controller!;
@@ -661,14 +670,20 @@ void main() {
         ),
         findsOneWidget,
       );
-      final viewport = tester.getRect(transcript());
       final dividerTop = tester.getTopLeft(divider()).dy;
       expect(
         dividerTop,
-        closeTo(viewport.top + 48, 1),
+        closeTo(readableTop(tester) + 48, 1),
         reason:
             'the divider lands at the top of the transcript, under '
             '~1 row (48 dp) of context',
+      );
+      // fh1215: below the floating header's pill, never under it.
+      expect(
+        dividerTop,
+        greaterThan(
+          tester.getRect(find.byKey(const ValueKey('chat-activity-pill'))).bottom,
+        ),
       );
       // QA 9489: the first news is the reply (the owner's own question
       // sits above the divider), and landing shows no count: the pill is
@@ -752,7 +767,7 @@ void main() {
               divider().evaluate().isNotEmpty &&
               transcriptPainted() &&
               (tester.getTopLeft(divider()).dy -
-                          (tester.getRect(transcript()).top + 48))
+                          (readableTop(tester) + 48))
                       .abs() <=
                   1,
         );
@@ -761,8 +776,7 @@ void main() {
           findsOneWidget,
           reason: 'the chat opens on the divider, far above the bottom',
         );
-        final viewport = tester.getRect(transcript());
-        expect(tester.getTopLeft(divider()).dy, closeTo(viewport.top + 48, 1));
+        expect(tester.getTopLeft(divider()).dy, closeTo(readableTop(tester) + 48, 1));
         expect(find.textContaining('Respuesta histórica 5.'), findsOneWidget);
         expect(
           find.descendant(
@@ -799,7 +813,7 @@ void main() {
             divider().evaluate().isNotEmpty &&
             transcriptPainted() &&
             (tester.getTopLeft(divider()).dy -
-                        (tester.getRect(transcript()).top + 48))
+                        (readableTop(tester) + 48))
                     .abs() <=
                 1,
       );
@@ -807,7 +821,7 @@ void main() {
       expect(divider(), findsOneWidget);
       expect(
         tester.getTopLeft(divider()).dy,
-        closeTo(tester.getRect(transcript()).top + 48, 1),
+        closeTo(readableTop(tester) + 48, 1),
       );
       // Precondition: the lazy list really had to walk up through several
       // offsets to build the first unread row.
@@ -881,7 +895,7 @@ void main() {
 
     /// Divider top relative to the transcript top.
     double dividerFromTop(WidgetTester tester) =>
-        tester.getTopLeft(divider()).dy - tester.getRect(transcript()).top;
+        tester.getTopLeft(divider()).dy - readableTop(tester);
 
     testWidgets('QA 9491: rows reflowing after the landing keep the divider '
         'at the top', (tester) async {
