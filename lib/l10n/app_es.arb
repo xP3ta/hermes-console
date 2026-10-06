@@ -10150,5 +10150,17 @@
       }
     }
   },
-  "rt1215Thinking": "Pensamiento"
+  "rt1215Thinking": "Pensamiento",
+  "fh1215ImageStackLabel": "Imagen {index} de {count}. Desliza para ver la siguiente",
+  "@fh1215ImageStackLabel": {"description": "Accessible label of a stack of images in one reply (fh1215).", "placeholders": {"index": {"type": "int"}, "count": {"type": "int"}}},
+  "fh1215GalleryPosition": "{index} / {count}",
+  "@fh1215GalleryPosition": {"description": "Position of the image shown in the gallery viewer (fh1215).", "placeholders": {"index": {"type": "int"}, "count": {"type": "int"}}},
+  "fh1215Offline": "Sin conexión",
+  "@fh1215Offline": {"description": "Header activity pill when the chat lost its connection (fh1215)."},
+  "fh1215TasksDoneFlash": "{count, plural, =1{✓ 1 tarea} other{✓ {count} tareas}}",
+  "@fh1215TasksDoneFlash": {"description": "Brief activity pill counter once every task is done; it then disappears (fh1215).", "placeholders": {"count": {"type": "int"}}},
+  "fh1215TasksCompleted": "{count} completadas",
+  "@fh1215TasksCompleted": {"description": "Collapsed row of completed tasks in the activity panel (fh1215).", "placeholders": {"count": {"type": "int"}}},
+  "fh1215TasksHideCompleted": "Ocultar completadas",
+  "@fh1215TasksHideCompleted": {"description": "Collapses the completed tasks again in the activity panel (fh1215)."}
 }

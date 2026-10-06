@@ -8490,5 +8490,11 @@
   "rt1215Thinking": "Thinking",
   "@rt1215Thinking": {
     "description": "Label of the block that shows the model's reasoning (rt1215)."
-  }
+  },
+  "fh1215ImageStackLabel": "Image {index} of {count}. Swipe for the next one",
+  "fh1215GalleryPosition": "{index} / {count}",
+  "fh1215Offline": "Offline",
+  "fh1215TasksDoneFlash": "{count, plural, =1{✓ 1 task} other{✓ {count} tasks}}",
+  "fh1215TasksCompleted": "{count} completed",
+  "fh1215TasksHideCompleted": "Hide completed"
 }
