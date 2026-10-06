@@ -1409,7 +1409,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     if (_pickerOpen || _attachBlock != RoomAttachBlock.none) return;
     _pickerOpen = true;
     try {
-      final picked = <({String path, String name, AttachmentType type})>[];
+      final picked = <({String? path, String name, AttachmentType type})>[];
+      final blocked = <String>[];
       switch (source) {
         case AttachmentSourceChoice.camera:
         case AttachmentSourceChoice.photos:
@@ -1436,20 +1437,49 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             allowMultiple: true,
           );
           for (final f in result?.files ?? const <PlatformFile>[]) {
-            if (f.path == null ||
-                !AttachmentUploader.isAllowedDocumentName(f.name)) {
+            if (!AttachmentUploader.isAllowedDocumentName(f.name)) {
+              blocked.add(f.name);
               continue;
             }
             picked.add((
-              path: f.path!,
+              path: f.path,
               name: f.name,
               type: AttachmentType.document,
             ));
           }
       }
+      // Same caps as the main chat (8 MB per file, 24 MB per message), but
+      // every room file is uploaded, never embedded as text: a large .html
+      // or .md must not hit the 256 KB inline-text cap and vanish.
+      var batchBytes = _attachments.fold<int>(0, (sum, a) => sum + a.sizeBytes);
+      int? tooBig;
+      var batchFull = false;
+      var unreadable = false;
       for (final f in picked) {
-        final size = await File(f.path).length();
-        if (size <= 0 || size > AttachmentUploader.maxBytes) continue;
+        final path = f.path;
+        int size;
+        try {
+          size = path == null ? 0 : await File(path).length();
+        } catch (_) {
+          size = 0;
+        }
+        switch (pendingAttachmentLimitViolation(
+          sizeBytes: size,
+          itemLimit: AttachmentUploader.maxBytes,
+          currentBatchBytes: batchBytes,
+        )) {
+          case PendingAttachmentLimitViolation.invalid:
+            unreadable = true;
+            continue;
+          case PendingAttachmentLimitViolation.item:
+            tooBig = AttachmentUploader.maxBytes;
+            continue;
+          case PendingAttachmentLimitViolation.batch:
+            batchFull = true;
+            continue;
+          case null:
+            break;
+        }
         final draft = await AttachmentUploader.materializeForDraft(
           AttachmentDraft(
             localId: const Uuid().v4(),
@@ -1457,10 +1487,42 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             name: f.name,
             mimeType: _mime(f.name, f.type),
             sizeBytes: size,
-            localPath: f.path,
+            localPath: path!,
           ),
+          itemLimit: AttachmentUploader.maxBytes,
         );
-        if (draft != null && mounted) setState(() => _attachments.add(draft));
+        if (draft == null) {
+          unreadable = true;
+          continue;
+        }
+        if (!mounted) {
+          await AttachmentUploader.deletePrivateDraftCopy(draft);
+          continue;
+        }
+        batchBytes += draft.sizeBytes;
+        setState(() => _attachments.add(draft));
+      }
+      if (!mounted) return;
+      final s = Strings.of(context);
+      if (blocked.isNotEmpty) {
+        _notice(
+          s.roomAttachTypeBlocked(blocked.join(', ')),
+          kind: HermesNoticeKind.warning,
+        );
+      } else if (tooBig != null) {
+        _notice(
+          s.chaFileTooBig('${tooBig ~/ (1024 * 1024)} MB'),
+          kind: HermesNoticeKind.warning,
+        );
+      } else if (batchFull) {
+        _notice(
+          s.chaAttachmentBatchTooBig(
+            '${AttachmentUploader.maxBatchBytes ~/ (1024 * 1024)} MB',
+          ),
+          kind: HermesNoticeKind.warning,
+        );
+      } else if (unreadable) {
+        _notice(s.chaAttachmentPreparationFailed);
       }
     } catch (_) {
       if (mounted) _notice(Strings.of(context).roomActionFailed);
