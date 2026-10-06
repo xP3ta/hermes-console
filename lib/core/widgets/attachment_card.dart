@@ -31,6 +31,7 @@ enum AttachmentKind {
   text,
   archive,
   audio,
+  video,
   other,
 }
 
@@ -81,6 +82,10 @@ AttachmentKind attachmentKindFor(String name, String mimeType) {
       const {'mp3', 'wav', 'ogg', 'm4a'}.contains(ext)) {
     return AttachmentKind.audio;
   }
+  if (m.startsWith('video/') ||
+      const {'mp4', 'm4v', 'mov', 'webm', 'mkv', '3gp', 'avi'}.contains(ext)) {
+    return AttachmentKind.video;
+  }
   return AttachmentKind.other;
 }
 
@@ -95,6 +100,7 @@ String _badgeLabel(AttachmentKind kind, String name) {
     AttachmentKind.text => ext.isNotEmpty ? ext : 'TXT',
     AttachmentKind.archive => ext.isNotEmpty ? ext : 'ZIP',
     AttachmentKind.audio => ext.isNotEmpty ? ext : 'AUDIO',
+    AttachmentKind.video => ext.isNotEmpty ? ext : 'VIDEO',
     AttachmentKind.image => 'IMG',
     AttachmentKind.other => ext.isNotEmpty ? ext : 'FILE',
   };
@@ -109,6 +115,7 @@ Color _badgeColor(AttachmentKind kind) {
     AttachmentKind.text => const Color(0xFF8A8F98),
     AttachmentKind.archive => const Color(0xFFC79328),
     AttachmentKind.audio => const Color(0xFFD06BB3),
+    AttachmentKind.video => const Color(0xFF6E6AE8),
     AttachmentKind.image => const Color(0xFF2E9E5B),
     AttachmentKind.other => const Color(0xFF8A8F98),
   };
@@ -291,7 +298,8 @@ class AttachmentCard extends StatelessWidget {
 
   String _fileSubtitle(BuildContext context, AttachmentKind kind) {
     if (!showUploadState) {
-      return '${_badgeLabel(kind, name)} · $sizeLabel';
+      final badge = _badgeLabel(kind, name);
+      return sizeLabel.isEmpty ? badge : '$badge · $sizeLabel';
     }
     final state = _uploadStateLabel(context);
     return sizeLabel.isEmpty ? state : '$state · $sizeLabel';

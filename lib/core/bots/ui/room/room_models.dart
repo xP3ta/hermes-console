@@ -109,9 +109,53 @@ String appendRoomAttachmentSuffix(String text, List<RoomAttachmentRef> refs) {
   return body.isEmpty ? suffix : '$body\n\n$suffix';
 }
 
-/// Splits a trailing attachment suffix off [text]. Anything malformed stays
+/// A whole line holding exactly `MEDIA:<absolute path>` (Hermes' native
+/// media convention, passed through as text by the bot room adapter).
+/// Inline mentions inside prose never match.
+final RegExp _mediaLineRe = RegExp(r'^\s*MEDIA:\s*(\S(?:.*\S)?)\s*$');
+
+/// Lifts `MEDIA:<path>` lines out of [body] (outside code fences) into
+/// attachment refs, so bot members' images render as previews instead of
+/// raw paths. Lines whose path is not a safe absolute path stay text.
+RoomMessageBody _liftMediaLines(RoomMessageBody body) {
+  if (!body.text.contains('MEDIA:')) return body;
+  final kept = <String>[];
+  final refs = <RoomAttachmentRef>[];
+  var inFence = false;
+  for (final line in body.text.split('\n')) {
+    final trimmed = line.trimLeft();
+    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
+      inFence = !inFence;
+      kept.add(line);
+      continue;
+    }
+    final match = inFence ? null : _mediaLineRe.firstMatch(line);
+    final path = match == null ? null : _unquote(match.group(1)!);
+    if (path == null || !_safeAbsolutePath(path)) {
+      kept.add(line);
+      continue;
+    }
+    final leaf = path.split('/').where((part) => part.isNotEmpty).lastOrNull;
+    if (leaf == null || leaf.length > 255) {
+      kept.add(line);
+      continue;
+    }
+    refs.add(RoomAttachmentRef(name: leaf, path: path));
+  }
+  if (refs.isEmpty) return body;
+  return RoomMessageBody(
+    kept.join('\n').replaceAll(RegExp(r'\n{3,}'), '\n\n').trim(),
+    List.unmodifiable([...refs, ...body.attachments]),
+  );
+}
+
+/// Splits a trailing attachment suffix off [text], and lifts whole-line
+/// `MEDIA:<path>` directives into attachments. Anything malformed stays
 /// part of the Markdown body (never silently dropped).
-RoomMessageBody parseRoomMessageText(String text) {
+RoomMessageBody parseRoomMessageText(String text) =>
+    _liftMediaLines(_parseAttachmentSuffix(text));
+
+RoomMessageBody _parseAttachmentSuffix(String text) {
   final index = text.lastIndexOf(roomAttachmentHeader);
   if (index < 0) return RoomMessageBody(text, const []);
   if (index > 0 && text[index - 1] != '\n') {

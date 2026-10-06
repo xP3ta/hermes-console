@@ -16,7 +16,8 @@ import 'package:hermes_android/core/widgets/generated_video_card.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/l10n/app_localizations_en.dart';
 import 'package:hermes_android/l10n/app_localizations_es.dart';
-import 'package:video_player/video_player.dart';
+
+import 'support/fake_video_player_platform.dart';
 
 class _FakeAudioPlayback implements GeneratedAudioPlayback {
   final durations = StreamController<Duration>.broadcast();
@@ -682,18 +683,17 @@ void main() {
       ..padding = const FakeViewPadding(top: 28, bottom: 48)
       ..viewPadding = const FakeViewPadding(top: 28, bottom: 48);
     addTearDown(tester.view.reset);
+    FakeVideoPlayerPlatform.install();
     final directory = Directory.systemTemp.createTempSync('video-viewer-safe-');
     addTearDown(() => directory.deleteSync(recursive: true));
     final file = File('${directory.path}/clip.mp4')
       ..writeAsBytesSync(<int>[0, 0, 0, 24]);
-    final controller = VideoPlayerController.file(file);
-    addTearDown(controller.dispose);
 
     await tester.pumpWidget(
       host(
         Builder(
           builder: (context) => FilledButton(
-            onPressed: () => showVideoViewer(context, file, controller),
+            onPressed: () => showVideoViewer(context, file),
             child: const Text('Launch'),
           ),
         ),
@@ -706,7 +706,9 @@ void main() {
     final viewer = find.byKey(
       const ValueKey('generated-video-viewer-safe-area'),
     );
-    final playback = find.byIcon(Icons.play_arrow_rounded);
+    final playback = find.byKey(
+      const ValueKey('generated-video-viewer-playback'),
+    );
     expect(tester.getRect(viewer).bottom, lessThanOrEqualTo(752));
     expect(tester.getRect(playback).bottom, lessThanOrEqualTo(752));
   });
