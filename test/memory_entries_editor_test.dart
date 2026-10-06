@@ -34,6 +34,10 @@ class _MemServer {
   int? putStatusOverride;
   String putDetail = '';
 
+  /// Older upstream graphs mint `memory:<source>:<index>` ids with no
+  /// fingerprint; the server then resolves them by position alone.
+  bool legacyIds = false;
+
   static String fp(String text) =>
       text.trim().hashCode.toUnsigned(32).toRadixString(16);
 
@@ -48,7 +52,9 @@ class _MemServer {
     for (final source in ['memory', 'profile']) {
       for (final text in files[profile]?[source] ?? const <String>[]) {
         out.add({
-          'id': 'memory:$source:$index:${fp(text)}',
+          'id': legacyIds
+              ? 'memory:$source:$index'
+              : 'memory:$source:$index:${fp(text)}',
           'label': text.split('\n').first,
           'kind': 'memory',
           'memorySource': source,
@@ -62,9 +68,16 @@ class _MemServer {
   /// (source, local index) the id still names, or null when stale.
   (String, int)? _resolve(String profile, String id) {
     final parts = id.split(':');
-    if (parts.length != 4 || parts[0] != 'memory') return null;
-    final entries = files[profile]?[parts[1]];
-    if (entries == null) return null;
+    final entries = files[profile]?[parts.length > 1 ? parts[1] : ''];
+    if (entries == null || parts[0] != 'memory') return null;
+    if (parts.length == 3) {
+      final before = parts[1] == 'profile'
+          ? (files[profile]?['memory']?.length ?? 0)
+          : 0;
+      final local = int.parse(parts[2]) - before;
+      return local >= 0 && local < entries.length ? (parts[1], local) : null;
+    }
+    if (parts.length != 4) return null;
     final local = entries.indexWhere((e) => fp(e) == parts[3]);
     return local < 0 ? null : (parts[1], local);
   }
@@ -322,6 +335,26 @@ void main() {
     // The list reloads with the server's current entries; nothing written.
     expect(server.writes, isEmpty);
     expect(find.text('Homelab: Proxmox + NAS'), findsOneWidget);
+  });
+
+  testWidgets('without fingerprinted ids the re-read still catches a change', (
+    tester,
+  ) async {
+    // Only the client's content comparison protects this case: the old id
+    // still resolves (by position) after the entry was rewritten elsewhere.
+    final server = _server()..legacyIds = true;
+    await _pump(tester, server);
+    await _openEntries(tester);
+    await _openEntry(tester, 0);
+    await tester.enterText(
+      find.byKey(const ValueKey('memory-entry-field')),
+      'my phone edit',
+    );
+    server.editElsewhere('research', 'memory', 0, 'desktop edit');
+    await _save(tester);
+    expect(server.writes, isEmpty);
+    expect(server.files['research']!['memory']!.first, 'desktop edit');
+    expect(find.byKey(const ValueKey('memory-entry-conflict')), findsOneWidget);
   });
 
   testWidgets('an entry removed elsewhere is a conflict, not a write', (
