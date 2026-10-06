@@ -1234,7 +1234,7 @@ class _GeneratedMediaAttachmentCardState
     if (file == null) return;
     try {
       await FilePicker.platform.saveFile(
-        dialogTitle: 'Hermes Console',
+        dialogTitle: 'Console',
         fileName: widget.reference.displayName,
         bytes: await file.readAsBytes(),
       );

@@ -157,7 +157,7 @@ void main() {
 
     await expectA11yLayoutUsable(tester, {
       'skip': find.text('Skip'),
-      'title': find.text('Hermes Console'),
+      'title': find.text('Console'),
       'tagline': find.textContaining('self-hosted Hermes agent'),
       'next': find.text('Next'),
     });

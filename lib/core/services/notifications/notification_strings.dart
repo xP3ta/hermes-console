@@ -187,7 +187,7 @@ class NotifL10n {
   );
 
   // ── Prueba ────────────────────────────────────────────────────────────────
-  String get testTitle => 'Hermes Console';
+  String get testTitle => 'Console';
   String get testBody => _(
     'Las notificaciones funcionan. Te avisaré de aprobaciones, ejecuciones y respuestas.',
     'Notifications are working. I will notify you of approvals, runs and replies.',

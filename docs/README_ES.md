@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://hermes.xpetalab.dev">
-    <img src="../assets/icon/play_store_512.png" width="132" alt="Logo de Hermes Console" />
+    <img src="../assets/icon/play_store_512.png" width="132" alt="Logo de Console" />
   </a>
 </p>
 

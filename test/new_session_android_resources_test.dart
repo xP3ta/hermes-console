@@ -427,9 +427,11 @@ void main() {
       if (!File(path).existsSync()) continue;
       expect(read(path), isNot(contains('WidgetProvider')), reason: flavor);
     }
+    // The play source set may not exist at all (it no longer overrides the
+    // launcher icon); it must never carry its own manifest.
     expect(
-      Directory('android/app/src/play').listSync().map((e) => e.path),
-      isNot(contains('android/app/src/play/AndroidManifest.xml')),
+      File('android/app/src/play/AndroidManifest.xml').existsSync(),
+      isFalse,
     );
     // The qa flavor keeps the five Bot Mode widgets placeable.
     for (final name in [

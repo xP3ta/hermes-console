@@ -1,4 +1,4 @@
-import 'dart:math' as math;
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,37 +8,6 @@ import 'package:hermes_android/core/theme/theme_contrast.dart';
 import 'package:hermes_android/core/widgets/animated_hermes_logo.dart';
 
 void main() {
-  ColorFilter expectedTint(Color accent) {
-    const source = Color(0xFFF0A848);
-    final sourceHue = HSVColor.fromColor(source).hue;
-    final targetHue = HSVColor.fromColor(accent).hue;
-    final angle = (targetHue - sourceHue) * 3.141592653589793 / 180;
-    final cosine = math.cos(angle);
-    final sine = math.sin(angle);
-    return ColorFilter.matrix([
-      0.213 + cosine * 0.787 - sine * 0.213,
-      0.715 - cosine * 0.715 - sine * 0.715,
-      0.072 - cosine * 0.072 + sine * 0.928,
-      0,
-      0,
-      0.213 - cosine * 0.213 + sine * 0.143,
-      0.715 + cosine * 0.285 + sine * 0.140,
-      0.072 - cosine * 0.072 - sine * 0.283,
-      0,
-      0,
-      0.213 - cosine * 0.213 - sine * 0.787,
-      0.715 - cosine * 0.715 + sine * 0.715,
-      0.072 + cosine * 0.928 + sine * 0.072,
-      0,
-      0,
-      0,
-      0,
-      0,
-      1,
-      0,
-    ]);
-  }
-
   testWidgets('orbit advances while platform animations are enabled', (
     tester,
   ) async {
@@ -61,100 +30,62 @@ void main() {
     expect(after, isNot(same(before)));
   });
 
-  testWidgets('themed logo keeps the transparent canvas transparent', (
-    tester,
-  ) async {
-    const accent = Color(0xFFFF4F91);
+  String assetName(Image image) {
+    final provider = image.image;
+    // cacheWidth wraps the asset in a ResizeImage; assert on the source asset.
+    final asset = provider is ResizeImage ? provider.imageProvider : provider;
+    return (asset as AssetImage).assetName;
+  }
 
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.fromId('crimson'),
-        home: const Scaffold(
-          body: Center(
-            child: SizedBox.square(
-              dimension: 200,
-              child: AnimatedHermesLogo(
-                size: 200,
-                animate: false,
-                orbit: false,
-                glow: false,
-                color: accent,
-              ),
+  for (final themeId in ['crimson', 'claude-light']) {
+    testWidgets('brand logo shows the untinted Console mark on $themeId', (
+      tester,
+    ) async {
+      final theme = AppTheme.fromId(themeId);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: theme,
+          home: Scaffold(
+            body: AnimatedHermesLogo(
+              animate: false,
+              glow: false,
+              color: theme.hermes.accent,
             ),
           ),
         ),
-      ),
-    );
+      );
 
-    final filtered = tester.widget<ColorFiltered>(
-      find.byKey(const Key('animated_hermes_logo_tint')),
-    );
-    expect(filtered.colorFilter, expectedTint(accent));
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('animated_hermes_logo_tint')),
-        matching: find.byType(Image),
-      ),
-      findsOneWidget,
-    );
+      final mark = find.byKey(const Key('animated_hermes_logo_mark'));
+      expect(mark, findsOneWidget);
+      expect(assetName(tester.widget<Image>(mark)), kConsoleMarkAsset);
+      expect(kConsoleMarkAsset, 'assets/branding/console_mark.png');
+      // One logo everywhere: the mark is never re-tinted per theme.
+      expect(
+        find.ancestor(of: mark, matching: find.byType(ColorFiltered)),
+        findsNothing,
+      );
+      expect(
+        tester.widgetList<Image>(find.byType(Image)).map(assetName),
+        everyElement(kConsoleMarkAsset),
+      );
+      final emblem = tester.widget<Container>(
+        find.byKey(const Key('animated_hermes_logo_emblem')),
+      );
+      final decoration = emblem.decoration! as BoxDecoration;
+      expect(decoration.color, isNull);
+      expect(decoration.gradient, isNull);
+    });
+  }
+
+  test('Console brand assets ship in the bundle', () {
+    final pubspec = File('pubspec.yaml').readAsStringSync();
+    for (final asset in [kConsoleMarkAsset, kConsoleIconAsset]) {
+      expect(File(asset).existsSync(), isTrue, reason: asset);
+      expect(pubspec, contains('- $asset'), reason: asset);
+    }
   });
 
-  testWidgets('light theme uses the opaque dimensional cutout once', (
-    tester,
-  ) async {
-    final theme = AppTheme.fromId('claude-light');
-    final colors = theme.hermes;
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: theme,
-        home: Scaffold(
-          body: AnimatedHermesLogo(
-            animate: false,
-            glow: false,
-            color: colors.accent,
-          ),
-        ),
-      ),
-    );
-
-    expect(
-      find.byKey(const Key('animated_hermes_logo_light_artwork')),
-      findsOneWidget,
-    );
-    final filtered = tester.widget<ColorFiltered>(
-      find.byKey(const Key('animated_hermes_logo_light_artwork')),
-    );
-    expect(filtered.colorFilter, expectedTint(colors.accent));
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('animated_hermes_logo_light_artwork')),
-        matching: find.byType(Image),
-      ),
-      findsOneWidget,
-    );
-    final images = tester.widgetList<Image>(find.byType(Image));
-    expect(
-      // El provider puede venir envuelto en ResizeImage (cacheWidth/Height de
-      // decodificado acotado); la aserción sigue siendo sobre el asset origen.
-      images.map((image) {
-        final provider = image.image;
-        final asset = provider is ResizeImage
-            ? provider.imageProvider
-            : provider;
-        return (asset as AssetImage).assetName;
-      }),
-      everyElement('assets/branding/hermes_logo_light.png'),
-    );
-    final emblem = tester.widget<Container>(
-      find.byKey(const Key('animated_hermes_logo_emblem')),
-    );
-    final decoration = emblem.decoration! as BoxDecoration;
-    expect(decoration.color, isNull);
-    expect(decoration.gradient, isNull);
-  });
-
-  testWidgets('splash tints the complete brand with the active theme', (
+  testWidgets('splash keeps the Console mark and themes orbit and progress', (
     tester,
   ) async {
     final theme = AppTheme.fromId('crimson');
@@ -183,7 +114,7 @@ void main() {
       find.byKey(const ValueKey('splash-progress-fill')),
     );
     expect(fill.color, expected);
-    expect(find.byKey(const Key('animated_hermes_logo_tint')), findsOneWidget);
+    expect(find.byKey(const Key('animated_hermes_logo_mark')), findsOneWidget);
 
     final beforePercent = tester
         .widget<Text>(find.byKey(const ValueKey('splash-progress-percent')))

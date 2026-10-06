@@ -1011,7 +1011,7 @@ class _DrawerHeader extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      'Hermes Console',
+                      'Console',
                       style: TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w700,

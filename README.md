@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://hermes.xpetalab.dev">
-    <img src="assets/branding/hermes_console_hero.png" width="100%" alt="Hermes Console — your self-hosted agent in your pocket" />
+    <img src="assets/branding/hermes_console_hero.png" width="100%" alt="Console — native app for Hermes" />
   </a>
 </p>
 
