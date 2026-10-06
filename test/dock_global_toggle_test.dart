@@ -47,6 +47,14 @@ Widget _shellHost(ConnectionManager manager) => MaterialApp(
   ),
 );
 
+// The dock under test is the phone bottom bar: tablets show a side rail.
+void _phone(WidgetTester tester) {
+  tester.view
+    ..devicePixelRatio = 1
+    ..physicalSize = const Size(390, 844);
+  addTearDown(tester.view.reset);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -65,6 +73,7 @@ void main() {
     testWidgets('paints the dock when the switch is on (default)', (
       tester,
     ) async {
+      _phone(tester);
       final manager = await ConnectionManager.create(
         await SharedPreferences.getInstance(),
       );
@@ -84,6 +93,7 @@ void main() {
     testWidgets(
       'paints only the body, with no dock and no empty gap, when the switch is off',
       (tester) async {
+        _phone(tester);
         final manager = await ConnectionManager.create(
           await SharedPreferences.getInstance(),
         );
@@ -154,6 +164,7 @@ void main() {
     testWidgets('paints the dock when the switch is on (default)', (
       tester,
     ) async {
+      _phone(tester);
       await controller.ensureLoaded();
       await tester.pumpWidget(botsHost());
       await tester.pumpAndSettle();
@@ -165,6 +176,7 @@ void main() {
     });
 
     testWidgets('paints nothing at all when the switch is off', (tester) async {
+      _phone(tester);
       await controller.setUseDock(false);
       await tester.pumpWidget(botsHost());
       await tester.pumpAndSettle();
@@ -209,40 +221,41 @@ void main() {
       }),
     );
 
-    testWidgets(
-      'hides its own FAB when the dock is actually active',
-      (tester) async {
-        final manager = await ConnectionManager.create(
-          await SharedPreferences.getInstance(),
-        );
-        await controller.setUseDock(true);
+    testWidgets('hides its own FAB when the dock is actually active', (
+      tester,
+    ) async {
+      _phone(tester);
+      final manager = await ConnectionManager.create(
+        await SharedPreferences.getInstance(),
+      );
+      await controller.setUseDock(true);
 
-        await tester.pumpWidget(
-          MaterialApp(
-            locale: const Locale('en'),
-            localizationsDelegates: Strings.localizationsDelegates,
-            supportedLocales: Strings.supportedLocales,
-            theme: AppTheme.fromId('dark'),
-            home: CronScreen(
-              connection: _connection,
-              connManager: manager,
-              clientOverride: emptyCronClient(),
-            ),
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: Strings.localizationsDelegates,
+          supportedLocales: Strings.supportedLocales,
+          theme: AppTheme.fromId('dark'),
+          home: CronScreen(
+            connection: _connection,
+            connManager: manager,
+            clientOverride: emptyCronClient(),
           ),
-        );
-        await tester.pumpAndSettle();
+        ),
+      );
+      await tester.pumpAndSettle();
 
-        expect(
-          find.byKey(const ValueKey('general-mode-floating-dock')),
-          findsOneWidget,
-        );
-        expect(find.byType(FloatingActionButton), findsNothing);
-      },
-    );
+      expect(
+        find.byKey(const ValueKey('general-mode-floating-dock')),
+        findsOneWidget,
+      );
+      expect(find.byType(FloatingActionButton), findsNothing);
+    });
 
     testWidgets(
       'brings back its native FAB, fully functional, when the dock is switched off',
       (tester) async {
+        _phone(tester);
         final manager = await ConnectionManager.create(
           await SharedPreferences.getInstance(),
         );

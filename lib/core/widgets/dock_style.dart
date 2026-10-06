@@ -238,12 +238,21 @@ class DockBar extends StatelessWidget {
   /// sits; `null` paints no indicator.
   final int? selectedIndex;
 
+  /// [Axis.vertical] lays the same tiles out as a navigation rail (tablets,
+  /// see `Responsive.usesRail`); the default is the bottom bar.
+  final Axis axis;
+
   const DockBar({
     required this.style,
     required this.children,
     this.selectedIndex,
+    this.axis = Axis.horizontal,
     super.key,
   });
+
+  /// Width of the vertical rail form and height of each of its slots.
+  static const railWidth = 72.0;
+  static const railSlotHeight = 60.0;
 
   /// Duration of the indicator slide between slots.
   static const indicatorDuration = Duration(milliseconds: 220);
@@ -258,6 +267,9 @@ class DockBar extends StatelessWidget {
     final radius = BorderRadius.circular(visual.outerRadius);
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final index = selectedIndex;
+    if (axis == Axis.vertical) {
+      return _buildRail(context, visual, radius, reduceMotion, index);
+    }
     final row = Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: children,
@@ -344,6 +356,64 @@ class DockBar extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+    return FrostedBackdrop(
+      sigma: visual.blurSigma,
+      tint: visual.background,
+      borderRadius: radius,
+      builder: surface,
+    );
+  }
+
+  Widget _buildRail(
+    BuildContext context,
+    DockVisual visual,
+    BorderRadius radius,
+    bool reduceMotion,
+    int? index,
+  ) {
+    final colors = Theme.of(context).hermes;
+    final column = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
+    );
+    Widget surface(BuildContext context, Color fill) => DecoratedBox(
+      decoration: BoxDecoration(
+        color: fill,
+        border: Border.all(color: visual.border),
+        borderRadius: radius,
+        boxShadow: visual.shadows,
+      ),
+      child: SizedBox(
+        width: railWidth,
+        height: railSlotHeight * children.length + 8,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Stack(
+            children: [
+              if (index != null && index >= 0 && index < children.length)
+                AnimatedPositioned(
+                  key: const ValueKey('dock-active-indicator'),
+                  duration: reduceMotion ? Duration.zero : indicatorDuration,
+                  curve: Curves.easeOutCubic,
+                  left: 6,
+                  right: 6,
+                  top: railSlotHeight * index + 4,
+                  height: railSlotHeight - 8,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: colors.surfaceVariant,
+                        borderRadius: BorderRadius.circular(visual.innerRadius),
+                      ),
+                    ),
+                  ),
+                ),
+              Positioned.fill(child: column),
+            ],
+          ),
         ),
       ),
     );
