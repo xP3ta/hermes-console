@@ -46,6 +46,10 @@ abstract final class HermesNoticeDurations {
 
   /// Tiempo minimo de lectura de un aviso cuando otros esperan su turno.
   static const Duration minWhenQueued = Duration(milliseconds: 2500);
+
+  /// Minimum time a notice with an action (Undo...) stays when others are
+  /// waiting: long enough to read it and reach the button.
+  static const Duration actionMinWhenQueued = Duration(seconds: 6);
 }
 
 /// Asa de un aviso ya mostrado: permite retirarlo antes de tiempo.
@@ -602,10 +606,15 @@ class _NoticeLaneState extends State<_NoticeLane>
     _dwell?.cancel();
     _timer = null;
     _dwellDone = false;
-    _dwell = Timer(HermesNoticeDurations.minWhenQueued, () {
-      _dwellDone = true;
-      _yieldToQueue(notice);
-    });
+    _dwell = Timer(
+      notice.action != null
+          ? HermesNoticeDurations.actionMinWhenQueued
+          : HermesNoticeDurations.minWhenQueued,
+      () {
+        _dwellDone = true;
+        _yieldToQueue(notice);
+      },
+    );
     if (notice.sticky) return;
     final duration = notice.duration ?? _defaultDuration(notice);
     // Con navegacion accesible una accion no debe caducar antes de poder usarla.

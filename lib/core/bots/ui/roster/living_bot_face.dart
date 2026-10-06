@@ -45,6 +45,71 @@ int get livingBotFaceActiveTickers => _LivingBotFaceState._active;
 @visibleForTesting
 int get livingBotFacePendingBlinks => _LivingBotFaceState._pendingBlinks;
 
+/// Test hook: idle list faces currently enrolled in the shared blink
+/// scheduler ([LivingBotFaceBlink.shared]).
+@visibleForTesting
+int get livingBotFaceSharedBlinkFaces => _SharedBlinkScheduler._faces.length;
+
+/// Test hook: timers held by the shared blink scheduler (0 or 1, whatever
+/// the number of list faces).
+@visibleForTesting
+int get livingBotFaceSharedBlinkTimers =>
+    _SharedBlinkScheduler._timer == null ? 0 : 1;
+
+/// How an idle [LivingBotFace] blinks.
+enum LivingBotFaceBlink {
+  /// The face keeps its own blink timer (one face on screen: the bot chat
+  /// header, the profile hero).
+  own,
+
+  /// List/roster faces: no per-face timer. ONE scheduler shared by every
+  /// such face blinks a single random face every
+  /// [LivingBotFace.sharedBlinkMinPause]-[LivingBotFace.sharedBlinkMaxPause],
+  /// so ten idle bots cost one rare blink, not ten interleaved ones.
+  shared,
+}
+
+/// One timer for every [LivingBotFaceBlink.shared] face: it wakes up rarely
+/// and blinks one random enrolled (mounted, visible, idle) face.
+abstract final class _SharedBlinkScheduler {
+  static final Set<_LivingBotFaceState> _faces = <_LivingBotFaceState>{};
+  static Timer? _timer;
+  static final math.Random _random = math.Random();
+
+  static void enroll(_LivingBotFaceState face) {
+    _faces.add(face);
+    _arm();
+  }
+
+  static void leave(_LivingBotFaceState face) {
+    _faces.remove(face);
+    if (_faces.isEmpty) {
+      _timer?.cancel();
+      _timer = null;
+    }
+  }
+
+  static void _arm() {
+    if (_timer != null || _faces.isEmpty) return;
+    final min = LivingBotFace.sharedBlinkMinPause.inMilliseconds;
+    final span = LivingBotFace.sharedBlinkMaxPause.inMilliseconds - min;
+    _timer = Timer(
+      Duration(milliseconds: min + _random.nextInt(span + 1)),
+      _fire,
+    );
+  }
+
+  static void _fire() {
+    _timer = null;
+    if (_faces.isEmpty) return;
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle == null || lifecycle == AppLifecycleState.resumed) {
+      _faces.elementAt(_random.nextInt(_faces.length))._blinkOnce();
+    }
+    _arm();
+  }
+}
+
 /// A living bot face: thinking look-around, working scan (eyes read a
 /// line) with a soft pulsing ring, attention nudge every few seconds,
 /// speaking while a reply streams, and an entrance on first appearance.
@@ -70,6 +135,9 @@ class LivingBotFace extends StatefulWidget {
   /// Plays the scale/fade entrance the first time this face is built.
   final bool entrance;
 
+  /// Own blink timer (default) or the rare shared list blink.
+  final LivingBotFaceBlink blink;
+
   /// Motion amplitude. Defaults by size: large (pinned, profile hero)
   /// faces are the most expressive.
   final double? expressiveness;
@@ -84,6 +152,7 @@ class LivingBotFace extends StatefulWidget {
     this.semanticLabel,
     this.entrance = true,
     this.expressiveness,
+    this.blink = LivingBotFaceBlink.own,
   });
 
   /// Amplitude used for a face of [size] dp: small faces need more relative
@@ -97,6 +166,10 @@ class LivingBotFace extends StatefulWidget {
 
   /// Shortest pause between idle blinks.
   static const minBlinkPause = Duration(milliseconds: 4200);
+
+  /// Pause between two blinks of the WHOLE list of shared-blink faces.
+  static const sharedBlinkMinPause = Duration(seconds: 12);
+  static const sharedBlinkMaxPause = Duration(seconds: 20);
 
   static double expressivenessFor(double size) => size >= 56 ? 1.3 : 1.2;
 
@@ -206,9 +279,15 @@ class _LivingBotFaceState extends State<LivingBotFace>
   }
 
   void _runBlinks(bool on) {
-    if (on) {
+    final shared = widget.blink == LivingBotFaceBlink.shared;
+    if (on && shared) {
+      _cancelBlinkTimer();
+      _SharedBlinkScheduler.enroll(this);
+    } else if (on) {
+      _SharedBlinkScheduler.leave(this);
       if (_nextBlink == null && !_blink.isAnimating) _scheduleBlink();
     } else {
+      _SharedBlinkScheduler.leave(this);
       _cancelBlinkTimer();
       if (_blink.isAnimating || _blink.value != 0) {
         _blink.stop();
@@ -254,10 +333,21 @@ class _LivingBotFaceState extends State<LivingBotFace>
     });
   }
 
+  /// One blink requested by the shared list scheduler.
+  void _blinkOnce() {
+    if (_disposed || !_motion || _continuous || _blink.isAnimating) return;
+    _blinks++;
+    _blink.forward(from: 0).whenCompleteOrCancel(() {
+      if (_disposed) return;
+      if (_blink.value != 0) _blink.value = 0;
+    });
+  }
+
   @override
   void dispose() {
     _disposed = true;
     _frames?.cancel();
+    _SharedBlinkScheduler.leave(this);
     _cancelBlinkTimer();
     if (_counted) _active--;
     _clock.dispose();
