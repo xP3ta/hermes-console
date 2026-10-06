@@ -348,7 +348,8 @@ String? _cumulativeTokenLabel(SessionContextMetrics metrics) {
       : '${compactSessionContextTokens(cumulative)} tok';
 }
 
-String _contextTriggerText(SessionContextMetrics metrics) {
+/// Short text of the context trigger: `45%`, else cumulative tokens, else `—`.
+String sessionContextTriggerText(SessionContextMetrics metrics) {
   final percent = metrics.percent;
   if (percent != null) return '$percent%';
   return _cumulativeTokenLabel(metrics) ?? '—';
@@ -363,7 +364,8 @@ String _contextTriggerSemanticValue(
   return _cumulativeTokenLabel(metrics) ?? strings.chaContextWindowUnavailable;
 }
 
-String _contextTriggerSemanticsLabel(
+/// Accessible label of the context trigger (description + best value).
+String sessionContextTriggerSemanticsLabel(
   Strings strings,
   SessionContextMetrics metrics,
 ) {
@@ -496,7 +498,7 @@ class _SessionContextPopoverButtonState
                 compaction,
                 Localizations.localeOf(context).languageCode,
               ),
-            _contextTriggerSemanticsLabel(strings, value),
+            sessionContextTriggerSemanticsLabel(strings, value),
             ?widget.modeLabel,
             if (widget.compressionCount > 0 && compaction == null)
               strings.chaSessionCompactedTooltip(widget.compressionCount),
@@ -516,7 +518,7 @@ class _SessionContextPopoverButtonState
                     ),
                     const SizedBox(width: 5),
                     Text(
-                      _contextTriggerText(value),
+                      sessionContextTriggerText(value),
                       style: TextStyle(
                         color: colors.textPrimary,
                         fontSize: 10.5,
@@ -665,7 +667,7 @@ class SessionContextTrigger extends StatelessWidget {
         return Semantics(
           button: true,
           onTap: onPressed,
-          label: _contextTriggerSemanticsLabel(strings, value),
+          label: sessionContextTriggerSemanticsLabel(strings, value),
           excludeSemantics: true,
           child: Tooltip(
             message: strings.chaContextUsageOpen,
@@ -706,7 +708,7 @@ class SessionContextTrigger extends StatelessWidget {
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            _contextTriggerText(value),
+                            sessionContextTriggerText(value),
                             style: TextStyle(
                               color: Theme.of(context).hermes.textPrimary,
                               fontSize: 11.5,
@@ -735,12 +737,16 @@ class SessionContextRing extends StatelessWidget {
     required this.percent,
     this.size = 24,
     this.strokeWidth = 2.4,
+    this.color,
     super.key,
   });
 
   final int? percent;
   final double size;
   final double strokeWidth;
+
+  /// Arc colour; the theme accent when null.
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
@@ -752,7 +758,7 @@ class SessionContextRing extends StatelessWidget {
           value: (percent ?? 0) / 100,
           strokeWidth: strokeWidth,
           strokeCap: StrokeCap.round,
-          color: colors.accentText,
+          color: color ?? colors.accentText,
           backgroundColor: colors.divider.withValues(alpha: 0.72),
         ),
       ),
