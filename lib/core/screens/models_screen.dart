@@ -2137,44 +2137,46 @@ class _ModelsScreenState extends State<ModelsScreen>
     }).length;
     return _ModelTonalGroup(
       margin: const EdgeInsets.only(bottom: 8),
-      child: ExpansionTile(
-        shape: const Border(),
-        collapsedShape: const Border(),
-        tilePadding: const EdgeInsets.symmetric(horizontal: 14),
-        leading: SizedBox.square(
-          dimension: 30,
-          child: Icon(Icons.tune, size: 21, color: colors.accent),
-        ),
-        title: Text(
-          s.mdlAuxSection,
-          style: HermesListRow.titleStyle(
-            Theme.of(context),
-            color: colors.textPrimary,
+      child: HermesListRow.alignTile(
+        child: ExpansionTile(
+          shape: const Border(),
+          collapsedShape: const Border(),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+          leading: SizedBox.square(
+            dimension: 30,
+            child: Icon(Icons.tune, size: 21, color: colors.accent),
           ),
-        ),
-        subtitle: Text(
-          customized == 0
-              ? s.mdlAuxAllAuto
-              : s.mdlAuxCustomized(customized, _auxTasks.length),
-          style: HermesListRow.subtitleStyle(
-            Theme.of(context),
-            color: colors.textSecondary,
-          ),
-        ),
-        childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-        children: [
-          if (customized > 0)
-            ListTile(
-              dense: true,
-              leading: Icon(Icons.auto_mode, size: 18, color: colors.accent),
-              title: Text(
-                s.mdlAuxResetAll,
-                style: TextStyle(fontSize: 12.5, color: colors.accentHover),
-              ),
-              onTap: _setting ? null : _resetAux,
+          title: Text(
+            s.mdlAuxSection,
+            style: HermesListRow.titleStyle(
+              Theme.of(context),
+              color: colors.textPrimary,
             ),
-          ..._auxTasks.map((t) => _buildAuxTile(colors, t)),
-        ],
+          ),
+          subtitle: Text(
+            customized == 0
+                ? s.mdlAuxAllAuto
+                : s.mdlAuxCustomized(customized, _auxTasks.length),
+            style: HermesListRow.subtitleStyle(
+              Theme.of(context),
+              color: colors.textSecondary,
+            ),
+          ),
+          childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          children: [
+            if (customized > 0)
+              ListTile(
+                dense: true,
+                leading: Icon(Icons.auto_mode, size: 18, color: colors.accent),
+                title: Text(
+                  s.mdlAuxResetAll,
+                  style: TextStyle(fontSize: 12.5, color: colors.accentHover),
+                ),
+                onTap: _setting ? null : _resetAux,
+              ),
+            ..._auxTasks.map((t) => _buildAuxTile(colors, t)),
+          ],
+        ),
       ),
     );
   }
@@ -2186,34 +2188,40 @@ class _ModelsScreenState extends State<ModelsScreen>
   ) {
     return _ModelTonalGroup(
       margin: const EdgeInsets.only(bottom: 8),
-      child: ExpansionTile(
-        shape: const Border(),
-        collapsedShape: const Border(),
-        tilePadding: const EdgeInsets.symmetric(horizontal: 14),
-        leading: SizedBox.square(
-          dimension: 30,
-          child: Icon(Icons.lock_outline, size: 21, color: colors.textDisabled),
-        ),
-        title: Text(
-          Strings.of(context).mdlUnconfiguredProviders,
-          style: HermesListRow.titleStyle(
-            Theme.of(context),
-            color: colors.textPrimary,
+      child: HermesListRow.alignTile(
+        child: ExpansionTile(
+          shape: const Border(),
+          collapsedShape: const Border(),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+          leading: SizedBox.square(
+            dimension: 30,
+            child: Icon(
+              Icons.lock_outline,
+              size: 21,
+              color: colors.textDisabled,
+            ),
           ),
-        ),
-        subtitle: Text(
-          // Con el Dashboard caído se enseña el último catálogo bueno,
-          // dejándolo claro para no fingir datos en vivo (spec 028 U-02).
-          _catalogFromCache
-              ? '${Strings.of(context).mdlUnconfiguredHint(providers.length)} · ${Strings.of(context).mdlCatalogOfflineSuffix}'
-              : Strings.of(context).mdlUnconfiguredHint(providers.length),
-          style: HermesListRow.subtitleStyle(
-            Theme.of(context),
-            color: colors.textSecondary,
+          title: Text(
+            Strings.of(context).mdlUnconfiguredProviders,
+            style: HermesListRow.titleStyle(
+              Theme.of(context),
+              color: colors.textPrimary,
+            ),
           ),
+          subtitle: Text(
+            // Con el Dashboard caído se enseña el último catálogo bueno,
+            // dejándolo claro para no fingir datos en vivo (spec 028 U-02).
+            _catalogFromCache
+                ? '${Strings.of(context).mdlUnconfiguredHint(providers.length)} · ${Strings.of(context).mdlCatalogOfflineSuffix}'
+                : Strings.of(context).mdlUnconfiguredHint(providers.length),
+            style: HermesListRow.subtitleStyle(
+              Theme.of(context),
+              color: colors.textSecondary,
+            ),
+          ),
+          childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          children: providers.map((p) => _buildUnauthTile(colors, p)).toList(),
         ),
-        childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-        children: providers.map((p) => _buildUnauthTile(colors, p)).toList(),
       ),
     );
   }
