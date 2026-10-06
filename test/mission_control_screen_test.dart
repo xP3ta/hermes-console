@@ -568,7 +568,10 @@ void main() {
     );
     expect(find.byKey(const ValueKey('mission-goto-work')), findsNothing);
     expect(find.byKey(const ValueKey('mission-work-feed')), findsNothing);
-    expect(find.byKey(const ValueKey('mission-workspace-button')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('mission-workspace-button')),
+      findsNothing,
+    );
     expect(find.text('Resumen'), findsNothing);
   });
 
@@ -743,9 +746,7 @@ void main() {
     );
   });
 
-  testWidgets('bot profile groups every action around the bot', (
-    tester,
-  ) async {
+  testWidgets('bot profile groups every action around the bot', (tester) async {
     final manager = await _manager();
     Session? opened;
     await tester.pumpWidget(
@@ -1007,8 +1008,10 @@ void main() {
     final manager = await _manager();
     // Preview/time come from profiles.list canonical_session (spec 070 T206),
     // never from the legacy ui_meta pin nor a local session list.
+    // The main bot's hero line says it while free (Dots home).
     final official = AgentProfile.fromJson({
-      'name': 'infra',
+      'name': 'default',
+      'is_default': true,
       'ui_meta': {
         'hermes-bots': {'chat': 'legacy-ignored'},
       },
@@ -1036,7 +1039,7 @@ void main() {
               preview: 'Última respuesta del bot',
               startedAt: 100,
               updatedAt: 120,
-              profile: 'infra',
+              profile: 'default',
             ),
           ],
           board: const KanbanBoard(columns: []),
@@ -1045,7 +1048,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Última respuesta del bot'), findsOneWidget);
+    expect(find.text('Libre · «Última respuesta del bot»'), findsOneWidget);
     expect(find.text('Inactivo · Última respuesta del bot'), findsNothing);
     expect(find.text('Bot Chat'), findsNothing);
   });
@@ -1066,7 +1069,10 @@ void main() {
 
     final bots = find.byKey(const ValueKey('mission-destination-bots'));
     expect(
-      tester.getSemantics(bots).getSemanticsData().hasAction(SemanticsAction.tap),
+      tester
+          .getSemantics(bots)
+          .getSemanticsData()
+          .hasAction(SemanticsAction.tap),
       isTrue,
       reason: 'Bots debe publicar la acción tap en Android',
     );
@@ -1107,7 +1113,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Bots'), findsWidgets);
-    expect(find.text('default'), findsWidgets);
+    // The main bot reads "Hermes", never the raw `default` slug.
+    expect(find.text('Hermes'), findsWidgets);
+    expect(find.text('default'), findsNothing);
     // Spec 070 S1: no Activo/Inactivo labels; idle rows show the preview.
     expect(find.text('Inactivo'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -1721,7 +1729,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Te necesitan'), findsOneWidget);
+    // Dots home: no "Needs you" section; the approval row sits under the
+    // summary line.
     expect(find.byKey(const ValueKey('mission-attention')), findsOneWidget);
     expect(find.text('Restart Proxmox node'), findsNothing);
     expect(find.textContaining('approval-1'), findsNothing);
@@ -1846,7 +1855,10 @@ void main() {
     expect(find.text('2 aprobaciones · 0 bloqueados'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('mission-attention')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('mission-attention-sheet')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('mission-attention-sheet')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('mission-work-feed')), findsNothing);
     expect(find.text('Aprobación pendiente'), findsNWidgets(2));
     expect(find.text('Restart node'), findsNothing);
@@ -2285,9 +2297,11 @@ void main() {
     tester,
   ) async {
     final manager = await _manager();
+    // The Dots grid holds four per row: 32 bots overflow the first screen.
     final profiles = List.generate(
-      8,
-      (index) => AgentProfile(name: 'agent_$index'),
+      32,
+      (index) =>
+          AgentProfile(name: 'agent_${index.toString().padLeft(2, '0')}'),
     );
     await tester.pumpWidget(
       _host(
@@ -2300,9 +2314,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('agent_0'), findsOneWidget);
-    expect(find.text('agent_1'), findsOneWidget);
-    expect(find.text('agent_7'), findsNothing);
+    expect(find.text('agent_00'), findsOneWidget);
+    expect(find.text('agent_01'), findsOneWidget);
+    expect(find.text('agent_31'), findsNothing);
     final rosterScroll = find
         .descendant(
           of: find.byKey(const ValueKey('mission-bots')),
@@ -2310,11 +2324,11 @@ void main() {
         )
         .first;
     await tester.scrollUntilVisible(
-      find.text('agent_7'),
+      find.text('agent_31'),
       180,
       scrollable: rosterScroll,
     );
-    expect(find.text('agent_7'), findsOneWidget);
+    expect(find.text('agent_31'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -2433,10 +2447,13 @@ void main() {
     final zetaY = tester.getTopLeft(
       find.byKey(const ValueKey('mission-bot-row-zeta')),
     );
-    // El sello `created` de ui_meta encabeza la lista (Desktop: activityOf);
-    // después manda la sesión más reciente, no la prioridad de estado.
-    expect(newbornY.dy, lessThan(alphaY.dy));
-    expect(alphaY.dy, lessThan(zetaY.dy));
+    // El sello `created` de ui_meta encabeza la rejilla (Desktop: activityOf);
+    // después manda la sesión más reciente, no la prioridad de estado. La
+    // rejilla se lee por filas: arriba-abajo y, en la misma fila, de izquierda
+    // a derecha.
+    double order(Offset o) => o.dy * 10000 + o.dx;
+    expect(order(newbornY), lessThan(order(alphaY)));
+    expect(order(alphaY), lessThan(order(zetaY)));
   });
 
   testWidgets('bot waiting on the user carries the needs-you badge', (
@@ -2482,7 +2499,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Spec 070 S1: one state signal on the face (attention ring) and the
-    // bot listed under "Needs you" — no extra badge or dot on the row.
+    // bot first in the team grid — no extra badge on the row.
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('mission-bot-row-infra')),
@@ -2497,16 +2514,14 @@ void main() {
       ),
       findsNothing,
     );
-    expect(
-      tester
-          .getTopLeft(find.byKey(const ValueKey('mission-bot-row-infra')))
-          .dy,
-      lessThan(
-        tester
-            .getTopLeft(find.byKey(const ValueKey('roster-section-recent')))
-            .dy,
-      ),
+    // Dots home: the waiting bot leads the team grid.
+    final infra = tester.getTopLeft(
+      find.byKey(const ValueKey('mission-bot-row-infra')),
     );
+    final qa = tester.getTopLeft(
+      find.byKey(const ValueKey('mission-bot-row-qa')),
+    );
+    expect(infra.dy * 10000 + infra.dx, lessThan(qa.dy * 10000 + qa.dx));
   });
 
   testWidgets(

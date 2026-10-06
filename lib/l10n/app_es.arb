@@ -8202,28 +8202,6 @@
   "roomMoreActions": "Más acciones",
   "roomCannotSend": "Esta conexión no puede escribir en la sala.",
   "rosterTitle": "Bots",
-  "rosterFilterAll": "Todo",
-  "rosterFilterBots": "Perfiles",
-  "rosterFilterRooms": "Salas",
-  "rosterNeedsYou": "Te necesitan",
-  "rosterRecent": "Recientes",
-  "rosterNeedsYouBadge": "Te necesita",
-  "rosterWorkingOn": "Trabajando · {title}",
-  "@rosterWorkingOn": {
-    "placeholders": {
-      "title": {
-        "type": "String"
-      }
-    }
-  },
-  "rosterWaitingFor": "Esperando tu respuesta · {title}",
-  "@rosterWaitingFor": {
-    "placeholders": {
-      "title": {
-        "type": "String"
-      }
-    }
-  },
   "rosterWorking": "Trabajando…",
   "rosterThinking": "Pensando…",
   "rosterSpeaking": "Respondiendo…",
@@ -8254,7 +8232,6 @@
   "rosterEmpty": "Aún no hay nada aquí",
   "rosterNoMatches": "Sin resultados",
   "rosterOpenProfile": "Abrir ficha",
-  "rosterNoPreview": "Sin mensajes todavía",
   "rosterRoomMembers": "{count, plural, =1{1 miembro} other{{count} miembros}}",
   "@rosterRoomMembers": {
     "placeholders": {
@@ -8351,6 +8328,46 @@
   "rosterUnhide": "Mostrar",
   "rosterMoveToSection": "Mover a sección…",
   "rosterUpdateFailed": "No se pudo actualizar la lista. Inténtalo de nuevo.",
+  "dotsTeam": "Tu equipo",
+  "dotsRooms": "Salas",
+  "dotsIdle": "Libre",
+  "dotsIdleWith": "Libre · «{preview}»",
+  "dotsWaiting": "Te espera",
+  "dotsWaitingOn": "Te espera · {title}",
+  "dotsWorking": "Trabajando",
+  "dotsSummaryWorking": "{count} trabajando",
+  "@dotsSummaryWorking": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dotsSummaryWaiting": "{count, plural, =1{1 te espera} other{{count} te esperan}}",
+  "@dotsSummaryWaiting": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dotsActivity": "{count, plural, =1{Actividad · 1 delegada} other{Actividad · {count} delegadas}}",
+  "@dotsActivity": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dotsRoomWorking": "Trabajando…",
+  "dotsA11yMain": "{name}, bot principal, {status}",
+  "dotsA11yBot": "{name}, {status}",
+  "dotsA11yWorkingOn": "trabajando: {title}",
+  "dotsA11yWorking": "trabajando",
+  "dotsA11yWaitingOn": "te espera: {title}",
+  "dotsA11yWaiting": "te espera",
+  "dotsA11yIdle": "libre",
+  "dotsA11yRoom": "{name}, sala, {detail}",
   "notifBotModeListenerOn": "Los perfiles y las salas pueden avisarte aquí: aprobaciones, @menciones, resúmenes de ronda y progreso en vivo, con Aprobar, Denegar, Responder y Detener desde la propia notificación.",
   "notifBotModeListenerOff": "La escucha en segundo plano está apagada: los avisos de perfiles y salas y los widgets solo se actualizan con Hermes abierto.",
   "notifLiveUpdatesTitle": "Actualizaciones en vivo",

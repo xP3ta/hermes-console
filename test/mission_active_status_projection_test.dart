@@ -1,8 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/state/bot_presence.dart';
+import 'package:hermes_android/core/bots/ui/roster/dots_home_view.dart';
 import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
 import 'package:hermes_android/core/bots/ui/roster/roster_model.dart';
-import 'package:hermes_android/core/bots/ui/roster/roster_rows.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
@@ -87,11 +87,9 @@ void main() {
         final entry = _entry(agent);
         expect(entry.signal, BotFaceSignal.working);
         expect(entry.workingOn, 'Migrar la base');
-        expect(
-          rosterBotLine(StringsEs(), entry),
-          'Trabajando · Migrar la base',
-        );
-        expect(rosterBotLine(StringsEn(), entry), 'Working · Migrar la base');
+        // Dots home: the main/hero line is the canonical chat's step alone.
+        expect(dotsHeroStatus(StringsEs(), entry), 'Migrar la base');
+        expect(dotsHeroStatus(StringsEn(), entry), 'Migrar la base');
       },
     );
 
@@ -106,11 +104,11 @@ void main() {
       expect(entry.signal, BotFaceSignal.attention);
       expect(entry.needsYou, isTrue);
       expect(
-        rosterBotLine(StringsEs(), entry),
-        'Esperando tu respuesta · Aprobar despliegue',
+        dotsHeroStatus(StringsEs(), entry),
+        'Te espera · Aprobar despliegue',
       );
       expect(
-        rosterBotLine(StringsEn(), entry),
+        dotsHeroStatus(StringsEn(), entry),
         'Waiting for you · Aprobar despliegue',
       );
     });

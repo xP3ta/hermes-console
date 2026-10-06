@@ -10,11 +10,6 @@ import '../../state/attention.dart';
 import '../../state/bot_chat_target.dart';
 import 'living_bot_face.dart';
 
-/// Roster filter segment (spec 070 S1).
-enum RosterFilter { all, bots, rooms }
-
-enum RosterSectionKind { needsYou, user, recent }
-
 sealed class RosterEntry {
   const RosterEntry();
 
@@ -35,6 +30,10 @@ final class BotRosterEntry extends RosterEntry {
   /// Canonical Bot Chat preview (`canonical_session.preview`).
   final String preview;
 
+  /// Subagents the canonical Bot Chat's turn has delegated and that are
+  /// still running ("Activity · N delegated"); other chats never count.
+  final int delegated;
+
   @override
   final DateTime? at;
 
@@ -43,6 +42,7 @@ final class BotRosterEntry extends RosterEntry {
     required this.signal,
     this.workingOn,
     this.preview = '',
+    this.delegated = 0,
     this.at,
   });
 
@@ -127,6 +127,7 @@ final class BotRosterEntry extends RosterEntry {
           ? null
           : title,
       preview: rosterPreviewText(chat.preview),
+      delegated: agent.botChatDelegated,
       at: candidates.isEmpty
           ? null
           : candidates.reduce((a, b) => a.isAfter(b) ? a : b),
@@ -306,159 +307,6 @@ final class RoomRosterEntry extends RosterEntry {
 /// marks are stripped with the same helper notifications and session
 /// previews use, so a row never shows `**`, `##` or backticks.
 String rosterPreviewText(String markdown) => markdownToCompactText(markdown);
-
-final class RosterSection {
-  final RosterSectionKind kind;
-  final String? id;
-
-  /// User section name (only for [RosterSectionKind.user]).
-  final String? name;
-  final List<RosterEntry> entries;
-
-  const RosterSection({
-    required this.kind,
-    required this.entries,
-    this.id,
-    this.name,
-  });
-}
-
-final class RosterLayout {
-  final List<BotRosterEntry> pinned;
-  final List<RosterSection> sections;
-  final int hiddenCount;
-
-  const RosterLayout({
-    required this.pinned,
-    required this.sections,
-    required this.hiddenCount,
-  });
-
-  bool get isEmpty => pinned.isEmpty && sections.isEmpty;
-
-  /// Pure roster ordering (spec 070 S1): pinned faces on top, then
-  /// **Needs you**, then the user sections from `ui_meta` (sorted by name),
-  /// then everything else by recency. Pinned bots appear only in the pinned
-  /// strip unless they need the user. Hidden bots are skipped unless
-  /// [showHidden]. A search query flattens everything into one list.
-  static RosterLayout build({
-    required List<BotRosterEntry> bots,
-    required List<RoomRosterEntry> rooms,
-    RosterFilter filter = RosterFilter.all,
-    String query = '',
-    bool showHidden = false,
-  }) {
-    final hiddenCount = bots.where((b) => b.profile.botHidden).length;
-    final folded = foldRosterSearch(query);
-    bool matches(RosterEntry entry) {
-      if (folded.isEmpty) return true;
-      final fields = switch (entry) {
-        BotRosterEntry(:final profile) => [
-          profile.name,
-          profile.botTitle,
-          profile.description,
-          profile.botSectionName,
-        ],
-        RoomRosterEntry(:final title, :final members) => [
-          title,
-          for (final m in members) m.handle,
-        ],
-      };
-      return fields.whereType<String>().any(
-        (value) => foldRosterSearch(value).contains(folded),
-      );
-    }
-
-    final visibleBots = filter == RosterFilter.rooms
-        ? const <BotRosterEntry>[]
-        : bots
-              .where((b) => showHidden || !b.profile.botHidden)
-              .where(matches)
-              .toList();
-    final visibleRooms = filter == RosterFilter.bots
-        ? const <RoomRosterEntry>[]
-        : rooms.where(matches).toList();
-
-    int byRecency(RosterEntry a, RosterEntry b) {
-      final at = a.at?.millisecondsSinceEpoch ?? 0;
-      final bt = b.at?.millisecondsSinceEpoch ?? 0;
-      if (at != bt) return bt.compareTo(at);
-      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
-    }
-
-    if (folded.isNotEmpty) {
-      final all = <RosterEntry>[...visibleBots, ...visibleRooms]
-        ..sort(byRecency);
-      return RosterLayout(
-        pinned: const [],
-        sections: [
-          if (all.isNotEmpty)
-            RosterSection(kind: RosterSectionKind.recent, entries: all),
-        ],
-        hiddenCount: hiddenCount,
-      );
-    }
-
-    final pinned = visibleBots.where((b) => b.profile.botPinned).toList()
-      ..sort(byRecency);
-    final needs = <RosterEntry>[
-      ...visibleBots.where((b) => b.needsYou),
-      ...visibleRooms.where((r) => r.needsYou),
-    ]..sort(byRecency);
-    final placed = {for (final entry in needs) entry.key};
-    final rest = visibleBots
-        .where((b) => !b.profile.botPinned && !placed.contains(b.key))
-        .toList();
-
-    // Section names: the lexicographically smallest name per id among all
-    // bots, so a partially synced rename renders stably.
-    final names = <String, String>{};
-    for (final bot in bots) {
-      final id = bot.profile.botSectionId;
-      final name = bot.profile.botSectionName;
-      if (id == null || name == null) continue;
-      if (!names.containsKey(id) || name.compareTo(names[id]!) < 0) {
-        names[id] = name;
-      }
-    }
-    final grouped = <String, List<RosterEntry>>{};
-    final loose = <RosterEntry>[];
-    for (final bot in rest) {
-      final id = bot.profile.botSectionId;
-      if (id != null && names.containsKey(id)) {
-        (grouped[id] ??= []).add(bot);
-      } else {
-        loose.add(bot);
-      }
-    }
-    loose.addAll(visibleRooms.where((r) => !placed.contains(r.key)));
-    loose.sort(byRecency);
-    final sectionIds = grouped.keys.toList()
-      ..sort((a, b) {
-        final byName = names[a]!.toLowerCase().compareTo(
-          names[b]!.toLowerCase(),
-        );
-        return byName != 0 ? byName : a.compareTo(b);
-      });
-    return RosterLayout(
-      pinned: pinned,
-      sections: [
-        if (needs.isNotEmpty)
-          RosterSection(kind: RosterSectionKind.needsYou, entries: needs),
-        for (final id in sectionIds)
-          RosterSection(
-            kind: RosterSectionKind.user,
-            id: id,
-            name: names[id],
-            entries: grouped[id]!..sort(byRecency),
-          ),
-        if (loose.isNotEmpty)
-          RosterSection(kind: RosterSectionKind.recent, entries: loose),
-      ],
-      hiddenCount: hiddenCount,
-    );
-  }
-}
 
 final RegExp _foldA = RegExp(r'[áàäâãå]');
 final RegExp _foldE = RegExp(r'[éèëê]');

@@ -214,6 +214,10 @@ final class MissionLiveChat {
   /// before the server has registered it as `canonical_session`.
   final bool botChat;
 
+  /// Delegated subagents of this chat still running
+  /// (`ActiveChat.safeActiveSubagentCount`).
+  final int subagentCount;
+
   const MissionLiveChat({
     required this.profileName,
     required this.sessionId,
@@ -224,6 +228,7 @@ final class MissionLiveChat {
     this.provider,
     this.settledAt,
     this.botChat = false,
+    this.subagentCount = 0,
   });
 }
 
@@ -459,6 +464,10 @@ final class MissionAgent {
   /// Title behind [botChatPresence], for the «Working · chat» line.
   final String? botChatTitle;
 
+  /// Running subagents delegated by the canonical Bot Chat's open turn;
+  /// subagents of the profile's other chats never count.
+  final int botChatDelegated;
+
   /// Shared by Bots and room presence; a gateway being online is not a turn.
   bool get activeNow => switch (status) {
     MissionAgentStatus.thinking ||
@@ -483,6 +492,7 @@ final class MissionAgent {
     this.livePresenceTitle,
     this.botChatPresence = BotPresence.idle,
     this.botChatTitle,
+    this.botChatDelegated = 0,
   });
 }
 
@@ -684,6 +694,7 @@ abstract final class MissionProjector {
               : _liveRowTitle(profile, liveRow),
           botChatPresence: botChat.presence,
           botChatTitle: botChat.title,
+          botChatDelegated: botChat.delegated,
         ),
       );
     }
@@ -708,7 +719,8 @@ abstract final class MissionProjector {
 
   /// The canonical Bot Chat's own state: its open Console chat, else its
   /// `session.active_list` row (the chat speaks for a row of the same id).
-  static ({BotPresence presence, String? title}) _botChatPresence(
+  static ({BotPresence presence, String? title, int delegated})
+  _botChatPresence(
     AgentProfile profile,
     List<MissionLiveChat> chats,
     List<DesktopActiveSession> liveRows,
@@ -726,8 +738,10 @@ abstract final class MissionProjector {
         title = _liveRowTitle(profile, row);
       }
     }
+    var delegated = 0;
     for (final chat in chats) {
       if (!chat.botChat && !ids.contains(chat.sessionId)) continue;
+      if (chat.subagentCount > delegated) delegated = chat.subagentCount;
       final presence = switch (chat.phase) {
         MissionLivePhase.approvalRequired => BotPresence.attention,
         MissionLivePhase.working ||
@@ -740,7 +754,11 @@ abstract final class MissionProjector {
         title = _firstNonEmpty([chat.title]);
       }
     }
-    return (presence: best, title: best == BotPresence.idle ? null : title);
+    return (
+      presence: best,
+      title: best == BotPresence.idle ? null : title,
+      delegated: delegated,
+    );
   }
 
   /// The open chat of the same session speaks for it: a working chat always,

@@ -33,7 +33,7 @@ import '../bots/ui/room/room_sheets.dart' show showRoomMembersSheet;
 import '../bots/state/bot_presence.dart';
 import '../bots/state/bot_roster_meta.dart';
 import '../bots/ui/profile/bot_profile_screen.dart';
-import '../bots/ui/roster/bots_roster_view.dart';
+import '../bots/ui/roster/dots_home_view.dart';
 import '../bots/ui/roster/projection_room_sheet.dart';
 import '../bots/ui/roster/roster_actions.dart';
 import '../bots/ui/roster/roster_model.dart';
@@ -1157,6 +1157,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         chat.sessionId,
         chat.storedSessionId,
         chat.sessionProfile,
+        chat.safeActiveSubagentCount,
       ],
     ];
   }
@@ -1246,6 +1247,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             model: session?.model,
             settledAt: chat.lastTerminalAt,
             botChat: chat.sessionId == 'mob-bot-$profile',
+            subagentCount: chat.safeActiveSubagentCount,
           );
         })
         .toList(growable: false);
@@ -3228,7 +3230,6 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             remoteBotLoader: widget.remoteBotLoader,
             onRemoteOpen: _openRemoteBot,
             onRemoteDetails: _remoteBotDetails,
-            onSectionMenu: _canManageSections ? _sectionMenu : null,
             onAttention:
                 projection.approvals.isNotEmpty ||
                     projection.blockedCount > 0
@@ -3966,9 +3967,11 @@ class _WorkspaceSheet extends StatelessWidget {
   }
 }
 
-/// Bots roster (spec 070 S1) over [BotsRosterView]: server-sourced rows for
-/// bots (presence, canonical preview/time, `ui_meta` pins/sections/hidden)
-/// and rooms (hosted `groups.*` plus read-only Desktop projection).
+/// Bots home (Dots style, owner variant C) over [DotsHomeView]: the main
+/// bot on top, the team grid and the room cards, all derived from this
+/// screen's one snapshot (presence from each canonical Bot Chat, canonical
+/// preview/time, `ui_meta` pins/hidden) plus hosted `groups.*` and the
+/// read-only Desktop projection rooms.
 class _BotsTab extends StatefulWidget {
   final SharedPreferences prefs;
   final String connectionId;
@@ -3985,7 +3988,6 @@ class _BotsTab extends StatefulWidget {
   final RemoteBotLoader? remoteBotLoader;
   final void Function(SavedConnection, AgentProfile) onRemoteOpen;
   final void Function(SavedConnection, AgentProfile) onRemoteDetails;
-  final void Function(String sectionId, String name)? onSectionMenu;
   final VoidCallback? onAttention;
   final String? attentionSummary;
   final VoidCallback? onCreateAgent;
@@ -4008,7 +4010,6 @@ class _BotsTab extends StatefulWidget {
     required this.onRemoteDetails,
     required this.onRefresh,
     this.remoteBotLoader,
-    this.onSectionMenu,
     this.onAttention,
     this.attentionSummary,
     this.onCreateAgent,
@@ -4095,18 +4096,15 @@ class _BotsTabState extends State<_BotsTab> {
     final unsupported =
         widget.snapshot.profilesCapability ==
         MissionCapabilityState.unsupported;
-    return BotsRosterView(
+    return DotsHomeView(
       bots: unsupported ? const [] : _bots(),
       rooms: _rooms(),
       avatarCache: widget.avatarCache,
       searchOpen: widget.searchOpen,
-      prefs: widget.prefs,
-      connectionId: widget.connectionId,
       onOpenBot: (entry) => widget.onOpenChat(entry.agent),
       onBotActions: widget.onBotActions,
       onOpenRoom: widget.onOpenRoom,
       onRoomActions: widget.onRoomActions,
-      onSectionMenu: widget.onSectionMenu,
       onAttention: widget.onAttention,
       attentionSummary: widget.attentionSummary,
       onRefresh: widget.onRefresh,
