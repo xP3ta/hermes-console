@@ -99,6 +99,24 @@ La app no fija globalmente ningún proveedor de pago, modelo personal, idioma o
 dirección de servidor. Una ruta elegida falla de forma visible en lugar de
 enviar audio silenciosamente por otra.
 
+### Experimental: voz GPT-Live
+
+Los ajustes de Voz incluyen el interruptor opcional **Voz GPT-Live
+(experimental)**. Viene desactivado y solo funciona si el servidor Hermes
+conectado usa `voice.voice_chat_mode: gpt-live` con una clave de OpenAI
+configurada **en el servidor**. El móvil nunca guarda esa clave: envía su
+oferta WebRTC al Dashboard (`POST /api/audio/voice-live/session`) y habla con
+el modelo de voz con la respuesta que devuelve el servidor. Si el servidor
+indica que GPT-Live no está disponible, Voz vuelve al modo por turnos con un
+aviso.
+
+Durante una sesión en vivo, decir «cállate», «para de hablar» o «basta»
+(«stop talking», «be quiet», «enough» en inglés) interrumpe la respuesta en
+curso y sigue escuchando. Decir solo «para» o «termina la conversación»
+termina la sesión. Console nunca cierra una sesión en vivo porque nadie hable;
+los límites de sesión del proveedor se aplican y quedan fuera del control de
+la app.
+
 ## Compilar desde fuente
 
 Necesitas Flutter 3.47.x, el Dart incluido, Java 17 y Android SDK 36.
