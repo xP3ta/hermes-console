@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/screens/cron_screen.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/global_activity_aggregate.dart';
@@ -221,6 +222,36 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('archive-view-hidden')));
     await _settle(tester);
   }
+
+  // Script-only scheduled jobs (every job on the owner's default profile)
+  // never create a session: their runs are reached through each job, as in
+  // Desktop's sidebar cron section. Automation leads there; Chats does not.
+  testWidgets('the Automation tab leads to the scheduled jobs and their runs', (
+    tester,
+  ) async {
+    final server = _Server({'s1': _row('s1', 'QA ping')});
+    await pump(tester, server);
+    await _pumpUntil(tester, find.text('QA ping'));
+    const entry = ValueKey('session-library-scheduled-jobs');
+    expect(find.byKey(entry), findsNothing, reason: 'not in Chats');
+
+    await tester.tap(find.byKey(const ValueKey('session-filter-automation')));
+    await _settle(tester);
+    expect(find.byKey(entry), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('session-filter-archived')));
+    await _settle(tester);
+    expect(find.byKey(entry), findsNothing, reason: 'not in the archive');
+    await tester.tap(find.byKey(const ValueKey('session-filter-archived')));
+    await _settle(tester);
+
+    await tester.tap(find.byKey(entry));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(CronScreen), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 2));
+  });
 
   testWidgets('a chat hidden on Desktop too is listed in Archive > Hidden '
       'and Show brings it back with one PATCH hidden:false', (tester) async {

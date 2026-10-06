@@ -111,6 +111,7 @@ class Session implements SessionSortKey {
   /// The server's `last_read_at` watermark (seconds). Null when the server
   /// does not publish it or never tracked the session (NULL = read there).
   final double? lastReadAt;
+
   /// A search hit's FTS snippet as the server sent it, with the `>>>`/`<<<`
   /// match delimiters ([preview] has them stripped). Null for list rows.
   final String? searchSnippet;
@@ -294,6 +295,13 @@ class Session implements SessionSortKey {
   /// ¿Es una sesión de job/cron/skill programada? El servidor las marca con
   /// `source: "cron"` y/o las nombra `cron_<jobid>_<timestamp>` (009-jobs).
   bool get isJob => id.startsWith('cron_') || source == 'cron';
+
+  /// Automation run (Cron, Kanban worker, tool, subagent, webhook, one-shot…)
+  /// versus a normal chat. Decided ONLY by the server's `source`, as Desktop's
+  /// sidebar does (`SIDEBAR_EXCLUDED_SOURCES`): the same field the library's
+  /// `sources`/`exclude_sources` query filters on, so Home, the drawer, the
+  /// Chats/Automation tabs and the history cleanup can never disagree.
+  bool get isAutomation => AutomationSessionSources.contains(source);
 
   /// Whether this row is its own entry in a session list (Home recents,
   /// Conversations, drawer), one rule for every screen.
