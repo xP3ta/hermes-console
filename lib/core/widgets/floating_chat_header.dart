@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/activity_snapshot.dart';
 import '../theme/app_theme.dart';
 
 /// Tone of an idle/override header pill.
@@ -29,6 +30,11 @@ class HeaderMascotRequest {
     required this.identity,
     required this.state,
     this.members = const [],
+    this.memberStates = const [],
+    this.activity,
+    this.error = false,
+    this.justFinished = false,
+    this.name,
     this.size = FloatingChatHeader.faceSize,
   });
 
@@ -38,6 +44,24 @@ class HeaderMascotRequest {
 
   /// Rooms: the member identities, in cluster order. Empty elsewhere.
   final List<String> members;
+
+  /// Rooms: each member's own state, parallel to [members]. Missing
+  /// entries fall back to [state].
+  final List<HeaderMascotState> memberStates;
+
+  /// Chats: what is live now, so the engine can tell a tool from thinking
+  /// and a pending permission from a running step. [state] still owns
+  /// offline.
+  final ActivitySnapshot? activity;
+
+  /// The last turn failed.
+  final bool error;
+
+  /// The short "just finished" window after a turn.
+  final bool justFinished;
+
+  /// Screen-reader name; defaults to [identity].
+  final String? name;
   final double size;
 
   bool get isRoom => members.isNotEmpty;

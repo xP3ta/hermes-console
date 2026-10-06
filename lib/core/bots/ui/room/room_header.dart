@@ -84,6 +84,15 @@ class RoomHeaderBar extends StatelessWidget {
           : HeaderMascotRequest(
               identity: title,
               members: [for (final m in members) m.memberId],
+              memberStates: [
+                for (final m in members)
+                  switch (states[m.memberId]) {
+                    RoomTurnState.working => HeaderMascotState.working,
+                    RoomTurnState.needsYou ||
+                    RoomTurnState.failed => HeaderMascotState.waiting,
+                    _ => HeaderMascotState.idle,
+                  },
+              ],
               state: switch (tone) {
                 FloatingHeaderTone.idle => HeaderMascotState.idle,
                 FloatingHeaderTone.working => HeaderMascotState.working,

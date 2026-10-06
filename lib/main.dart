@@ -9,6 +9,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/widgets/artifact_viewer/code_view_prefs.dart';
+import 'core/widgets/floating_chat_header.dart';
+import 'core/widgets/mascot/header_mascot.dart';
 import 'core/widgets/mascot/mascot_sprite.dart';
 import 'core/services/message_reaction_prefs.dart';
 import 'core/services/pinned_prompt_prefs.dart';
@@ -2878,7 +2880,12 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                     child: AppLockGate(
                       lock: widget.appLock,
                       navigatorKey: _navigatorKey,
-                      child: navChild!,
+                      // Every floating chat header draws its mascot with the
+                      // sprite engine.
+                      child: HeaderMascotScope(
+                        builder: buildHeaderMascot,
+                        child: navChild!,
+                      ),
                     ),
                   ),
                 ),

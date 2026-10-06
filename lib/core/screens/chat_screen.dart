@@ -7247,6 +7247,7 @@ class _ChatScreenState extends State<ChatScreen>
         _chatBound &&
         _chat.transportStatusListenable.value.state ==
             ChatTransportState.offline;
+    final snapshot = _buildActivitySnapshot();
     return FloatingChatHeader(
       key: ValueKey(botSurface ? 'bot-chat-header' : 'chat-header'),
       leading: leading,
@@ -7265,6 +7266,11 @@ class _ChatScreenState extends State<ChatScreen>
                 ChatActivityKind.awaitingApproval => HeaderMascotState.waiting,
                 null => HeaderMascotState.idle,
               },
+        // The mascot engine reads the same snapshot as the pill.
+        activity: snapshot,
+        error: _chatBound && _chat.state == ChatPipelineState.failed,
+        justFinished: _chatBound && _chat.state == ChatPipelineState.completed,
+        name: name,
       ),
       faces: botSurface
           ? _BotChatHeaderFace(
@@ -7280,7 +7286,7 @@ class _ChatScreenState extends State<ChatScreen>
             ),
       pill: ActivityTaskLingerHost(
         key: const ValueKey('chat-activity-pill'),
-        snapshot: _buildActivitySnapshot(),
+        snapshot: snapshot,
         actions: _buildActivityActions(),
         // ps1215: the same clock the chat measures the turn with.
         clock: _chat.wallNow,

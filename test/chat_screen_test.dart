@@ -144,6 +144,7 @@ import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/core/widgets/mission_profile_avatar.dart';
 import 'package:hermes_android/core/widgets/motion_entrance.dart';
 import 'package:hermes_android/core/widgets/chat_status_pill.dart';
+import 'package:hermes_android/core/widgets/mascot/mascot_sprite.dart';
 import 'package:hermes_android/core/widgets/stacked_image_cards.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
@@ -33102,6 +33103,61 @@ void main() {
       expect(pillRect.bottom, lessThanOrEqualTo(inset));
       expect(face.top, greaterThanOrEqualTo(24), reason: 'below status bar');
       expect(find.byKey(const ValueKey('chat-notch')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the header draws the sprite mascot, and it stops while '
+        'another route covers the chat', (tester) async {
+      await pumpChat(tester, connection: _remoteConn('conn-fh1215-mascot'));
+      await tester.pump();
+      final sprite = find.descendant(
+        of: find.byKey(const ValueKey('chat-header')),
+        matching: find.byType(MascotSprite),
+      );
+      expect(sprite, findsOneWidget);
+      expect(tester.widget<MascotSprite>(sprite).header, isTrue);
+      expect(find.byKey(const ValueKey('chat-header-face')), findsNothing);
+      expect(MascotSprite.visibleHeaders.value, 1);
+
+      // Motion on (tests run with still sprites): idle blinks on a timer.
+      debugMascotSpritesStill = false;
+      addTearDown(() => debugMascotSpritesStill = true);
+      final navigator = tester.state<NavigatorState>(
+        find.byType(Navigator).first,
+      );
+      Future<void> settle() async {
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+      }
+
+      unawaited(
+        navigator.push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => const Scaffold(body: SizedBox.expand()),
+          ),
+        ),
+      );
+      await settle();
+      expect(MascotSprite.visibleHeaders.value, 0);
+      expect(debugMascotActiveTimers, 0, reason: 'covered: no frames');
+
+      navigator.pop();
+      await settle();
+      expect(MascotSprite.visibleHeaders.value, 1);
+      expect(debugMascotActiveTimers, greaterThan(0), reason: 'visible again');
+
+      unawaited(
+        navigator.push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => const Scaffold(body: SizedBox.expand()),
+          ),
+        ),
+      );
+      await settle();
+      expect(debugMascotActiveTimers, 0);
+      navigator.pop();
+      debugMascotSpritesStill = true;
+      await settle();
       expect(tester.takeException(), isNull);
     });
 
