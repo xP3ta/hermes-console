@@ -144,6 +144,7 @@ import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/core/widgets/mission_profile_avatar.dart';
 import 'package:hermes_android/core/widgets/motion_entrance.dart';
 import 'package:hermes_android/core/widgets/chat_status_pill.dart';
+import 'package:hermes_android/core/widgets/mascot/mascot_identity.dart';
 import 'package:hermes_android/core/widgets/mascot/mascot_sprite.dart';
 import 'package:hermes_android/core/widgets/stacked_image_cards.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
@@ -23660,9 +23661,13 @@ void main() {
         ),
         findsOneWidget,
       );
-      // fh1215: the floating header carries its own face, a separate widget.
+      // fh1215: the floating header carries its own face, a separate widget
+      // (the sprite mascot since the #189 wiring).
       expect(
-        find.byKey(const ValueKey('chat-header-companion')),
+        find.descendant(
+          of: find.byKey(const ValueKey('chat-header')),
+          matching: find.byKey(const ValueKey('header-mascot')),
+        ),
         findsOneWidget,
       );
       final companion = tester.widget<CompanionStatusIndicator>(_messageFace());
@@ -23736,9 +23741,13 @@ void main() {
         ),
         findsOneWidget,
       );
-      // fh1215: the floating header carries its own face, a separate widget.
+      // fh1215: the floating header carries its own face, a separate widget
+      // (the sprite mascot since the #189 wiring).
       expect(
-        find.byKey(const ValueKey('chat-header-companion')),
+        find.descendant(
+          of: find.byKey(const ValueKey('chat-header')),
+          matching: find.byKey(const ValueKey('header-mascot')),
+        ),
         findsOneWidget,
       );
       final activeCompanion = tester.widget<CompanionStatusIndicator>(
@@ -23769,9 +23778,13 @@ void main() {
         ),
         findsOneWidget,
       );
-      // fh1215: the floating header carries its own face, a separate widget.
+      // fh1215: the floating header carries its own face, a separate widget
+      // (the sprite mascot since the #189 wiring).
       expect(
-        find.byKey(const ValueKey('chat-header-companion')),
+        find.descendant(
+          of: find.byKey(const ValueKey('chat-header')),
+          matching: find.byKey(const ValueKey('header-mascot')),
+        ),
         findsOneWidget,
       );
       final finishedCompanion = tester.widget<CompanionStatusIndicator>(
@@ -32776,12 +32789,19 @@ void main() {
     expect(find.text('HERMES CONSOLE'), findsNothing);
     // fh1215: idle, the header pill says the bot's name only.
     expect(find.text('@infra'), findsNothing);
-    final botAvatar = find.byKey(const ValueKey('bot-chat-avatar-infra'));
-    expect(
-      find.descendant(of: botAvatar, matching: find.byType(Image)),
-      findsOneWidget,
+    // The header face is the bot's sprite mascot (#189 wiring), keyed to
+    // its profile.
+    final headerMascot = find.descendant(
+      of: find.byKey(const ValueKey('bot-chat-header')),
+      matching: find.byType(MascotSprite),
     );
-    expect(avatarLoads, ['infra']);
+    expect(headerMascot, findsOneWidget);
+    expect(
+      tester.widget<MascotSprite>(headerMascot).identity,
+      MascotIdentity.forProfile('infra'),
+    );
+    expect(tester.widget<MascotSprite>(headerMascot).name, 'Infra Bot');
+    expect(avatarLoads.where((p) => p != 'infra'), isEmpty);
     expect(find.byKey(const ValueKey('voice')), findsNothing);
     expect(find.byKey(const ValueKey('send')), findsOneWidget);
     // Sin drawer, "nueva sesión" ni ⋮: buscar, el modelo y los ajustes de la
@@ -32864,6 +32884,8 @@ void main() {
     // the header face ran a repeating clock while nothing was happening.
     debugLivingBotFacesStill = false;
     addTearDown(() => debugLivingBotFacesStill = true);
+    debugMascotSpritesStill = false;
+    addTearDown(() => debugMascotSpritesStill = true);
     await pumpChat(
       tester,
       connection: _remoteConn('conn-bot-idle-frames'),
@@ -32888,12 +32910,12 @@ void main() {
         botModeUiMeta: {'title': 'Argos', 'shape': 'blobatar'},
       ),
     );
-    final header = find.byKey(const ValueKey('bot-chat-avatar-argos'));
-    expect(header, findsOneWidget);
-    expect(
-      find.descendant(of: header, matching: find.byType(HermesBotFace)),
-      findsOneWidget,
+    // The header face is the sprite mascot (#189 wiring).
+    final header = find.descendant(
+      of: find.byKey(const ValueKey('bot-chat-header')),
+      matching: find.byType(MascotSprite),
     );
+    expect(header, findsOneWidget);
     // Let the route and one-shot entrance animations finish.
     for (var i = 0; i < 30; i++) {
       await tester.pump(const Duration(milliseconds: 100));
@@ -32911,6 +32933,8 @@ void main() {
       reason: 'idle bot chat kept ticking in $busy of $steps samples',
     );
     expect(livingBotFaceActiveTickers, 0);
+    // Idle mascot: at most its one-shot blink timer, never a frame clock.
+    expect(debugMascotActiveTimers, lessThanOrEqualTo(1));
     expect(tester.takeException(), isNull);
   });
 
@@ -33078,7 +33102,10 @@ void main() {
       expect(pill, findsOneWidget);
       expect(tester.widget<Text>(pillText).data, 'qa');
       final face = tester.getRect(
-        find.byKey(const ValueKey('bot-chat-avatar-qa')),
+        find.descendant(
+          of: find.byKey(const ValueKey('bot-chat-header')),
+          matching: find.byKey(const ValueKey('header-mascot')),
+        ),
       );
       final pillRect = tester.getRect(pill);
       expect((face.center.dx - pillRect.center.dx).abs(), lessThan(1));
