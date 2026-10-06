@@ -88,8 +88,8 @@ void main() {
     await expectA11yLayoutUsable(tester, {
       'menu': find.byTooltip('Menu'),
       'new chat': find.byTooltip('New chat'),
-      'search in chat': find.byTooltip('Search in chat'),
-      'conversation settings': find.byTooltip('Conversation settings'),
+      // Search and conversation settings live behind the composer notch.
+      'conversation notch': find.byKey(const ValueKey('chat-notch')),
       'composer': find.byKey(const ValueKey('chat-composer-host')),
       'user message': find.text('Review the release').last,
       'assistant message': find.text('The release is ready.'),
