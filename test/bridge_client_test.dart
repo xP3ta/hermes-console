@@ -587,7 +587,7 @@ void main() {
           ),
         );
         await expectLater(
-          c.rollback('b1'),
+          c.modelOptions(),
           throwsA(
             isA<BridgeException>()
                 .having((e) => e.kind, 'kind', BridgeErrorKind.badRequest)
@@ -602,7 +602,7 @@ void main() {
       for (final s in [401, 403]) {
         final c = clientWith(MockClient((_) async => http.Response('no', s)));
         await expectLater(
-          c.rollback('b1'),
+          c.modelOptions(),
           throwsA(
             isA<BridgeException>()
                 .having((e) => e.kind, 'kind', BridgeErrorKind.auth)
@@ -616,7 +616,7 @@ void main() {
     test('HTTP 500 se clasifica como server', () async {
       final c = clientWith(MockClient((_) async => http.Response('boom', 500)));
       await expectLater(
-        c.rollback('b1'),
+        c.modelOptions(),
         throwsA(
           isA<BridgeException>().having(
             (e) => e.kind,
@@ -670,7 +670,7 @@ void main() {
         MockClient((_) async => http.Response('BODY-MARKER malformed', 200)),
       );
       await expectLater(
-        c.rollback('b1'),
+        c.modelOptions(),
         throwsA(
           isA<BridgeException>()
               .having((e) => e.code, 'code', 'invalid_response')
@@ -697,7 +697,7 @@ void main() {
         ),
       );
       try {
-        await c.rollback('b1');
+        await c.modelOptions();
         fail('debió lanzar BridgeException');
       } on BridgeException catch (e) {
         expect(e.diagnostic, isNotNull);

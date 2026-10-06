@@ -2340,7 +2340,6 @@
       }
     }
   },
-  "runsListNote": "Ejecuciones lanzadas desde esta app. El gateway no las conserva tras completarse.",
   "runsRefreshStates": "Actualizar estados",
   "runsEmpty": "Sin ejecuciones todavía",
   "runsEmptySub": "Lanza una tarea al agente con el botón +",
@@ -4984,7 +4983,6 @@
   "lisOauthDoneWithUrl": "Autenticación completada. Arranca el agente y entra.",
   "lisOauthUrlTimeout": "No se pudo obtener la URL de autenticación. Intenta de nuevo.",
   "lisOauthBrowserNote": "Este proveedor usa autenticación por navegador (no necesita API key). Pulsa Autenticar y, cuando aparezca la URL, ábrela para iniciar sesión; luego pulsa «Arrancar agente y entrar».",
-  "runsRepeat": "Relanzar",
   "runComposerTitle": "Nueva ejecución",
   "runComposerSubtitle": "Elige una plantilla o escribe la instrucción. ▷ la lanza directa.",
   "runComposerHint": "Instrucción para el agente…",

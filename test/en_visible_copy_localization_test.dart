@@ -125,27 +125,6 @@ void main() {
     );
   });
 
-  test('local Runs copy is localized in English and Spanish', () {
-    const en = {
-      'runsLocalRunning': 'Running on the local agent…',
-      'runsLocalBridgeUnavailable':
-          'Could not connect to the local agent (Mobile Bridge). Start the agent and try again.',
-    };
-    const es = {
-      'runsLocalRunning': 'Ejecutando en el agente local…',
-      'runsLocalBridgeUnavailable':
-          'No se pudo conectar con el agente local (Mobile Bridge). Arranca el agente y reintenta.',
-    };
-    _expectLocalized(en, es);
-
-    final source = _source('lib/core/screens/runs_screen.dart');
-    for (final key in en.keys) {
-      expect(source, contains('.$key'));
-    }
-    expect(source, isNot(contains("'Ejecutando en el agente local…'")));
-    expect(source, isNot(contains("'No se pudo conectar con el agente local")));
-  });
-
   test('Task Center Mobile Bridge copy is localized in English and Spanish', () {
     const en = {
       'runsLocalRunning': 'Running on the local agent…',
