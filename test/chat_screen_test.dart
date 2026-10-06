@@ -13234,6 +13234,16 @@ void main() {
       final draftsDir = Directory('${temp.path}/attachment_drafts');
       expect(draftsDir.listSync().whereType<File>(), hasLength(3));
 
+      // Firing the entry's onPressed directly leaves the attach menu open,
+      // which a real tap would close; close it so it does not cover the
+      // tray's remove button.
+      MenuController.maybeOf(
+        tester.element(find.byType(MenuItemButton).first),
+      )!.close();
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(find.byType(MenuItemButton), findsNothing);
       final firstCard = find.byType(AttachmentCard).first;
       await tester.tap(
         find.descendant(of: firstCard, matching: find.byIcon(Icons.close)),
