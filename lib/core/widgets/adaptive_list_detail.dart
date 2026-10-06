@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../theme/app_theme.dart';
+import '../theme/motion.dart';
 import '../utils/responsive.dart';
 
 /// Material 3 list-detail layout for tablets (Chats, Projects, Settings).
@@ -175,7 +176,8 @@ class AdaptiveListDetailState extends State<AdaptiveListDetail>
           onGenerateInitialRoutes: (_, _) => [
             PageRouteBuilder<void>(
               settings: const RouteSettings(name: 'detail-placeholder'),
-              pageBuilder: (_, _, _) => widget.placeholder,
+              pageBuilder: (_, _, _) =>
+                  CoveredRouteMediaQueryFreeze(child: widget.placeholder),
               transitionDuration: Duration.zero,
               reverseTransitionDuration: Duration.zero,
             ),

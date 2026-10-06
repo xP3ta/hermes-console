@@ -173,8 +173,7 @@ class _HermesBotFaceState extends State<HermesBotFace>
   }
 
   void _syncMotion() {
-    final reduceMotion =
-        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final enabled =
         widget.animate &&
         widget.visual is HermesBlobatarFaceVisual &&

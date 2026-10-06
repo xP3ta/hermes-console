@@ -6,6 +6,7 @@ import 'package:video_player/video_player.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../theme/motion.dart';
 import 'attachment_card.dart' show saveMediaToGallery, shareMediaFile;
 
 /// `mm:ss` for a playback position/duration. Local formatting only — does
@@ -494,9 +495,11 @@ Future<Duration?> showVideoViewer(
       barrierColor: Colors.black,
       barrierDismissible: true,
       transitionDuration: const Duration(milliseconds: 180),
-      pageBuilder: (ctx, anim, _) => FadeTransition(
-        opacity: anim,
-        child: _GeneratedVideoViewer(file: file, startAt: startAt),
+      pageBuilder: (ctx, anim, _) => CoveredRouteMediaQueryFreeze(
+        child: FadeTransition(
+          opacity: anim,
+          child: _GeneratedVideoViewer(file: file, startAt: startAt),
+        ),
       ),
     ),
   );

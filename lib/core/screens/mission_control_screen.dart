@@ -2878,13 +2878,14 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final media = MediaQuery.of(context);
+          // Aspect reads only: a full MediaQuery.of would rebuild the whole
+          // Bots body on any MediaQuery change.
           _surfaceCoordinator.updateViewport(
             postLayoutSize: constraints.biggest,
-            safePadding: media.padding,
-            viewInsets: media.viewInsets,
-            textScale: media.textScaler.scale(1),
-            reducedMotion: media.disableAnimations,
+            safePadding: MediaQuery.paddingOf(context),
+            viewInsets: MediaQuery.viewInsetsOf(context),
+            textScale: MediaQuery.textScalerOf(context).scale(1),
+            reducedMotion: MediaQuery.disableAnimationsOf(context),
           );
           return Stack(
             fit: StackFit.expand,
