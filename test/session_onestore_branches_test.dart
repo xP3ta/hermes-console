@@ -20,6 +20,7 @@ import 'package:hermes_android/main.dart' show hermesRouteObserver;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/home_chat_finders.dart';
 
 final int _now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
@@ -107,17 +108,21 @@ class _HomeClient extends ApiClient {
   void close() {}
 }
 
-void expectRows(String surface) {
+void expectRows(
+  String surface, {
+  Finder Function(String title, {bool skipOffstage})? rowOf,
+}) {
+  rowOf ??= find.text;
   for (final title in _shown) {
     expect(
-      find.text(title, skipOffstage: false),
+      rowOf(title, skipOffstage: false),
       findsOneWidget,
       reason: '$surface shows "$title"',
     );
   }
   for (final title in _folded) {
     expect(
-      find.text(title, skipOffstage: false),
+      rowOf(title, skipOffstage: false),
       findsNothing,
       reason: '$surface folds "$title"',
     );
@@ -207,8 +212,10 @@ void main() {
         ),
       ),
     );
-    await _pumpUntil(tester, find.text('Release plan: option B'));
-    expectRows('Home');
+    // Inicio v3: the newest chat is the calm card's starter, the others
+    // are Retomar rows (#183).
+    await _pumpUntil(tester, findHomeChat('Release plan: option B'));
+    expectRows('Home', rowOf: findHomeChat);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
   });

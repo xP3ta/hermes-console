@@ -1090,6 +1090,9 @@ class _RetomarRow extends StatelessWidget {
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
                             preview,
+                            // Same key as the Conversations-parity tests
+                            // read on the old Home row.
+                            key: ValueKey('preview-$preview'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(

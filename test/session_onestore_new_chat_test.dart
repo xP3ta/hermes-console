@@ -22,6 +22,7 @@ import 'package:hermes_android/main.dart' show hermesRouteObserver;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/home_chat_finders.dart';
 
 final int _now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
@@ -279,7 +280,7 @@ void main() {
       final id = await connectionId();
       await tester.runAsync(() => _saveDraft(id, _provisionalId, _firstTurn));
       await _pumpHome(tester, const []);
-      expect(find.text(_firstTurn), findsOneWidget);
+      expect(findHomeChat(_firstTurn), findsOneWidget);
       await _unmount(tester);
     });
 
@@ -289,8 +290,8 @@ void main() {
       final id = await connectionId();
       await tester.runAsync(() => _saveDraft(id, _serverId, _followUp));
       await _pumpHome(tester, [_serverRow()]);
-      expect(find.text(_serverTitle), findsOneWidget);
-      expect(find.text(_followUp), findsNothing, reason: 'no second row');
+      expect(findHomeChat(_serverTitle), findsOneWidget);
+      expect(findHomeChat(_followUp), findsNothing, reason: 'no second row');
       await _unmount(tester);
     });
   });

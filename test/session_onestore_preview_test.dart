@@ -48,6 +48,10 @@ class _ListOnlyClient extends ApiClient {
   void close() {}
 }
 
+/// Older than Inicio v3's 12 h «Continue» window: the chat is a «Retomar»
+/// row, the Home surface that paints a preview line (#183).
+const _retomarMinutes = 13 * 60;
+
 double _minutesAgo(int minutes) =>
     DateTime.now().subtract(Duration(minutes: minutes)).millisecondsSinceEpoch /
     1000;
@@ -120,7 +124,7 @@ void main() {
         messageCount: 4,
         isActive: false,
         preview: prompt,
-        startedAt: _minutesAgo(5),
+        startedAt: _minutesAgo(_retomarMinutes),
       );
       await pumpColdHome(tester, [row]);
       final strings = await Strings.delegate.load(const Locale('en'));
@@ -149,7 +153,7 @@ void main() {
       preview: 'Review the release notes for 1.2.15',
       lastUserPreview: 'And the changelog?',
       lastAssistantPreview: 'The changelog is ready.',
-      startedAt: _minutesAgo(25),
+      startedAt: _minutesAgo(_retomarMinutes),
     );
     await pumpColdHome(tester, [row]);
 
@@ -164,7 +168,7 @@ void main() {
   /// A chat whose list row has no `preview` but does carry last-turn
   /// previews. Desktop's sidebar paints only `session.preview`, so it shows
   /// the title and no preview line.
-  Session noPreviewRow() => Session(
+  Session noPreviewRow({int minutesAgo = 8}) => Session(
     id: 'no-preview',
     title: 'Untouched draft topic',
     model: 'model-a',
@@ -174,7 +178,7 @@ void main() {
     preview: '',
     lastUserPreview: 'Last prompt',
     lastAssistantPreview: 'Last answer',
-    startedAt: _minutesAgo(8),
+    startedAt: _minutesAgo(minutesAgo),
   );
 
   Future<void> expectNoPreviewLine(WidgetTester tester, String surface) async {
@@ -200,7 +204,12 @@ void main() {
   testWidgets('Home paints no preview line where Desktop paints none', (
     tester,
   ) async {
-    await pumpColdHome(tester, [noPreviewRow()]);
+    await pumpColdHome(tester, [noPreviewRow(minutesAgo: _retomarMinutes)]);
+    expect(
+      find.byKey(const ValueKey('home-retomar-chat:no-preview')),
+      findsOneWidget,
+      reason: 'the chat is a Retomar row, where Home paints previews',
+    );
     await expectNoPreviewLine(tester, 'Home');
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();

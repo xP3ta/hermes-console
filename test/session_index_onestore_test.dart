@@ -9,6 +9,7 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/home_chat_finders.dart';
 
 /// One source of truth for the per-connection session overrides (local
 /// titles, archive, pin, hidden): every screen reads the same store, a change
@@ -237,9 +238,9 @@ void main() {
       );
       for (var attempt = 0; attempt < 40; attempt++) {
         await tester.pump(const Duration(milliseconds: 50));
-        if (find.text(visible).evaluate().isNotEmpty) break;
+        if (findHomeChat(visible).evaluate().isNotEmpty) break;
       }
-      expect(find.text(visible), findsOneWidget);
+      expect(findHomeChat(visible), findsOneWidget);
       // Let the initial refresh settle so later reads are attributable.
       await tester.pump(const Duration(milliseconds: 200));
     }
@@ -262,8 +263,8 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('Renamed elsewhere'), findsOneWidget);
-      expect(find.text('Server title'), findsNothing);
+      expect(findHomeChat('Renamed elsewhere'), findsOneWidget);
+      expect(findHomeChat('Server title'), findsNothing);
       expect(client.sessionReads, reads, reason: 'no extra network read');
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -284,14 +285,14 @@ void main() {
       await other.archiveSession(archived);
       await tester.pump();
 
-      expect(find.text('Archived elsewhere'), findsNothing);
-      expect(find.text('Kept row'), findsOneWidget);
+      expect(findHomeChat('Archived elsewhere'), findsNothing);
+      expect(findHomeChat('Kept row'), findsOneWidget);
       expect(client.sessionReads, reads);
 
       // Restoring it brings the row back from the same retained page.
       await other.unarchiveSession(archived);
       await tester.pump();
-      expect(find.text('Archived elsewhere'), findsOneWidget);
+      expect(findHomeChat('Archived elsewhere'), findsOneWidget);
       expect(client.sessionReads, reads);
 
       await tester.pumpWidget(const SizedBox.shrink());

@@ -22,6 +22,7 @@ import 'package:hermes_android/main.dart' show hermesRouteObserver;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/home_chat_finders.dart';
 
 double _nowSeconds() => DateTime.now().millisecondsSinceEpoch / 1000;
 
@@ -524,9 +525,9 @@ void main() {
       );
       for (var attempt = 0; attempt < 40; attempt++) {
         await tester.pump(const Duration(milliseconds: 50));
-        if (find.text('Deleted in detail').evaluate().isNotEmpty) break;
+        if (findHomeChat('Deleted in detail').evaluate().isNotEmpty) break;
       }
-      expect(find.text('Deleted in detail'), findsOneWidget);
+      expect(findHomeChat('Deleted in detail'), findsOneWidget);
       await tester.pump(const Duration(milliseconds: 200));
     }
 
@@ -546,8 +547,8 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
       }
 
-      expect(find.text('Deleted in detail'), findsNothing);
-      expect(find.text('Kept row'), findsOneWidget);
+      expect(findHomeChat('Deleted in detail'), findsNothing);
+      expect(findHomeChat('Kept row'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
@@ -579,13 +580,13 @@ void main() {
         }
       });
       await tester.pump();
-      expect(find.text('Deleted in detail'), findsNothing);
+      expect(findHomeChat('Deleted in detail'), findsNothing);
 
       client.hold!.complete();
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.text('Deleted in detail'), findsNothing);
-      expect(find.text('Kept row'), findsOneWidget);
+      expect(findHomeChat('Deleted in detail'), findsNothing);
+      expect(findHomeChat('Kept row'), findsOneWidget);
 
       // A later refresh that fails keeps Home's retained page: the deleted
       // chat is not in it either.
@@ -598,8 +599,8 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.text('Deleted in detail'), findsNothing);
-      expect(find.text('Kept row'), findsOneWidget);
+      expect(findHomeChat('Deleted in detail'), findsNothing);
+      expect(findHomeChat('Kept row'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
@@ -635,8 +636,8 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.text('Deleted in detail'), findsNothing);
-      expect(find.text('Kept row'), findsOneWidget);
+      expect(findHomeChat('Deleted in detail'), findsNothing);
+      expect(findHomeChat('Kept row'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
@@ -652,7 +653,7 @@ void main() {
       final store = await SessionArchive.load(prefs, connection.id);
       await tester.runAsync(() => store.markSessionDeleted(gone));
       await tester.pump();
-      expect(find.text('Deleted in detail'), findsNothing);
+      expect(findHomeChat('Deleted in detail'), findsNothing);
       // What the home screen widget asks: it only holds an id.
       expect(store.isSessionIdDeleted('gone'), isTrue);
 
@@ -668,7 +669,7 @@ void main() {
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
-      expect(find.text('Recreated'), findsOneWidget);
+      expect(findHomeChat('Recreated'), findsOneWidget);
       expect(store.isSessionIdDeleted('gone'), isFalse);
       // The old copy of the deleted chat stays gone.
       expect(store.isSessionDeleted(gone), isFalse);
@@ -695,13 +696,13 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(client.sessionReads, greaterThan(reads));
-      expect(find.text('Deleted in detail'), findsNothing);
-      expect(find.text('Kept row'), findsOneWidget);
+      expect(findHomeChat('Deleted in detail'), findsNothing);
+      expect(findHomeChat('Kept row'), findsOneWidget);
 
       client.hold!.complete();
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.text('Deleted in detail'), findsNothing);
-      expect(find.text('Kept row'), findsOneWidget);
+      expect(findHomeChat('Deleted in detail'), findsNothing);
+      expect(findHomeChat('Kept row'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
