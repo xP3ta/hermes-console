@@ -17,6 +17,7 @@ import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
+import 'package:hermes_android/core/screens/lock_screen.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
@@ -313,10 +314,17 @@ void main() {
 
   /// Home (the app's real `home:` route) → Mission Control (Bots) → chat,
   /// pushed with the same MaterialPageRoute the app uses.
-  Future<NavigatorState> pumpStack(WidgetTester tester, _Gateway g) async {
+  Future<NavigatorState> pumpStack(
+    WidgetTester tester,
+    _Gateway g, {
+    Map<String, Object> extraPrefs = const {},
+  }) async {
     tester.platformDispatcher.localesTestValue = [const Locale('es')];
     addTearDown(tester.platformDispatcher.clearLocalesTestValue);
-    SharedPreferences.setMockInitialValues({'onboarding_done': true});
+    SharedPreferences.setMockInitialValues({
+      'onboarding_done': true,
+      ...extraPrefs,
+    });
     final prefs = await SharedPreferences.getInstance();
     final manager = await ConnectionManager.create(prefs);
     final secureStorage = SecureStorage();
@@ -396,6 +404,176 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 20));
   }
+
+  group('returning to the app after switching away (QA 9491)', () {
+    Finder composer() => find
+        .descendant(
+          of: find.byType(ChatScreen, skipOffstage: false),
+          matching: find.byType(TextField, skipOffstage: false),
+        )
+        .last;
+    FocusNode composerFocus(WidgetTester tester) =>
+        tester.widget<TextField>(composer()).focusNode!;
+    int shows(WidgetTester tester) => tester.testTextInput.log
+        .where((call) => call.method == 'TextInput.show')
+        .length;
+
+    Future<void> openKeyboard(WidgetTester tester) async {
+      for (final inset in _openFrames) {
+        tester.view.viewInsets = FakeViewPadding(bottom: inset);
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+    }
+
+    /// Android leaves the app: the IME goes away while no frames run.
+    Future<void> leave(WidgetTester tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump(const Duration(milliseconds: 16));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 0);
+      // Let the focus change settle (it is applied in a microtask).
+      await tester.pump(Duration.zero);
+    }
+
+    Future<void> comeBack(WidgetTester tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    }
+
+    void expectNoGap(WidgetTester tester, double restingBottom, String when) {
+      final chat = tester.element(find.byType(ChatScreen));
+      expect(MediaQuery.viewInsetsOf(chat).bottom, 0, reason: when);
+      expect(
+        tester.getRect(composer()).bottom,
+        closeTo(restingBottom, 0.5),
+        reason: '$when: the composer must sit at the bottom',
+      );
+    }
+
+    testWidgets('without the keyboard: no gap and the keyboard stays closed', (
+      tester,
+    ) async {
+      usePhoneView(tester);
+      final g = _Gateway();
+      await pumpStack(tester, g);
+      composerFocus(tester).unfocus();
+      await tester.pump(const Duration(milliseconds: 400));
+      final restingBottom = tester.getRect(composer()).bottom;
+      await leave(tester);
+      tester.testTextInput.log.clear();
+      await comeBack(tester);
+      await tester.pump();
+      expectNoGap(tester, restingBottom, 'first resumed frame');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(shows(tester), 0);
+      expect(composerFocus(tester).hasFocus, isFalse);
+      expect(tester.takeException(), isNull);
+      await tearDownStack(tester, g);
+    });
+
+    testWidgets('with the composer focused: the keyboard is closed while away '
+        'and asked back once on return', (tester) async {
+      usePhoneView(tester);
+      final g = _Gateway();
+      await pumpStack(tester, g);
+      final restingBottom = tester.getRect(composer()).bottom;
+      await openKeyboard(tester);
+      expect(tester.getRect(composer()).bottom, lessThan(restingBottom - 200));
+      tester.testTextInput.log.clear();
+      await leave(tester);
+      // The input connection is released while away, so Android does not
+      // restore a keyboard inset behind our back on return.
+      expect(composerFocus(tester).hasFocus, isFalse);
+      expect(
+        tester.testTextInput.log.map((c) => c.method),
+        contains('TextInput.clearClient'),
+      );
+      tester.testTextInput.log.clear();
+      await comeBack(tester);
+      await tester.pump();
+      expectNoGap(tester, restingBottom, 'first resumed frame');
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(composerFocus(tester).hasFocus, isTrue);
+      expect(shows(tester), 1);
+      expect(tester.takeException(), isNull);
+      await tearDownStack(tester, g);
+    });
+
+    testWidgets('a route opened while away keeps the keyboard closed', (
+      tester,
+    ) async {
+      usePhoneView(tester);
+      final g = _Gateway();
+      final nav = await pumpStack(tester, g);
+      await openKeyboard(tester);
+      await leave(tester);
+      // A notification tap opened another screen before the app came back.
+      nav.push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('other screen')),
+        ),
+      );
+      tester.testTextInput.log.clear();
+      await comeBack(tester);
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('other screen'), findsOneWidget);
+      expect(shows(tester), 0);
+      expect(composerFocus(tester).hasFocus, isFalse);
+      nav.pop();
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(shows(tester), 0);
+      expect(composerFocus(tester).hasFocus, isFalse);
+      expect(tester.takeException(), isNull);
+      await tearDownStack(tester, g);
+    });
+
+    testWidgets('App Lock on return: no keyboard behind the lock screen, and '
+        'none after unlocking', (tester) async {
+      usePhoneView(tester);
+      final g = _Gateway();
+      await pumpStack(tester, g, extraPrefs: {'app_lock_timeout_s': 0});
+      // App Lock is switched on once the app is open (it would otherwise
+      // start locked).
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('app_lock_enabled', true);
+      final restingBottom = tester.getRect(composer()).bottom;
+      await openKeyboard(tester);
+      await leave(tester);
+      await comeBack(tester);
+      await tester.pump();
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      final lock = tester.state<HermesAppState>(find.byType(HermesApp)).appLock;
+      expect(lock.locked.value, isTrue);
+      expect(find.byType(LockScreen), findsOneWidget);
+      expect(composerFocus(tester).hasFocus, isFalse);
+      // Whatever the lock screen's own PIN field does, from here on nothing
+      // may hand the keyboard back to the chat composer.
+      final pin = find.descendant(
+        of: find.byType(LockScreen),
+        matching: find.byType(EditableText),
+      );
+      tester.testTextInput.log.clear();
+      lock.unlock();
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.byType(LockScreen), findsNothing);
+      expect(pin, findsNothing);
+      expect(composerFocus(tester).hasFocus, isFalse);
+      expect(shows(tester), 0);
+      expectNoGap(tester, restingBottom, 'after unlocking');
+      expect(tester.takeException(), isNull);
+      await tearDownStack(tester, g);
+    });
+  });
 
   testWidgets(
     'keyboard animation in a chat does not rebuild the covered Bots tab or Home',

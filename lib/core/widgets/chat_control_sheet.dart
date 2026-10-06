@@ -20,7 +20,6 @@ class ChatControlLabels {
   final String cron;
   final String? recovery;
   final String? extensions;
-  final String? terminal;
   final String delete;
   final String readOnly;
   final String releaseDesktop;
@@ -47,7 +46,6 @@ class ChatControlLabels {
     this.prompts,
     this.showPinnedPrompt,
     this.branch,
-    this.terminal,
   });
 }
 
@@ -72,7 +70,6 @@ class ChatControlSheet extends StatelessWidget {
   final VoidCallback? onCron;
   final VoidCallback? onRecovery;
   final VoidCallback? onExtensions;
-  final VoidCallback? onTerminal;
   final VoidCallback? onDelete;
   final bool showReleaseDesktop;
   final bool releaseDesktopEnabled;
@@ -97,7 +94,6 @@ class ChatControlSheet extends StatelessWidget {
     this.onCron,
     this.onRecovery,
     this.onExtensions,
-    this.onTerminal,
     this.showReleaseDesktop = false,
     this.releaseDesktopEnabled = false,
     this.releaseInFlight = false,
@@ -255,13 +251,6 @@ class ChatControlSheet extends StatelessWidget {
                   icon: Icons.extension_outlined,
                   title: labels.extensions!,
                   onTap: onExtensions!,
-                ),
-              if (labels.terminal != null && onTerminal != null)
-                _ActionRow(
-                  key: const ValueKey('chat-control-terminal'),
-                  icon: Icons.terminal_rounded,
-                  title: labels.terminal!,
-                  onTap: onTerminal!,
                 ),
             ],
           ),

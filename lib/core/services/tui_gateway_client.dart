@@ -21,7 +21,6 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/command_descriptor.dart';
 import '../models/composer_reference.dart';
-import '../models/terminal_exec.dart';
 import '../models/agent_profile.dart';
 import '../models/admin_integrations.dart';
 import '../models/bot_visual_identity.dart';
@@ -1492,7 +1491,6 @@ class TuiGatewayClient
         HermesDesktopControlGateway,
         HermesDesktopTurnSideGateway,
         HermesDesktopSessionControlGateway,
-        HermesTerminalGateway,
         HermesProjectManagementGateway,
         HermesPullRequestGateway,
         HermesForeignSessionGateway,
@@ -6541,79 +6539,6 @@ class TuiGatewayClient
     } catch (_) {
       return _invalidControlResponse(DesktopGatewayCapability.agentCenter);
     }
-  }
-
-  @override
-  bool get shellExecAvailable =>
-      !_connection.readOnly &&
-      _capabilityCache.canAttempt(DesktopGatewayCapability.shellExec);
-
-  static const Set<int> _shellExecServerCodes = {4004, 4005, 5001, 5002, 5003};
-
-  @override
-  Future<ShellExecResult> shellExec(
-    String command, {
-    required String profile,
-  }) async {
-    if (!shellExecAvailable) throw const ShellExecUnsupported();
-    final Map<String, dynamic> result;
-    try {
-      result = await _request('shell.exec', {
-        'command': command,
-        'profile': profile,
-      }, timeout: const Duration(seconds: 45));
-    } on TuiGatewayRpcError catch (error) {
-      final code = error.code;
-      if (code == -32601) {
-        _capabilityCache.mark(
-          DesktopGatewayCapability.shellExec,
-          DesktopGatewayCapabilityState.unsupported,
-        );
-        throw const ShellExecUnsupported();
-      }
-      if (code != null && _shellExecServerCodes.contains(code)) {
-        throw ShellExecRefusal(code, error.message);
-      }
-      throw const ShellExecFailure();
-    } catch (_) {
-      throw const ShellExecFailure();
-    }
-    _capabilityCache.mark(
-      DesktopGatewayCapability.shellExec,
-      DesktopGatewayCapabilityState.supported,
-    );
-    final parsed = ShellExecResult.tryParse(result);
-    if (parsed == null) throw const ShellExecFailure();
-    return parsed;
-  }
-
-  @override
-  Future<void> terminalResize(String runtimeSessionId, int cols) async {
-    try {
-      await _request('terminal.resize', {
-        'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
-        'cols': cols,
-      });
-    } catch (_) {
-      // Only records the column width for server-side rendering.
-    }
-  }
-
-  @override
-  Future<List<AgentProcessSeed>> agentProcessSeeds(
-    String runtimeSessionId, {
-    String? profile,
-  }) async {
-    final owner = profile?.trim() ?? '';
-    final result = await _controlRequest('process.list', {
-      'session_id': _validatedControlValue(runtimeSessionId, maxLength: 512),
-      if (owner.isNotEmpty) 'profile': owner,
-    }, capability: DesktopGatewayCapability.agentCenter);
-    final rows = result['processes'];
-    if (rows is! List) {
-      _invalidControlResponse(DesktopGatewayCapability.agentCenter);
-    }
-    return [for (final row in rows) ?AgentProcessSeed.tryParse(row)];
   }
 
   @override

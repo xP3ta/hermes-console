@@ -6,7 +6,7 @@ import '../theme/app_theme.dart';
 import '../theme/motion.dart';
 import '../utils/responsive.dart';
 import 'settings_deep_link.dart';
-import 'settings_search.dart';
+import 'settings_sections.dart';
 
 /// Settings laid out for the window size.
 ///

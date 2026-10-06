@@ -13,7 +13,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/settings_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/shared_gateway_pool.dart';
-import 'package:hermes_android/core/services/terminal_availability.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/theme/scroll_behavior.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
@@ -54,7 +53,6 @@ void main() {
     http = _SlowOfflineHttp();
     HttpOverrides.global = http;
     SharedGatewayPool.debugDefaultLinger = Duration.zero;
-    TerminalAvailability.resetForTesting();
     SharedPreferences.setMockInitialValues({});
     TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(

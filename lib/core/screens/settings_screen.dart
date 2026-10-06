@@ -18,12 +18,9 @@ import '../services/connection_manager.dart';
 
 import '../services/font_size_service.dart';
 import '../services/local_transcript_store.dart';
-import '../services/active_profile_scope.dart';
-import '../services/server_config_repository.dart';
-import '../settings/server_config_pages.dart';
 import '../settings/settings_deep_link.dart';
 import '../settings/settings_list_detail.dart';
-import '../settings/settings_search.dart';
+import '../settings/settings_sections.dart';
 import '../services/session_deletion.dart';
 import '../services/turn_outbox_store.dart';
 import '../theme/app_theme.dart';
@@ -42,10 +39,7 @@ import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_update_card.dart';
 import '../widgets/read_only.dart';
-import '../capabilities/capabilities_repository.dart'
-    show CapabilitiesRepository;
 import 'about_screen.dart';
-import 'advanced_settings_screen.dart';
 import 'lock_screen.dart';
 import 'gateway_manager_screen.dart';
 import 'instance_edit_screen.dart';
@@ -58,17 +52,13 @@ import 'dock_settings_screen.dart';
 import 'embed_settings_screen.dart';
 import 'notification_settings_screen.dart';
 import 'voice_settings_screen.dart';
-import 'server_config_page_screen.dart' show ServerConfigStoreFactory;
 
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/message_reaction_prefs.dart';
 import '../services/pinned_prompt_prefs.dart';
-import '../services/shared_gateway_pool.dart';
-import '../services/terminal_availability.dart';
 import '../widgets/hermes_app_bar.dart';
 import 'backup_restore_screen.dart';
-import 'terminal_pane_screen.dart';
 import '../widgets/diagnostic_bundle_tile.dart';
 import '../widgets/install_source_section.dart';
 import '../design/content.dart' show HermesToggleRow;
@@ -151,99 +141,15 @@ SettingsThemePresentation settingsThemePresentation(
   );
 }
 
-/// The Terminal row of Settings. Hidden until the server has answered
-/// `shell.exec`; asks once when the section appears (an empty command the
-/// server refuses, nothing runs).
-class _TerminalEntry extends StatefulWidget {
-  const _TerminalEntry({required this.connection, required this.connManager});
-
-  final SavedConnection connection;
-  final ConnectionManager connManager;
-
-  @override
-  State<_TerminalEntry> createState() => _TerminalEntryState();
-}
-
-class _TerminalEntryState extends State<_TerminalEntry> {
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_confirm());
-  }
-
-  String get _profile => Session.profileOwner(
-    widget.connManager.activeProfileFor(widget.connection.id),
-  );
-
-  Future<void> _confirm() async {
-    final conn = widget.connection;
-    if (conn.readOnly) return;
-    final lease = SharedGatewayPool.instance.acquire(conn);
-    try {
-      await TerminalAvailability.confirm(conn, lease.client, profile: _profile);
-    } finally {
-      lease.release();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<int>(
-      valueListenable: TerminalAvailability.changes,
-      builder: (context, _, _) {
-        if (!TerminalAvailability.offered(widget.connection)) {
-          return const SizedBox.shrink();
-        }
-        return HermesGroup(
-          children: [
-            HermesNavRow(
-              key: const ValueKey('settings-terminal'),
-              icon: Icons.terminal_rounded,
-              title: Strings.of(context).termTitle,
-              subtitle: Strings.of(context).termSubtitle,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => TerminalPaneScreen(
-                    connection: widget.connection,
-                    profile: _profile,
-                    onOpenSecurity: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            SecurityInfoScreen(connManager: widget.connManager),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
 class SettingsScreen extends StatelessWidget {
   final SavedConnection connection;
   final ConnectionManager connManager;
   @visibleForTesting
   final Future<bool> Function()? verifyHistoryCleanupForTesting;
-
-  /// Where the "Advanced" row reads the config schema (tests pass a fake).
-  @visibleForTesting
-  final ServerConfigStoreFactory? advancedStoreFor;
-
-  /// Where the Advanced screen gets its diagnostics repository (tests only).
-  @visibleForTesting
-  final CapabilitiesRepository Function(String profile)? advancedRepositoryFor;
   const SettingsScreen({
     required this.connection,
     required this.connManager,
     @visibleForTesting this.verifyHistoryCleanupForTesting,
-    @visibleForTesting this.advancedStoreFor,
-    @visibleForTesting this.advancedRepositoryFor,
     super.key,
   });
 
@@ -457,17 +363,9 @@ class SettingsScreen extends StatelessWidget {
               connection: conn,
               connManager: connManager,
             ),
-            _AdvancedEntry(
-              key: ValueKey('advanced-${conn.id}'),
-              connection: conn,
-              connManager: connManager,
-              storeFor: advancedStoreFor,
-              repositoryFor: advancedRepositoryFor,
-            ),
           ],
         ),
       ),
-      _TerminalEntry(connection: conn, connManager: connManager),
     ],
     SettingsSection.bridge => [
       _SectionHeader(Strings.of(context).setSecBridge),
@@ -594,114 +492,6 @@ class _KeptAliveSectionState extends State<_KeptAliveSection>
   Widget build(BuildContext context) {
     super.build(context);
     return widget.child;
-  }
-}
-
-/// The one "Advanced" row. It is there only when the server's config schema
-/// answers (one read when Settings opens, per profile) with at least one field
-/// an Advanced page owns, and config reads are not denied for the connection.
-class _AdvancedEntry extends StatefulWidget {
-  final SavedConnection connection;
-  final ConnectionManager connManager;
-  final ServerConfigStoreFactory? storeFor;
-  final CapabilitiesRepository Function(String profile)? repositoryFor;
-
-  const _AdvancedEntry({
-    super.key,
-    required this.connection,
-    required this.connManager,
-    this.storeFor,
-    this.repositoryFor,
-  });
-
-  @override
-  State<_AdvancedEntry> createState() => _AdvancedEntryState();
-}
-
-class _AdvancedEntryState extends State<_AdvancedEntry> {
-  DashboardClient? _client;
-  late final ActiveProfileScope _scope = ActiveProfileScope.of(
-    widget.connManager,
-    widget.connection.id,
-  );
-  Map<String, dynamic>? _schema;
-
-  @override
-  void initState() {
-    super.initState();
-    _scope.addListener(_onProfileChanged);
-    unawaited(_probe());
-  }
-
-  @override
-  void dispose() {
-    _scope.removeListener(_onProfileChanged);
-    _client?.close();
-    super.dispose();
-  }
-
-  void _onProfileChanged() {
-    setState(() => _schema = null);
-    unawaited(_probe());
-  }
-
-  Future<void> _probe() async {
-    final conn = widget.connection;
-    if (widget.connManager.loadCapabilities(conn.id).configRead ==
-        CapState.no) {
-      return;
-    }
-    final ticket = _scope.capture();
-    final store =
-        widget.storeFor?.call(ticket.name, writable: !conn.readOnly) ??
-        ServerConfigRepository(
-          _client ??= DashboardClient.lazy(conn),
-          profile: ticket.name,
-          writable: !conn.readOnly,
-        );
-    try {
-      final schema = await store.readSchema();
-      if (!mounted || !ticket.isCurrent) return;
-      if (serverConfigPagesWithFields(schema).isNotEmpty) {
-        setState(() => _schema = schema);
-      }
-    } on ServerConfigException {
-      // No schema, no row.
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final schema = _schema;
-    final s = Strings.of(context);
-    // The row stays even without a config schema: Advanced also holds the
-    // read-only Diagnostics entry, which is probed only when Advanced opens.
-    return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: HermesGroup(
-        children: [
-          HermesNavRow(
-            icon: Icons.tune_rounded,
-            title: s.drawerAdvanced,
-            subtitle: schema == null
-                ? s.sd1215AdvancedSub
-                : s.adv1215AdvancedSub,
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => AdvancedSettingsScreen(
-                  connection: widget.connection,
-                  connManager: widget.connManager,
-                  initialSchema: schema,
-                  storeFor: widget.storeFor,
-                  repositoryFor: widget.repositoryFor,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
 

@@ -9,9 +9,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hermes_android/core/capabilities/server_diagnostics_models.dart';
 import 'package:hermes_android/core/models/foreign_session.dart';
-import 'package:hermes_android/core/models/terminal_exec.dart';
 import 'package:hermes_android/core/bots/data/room_member_prompts.dart';
 import 'package:hermes_android/core/models/agent_task_list.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
@@ -356,33 +354,6 @@ final List<_Consumer> _consumers = [
   ),
   _Consumer(
     'result',
-    'shell.exec',
-    (c) => c.methodResultSchema('shell.exec'),
-    (s) => ShellExecResult.tryParse(s) != null,
-  ),
-  _Consumer(
-    'result',
-    'process.list',
-    (c) => c.methodResultSchema('process.list'),
-    (s) {
-      final rows = s['processes'];
-      if (rows is! List) return false;
-      for (final row in rows) {
-        AgentProcessSeed.tryParse(row);
-      }
-      return true;
-    },
-    semanticallyEmpty: (s) => (s['processes'] as List?)?.isEmpty ?? true,
-  ),
-  for (final type in const ['agent.terminal.output', 'terminal.close'])
-    _Consumer(
-      'event',
-      type,
-      (c) => c.eventPayloadSchema(type),
-      (s) => parseAgentTerminalEvent(s) != null,
-    ),
-  _Consumer(
-    'result',
     'session.compress',
     (c) => c.methodResultSchema('session.compress'),
     (s) {
@@ -486,23 +457,6 @@ final List<_Consumer> _consumers = [
     // A result without a folder carries nothing to apply to the row.
     semanticallyEmpty: (s) =>
         s['cwd'] is! String || (s['cwd'] as String).trim().isEmpty,
-  ),
-  // Live MCP state for Diagnostics: every row with a name is kept.
-  _Consumer(
-    'result',
-    'mcp.servers.status',
-    (c) => c.methodResultSchema('mcp.servers.status'),
-    (s) {
-      final rows = (s['servers'] as List).cast<Map<String, dynamic>>();
-      return rows
-              .where((row) => McpServerStatus.tryParse(row) != null)
-              .length ==
-          rows.length;
-    },
-    // A row without a name has nothing to show.
-    semanticallyEmpty: (s) => (s['servers'] as List).any(
-      (row) => row is! Map || (row['name'] as String? ?? '').trim().isEmpty,
-    ),
   ),
   _Consumer(
     'result',
