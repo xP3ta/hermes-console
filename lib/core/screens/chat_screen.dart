@@ -14,10 +14,8 @@ import '../widgets/chat_mention_palette.dart';
 import '../widgets/chat/composer_reference_palette.dart';
 import '../widgets/chat/pasted_text_editor.dart';
 import '../services/message_reaction_prefs.dart';
-import '../services/terminal_availability.dart';
 import '../widgets/chat/chat_markdown_body.dart';
 import '../widgets/chat/message_reaction_bar.dart';
-import 'terminal_pane_screen.dart';
 import '../widgets/chat/chat_message_frame.dart';
 import '../widgets/chat/composer_pasted_image.dart';
 import '../widgets/chat/console_composer.dart';
@@ -1072,7 +1070,6 @@ enum _ChatControlAction {
   cron,
   recovery,
   extensions,
-  terminal,
   releaseDesktop,
   delete,
 }
@@ -1705,6 +1702,10 @@ class _ChatScreenState extends State<ChatScreen>
   // Chat sending state — derived from pipeline state.
   late final TextEditingController _textController;
   final _textFocusNode = FocusNode();
+
+  /// The composer had the keyboard when the app went to the background.
+  /// See [_releaseKeyboardWhileAway].
+  bool _keyboardBeforeLeaving = false;
   bool get _sending => _chat.sending;
   bool _compressionCommandInFlight = false;
   bool? _lastDesktopCompressionPresentation;
@@ -7922,6 +7923,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
+      _releaseKeyboardWhileAway();
       _unreadHide();
       _persistLastRead();
       // cs1215: a chat created during this visit has a durable id now.
@@ -7959,6 +7961,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
     // Al volver a primer plano, repinta la configuración conocida sin mutarla.
     if (state == AppLifecycleState.resumed) {
+      if (!wasInForeground) _restoreKeyboardAfterReturn();
       if (_chatRouteVisible) _unreadShow();
       _loadActiveModel();
       if (_chatBound) {
@@ -7966,6 +7969,34 @@ class _ChatScreenState extends State<ChatScreen>
         if (!wasInForeground) _relaunchViewerAttachOnResume();
       }
     }
+  }
+
+  /// QA 9491: leaving the app with the keyboard open and coming back showed
+  /// the composer floating over an empty band where the keyboard had been,
+  /// until the input was tapped. The composer kept focus and its input
+  /// connection while the app was away, so Android could hand back a stale
+  /// keyboard inset on return. Releasing the focus when the app leaves the
+  /// screen closes the connection; [_restoreKeyboardAfterReturn] asks for the
+  /// keyboard again, like messaging apps do.
+  void _releaseKeyboardWhileAway() {
+    if (!_textFocusNode.hasFocus) return;
+    _keyboardBeforeLeaving = true;
+    _textFocusNode.unfocus();
+  }
+
+  /// Gives the keyboard back to the composer on return, only when it had it
+  /// on leaving and this chat is still the screen on top: never behind the
+  /// App Lock screen, never after unlocking, never under another screen
+  /// opened meanwhile (a notification tap).
+  void _restoreKeyboardAfterReturn() {
+    if (!_keyboardBeforeLeaving) return;
+    _keyboardBeforeLeaving = false;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || !mounted || !_appInForeground) return;
+      if (_appLocked || _coveredByAppLock) return;
+      if (ModalRoute.of(context)?.isCurrent != true) return;
+      _textFocusNode.requestFocus();
+    });
   }
 
   Future<void>? _resumeViewerAttach;
@@ -11469,18 +11500,6 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  Future<void> _openTerminal() async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => TerminalPaneScreen(
-          connection: widget.connection,
-          profile: Session.profileOwner(widget.session.profile),
-          chat: _chat,
-        ),
-      ),
-    );
-  }
-
   bool _desktopControlCenterAvailable(DesktopGatewayCapability capability) {
     if (_chat.desktopRuntimeSessionId == null ||
         _chat.desktopControlGateway == null) {
@@ -11500,17 +11519,6 @@ class _ChatScreenState extends State<ChatScreen>
         widget.connection.readOnly ||
         policy?.effectiveMode(widget.session.id) == ApprovalMode.readOnly;
 
-    final terminalGateway = _chat.terminalGateway;
-    if (terminalGateway != null && _chat.desktopRuntimeSessionId != null) {
-      unawaited(
-        TerminalAvailability.confirm(
-          widget.connection,
-          terminalGateway,
-          profile: Session.profileOwner(widget.session.profile),
-        ),
-      );
-    }
-
     final action = await showHermesFloatingSurface<_ChatControlAction>(
       context: context,
       surfaceKey: const ValueKey('chat-control-dialog'),
@@ -11519,10 +11527,7 @@ class _ChatScreenState extends State<ChatScreen>
         void select(_ChatControlAction action) =>
             Navigator.of(dialogContext).pop(action);
 
-        // The Terminal row appears once the server has confirmed shell.exec.
-        return ValueListenableBuilder<int>(
-          valueListenable: TerminalAvailability.changes,
-          builder: (context, _, _) => ChatControlSheet(
+        return ChatControlSheet(
           labels: ChatControlLabels(
             title: strings.chaControlTitle,
             scope: strings.chaControlScope,
@@ -11540,7 +11545,6 @@ class _ChatScreenState extends State<ChatScreen>
             cron: strings.crnOpenFromConversation,
             recovery: strings.chaControlRecovery,
             extensions: strings.drawerExtensions,
-            terminal: strings.termTitle,
             delete: strings.sesDelete,
             readOnly: strings.statusReadOnly,
             releaseDesktop: strings.chaControlReleaseDesktop,
@@ -11580,15 +11584,8 @@ class _ChatScreenState extends State<ChatScreen>
               )
               ? null
               : () => select(_ChatControlAction.extensions),
-          onTerminal:
-              _chat.desktopRuntimeSessionId == null ||
-                  _chat.terminalGateway == null ||
-                  !TerminalAvailability.offered(widget.connection)
-              ? null
-              : () => select(_ChatControlAction.terminal),
           onReleaseDesktop: () => select(_ChatControlAction.releaseDesktop),
           onDelete: () => select(_ChatControlAction.delete),
-          ),
         );
       },
     );
@@ -11616,8 +11613,6 @@ class _ChatScreenState extends State<ChatScreen>
         unawaited(_openRecoveryCenter());
       case _ChatControlAction.extensions:
         unawaited(_openExtensionsCenter());
-      case _ChatControlAction.terminal:
-        unawaited(_openTerminal());
       case _ChatControlAction.releaseDesktop:
         unawaited(_releaseRuntimeForDesktop());
       case _ChatControlAction.delete:
