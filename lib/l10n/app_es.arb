@@ -10150,5 +10150,13 @@
       }
     }
   },
-  "rt1215Thinking": "Pensamiento"
+  "rt1215Thinking": "Pensamiento",
+  "chatNotchLabel": "Ajustes de la conversación e Ir a",
+  "chatNotchGoTo": "Ir a",
+  "chatNotchChats": "Chats",
+  "chatNotchNeedsYouElsewhere": "Algo te necesita en otra conversación",
+  "chatNotchSearchChats": "Buscar chats",
+  "chatNotchFindInChat": "Buscar en este chat",
+  "chatNotchPreviousChat": "Chat anterior",
+  "chatNotchNextChat": "Chat siguiente"
 }
