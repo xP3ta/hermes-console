@@ -136,6 +136,90 @@ void main() {
     });
   });
 
+  // QA 9491 «Hermes Console Devs»: bot replies landed up to 15 s late in an
+  // open room. Bots answer tens of seconds after the message they reply to,
+  // and by then the idle doubling had already reached the 15 s ceiling.
+  group('rc1215 foreground room cadence', () {
+    test('stays at 3 s for the active window after activity, then backs '
+        'off to 15 s', () {
+      var now = DateTime(2026, 10, 6, 12);
+      final backoff = RoomPollBackoff(clock: () => now);
+      expect(backoff.next(working: false, changed: true).inSeconds, 3);
+      for (var i = 0; i < 39; i++) {
+        now = now.add(const Duration(seconds: 3));
+        expect(
+          backoff.next(working: false, changed: false).inSeconds,
+          3,
+          reason: 'quiet poll ${i + 1} inside the active window',
+        );
+      }
+      now = now.add(RoomPollBackoff.activeWindow);
+      expect(backoff.next(working: false, changed: false).inSeconds, 6);
+      expect(backoff.next(working: false, changed: false).inSeconds, 12);
+      expect(backoff.next(working: false, changed: false).inSeconds, 15);
+      expect(backoff.next(working: false, changed: false).inSeconds, 15);
+    });
+
+    test('opening the room counts as activity', () {
+      var now = DateTime(2026, 10, 6, 12);
+      final backoff = RoomPollBackoff(clock: () => now);
+      backoff.next(working: false, changed: false);
+      backoff.next(working: false, changed: false);
+      expect(backoff.current.inSeconds, 12, reason: 'idle before reopening');
+      backoff.resetFast();
+      now = now.add(const Duration(seconds: 30));
+      expect(backoff.next(working: false, changed: false).inSeconds, 3);
+    });
+
+    test('a bot reply 34 s after the user sends shows within one fast '
+        'tick (before: 14 s)', () async {
+      var now = DateTime(2026, 10, 6, 12);
+      final start = now;
+      final timers = <({DateTime due, void Function() fire, _ManualTimer t})>[];
+      final replyAt = start.add(const Duration(seconds: 34));
+      DateTime? seenAt;
+      final poller = RoomLogPoller(
+        backoff: RoomPollBackoff(clock: () => now),
+        timer: (delay, callback) {
+          final timer = _ManualTimer();
+          timers.add((due: now.add(delay), fire: callback, t: timer));
+          return timer;
+        },
+        tick: () async {
+          final arrived = !now.isBefore(replyAt) && seenAt == null;
+          if (arrived) seenAt = now;
+          return (
+            delta: RoomLogDelta(
+              added: const [],
+              log: spec070LogPage('groups_log_empty'),
+              reset: false,
+            ),
+            working: false,
+          );
+        },
+      );
+      // The user's send re-arms the poller (room_screen calls setVisible).
+      poller.setVisible(true);
+      while (seenAt == null) {
+        final live = timers.where((e) => e.t.isActive).toList()
+          ..sort((a, b) => a.due.compareTo(b.due));
+        final next = live.first;
+        next.t.cancel();
+        now = next.due;
+        next.fire();
+        await Future<void>.delayed(Duration.zero);
+        expect(now.difference(start).inMinutes, lessThan(5));
+      }
+      poller.dispose();
+      final latency = seenAt!.difference(replyAt);
+      expect(
+        latency,
+        lessThanOrEqualTo(const Duration(seconds: 3)),
+        reason: 'reply visible ${latency.inSeconds} s after it landed',
+      );
+    });
+  });
+
   group('RoomLogPoller', () {
     test('only polls while visible and in foreground', () async {
       var ticks = 0;
@@ -171,7 +255,8 @@ void main() {
       expect(scheduled.last.$1, Duration.zero);
       await fireLast();
       expect(ticks, 1);
-      expect(scheduled.last.$1, const Duration(seconds: 6));
+      // Opening the room is activity: the next quiet poll stays fast.
+      expect(scheduled.last.$1, const Duration(seconds: 3));
       poller.setForeground(false);
       expect(timers.last.isActive, isFalse);
       expect(poller.isScheduled, isFalse);
