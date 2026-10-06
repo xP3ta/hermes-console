@@ -2197,7 +2197,18 @@ String _formatAudioDuration(Duration value) {
 
 /// Abre la imagen [file] a pantalla completa con zoom (pinch/double-tap),
 /// fondo negro y cierre por toque/atrás. Visor ligero, sin dependencias extra.
-Future<void> showImageViewer(BuildContext context, File file) {
+Future<void> showImageViewer(BuildContext context, File file) =>
+    showImageGallery(context, [file]);
+
+/// Full-screen viewer over [files] (one or more images of the same reply),
+/// starting at [initialIndex]. Swipe pages between them; pinch or double
+/// tap zooms the one on screen, and paging pauses while it is zoomed.
+Future<void> showImageGallery(
+  BuildContext context,
+  List<File> files, {
+  int initialIndex = 0,
+}) {
+  assert(files.isNotEmpty);
   releaseTextFocusIfKeyboardHidden(context);
   return Navigator.of(context).push(
     PageRouteBuilder<void>(
@@ -2208,7 +2219,10 @@ Future<void> showImageViewer(BuildContext context, File file) {
       pageBuilder: (_, anim, _) => CoveredRouteMediaQueryFreeze(
         child: FadeTransition(
           opacity: anim,
-          child: _GeneratedImageViewer(file: file),
+          child: _GeneratedImageViewer(
+            files: files,
+            initialIndex: initialIndex.clamp(0, files.length - 1),
+          ),
         ),
       ),
     ),
@@ -2216,37 +2230,33 @@ Future<void> showImageViewer(BuildContext context, File file) {
 }
 
 class _GeneratedImageViewer extends StatefulWidget {
-  final File file;
+  final List<File> files;
+  final int initialIndex;
 
-  const _GeneratedImageViewer({required this.file});
+  const _GeneratedImageViewer({required this.files, this.initialIndex = 0});
 
   @override
   State<_GeneratedImageViewer> createState() => _GeneratedImageViewerState();
 }
 
 class _GeneratedImageViewerState extends State<_GeneratedImageViewer> {
-  final TransformationController _transformation = TransformationController();
-  TapDownDetails? _doubleTapDetails;
+  late final PageController _pages = PageController(
+    initialPage: widget.initialIndex,
+  );
+  late int _index = widget.initialIndex;
+  bool _zoomed = false;
 
   @override
   void dispose() {
-    _transformation.dispose();
+    _pages.dispose();
     super.dispose();
   }
 
-  void _toggleZoom() {
-    if (_transformation.value != Matrix4.identity()) {
-      _transformation.value = Matrix4.identity();
-      return;
-    }
-    final point = _doubleTapDetails?.localPosition ?? Offset.zero;
-    _transformation.value = Matrix4.identity()
-      ..translateByDouble(-point.dx * 2, -point.dy * 2, 0, 1)
-      ..scaleByDouble(3, 3, 1, 1);
-  }
+  File get _file => widget.files[_index];
 
   @override
   Widget build(BuildContext context) {
+    final count = widget.files.length;
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -2254,24 +2264,23 @@ class _GeneratedImageViewerState extends State<_GeneratedImageViewer> {
           key: const ValueKey<String>('generated-image-viewer-safe-area'),
           children: [
             Positioned.fill(
-              child: GestureDetector(
-                onDoubleTapDown: (details) => _doubleTapDetails = details,
-                onDoubleTap: _toggleZoom,
-                child: InteractiveViewer(
-                  transformationController: _transformation,
-                  minScale: 1,
-                  maxScale: 5,
-                  child: Center(
-                    child: Image.file(
-                      widget.file,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, _, _) => const Icon(
-                        Icons.broken_image_outlined,
-                        color: Colors.white54,
-                        size: 64,
-                      ),
-                    ),
-                  ),
+              child: PageView.builder(
+                key: const ValueKey<String>('image-gallery-pages'),
+                controller: _pages,
+                physics: _zoomed || count < 2
+                    ? const NeverScrollableScrollPhysics()
+                    : const PageScrollPhysics(),
+                itemCount: count,
+                onPageChanged: (i) => setState(() {
+                  _index = i;
+                  _zoomed = false;
+                }),
+                itemBuilder: (_, i) => _ZoomableImagePage(
+                  key: ValueKey<String>('image-gallery-page-$i'),
+                  file: widget.files[i],
+                  onZoomChanged: (zoomed) {
+                    if (zoomed != _zoomed) setState(() => _zoomed = zoomed);
+                  },
                 ),
               ),
             ),
@@ -2287,13 +2296,26 @@ class _GeneratedImageViewerState extends State<_GeneratedImageViewer> {
                       color: Colors.white,
                     ),
                     tooltip: Strings.of(context).imgSaveToGallery,
-                    onPressed: () => saveMediaToGallery(context, widget.file),
+                    onPressed: () => saveMediaToGallery(context, _file),
                   ),
                   IconButton(
                     icon: const Icon(Icons.share_outlined, color: Colors.white),
                     tooltip: Strings.of(context).commonShare,
-                    onPressed: () => shareMediaFile(widget.file),
+                    onPressed: () => shareMediaFile(_file),
                   ),
+                  const Spacer(),
+                  if (count > 1)
+                    Text(
+                      Strings.of(
+                        context,
+                      ).fh1215GalleryPosition(_index + 1, count),
+                      key: const ValueKey<String>('image-gallery-position'),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   const Spacer(),
                   IconButton(
                     icon: const Icon(Icons.close, color: Colors.white),
@@ -2304,6 +2326,71 @@ class _GeneratedImageViewerState extends State<_GeneratedImageViewer> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ZoomableImagePage extends StatefulWidget {
+  final File file;
+  final ValueChanged<bool> onZoomChanged;
+
+  const _ZoomableImagePage({
+    required this.file,
+    required this.onZoomChanged,
+    super.key,
+  });
+
+  @override
+  State<_ZoomableImagePage> createState() => _ZoomableImagePageState();
+}
+
+class _ZoomableImagePageState extends State<_ZoomableImagePage> {
+  final TransformationController _transformation = TransformationController();
+  TapDownDetails? _doubleTapDetails;
+
+  @override
+  void dispose() {
+    _transformation.dispose();
+    super.dispose();
+  }
+
+  void _toggleZoom() {
+    if (_transformation.value != Matrix4.identity()) {
+      _transformation.value = Matrix4.identity();
+      widget.onZoomChanged(false);
+      return;
+    }
+    final point = _doubleTapDetails?.localPosition ?? Offset.zero;
+    _transformation.value = Matrix4.identity()
+      ..translateByDouble(-point.dx * 2, -point.dy * 2, 0, 1)
+      ..scaleByDouble(3, 3, 1, 1);
+    widget.onZoomChanged(true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onDoubleTapDown: (details) => _doubleTapDetails = details,
+      onDoubleTap: _toggleZoom,
+      child: InteractiveViewer(
+        transformationController: _transformation,
+        minScale: 1,
+        maxScale: 5,
+        onInteractionEnd: (_) => widget.onZoomChanged(
+          _transformation.value.getMaxScaleOnAxis() > 1.01,
+        ),
+        child: Center(
+          child: Image.file(
+            widget.file,
+            fit: BoxFit.contain,
+            errorBuilder: (_, _, _) => const Icon(
+              Icons.broken_image_outlined,
+              color: Colors.white54,
+              size: 64,
+            ),
+          ),
         ),
       ),
     );
