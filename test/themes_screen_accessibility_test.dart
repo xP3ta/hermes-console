@@ -20,7 +20,7 @@ void main() {
     home: const ThemesScreen(),
   );
 
-  testWidgets('muestra los seis temas oficiales de Hermes Desktop', (
+  testWidgets('muestra los doce temas oficiales de Hermes Desktop', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
@@ -32,18 +32,18 @@ void main() {
     expect(list, findsOneWidget);
     for (
       var i = 0;
-      i < 5 && find.text('Hermes Desktop · 6').evaluate().isEmpty;
+      i < 5 && find.text('Hermes Desktop · 12').evaluate().isEmpty;
       i++
     ) {
       await tester.drag(list, const Offset(0, -300));
       await tester.pump();
     }
-    expect(find.text('Hermes Desktop · 6'), findsOneWidget);
-    for (var i = 0; i < 8 && find.text('Slate').evaluate().isEmpty; i++) {
+    expect(find.text('Hermes Desktop · 12'), findsOneWidget);
+    for (var i = 0; i < 12 && find.text('Cyberpunk').evaluate().isEmpty; i++) {
       await tester.drag(list, const Offset(0, -300));
       await tester.pump();
     }
-    expect(find.text('Slate'), findsOneWidget);
+    expect(find.text('Cyberpunk'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

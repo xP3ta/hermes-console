@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'component_profile.dart';
 import 'motion.dart';
+import 'theme_contrast.dart';
 import 'theme_profile.dart';
 
 enum AppThemeMode {
@@ -575,7 +576,7 @@ class AppTheme {
   // Fuente canónica: apps/desktop/src/themes/presets.ts. Solo se adapta la
   // semántica de tokens (card→surface, muted→surfaceVariant, ring→accent);
   // los colores de identidad permanecen idénticos.
-  static const _desktopNousColors = HermesThemeColors(
+  static const _desktopNousAltColors = HermesThemeColors(
     background: Color(0xFFF8FAFF),
     surface: Color(0xFFFFFFFF),
     surfaceVariant: Color(0xFFF2F6FF),
@@ -592,7 +593,7 @@ class AppTheme {
     accentText: Color(0xFF0053FD),
   );
 
-  static const _desktopNousDarkColors = HermesThemeColors(
+  static const _desktopNousAltDarkColors = HermesThemeColors(
     background: Color(0xFF0D2F86),
     surface: Color(0xFF12378F),
     surfaceVariant: Color(0xFF183F9A),
@@ -688,6 +689,293 @@ class AppTheme {
     divider: Color(0xFF30363D),
   );
 
+  /// Maps a Desktop palette that ships its own colours (THEME_PRESET_PALETTES
+  /// in apps/shared/src/theme-presets.ts) onto Console tokens with the same
+  /// semantics as the presets above: card→surface, muted→surfaceVariant,
+  /// ring→accent, border→divider, destructive→error. Desktop colours are kept
+  /// byte-for-byte; only a token that misses Console's readability floor is
+  /// nudged toward black/white (text 4.5:1 on every surface, muted text 3:1,
+  /// button ink 4.5:1), exactly like the light synthesis below does for rings.
+  /// Desktop has no disabled/success/warning tokens: disabled is the muted
+  /// text faded 30% into the background, success/warning come from the
+  /// theme's own terminal palette (lowered to 3:1 on its surfaces).
+  static HermesThemeColors _desktopPalette({
+    required Brightness brightness,
+    required Color background,
+    required Color foreground,
+    required Color card,
+    required Color muted,
+    required Color mutedForeground,
+    required Color primary,
+    required Color ring,
+    required Color midgroundForeground,
+    required Color border,
+    required Color destructive,
+    required Color success,
+    required Color warning,
+  }) {
+    final light = brightness == Brightness.light;
+    final surfaces = [background, card, muted];
+    final textPrimary = ThemeContrast.adjustForContrast(
+      foreground,
+      surfaces,
+      minimum: 4.5,
+    );
+    // Catppuccin ships no separate muted ink (mutedForeground == foreground);
+    // Console needs a distinct secondary tier, so fade it 25% into the page.
+    final mutedSeed = mutedForeground == foreground
+        ? ThemeContrast.blend(foreground, background, 0.25)
+        : mutedForeground;
+    final textSecondary = ThemeContrast.adjustForContrast(mutedSeed, [
+      background,
+      card,
+    ], minimum: 3.0);
+    final accent = ThemeContrast.adjustForContrast(ring, [
+      background,
+    ], minimum: 3.0);
+    const ink = Color(0xFF161616);
+    final onAccent =
+        ThemeContrast.meets(midgroundForeground, accent, minimum: 4.5)
+        ? midgroundForeground
+        : (ThemeContrast.ratio(ink, accent) >=
+                  ThemeContrast.ratio(Colors.white, accent)
+              ? ink
+              : Colors.white);
+    // Status colours double as status TEXT (session tones lift them to AA on
+    // the page). On skins whose body text is itself near AA (Everforest
+    // light), that lift lands on the text colour and a status reads as a
+    // title, so push such a tone further from the text, away from the page.
+    final pole = light ? Colors.black : Colors.white;
+    // Success/warning icons are non-text UI: 3:1 against every surface (WCAG
+    // 1.4.11). The error token keeps Desktop's destructive colour.
+    Color status(Color tone, {bool iconFloor = true}) {
+      final asIcon = iconFloor
+          ? ThemeContrast.adjustForContrast(tone, surfaces, minimum: 3.0)
+          : tone;
+      final asText = ThemeContrast.adjustForContrast(tone, [
+        background,
+      ], minimum: 4.5);
+      if (ThemeContrast.ratio(asText, textPrimary) >= 1.3) return asIcon;
+      for (var step = 1; step <= 20; step++) {
+        final candidate = ThemeContrast.blend(asText, pole, step / 20);
+        if (ThemeContrast.ratio(candidate, textPrimary) >= 1.3) {
+          return candidate;
+        }
+      }
+      return asIcon;
+    }
+
+    return HermesThemeColors(
+      background: background,
+      surface: card,
+      surfaceVariant: muted,
+      accent: accent,
+      accentHover: primary != ring
+          ? primary
+          : ThemeContrast.blend(
+              ring,
+              light ? Colors.black : Colors.white,
+              0.15,
+            ),
+      onAccent: onAccent,
+      textPrimary: textPrimary,
+      textSecondary: textSecondary,
+      textDisabled: ThemeContrast.blend(textSecondary, background, 0.3),
+      error: status(destructive, iconFloor: false),
+      success: status(success),
+      warning: status(warning),
+      divider: border,
+      accentText: ThemeContrast.adjustForContrast(accent, [
+        background,
+        card,
+      ], minimum: 4.5),
+    );
+  }
+
+  // GitHub Light/Dark Default chrome; `nous` re-seeds only the accent family.
+  static final _desktopNousColors = _desktopPalette(
+    brightness: Brightness.light,
+    background: const Color(0xFFFFFFFF),
+    foreground: const Color(0xFF1F2328),
+    card: const Color(0xFFF6F8FA),
+    muted: const Color(0xFFF6F6F6),
+    mutedForeground: const Color(0xFF656D76),
+    primary: const Color(0xFF0053FD),
+    ring: const Color(0xFF0053FD),
+    midgroundForeground: const Color(0xFFFFFFFF),
+    border: const Color(0xFFD0D7DE),
+    destructive: const Color(0xFFCF222E),
+    success: const Color(0xFF1A7F37),
+    warning: const Color(0xFF9A6700),
+  );
+  static final _desktopNousDarkColors = _desktopPalette(
+    brightness: Brightness.dark,
+    background: const Color(0xFF0D1117),
+    foreground: const Color(0xFFE6EDF3),
+    card: const Color(0xFF010409),
+    muted: const Color(0xFF1A1E24),
+    mutedForeground: const Color(0xFF7D8590),
+    primary: const Color(0xFF4A84FE),
+    ring: const Color(0xFF4A84FE),
+    midgroundForeground: const Color(0xFF161616),
+    border: const Color(0xFF30363D),
+    destructive: const Color(0xFFF85149),
+    success: const Color(0xFF3FB950),
+    warning: const Color(0xFFD29922),
+  );
+  static final _desktopGithubColors = _desktopPalette(
+    brightness: Brightness.light,
+    background: const Color(0xFFFFFFFF),
+    foreground: const Color(0xFF1F2328),
+    card: const Color(0xFFF6F8FA),
+    muted: const Color(0xFFF6F6F6),
+    mutedForeground: const Color(0xFF656D76),
+    primary: const Color(0xFF196D31),
+    ring: const Color(0xFF196D31),
+    midgroundForeground: const Color(0xFFFFFFFF),
+    border: const Color(0xFFD0D7DE),
+    destructive: const Color(0xFFCF222E),
+    success: const Color(0xFF1A7F37),
+    warning: const Color(0xFF9A6700),
+  );
+  static final _desktopGithubDarkColors = _desktopPalette(
+    brightness: Brightness.dark,
+    background: const Color(0xFF0D1117),
+    foreground: const Color(0xFFE6EDF3),
+    card: const Color(0xFF010409),
+    muted: const Color(0xFF1A1E24),
+    mutedForeground: const Color(0xFF7D8590),
+    primary: const Color(0xFF4F9E5E),
+    ring: const Color(0xFF4F9E5E),
+    midgroundForeground: const Color(0xFFFFFFFF),
+    border: const Color(0xFF30363D),
+    destructive: const Color(0xFFF85149),
+    success: const Color(0xFF3FB950),
+    warning: const Color(0xFFD29922),
+  );
+  static final _desktopCatppuccinColors = _desktopPalette(
+    brightness: Brightness.light,
+    background: const Color(0xFFEFF1F5),
+    foreground: const Color(0xFF4C4F69),
+    card: const Color(0xFFE6E9EF),
+    muted: const Color(0xFFE8EBEF),
+    mutedForeground: const Color(0xFF4C4F69),
+    primary: const Color(0xFF6D2EBF),
+    ring: const Color(0xFF6D2EBF),
+    midgroundForeground: const Color(0xFFFFFFFF),
+    border: const Color(0xFFACB0BE),
+    destructive: const Color(0xFFD20F39),
+    success: const Color(0xFF40A02B),
+    warning: const Color(0xFFDF8E1D),
+  );
+  static final _desktopCatppuccinDarkColors = _desktopPalette(
+    brightness: Brightness.dark,
+    background: const Color(0xFF1E1E2E),
+    foreground: const Color(0xFFCDD6F4),
+    card: const Color(0xFF181825),
+    muted: const Color(0xFF29293A),
+    mutedForeground: const Color(0xFFCDD6F4),
+    primary: const Color(0xFFCBA6F7),
+    ring: const Color(0xFFCBA6F7),
+    midgroundForeground: const Color(0xFFFFFFFF),
+    border: const Color(0xFF585B70),
+    destructive: const Color(0xFFF38BA8),
+    success: const Color(0xFFA6E3A1),
+    warning: const Color(0xFFF9E2AF),
+  );
+  static final _desktopEverforestColors = _desktopPalette(
+    brightness: Brightness.light,
+    background: const Color(0xFFFDF6E3),
+    foreground: const Color(0xFF5C6A72),
+    card: const Color(0xFFFDF6E3),
+    muted: const Color(0xFFF7F0DE),
+    mutedForeground: const Color(0xFF939F91),
+    primary: const Color(0xFF586B35),
+    ring: const Color(0xFF586B35),
+    midgroundForeground: const Color(0xFFFFFFFF),
+    border: const Color(0xFFFDF6E3),
+    destructive: const Color(0xFFF1706F),
+    success: const Color(0xFF8DA101),
+    warning: const Color(0xFFDFA000),
+  );
+  static final _desktopEverforestDarkColors = _desktopPalette(
+    brightness: Brightness.dark,
+    background: const Color(0xFF2D353B),
+    foreground: const Color(0xFFD3C6AA),
+    card: const Color(0xFF2D353B),
+    muted: const Color(0xFF373E42),
+    mutedForeground: const Color(0xFF859289),
+    primary: const Color(0xFFA7C080),
+    ring: const Color(0xFFA7C080),
+    midgroundForeground: const Color(0xFFFFFFFF),
+    border: const Color(0xFF2D353B),
+    destructive: const Color(0xFFDA6362),
+    success: const Color(0xFFA7C080),
+    warning: const Color(0xFFDBBC7F),
+  );
+  static final _desktopSolarizedColors = _desktopPalette(
+    brightness: Brightness.light,
+    background: const Color(0xFFFDF6E3),
+    foreground: const Color(0xFF1F1F1F),
+    card: const Color(0xFFD3CBB7),
+    muted: const Color(0xFFF4EDDB),
+    mutedForeground: const Color(0xFF9CA8A6),
+    primary: const Color(0xFF675E34),
+    ring: const Color(0xFF675E34),
+    midgroundForeground: const Color(0xFFFFFFFF),
+    border: const Color(0xFFDDD6C1),
+    destructive: const Color(0xFFE25563),
+    success: const Color(0xFF859900),
+    warning: const Color(0xFFB58900),
+  );
+  static final _desktopSolarizedDarkColors = _desktopPalette(
+    brightness: Brightness.dark,
+    background: const Color(0xFF002B36),
+    foreground: const Color(0xFF839496),
+    card: const Color(0xFF002B36),
+    muted: const Color(0xFF08313C),
+    mutedForeground: const Color(0xFF586E75),
+    primary: const Color(0xFF6EA1C4),
+    ring: const Color(0xFF6EA1C4),
+    midgroundForeground: const Color(0xFFFFFFFF),
+    border: const Color(0xFF234751),
+    destructive: const Color(0xFFE35957),
+    success: const Color(0xFF859900),
+    warning: const Color(0xFFB58900),
+  );
+  // Classic Hermes: Desktop runs the CLI `default` skin (and its light
+  // overlay) through skinToDesktopTheme; these are that converter's outputs.
+  static final _desktopClassicColors = _desktopPalette(
+    brightness: Brightness.light,
+    background: const Color(0xFFF5F5F5),
+    foreground: const Color(0xFF2B2109),
+    card: const Color(0xFFF0F0EF),
+    muted: const Color(0xFFEDEDEC),
+    mutedForeground: const Color(0xFFB8860B),
+    primary: const Color(0xFF825D02),
+    ring: const Color(0xFF825D02),
+    midgroundForeground: const Color(0xFFFFFFFF),
+    border: const Color(0xFFCD7F32),
+    destructive: const Color(0xFFC62828),
+    success: const Color(0xFF18864B),
+    warning: const Color(0xFFA65C00),
+  );
+  static final _desktopClassicDarkColors = _desktopPalette(
+    brightness: Brightness.dark,
+    background: const Color(0xFF1A1A2E),
+    foreground: const Color(0xFFFFF8DC),
+    card: const Color(0xFF232335),
+    muted: const Color(0xFF282738),
+    mutedForeground: const Color(0xFFB8860B),
+    primary: const Color(0xFFFFBF00),
+    ring: const Color(0xFFFFBF00),
+    midgroundForeground: const Color(0xFF161616),
+    border: const Color(0xFFCD7F32),
+    destructive: const Color(0xFFEF5350),
+    success: const Color(0xFF4ADE80),
+    warning: const Color(0xFFFBBF24),
+  );
+
   /// Equivalente Android de `synthLightColors` en Hermes Desktop. Desktop
   /// separa skin y modo: cuando una skin no publica `darkColors`, conserva la
   /// paleta oscura como semilla y genera esta variante clara con su `ring`.
@@ -764,6 +1052,10 @@ class AppTheme {
   /// Jul-2026: Gruvbox vuelve al catálogo a petición del autor (y sale de la
   /// migración legacy), se añade Sage Garden y se incorporan los seis presets
   /// oficiales de Hermes Desktop. Ember vuelve con su paleta canónica Desktop.
+  /// Oct-2026: el catálogo Desktop sigue a BUILTIN_THEMES de Hermes Desktop
+  /// (12 familias, mismo orden). `nous` pasa a ser el Nous sobre GitHub como
+  /// en Desktop y la paleta anterior vive como `nous-alt`; `everforest` y
+  /// `solarized-dark` vuelven a ser temas reales y salen de la migración.
   static final List<HermesThemePreset> presets = List.unmodifiable([
     // ── Oscuros ──
     // Amber es el tema por defecto (la firma de Hermes) y va primero.
@@ -929,29 +1221,180 @@ class AppTheme {
       titleSpacing: 0.0,
     ),
     // ── Catálogo oficial de Hermes Desktop ──
+    // Mismo orden que BUILTIN_THEMES en apps/desktop/src/themes/presets.ts.
     HermesThemePreset(
       id: 'nous',
       name: 'Nous',
-      tagline: 'glass neutrals · Nous blue',
+      tagline: 'GitHub chrome · Nous blue',
       brightness: Brightness.light,
       colors: _desktopNousColors,
       fontFamily: 'Inter',
       radius: 12,
-      secondary: Color(0xFF1540B1),
+      secondary: Color(0xFF8250DF),
       desktopOfficial: true,
       desktopFamily: 'nous',
     ),
     HermesThemePreset(
       id: 'nous-dark',
       name: 'Nous',
-      tagline: 'deep Nous blue · psyche cream',
+      tagline: 'GitHub dark · Nous blue',
       brightness: Brightness.dark,
       colors: _desktopNousDarkColors,
       fontFamily: 'Inter',
       radius: 12,
-      secondary: Color(0xFFB5C7F3),
+      secondary: Color(0xFFBC8CFF),
       desktopOfficial: true,
       desktopFamily: 'nous',
+    ),
+    HermesThemePreset(
+      id: 'github',
+      name: 'GitHub',
+      tagline: 'GitHub Light Default',
+      brightness: Brightness.light,
+      colors: _desktopGithubColors,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFF8250DF),
+      desktopOfficial: true,
+      desktopFamily: 'github',
+    ),
+    HermesThemePreset(
+      id: 'github-dark',
+      name: 'GitHub',
+      tagline: 'GitHub Dark Default',
+      brightness: Brightness.dark,
+      colors: _desktopGithubDarkColors,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFFBC8CFF),
+      desktopOfficial: true,
+      desktopFamily: 'github',
+    ),
+    HermesThemePreset(
+      id: 'catppuccin',
+      name: 'Catppuccin',
+      tagline: 'soothing pastels · Latte',
+      brightness: Brightness.light,
+      colors: _desktopCatppuccinColors,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFF1E66F5),
+      desktopOfficial: true,
+      desktopFamily: 'catppuccin',
+    ),
+    HermesThemePreset(
+      id: 'catppuccin-dark',
+      name: 'Catppuccin',
+      tagline: 'soothing pastels · Mocha',
+      brightness: Brightness.dark,
+      colors: _desktopCatppuccinDarkColors,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFF94E2D5),
+      desktopOfficial: true,
+      desktopFamily: 'catppuccin',
+    ),
+    HermesThemePreset(
+      id: 'everforest',
+      name: 'Everforest',
+      tagline: 'warm, low-contrast forest greens',
+      brightness: Brightness.light,
+      colors: _desktopEverforestColors,
+      fontFamily: 'Inter',
+      radius: 12,
+      // Everforest blue (#3A94C5) deepened 40% toward black: the light skin's
+      // body text is only 5.2:1, so a tone lifted just to AA would land on
+      // the text colour and activity labels would read as titles.
+      secondary: Color(0xFF235976),
+      desktopOfficial: true,
+      desktopFamily: 'everforest',
+    ),
+    HermesThemePreset(
+      id: 'everforest-dark',
+      name: 'Everforest',
+      tagline: 'warm, low-contrast forest greens',
+      brightness: Brightness.dark,
+      colors: _desktopEverforestDarkColors,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFF7FBBB3),
+      desktopOfficial: true,
+      desktopFamily: 'everforest',
+    ),
+    HermesThemePreset(
+      id: 'solarized',
+      name: 'Solarized',
+      tagline: 'fixed-contrast light',
+      brightness: Brightness.light,
+      colors: _desktopSolarizedColors,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFF268BD2),
+      desktopOfficial: true,
+      desktopFamily: 'solarized',
+    ),
+    HermesThemePreset(
+      id: 'solarized-dark',
+      name: 'Solarized',
+      tagline: 'fixed-contrast dark',
+      brightness: Brightness.dark,
+      colors: _desktopSolarizedDarkColors,
+      fontFamily: 'Inter',
+      radius: 12,
+      // Solarized cyan (#2AA198) lifted 40% toward white: body text on the
+      // dark skin sits near the plain cyan, so activity labels need the
+      // lighter tone to stay distinct from titles.
+      secondary: Color(0xFF7FC7C1),
+      desktopOfficial: true,
+      desktopFamily: 'solarized',
+    ),
+    HermesThemePreset(
+      id: 'nous-alt',
+      name: 'Nous Alt',
+      tagline: 'glass neutrals · Nous blue',
+      brightness: Brightness.light,
+      colors: _desktopNousAltColors,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFF1540B1),
+      desktopOfficial: true,
+      desktopFamily: 'nous-alt',
+    ),
+    HermesThemePreset(
+      id: 'nous-alt-dark',
+      name: 'Nous Alt',
+      tagline: 'deep Nous blue · psyche cream',
+      brightness: Brightness.dark,
+      colors: _desktopNousAltDarkColors,
+      fontFamily: 'Inter',
+      radius: 12,
+      secondary: Color(0xFFB5C7F3),
+      desktopOfficial: true,
+      desktopFamily: 'nous-alt',
+    ),
+    HermesThemePreset(
+      id: 'classic',
+      name: 'Classic Hermes',
+      tagline: 'gold on navy · the original CLI look',
+      brightness: Brightness.light,
+      colors: _desktopClassicColors,
+      fontFamily: 'Inter',
+      radius: 10,
+      secondary: Color(0xFF1A1A2E),
+      desktopOfficial: true,
+      desktopFamily: 'classic',
+    ),
+    HermesThemePreset(
+      id: 'classic-dark',
+      name: 'Classic Hermes',
+      tagline: 'gold on navy · the original CLI look',
+      brightness: Brightness.dark,
+      colors: _desktopClassicDarkColors,
+      fontFamily: 'Inter',
+      radius: 10,
+      secondary: Color(0xFFCD7F32),
+      desktopOfficial: true,
+      desktopFamily: 'classic',
     ),
     HermesThemePreset(
       id: 'midnight-light',
@@ -1026,6 +1469,30 @@ class AppTheme {
       desktopFamily: 'mono',
     ),
     HermesThemePreset(
+      id: 'slate-light',
+      name: 'Slate',
+      tagline: 'cool slate · clear surface',
+      brightness: Brightness.light,
+      colors: _desktopSlateLightColors,
+      fontFamily: 'JetBrainsMono',
+      radius: 8,
+      secondary: Color(0xFF376C9F),
+      desktopOfficial: true,
+      desktopFamily: 'slate',
+    ),
+    HermesThemePreset(
+      id: 'slate',
+      name: 'Slate',
+      tagline: 'cool slate blue · developer focus',
+      brightness: Brightness.dark,
+      colors: _desktopSlateColors,
+      fontFamily: 'JetBrainsMono',
+      radius: 8,
+      secondary: Color(0xFFC9D1D9),
+      desktopOfficial: true,
+      desktopFamily: 'slate',
+    ),
+    HermesThemePreset(
       id: 'cyberpunk-light',
       name: 'Cyberpunk',
       tagline: 'neon green · clear surface',
@@ -1052,30 +1519,6 @@ class AppTheme {
       uppercaseTitles: true,
       desktopOfficial: true,
       desktopFamily: 'cyberpunk',
-    ),
-    HermesThemePreset(
-      id: 'slate-light',
-      name: 'Slate',
-      tagline: 'cool slate · clear surface',
-      brightness: Brightness.light,
-      colors: _desktopSlateLightColors,
-      fontFamily: 'JetBrainsMono',
-      radius: 8,
-      secondary: Color(0xFF376C9F),
-      desktopOfficial: true,
-      desktopFamily: 'slate',
-    ),
-    HermesThemePreset(
-      id: 'slate',
-      name: 'Slate',
-      tagline: 'cool slate blue · developer focus',
-      brightness: Brightness.dark,
-      colors: _desktopSlateColors,
-      fontFamily: 'JetBrainsMono',
-      radius: 8,
-      secondary: Color(0xFFC9D1D9),
-      desktopOfficial: true,
-      desktopFamily: 'slate',
     ),
     // ── Claros ──
     HermesThemePreset(
@@ -1115,9 +1558,7 @@ class AppTheme {
       'onedark' => 'steel', // azul editor sobre slate
       'cobalt2' => 'hermes-console', // azul profundo saturado
       'aguamarina' => 'steel', // sereno y frío
-      'solarized-dark' => 'dracula', // acento cian
       'synthwave' => 'dracula', // neón cyberpunk
-      'everforest' => 'phosphor', // familia verde
       'ayu-mirage' => 'amber', // melocotón cálido
       'latte' => 'claude-light',
       'solarized-light' => 'claude-light',

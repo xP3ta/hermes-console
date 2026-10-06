@@ -36,16 +36,28 @@ void main() {
           'sage-garden',
           'nous',
           'nous-dark',
+          'github',
+          'github-dark',
+          'catppuccin',
+          'catppuccin-dark',
+          'everforest',
+          'everforest-dark',
+          'solarized',
+          'solarized-dark',
+          'nous-alt',
+          'nous-alt-dark',
+          'classic',
+          'classic-dark',
           'midnight-light',
           'midnight',
           'ember-light',
           'ember',
           'mono-light',
           'mono',
-          'cyberpunk-light',
-          'cyberpunk',
           'slate-light',
           'slate',
+          'cyberpunk-light',
+          'cyberpunk',
           'claude-light',
         ]);
         final claros = AppTheme.presets
@@ -53,11 +65,17 @@ void main() {
             .toList();
         expect(claros.map((p) => p.id).toList(), [
           'nous',
+          'github',
+          'catppuccin',
+          'everforest',
+          'solarized',
+          'nous-alt',
+          'classic',
           'midnight-light',
           'ember-light',
           'mono-light',
-          'cyberpunk-light',
           'slate-light',
+          'cyberpunk-light',
           'claude-light',
         ]);
         expect(
@@ -67,16 +85,28 @@ void main() {
           orderedEquals([
             'nous',
             'nous-dark',
+            'github',
+            'github-dark',
+            'catppuccin',
+            'catppuccin-dark',
+            'everforest',
+            'everforest-dark',
+            'solarized',
+            'solarized-dark',
+            'nous-alt',
+            'nous-alt-dark',
+            'classic',
+            'classic-dark',
             'midnight-light',
             'midnight',
             'ember-light',
             'ember',
             'mono-light',
             'mono',
-            'cyberpunk-light',
-            'cyberpunk',
             'slate-light',
             'slate',
+            'cyberpunk-light',
+            'cyberpunk',
           ]),
         );
         expect(
@@ -84,7 +114,20 @@ void main() {
               .where((preset) => preset.desktopOfficial)
               .map((preset) => preset.desktopFamily)
               .toSet(),
-          {'nous', 'midnight', 'ember', 'mono', 'cyberpunk', 'slate'},
+          {
+            'nous',
+            'github',
+            'catppuccin',
+            'everforest',
+            'solarized',
+            'nous-alt',
+            'classic',
+            'midnight',
+            'ember',
+            'mono',
+            'slate',
+            'cyberpunk',
+          },
         );
       },
     );
@@ -105,9 +148,7 @@ void main() {
         'onedark': 'steel',
         'cobalt2': 'hermes-console',
         'aguamarina': 'steel',
-        'solarized-dark': 'dracula',
         'synthwave': 'dracula',
-        'everforest': 'phosphor',
         'ayu-mirage': 'amber',
         'latte': 'claude-light',
         'solarized-light': 'claude-light',
@@ -146,7 +187,7 @@ void main() {
       expect(AppTheme.fromId('amber').brightness, Brightness.dark);
     });
 
-    test('las seis familias Desktop conservan sus acentos oficiales', () {
+    test('las familias Desktop conservan sus acentos oficiales', () {
       const expected = {
         'nous': Color(0xFF0053FD),
         'midnight': Color(0xFF8B80E8),
