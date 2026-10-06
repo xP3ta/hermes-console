@@ -11,6 +11,7 @@ import '../models/activity_snapshot.dart';
 import '../theme/app_theme.dart';
 import 'activity_pill.dart';
 import 'activity_sections.dart';
+import 'activity_side_panel.dart';
 
 export 'activity_sections.dart'
     show ActivityPanelActions, ActivityScheduleAction;
@@ -430,6 +431,15 @@ class _ActivityPillHostState extends State<ActivityPillHost> {
   bool _open = false;
   ActivityPanelRoute? _route;
 
+  /// The tablet side panel host around this chat, if any.
+  ActivitySidePanelHostState? _side;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _side = ActivitySidePanelHost.maybeOf(context);
+  }
+
   @override
   void didUpdateWidget(ActivityPillHost oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -438,7 +448,9 @@ class _ActivityPillHostState extends State<ActivityPillHost> {
       // Los oyentes del panel viven en otro subárbol: se les avisa tras el frame.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          _live.value = ActivityPanelState(widget.snapshot, widget.actions);
+          final state = ActivityPanelState(widget.snapshot, widget.actions);
+          _live.value = state;
+          _side?.update(this, state);
         }
       });
     }
@@ -446,6 +458,7 @@ class _ActivityPillHostState extends State<ActivityPillHost> {
 
   @override
   void dispose() {
+    _side?.release(this);
     final route = _route;
     if (route != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -461,6 +474,25 @@ class _ActivityPillHostState extends State<ActivityPillHost> {
 
   void _openPanel() {
     if (_open) return;
+    // Tablets: a persistent side panel beside the chat when it has room. The
+    // pill toggles it. Without room the modal opens and a docked panel left
+    // from a wider window is forgotten (one panel at a time).
+    final side = _side ?? ActivitySidePanelHost.maybeOf(context);
+    if (side != null) {
+      if (side.fits) {
+        if (side.isOpenFor(this)) {
+          side.close(this);
+        } else {
+          side.open(
+            owner: this,
+            state: ActivityPanelState(widget.snapshot, widget.actions),
+            clock: widget.clock,
+          );
+        }
+        return;
+      }
+      side.close(this);
+    }
     final box = _pillKey.currentContext?.findRenderObject();
     if (box is! RenderBox || !box.hasSize) return;
     final size = box.size;
