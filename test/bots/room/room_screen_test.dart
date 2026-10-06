@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/ui/room/room_dictation.dart';
 import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
@@ -18,11 +19,13 @@ import 'package:hermes_android/core/models/attachment_draft.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/artifact_export_service.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/attachment_source_sheet.dart';
 import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/core/widgets/chat/chat_message_selection_area.dart';
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/core/widgets/markdown_table.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
 
 import '../../support/clipboard_image_fake.dart';
 import '../../support/inter_font.dart';
@@ -345,6 +348,100 @@ Future<void> _insertFromKeyboard(
     ),
   );
   await _settlePaste(tester);
+}
+
+final class _PickedFiles extends FilePicker {
+  _PickedFiles(this.files);
+
+  final List<PlatformFile> files;
+
+  @override
+  Future<FilePickerResult?> pickFiles({
+    String? dialogTitle,
+    String? initialDirectory,
+    FileType type = FileType.any,
+    List<String>? allowedExtensions,
+    Function(FilePickerStatus)? onFileLoading,
+    @Deprecated('Kept to match FilePicker') bool allowCompression = false,
+    int compressionQuality = 0,
+    bool allowMultiple = false,
+    bool withData = false,
+    bool withReadStream = false,
+    bool lockParentWindow = false,
+    bool readSequential = false,
+  }) async => FilePickerResult(files);
+}
+
+final class _PickedPhotos extends ImagePickerPlatform {
+  _PickedPhotos(this.photos);
+
+  final List<XFile> photos;
+
+  @override
+  Future<List<XFile>> getMultiImageWithOptions({
+    MultiImagePickerOptions options = const MultiImagePickerOptions(),
+  }) async => photos;
+}
+
+/// Uploads that fail [failures] times before they succeed.
+final class _FlakyUploader implements RoomAttachmentUploader {
+  _FlakyUploader({this.failures = 0});
+
+  int failures;
+  final List<AttachmentDraft> uploaded = [];
+
+  @override
+  Future<String?> upload(draft) async {
+    if (failures > 0) {
+      failures--;
+      return null;
+    }
+    uploaded.add(draft);
+    return '/srv/uploads/${draft.name}';
+  }
+}
+
+/// A real file of [bytes] bytes in a throwaway dir (the picker's cache copy).
+PlatformFile _pickedFile(String name, int bytes) {
+  final dir = Directory.systemTemp.createTempSync('room-pick-');
+  addTearDown(() {
+    if (dir.existsSync()) dir.deleteSync(recursive: true);
+  });
+  final file = File('${dir.path}/$name')
+    ..writeAsBytesSync(Uint8List(bytes)..fillRange(0, bytes, 0x61));
+  return PlatformFile(name: name, size: bytes, path: file.path);
+}
+
+void _useFilePicker(List<PlatformFile> files) {
+  // The plugin leaves its instance unset under test: never read it back.
+  FilePicker.platform = _PickedFiles(files);
+  addTearDown(() => FilePicker.platform = _PickedFiles(const []));
+}
+
+Future<void> _pickFrom(
+  WidgetTester tester,
+  AttachmentSourceChoice source,
+) async {
+  tester.widget<ConsoleComposer>(find.byType(ConsoleComposer)).onAttach!(
+    source,
+  );
+  await _settlePaste(tester);
+  await tester.pump();
+}
+
+Future<void> _sendRoomComposer(WidgetTester tester, String text) async {
+  await tester.enterText(
+    find.descendant(
+      of: find.byType(ConsoleComposer),
+      matching: find.byType(TextField),
+    ),
+    text,
+  );
+  await tester.pump();
+  await tester.tap(
+    find.byKey(const ValueKey('composer-primary-action-switcher')),
+  );
+  await tester.pump();
 }
 
 void main() {
@@ -1631,5 +1728,237 @@ void main() {
         findsNWidgets(2),
       );
     });
+  });
+
+  group('files picked in a room', () {
+    testWidgets('a large HTML document is staged and delivered by path', (
+      tester,
+    ) async {
+      _mockPathProvider();
+      // Text-like files are uploaded in rooms, never embedded: the 256 KB
+      // inline-text cap of the main chat must not drop them silently.
+      _useFilePicker([_pickedFile('inicio-completo.html', 300 * 1024)]);
+      final uploader = _FlakyUploader();
+      final gateway = await _pump(tester, events: const [], uploader: uploader);
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+      expect(_roomComposerCards(tester).single.name, 'inicio-completo.html');
+
+      await _sendRoomComposer(tester, 'the mockup');
+      await _settlePaste(tester, until: () => uploader.uploaded.isNotEmpty);
+      await tester.pumpAndSettle();
+
+      final draft = uploader.uploaded.single;
+      expect(draft.type, AttachmentType.document);
+      expect(draft.sizeBytes, 300 * 1024);
+      final sent = gateway.calls.where((c) => c.$1 == 'send').single.$2;
+      expect(
+        sent['text'],
+        'the mockup\n\n$roomAttachmentHeader\n'
+        'inicio-completo.html → @file:/srv/uploads/inicio-completo.html',
+      );
+      expect(_roomComposerCards(tester), isEmpty);
+    });
+
+    testWidgets('a binary document is staged and delivered by path', (
+      tester,
+    ) async {
+      _mockPathProvider();
+      _useFilePicker([_pickedFile('entrega.zip', 2048)]);
+      final uploader = _FlakyUploader();
+      final gateway = await _pump(tester, events: const [], uploader: uploader);
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+      await _sendRoomComposer(tester, 'zip');
+      await _settlePaste(tester, until: () => uploader.uploaded.isNotEmpty);
+      await tester.pumpAndSettle();
+      expect(uploader.uploaded.single.name, 'entrega.zip');
+      expect(
+        gateway.calls.where((c) => c.$1 == 'send').single.$2['text'],
+        endsWith('entrega.zip → @file:/srv/uploads/entrega.zip'),
+      );
+    });
+
+    testWidgets('a file over the 8 MB cap is refused with the limit', (
+      tester,
+    ) async {
+      _mockPathProvider();
+      _useFilePicker([_pickedFile('big.pdf', 8 * 1024 * 1024 + 1)]);
+      await _pump(tester, events: const [], uploader: _FlakyUploader());
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      await tester.pump();
+      expect(_roomComposerCards(tester), isEmpty);
+      expect(find.text('The file exceeds the 8 MB limit.'), findsOneWidget);
+    });
+
+    testWidgets('a program or installer is refused by name', (tester) async {
+      _mockPathProvider();
+      _useFilePicker([_pickedFile('app-release.apk', 4096)]);
+      await _pump(tester, events: const [], uploader: _FlakyUploader());
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      await tester.pump();
+      expect(_roomComposerCards(tester), isEmpty);
+      expect(
+        find.text("Programs and installers can't be uploaded: app-release.apk"),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('files past the 24 MB batch total are refused', (tester) async {
+      _mockPathProvider();
+      const mb = 1024 * 1024;
+      _useFilePicker([
+        _pickedFile('a.pdf', 8 * mb),
+        _pickedFile('b.pdf', 8 * mb),
+        _pickedFile('c.pdf', 8 * mb),
+        _pickedFile('d.pdf', mb),
+      ]);
+      await _pump(tester, events: const [], uploader: _FlakyUploader());
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      const notice =
+          'The selected attachments exceed the total limit of 24 MB.';
+      // 24 MB of real copies and digests: allow more real time than a paste.
+      for (var i = 0; i < 15; i++) {
+        await _settlePaste(
+          tester,
+          until: () => find.text(notice).evaluate().isNotEmpty,
+        );
+        if (find.text(notice).evaluate().isNotEmpty) break;
+      }
+      await tester.pump();
+      expect(_roomComposerCards(tester).map((c) => c.name), [
+        'a.pdf',
+        'b.pdf',
+        'c.pdf',
+      ]);
+      expect(find.text(notice), findsOneWidget);
+    });
+
+    testWidgets('a failed upload keeps the message and retry delivers it', (
+      tester,
+    ) async {
+      _mockPathProvider();
+      _useFilePicker([_pickedFile('notes.md', 1024)]);
+      final uploader = _FlakyUploader(failures: 1);
+      final gateway = await _pump(tester, events: const [], uploader: uploader);
+      await _pickFrom(tester, AttachmentSourceChoice.files);
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+      await _sendRoomComposer(tester, 'read this');
+      await _settlePaste(tester);
+      await tester.pump();
+      expect(find.text('Could not upload notes.md'), findsOneWidget);
+      expect(gateway.calls.where((c) => c.$1 == 'send'), isEmpty);
+      final retry = find.byWidgetPredicate(
+        (w) =>
+            w.key is ValueKey<String> &&
+            (w.key! as ValueKey<String>).value.startsWith(
+              'room-pending-retry-',
+            ),
+      );
+      expect(retry, findsOneWidget);
+
+      await tester.tap(retry);
+      await _settlePaste(tester, until: () => uploader.uploaded.isNotEmpty);
+      await tester.pumpAndSettle();
+      expect(uploader.uploaded.single.name, 'notes.md');
+      expect(
+        gateway.calls.where((c) => c.$1 == 'send').single.$2['text'],
+        endsWith('notes.md → @file:/srv/uploads/notes.md'),
+      );
+    });
+
+    testWidgets('photos keep the image path', (tester) async {
+      _mockPathProvider();
+      final dir = Directory.systemTemp.createTempSync('room-photo-');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final photo = File('${dir.path}/IMG_1.png')..writeAsBytesSync(_pastedPng);
+      final previous = ImagePickerPlatform.instance;
+      ImagePickerPlatform.instance = _PickedPhotos([XFile(photo.path)]);
+      addTearDown(() => ImagePickerPlatform.instance = previous);
+      final uploader = _FlakyUploader();
+      final gateway = await _pump(tester, events: const [], uploader: uploader);
+      await _pickFrom(tester, AttachmentSourceChoice.photos);
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+      await _sendRoomComposer(tester, 'pic');
+      await _settlePaste(tester, until: () => uploader.uploaded.isNotEmpty);
+      await tester.pumpAndSettle();
+      expect(uploader.uploaded.single.type, AttachmentType.image);
+      expect(uploader.uploaded.single.mimeType, 'image/png');
+      expect(
+        gateway.calls.where((c) => c.$1 == 'send').single.$2['text'],
+        endsWith('IMG_1.png → @file:/srv/uploads/IMG_1.png'),
+      );
+    });
+
+    for (final (label, caps, uploader, cross, reason) in [
+      ('writable', _allCaps, true, false, null),
+      (
+        'no uploader',
+        _allCaps,
+        false,
+        false,
+        'This connection cannot upload files to the server.',
+      ),
+      ('cross-gateway', _allCaps, true, true, 'another connection'),
+      ('read-only', const RoomCapabilities(), true, false, null),
+    ]) {
+      testWidgets('attach gate: $label', (tester) async {
+        _mockPathProvider();
+        _useFilePicker([_pickedFile('notes.md', 64)]);
+        await _pump(
+          tester,
+          events: const [],
+          caps: caps,
+          uploader: uploader ? _FlakyUploader() : null,
+          room: cross
+              ? buildRoom(
+                  members: [
+                    memberJson('m-builder', 'builder'),
+                    memberJson('m-peer', 'peerbot', peer: 'peer-1'),
+                  ],
+                )
+              : null,
+        );
+        if (!caps.canSend) {
+          expect(find.byType(ConsoleComposer), findsNothing);
+          expect(
+            find.byKey(const ValueKey('room-cannot-send')),
+            findsOneWidget,
+          );
+          return;
+        }
+        final open = label == 'writable';
+        final composer = tester.widget<ConsoleComposer>(
+          find.byType(ConsoleComposer),
+        );
+        expect(composer.attachEnabled, open);
+        final shown = find.byKey(const ValueKey('room-attach-disabled-reason'));
+        if (reason == null) {
+          expect(shown, findsNothing);
+        } else {
+          expect(tester.widget<Text>(shown).data, contains(reason));
+        }
+        if (composer.onAttach != null) {
+          await _pickFrom(tester, AttachmentSourceChoice.files);
+          await _settlePaste(
+            tester,
+            until: () => !open || _roomComposerCards(tester).isNotEmpty,
+          );
+        }
+        expect(_roomComposerCards(tester).length, open ? 1 : 0);
+      });
+    }
   });
 }

@@ -6778,6 +6778,14 @@
   "roomThreadTitle": "Thread",
   "roomAttachCrossGateway": "Attachments only work when every member runs on this Hermes; some are on another connection.",
   "roomAttachUnavailable": "This connection cannot upload files to the server.",
+  "roomAttachTypeBlocked": "Programs and installers can't be uploaded: {names}",
+  "@roomAttachTypeBlocked": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
   "roomAttachFailed": "Could not upload {name}",
   "@roomAttachFailed": {
     "placeholders": {

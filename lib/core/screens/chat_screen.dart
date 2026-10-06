@@ -99,6 +99,8 @@ import '../services/compaction_tracker.dart';
 import '../services/session_reconciler.dart';
 import '../services/artifact_export_service.dart';
 import '../services/attachment_uploader.dart';
+export '../services/attachment_uploader.dart'
+    show PendingAttachmentLimitViolation, pendingAttachmentLimitViolation;
 import '../services/command_risk.dart';
 import '../services/bridge_client.dart';
 import '../services/bridge_update_service.dart';
@@ -466,27 +468,6 @@ Future<List<XFile>> pickPendingGalleryImages(
     maxHeight: 2048,
     limit: remaining,
   );
-}
-
-enum PendingAttachmentLimitViolation { invalid, item, batch }
-
-/// Clasifica el motivo exacto por el que una selección no cabe en el composer.
-///
-/// Los límites son inclusivos: 8 MiB por elemento y 24 MiB por lote siguen
-/// siendo válidos. Mantener esta decisión pura evita mostrar el límite de un
-/// fichero cuando el problema real es la suma del lote.
-@visibleForTesting
-PendingAttachmentLimitViolation? pendingAttachmentLimitViolation({
-  required int sizeBytes,
-  required int itemLimit,
-  required int currentBatchBytes,
-}) {
-  if (sizeBytes <= 0) return PendingAttachmentLimitViolation.invalid;
-  if (sizeBytes > itemLimit) return PendingAttachmentLimitViolation.item;
-  if (currentBatchBytes + sizeBytes > AttachmentUploader.maxBatchBytes) {
-    return PendingAttachmentLimitViolation.batch;
-  }
-  return null;
 }
 
 String _attachmentLimitLabel(int bytes) => bytes >= 1024 * 1024

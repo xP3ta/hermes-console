@@ -8073,6 +8073,14 @@
   "roomThreadTitle": "Hilo",
   "roomAttachCrossGateway": "Los adjuntos solo funcionan si todos los miembros están en este Hermes; algunos están en otra conexión.",
   "roomAttachUnavailable": "Esta conexión no puede subir archivos al servidor.",
+  "roomAttachTypeBlocked": "No se pueden subir programas ni instaladores: {names}",
+  "@roomAttachTypeBlocked": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
   "roomAttachFailed": "No se pudo subir {name}",
   "@roomAttachFailed": {
     "placeholders": {

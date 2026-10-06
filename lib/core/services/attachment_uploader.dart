@@ -8,6 +8,27 @@ import 'package:path_provider/path_provider.dart';
 import '../models/attachment_draft.dart';
 import 'connection_manager.dart';
 
+enum PendingAttachmentLimitViolation { invalid, item, batch }
+
+/// Clasifica el motivo exacto por el que una selección no cabe en el composer
+/// (chat y salas comparten los mismos límites).
+///
+/// Los límites son inclusivos: 8 MiB por elemento y 24 MiB por lote siguen
+/// siendo válidos. Mantener esta decisión pura evita mostrar el límite de un
+/// fichero cuando el problema real es la suma del lote.
+PendingAttachmentLimitViolation? pendingAttachmentLimitViolation({
+  required int sizeBytes,
+  required int itemLimit,
+  required int currentBatchBytes,
+}) {
+  if (sizeBytes <= 0) return PendingAttachmentLimitViolation.invalid;
+  if (sizeBytes > itemLimit) return PendingAttachmentLimitViolation.item;
+  if (currentBatchBytes + sizeBytes > AttachmentUploader.maxBatchBytes) {
+    return PendingAttachmentLimitViolation.batch;
+  }
+  return null;
+}
+
 /// Resultado de subir un adjunto al filesystem gestionado del agente.
 class AttachmentUploadResult {
   final bool ok;
@@ -177,16 +198,22 @@ class AttachmentUploader {
   /// Materializa cualquier fichero del picker en app-support antes de guardar
   /// el draft. Cada [AttachmentDraft.localId] posee una copia independiente:
   /// retirarla nunca borra el fichero de otro chip o una ruta externa.
+  ///
+  /// [itemLimit] replaces the per-kind cap for surfaces that always upload
+  /// (rooms): there a text file is never embedded, so the 256 KB inline-text
+  /// cap does not apply.
   static Future<AttachmentDraft?> materializeForDraft(
     AttachmentDraft attachment, {
     Directory? baseDir,
+    int? itemLimit,
   }) async {
     if (attachment.localId.isEmpty || attachment.localPath.isEmpty) return null;
     final source = File(attachment.localPath);
     if (!await source.exists()) return null;
     try {
       final length = await source.length();
-      final limit = isTextEmbeddable(attachment) ? maxTextBytes : maxBytes;
+      final limit =
+          itemLimit ?? (isTextEmbeddable(attachment) ? maxTextBytes : maxBytes);
       if (length <= 0 || length > limit) return null;
       final base = baseDir ?? await getApplicationSupportDirectory();
       final dir = Directory('${base.path}/attachment_drafts');
