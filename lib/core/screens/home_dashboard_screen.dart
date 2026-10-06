@@ -7,9 +7,25 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_header_title.dart';
+import '../bots/state/attention.dart';
+import '../bots/state/mission_live_chats.dart';
+import '../bots/ui/room/room_launcher.dart';
+import '../bots/ui/room/room_prefs.dart';
+import '../design/schedule_builder.dart' show hermesFormatNextRun;
+import '../home/home_now.dart';
+import '../home/home_now_view.dart';
+import '../home/home_sources.dart';
+import '../models/agent_profile.dart';
+import '../models/cron_job.dart';
+import '../models/hosted_groups.dart';
+import '../models/mission_control.dart';
+import '../services/approval_policy.dart';
+import '../services/cron_repository.dart';
+import '../services/mission_snapshot_cache.dart';
+import 'cron_detail_page.dart' show cronParseTime;
+import 'cron_screen.dart';
 import '../config/flavor.dart';
 import '../models/core_read.dart';
 import '../models/desktop_active_session.dart';
@@ -35,15 +51,12 @@ import '../services/local_transcript_store.dart';
 import '../services/session_archive.dart';
 import '../services/session_repository.dart';
 import '../services/session_deletion.dart';
-import '../services/turn_outbox_store.dart';
 import '../services/tui_gateway_client.dart';
 import '../services/shared_gateway_pool.dart';
 import '../services/mission_snapshot_prewarm.dart';
 import '../theme/app_theme.dart';
 import '../utils/home_recent_sessions.dart';
 import '../utils/session_title.dart';
-import '../utils/assistant_operational_artifacts.dart';
-import '../utils/relative_time.dart';
 import '../widgets/onstage_gate.dart';
 import '../widgets/attachment_source_sheet.dart';
 import '../widgets/dock.dart';
@@ -65,9 +78,6 @@ import '../widgets/hermes_spark_mascot.dart';
 import '../widgets/read_only.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_pill.dart';
-import '../widgets/session_deletion_dialogs.dart';
-import '../widgets/session_title_editor_route.dart';
-import '../widgets/session_row_stop_control.dart';
 import 'chat_screen.dart';
 import 'gateway_manager_screen.dart';
 import 'local_instance_control_screen.dart';
@@ -79,10 +89,15 @@ import 'session_list_screen.dart';
 import 'settings_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/instance_status_panel.dart';
-import '../widgets/session_status_tone.dart';
 import '../../l10n/app_localizations.dart';
-import '../design/hermes_design.dart'
-    show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
+
+typedef HomeRoomApprove =
+    Future<void> Function(
+      SavedConnection connection, {
+      required String roomId,
+      required RoomApprovalAction action,
+      required String choice,
+    });
 
 /// App home: clean dashboard around the active gateway.
 ///
@@ -119,6 +134,29 @@ class HomeDashboardScreen extends StatefulWidget {
   )?
   homeWidgetUpdateOverride;
 
+  /// Cron jobs for «Próximo» (defaults to the Dashboard's `cron/jobs` when
+  /// Home builds its own clients).
+  final Future<List<CronJob>> Function(
+    SavedConnection connection,
+    String profile,
+  )?
+  cronJobsLoader;
+
+  /// Bots snapshot shared with Bot Mode (defaults to the shared cache).
+  final MissionSnapshotCache? missionSnapshotCacheOverride;
+
+  /// Bots roster shared with every screen (defaults to the shared one).
+  final BotRosterRegistry? rosterRegistryOverride;
+
+  /// Hosted-room approval answer (defaults to [pooledRoomApprove]).
+  final HomeRoomApprove? roomApproveOverride;
+
+  /// Opens a Bot Chat or room in Bot Mode (defaults to pushing it).
+  final ValueChanged<MissionControlOpenTarget>? botsOpenOverride;
+
+  /// Wall clock of the Home cards.
+  final DateTime Function()? clockOverride;
+
   const HomeDashboardScreen({
     required this.connManager,
     this.clientFactory,
@@ -133,6 +171,12 @@ class HomeDashboardScreen extends StatefulWidget {
     @visibleForTesting this.sessionStateWriterFactory,
     @visibleForTesting this.appLockOverride,
     @visibleForTesting this.homeWidgetUpdateOverride,
+    @visibleForTesting this.cronJobsLoader,
+    @visibleForTesting this.missionSnapshotCacheOverride,
+    @visibleForTesting this.rosterRegistryOverride,
+    @visibleForTesting this.roomApproveOverride,
+    @visibleForTesting this.botsOpenOverride,
+    @visibleForTesting this.clockOverride,
     super.key,
   });
 
@@ -200,6 +244,31 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   bool _foreground = true;
   bool _activityRebuildScheduled = false;
 
+  // Inicio v3 sources (all already held by Console; see [_homeNowFor]).
+  /// Bumped by every notification Home repaints for: the derived cards are
+  /// recomputed only when it (or another input identity) changes.
+  int _activityRevision = 0;
+  List<CronJob>? _cronJobs;
+  String? _cronScope;
+  DateTime? _cronReadAt;
+  int _cronEpoch = 0;
+  List<DesktopActiveSession> _activeRoster = const [];
+  DateTime? _activeRosterAt;
+  final OnstageGate _homeSourcesGate = OnstageGate();
+  Listenable? _homeSources;
+  BotRosterStore? _homeSourcesStore;
+  List<Object?>? _homeNowKey;
+  HomeNow? _homeNow;
+  bool _composerFocused = false;
+
+  /// Room approvals answered from Home: hidden until a newer Bots read
+  /// stops listing them (the cached snapshot does not see the answer).
+  final Set<String> _answeredRoomApprovals = {};
+
+  /// Room approvals older than this are not offered from Home: the cached
+  /// Bots read could list a request already answered elsewhere.
+  static const _roomApprovalMaxAge = Duration(minutes: 5);
+
   // Borrador del compositor de Inicio (chat nuevo sin sesión). Alcance:
   // conexión + perfil activo, como el resto de borradores v3.
   String? _homeDraftScope;
@@ -247,6 +316,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     _activeIdsGate.dispose();
     _liveStatusGate.removeListener(_onActivityChanged);
     _liveStatusGate.dispose();
+    _homeSourcesGate.removeListener(_onActivityChanged);
+    _homeSourcesGate.dispose();
+    _cronEpoch++;
     _listenedGlobalActivity?.removeListener(_onActivityChanged);
     _archive?.removeListener(_onActivityChanged);
     _archive?.removeListener(_dropDeletedRecents);
@@ -265,6 +337,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     // chat covers Home, hold those notifications and deliver one on return.
     _activeIdsGate.bind(context, activeChats?.activeIds);
     _liveStatusGate.bind(context, activeChats?.liveStatusRevision);
+    _bindHomeSources();
     final aggregate =
         widget.globalActivityOverride ?? activeChats?.globalActivity;
     if (!identical(_listenedGlobalActivity, aggregate)) {
@@ -368,6 +441,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     super.initState();
     _activeIdsGate.addListener(_onActivityChanged);
     _liveStatusGate.addListener(_onActivityChanged);
+    _homeSourcesGate.addListener(_onActivityChanged);
     WidgetsBinding.instance.addObserver(this);
     // Si se activa otra instancia desde cualquier pantalla (no solo el drawer
     // del home), recargamos al instante. Antes el home se quedaba con la
@@ -404,6 +478,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     setState(() {
       _recentSessions = [];
       _recentListFailed = false;
+      _cronJobs = null;
+      _cronReadAt = null;
+      _answeredRoomApprovals.clear();
     });
     _reload();
   }
@@ -423,6 +500,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
   }
 
   void _onActivityChanged() {
+    _activityRevision++;
     if (!mounted || _activityRebuildScheduled) return;
     // ss1215: outside a frame (a gateway event, a timer) repaint in the next
     // frame directly; only a notification raised while building is deferred.
@@ -625,6 +703,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         requestGeneration: generation,
         roster: roster,
       );
+      // The same read feeds the team faces (every live session of the
+      // gateway process, whichever profile).
+      if (!roster.hasMalformedRows && mounted) {
+        setState(() {
+          _activeRoster = roster.sessions;
+          _activeRosterAt = DateTime.now();
+          _activityRevision++;
+        });
+      }
       if (roster.hasMalformedRows) {
         _markActivityTransportStale(connection.id);
       } else {
@@ -895,297 +982,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
               '[home-dashboard] recents not saved (${error.runtimeType})',
             );
           }),
-    );
-  }
-
-  /// Borra un chat directamente desde recientes. Para instancias locales limpia
-  /// el transcript guardado (el bridge no expone /api/sessions); para remotas
-  /// borra en el servidor y, si éste no la borra (sesión de canal activo), la
-  /// oculta para que no reaparezca aquí.
-  Future<void> _deleteRecent(Session session) async {
-    final conn = _active;
-    if (conn == null) return;
-    final ownerProfile = Session.profileOwner(session.profile);
-    if (conn.readOnly) {
-      showReadOnlyNotice(context);
-      return;
-    }
-    final s = Strings.of(context);
-    final title =
-        _archive?.titleForSession(session, strings: s) ??
-        localizedSessionTitle(s, session);
-    final isLocal =
-        conn.kind == InstanceKind.localhost || session.source == 'mobile-local';
-    var cronDeletion = LinkedCronDeletionMode.keepSchedule;
-    if (session.isJob && !isLocal) {
-      final choice = await showCronConversationDeleteDialog(context, session);
-      if (choice == null) return;
-      cronDeletion = choice;
-    } else {
-      final confirm = await showHermesDialog<bool>(
-        context: context,
-        title: s.homeDeleteChatTitle,
-        message: s.homeDeleteChatBody(title),
-        actions: [
-          HermesDialogAction(
-            label: s.commonCancel,
-            value: false,
-            style: HermesDialogActionStyle.cancel,
-          ),
-          HermesDialogAction(
-            label: s.commonDelete,
-            value: true,
-            style: HermesDialogActionStyle.destructive,
-          ),
-        ],
-      );
-      if (confirm != true) return;
-    }
-
-    var removed = false;
-    if (isLocal) {
-      await LocalTranscriptStore.clear(
-        conn.id,
-        session.id,
-        profile: ownerProfile,
-      );
-      removed = true;
-    } else {
-      final client = ApiClient(
-        baseUrl: conn.baseUrl,
-        apiKey: conn.apiKey,
-        connectionId: conn.id,
-      );
-      late final LinkedSessionDeleteResult result;
-      try {
-        result = await deleteSessionWithResolvedLineage(
-          session,
-          loadSessions: ({bool includeChildren = false}) => client.getSessions(
-            includeChildren: includeChildren,
-            profile: ownerProfile,
-          ),
-          deleteSession: (sessionId) =>
-              client.deleteSession(sessionId, profile: ownerProfile),
-          cronDeletion: cronDeletion,
-          deleteCronJob:
-              !session.isJob ||
-                  cronDeletion == LinkedCronDeletionMode.keepSchedule
-              ? null
-              : (jobId) => widget.connManager.deleteLinkedCronJob(
-                  conn,
-                  jobId,
-                  profile: ownerProfile,
-                ),
-        );
-      } finally {
-        client.close();
-      }
-      if (!mounted) return;
-      switch (result.status) {
-        case LinkedSessionDeleteStatus.deleted:
-          removed = true;
-          break;
-        case LinkedSessionDeleteStatus.cancelled:
-          break;
-        case LinkedSessionDeleteStatus.sessionRejected:
-          if (mounted) {
-            _offerHideRecent(
-              session,
-              message: result.cronDeleted ? s.cronStoppedChatKept : null,
-            );
-          }
-          return;
-        case LinkedSessionDeleteStatus.cronDeleteFailed:
-          if (mounted) {
-            HermesNotice.of(context).showSnackBar(
-              SnackBar(content: Text(sessionDeletionFailureMessage(s, result))),
-              kind: HermesNoticeKind.error,
-            );
-          }
-          return;
-        case LinkedSessionDeleteStatus.sessionDeleteFailed:
-          if (mounted) {
-            HermesNotice.of(context).showSnackBar(
-              SnackBar(content: Text(sessionDeletionFailureMessage(s, result))),
-              kind: HermesNoticeKind.error,
-            );
-          }
-          return;
-      }
-      if (!removed) return;
-    }
-    if (!mounted || !removed) return;
-    // Shared store first: every screen drops the row in this frame.
-    unawaited(_archive?.markSessionDeleted(session));
-    final aggregate = _activeChats?.globalActivity;
-    aggregate?.clearSession(conn.id, ownerProfile, session.id);
-    await aggregate?.flushJournal();
-    await _activeChats?.forgetColdStartSession(
-      connectionId: conn.id,
-      profile: ownerProfile,
-      sessionId: session.id,
-    );
-    if (!mounted) return;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await ChatDraftStore(
-        prefs,
-      ).clear(conn.id, session.id, profile: ownerProfile);
-      await TurnOutboxStore().deleteForChat(
-        conn.id,
-        session.id,
-        profile: ownerProfile,
-      );
-    } catch (error) {
-      debugPrint(
-        '[home-dashboard] recovery cleanup failed (${error.runtimeType})',
-      );
-    }
-    if (!mounted) return;
-    setState(() {
-      _recentSessions = _recentSessions
-          .where(
-            (x) =>
-                x.id != session.id ||
-                Session.profileOwner(x.profile) != ownerProfile,
-          )
-          .toList();
-    });
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(
-        content: Text(s.homeChatDeleted, style: const TextStyle(fontSize: 13)),
-        duration: const Duration(seconds: 2),
-      ),
-      kind: HermesNoticeKind.success,
-    );
-  }
-
-  Future<void> _renameRecent(Session session) async {
-    final archive = _archive;
-    if (archive == null) return;
-    final currentTitle = archive.titleForSession(session);
-    final newTitle = await showSessionTitleEditorRoute(
-      context,
-      initialTitle: currentTitle,
-    );
-    if (!mounted || newTitle == null) return;
-    final trimmed = newTitle.trim();
-    if (trimmed.isEmpty) {
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).slRenameEmpty)),
-        kind: HermesNoticeKind.warning,
-      );
-      return;
-    }
-    try {
-      await archive.renameSession(session, trimmed);
-    } catch (_) {
-      if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).slRenameFailed)),
-        kind: HermesNoticeKind.error,
-      );
-      return;
-    }
-    if (!mounted) return;
-    setState(() {});
-    HermesNotice.of(context).showSnackBar(
-      SnackBar(content: Text(Strings.of(context).slRenamed)),
-      kind: HermesNoticeKind.success,
-    );
-  }
-
-  Future<void> _showRecentActions(Session session) async {
-    final strings = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    final readOnly = _active?.readOnly == true;
-    final action = await showHermesFloatingSurface<_RecentAction>(
-      context: context,
-      surfaceKey: const ValueKey('home-recent-actions'),
-      maxWidth: 420,
-      maxHeightFactor: 0.72,
-      builder: (surfaceContext) => Padding(
-        padding: const EdgeInsets.fromLTRB(12, 18, 12, 10),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-              child: Text(
-                _archive?.titleForSession(
-                      session,
-                      strings: Strings.of(context),
-                    ) ??
-                    localizedSessionTitle(Strings.of(context), session),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            ListTile(
-              key: const ValueKey('home-recent-action-rename'),
-              leading: const Icon(Icons.edit_outlined),
-              title: Text(strings.slMenuRename),
-              onTap: () => Navigator.pop(surfaceContext, _RecentAction.rename),
-            ),
-            if (!readOnly)
-              ListTile(
-                key: const ValueKey('home-recent-action-delete'),
-                leading: Icon(Icons.delete_outline, color: colors.error),
-                title: Text(
-                  strings.slMenuDelete,
-                  style: TextStyle(color: colors.error),
-                ),
-                onTap: () =>
-                    Navigator.pop(surfaceContext, _RecentAction.delete),
-              ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: () => Navigator.pop(surfaceContext),
-                child: Text(strings.commonCancel),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (!mounted) return;
-    switch (action) {
-      case _RecentAction.rename:
-        await _renameRecent(session);
-        break;
-      case _RecentAction.delete:
-        await _deleteRecent(session);
-        break;
-      case null:
-        break;
-    }
-  }
-
-  void _offerHideRecent(Session session, {String? message}) {
-    final messenger = HermesNotice.of(context);
-    final s = Strings.of(context);
-    messenger.showSnackBar(
-      SnackBar(
-        duration: const Duration(seconds: 6),
-        content: Text(message ?? s.slOfferHideContent),
-        action: SnackBarAction(
-          label: s.slHideAction,
-          onPressed: () async {
-            // Same logical key as Conversations, so a compressed chat hidden
-            // here is hidden there too.
-            await _archive?.hideSession(session);
-            if (!mounted) return;
-            setState(() {
-              _recentSessions = _recentSessions
-                  .where((item) => item.logicalId != session.logicalId)
-                  .toList();
-            });
-          },
-        ),
-      ),
     );
   }
 
@@ -1489,7 +1285,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     // The recents are what the splash waits for; the live activity roster
     // below decorates them when it lands.
     _completeInitialLoad();
-    if (ok) _scheduleMissionPrewarm(conn);
+    if (ok) {
+      _scheduleMissionPrewarm(conn);
+      unawaited(_refreshCron(conn));
+    }
     await _refreshRemoteActivity(conn, ownerProfile);
     if (!_isCurrentStatusRefresh(refreshEpoch, connectionId)) return;
     unawaited(
@@ -1588,12 +1387,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     );
   }
 
-  String _recentGroupLabel(HomeRecentDateGroup group) => switch (group) {
-    HomeRecentDateGroup.today => Strings.of(context).homeRecentToday,
-    HomeRecentDateGroup.yesterday => Strings.of(context).homeRecentYesterday,
-    HomeRecentDateGroup.earlier => Strings.of(context).homeRecentEarlier,
-  };
-
   GlobalActivity? _globalActivityFor(
     SavedConnection connection,
     Session session,
@@ -1607,134 +1400,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
       }
     }
     return null;
-  }
-
-  List<Widget> _buildRecentRows(SavedConnection connection, int limit) {
-    final rows = <Widget>[];
-    final now = DateTime.now();
-    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    final activeChats = _activeChats;
-    HomeRecentDateGroup? previousGroup;
-    final visible = _visibleRecentSessions.take(limit).toList(growable: false);
-
-    for (var index = 0; index < visible.length; index++) {
-      final session = visible[index];
-      final group = homeRecentDateGroup(session.lastActivityAt, now);
-      if (group != previousGroup) {
-        rows.add(
-          _RecentGroupHeader(
-            key: ValueKey('home-recent-group-${group.name}'),
-            label: _recentGroupLabel(group),
-            first: index == 0,
-          ),
-        );
-        previousGroup = group;
-      }
-
-      final title =
-          _archive?.titleForSession(session, strings: Strings.of(context)) ??
-          localizedSessionTitle(Strings.of(context), session);
-      // One preview rule for Home, Conversations and the Desktop sidebar:
-      // the session row's own preview ([sessionListPreview]). It is derived
-      // from the list response alone, so a cold start paints the same line
-      // as Conversations instead of an in-memory last turn that is gone.
-      final summary = HomeRecentSummary(user: sessionListPreview(session));
-      final activeChat = activeChats?.of(
-        connection.id,
-        session.id,
-        profile: session.profile,
-      );
-      final global = _globalActivityFor(connection, session);
-
-      Widget recentTile() {
-        // ss1215: the same derived status as the chat pill and the
-        // Conversaciones row (see [resolveSessionLiveStatus]).
-        final status = resolveSessionLiveStatus(
-          chat: activeChat?.liveStatus,
-          chatAuthoritative:
-              activeChat != null &&
-              (activeChat.hasDesktopRuntime ||
-                  activeChat.lastTerminalAt != null),
-          chatSettledAt: activeChat?.lastTerminalAt,
-          global: global,
-        );
-        final activityLabel = status.isLive
-            ? sessionLiveStatusLabel(Strings.of(context), status)
-            : null;
-        return _RecentSessionTile(
-          session: session,
-          title: title,
-          summary: summary,
-          activityLabel: activityLabel,
-          activityTone: sessionStatusToneFor(
-            sessionLiveStatusKind(status),
-            stale: status.stale,
-          ),
-          relativeTime: relativeTime(
-            session.lastActivityAt,
-            languageCode: Localizations.localeOf(context).languageCode,
-          ),
-          onTap: () => _openChat(session),
-          onStop:
-              activityLabel == null ||
-                  status.phase == SessionLivePhase.compacting
-              ? null
-              : () => _stopSession(connection, session),
-          onManage: () => _showRecentActions(session),
-        );
-      }
-
-      rows.add(
-        FadeSlideIn(
-          delayMs: reduceMotion ? 0 : 30 + (index.clamp(0, 3)) * 20,
-          duration: reduceMotion
-              ? Duration.zero
-              : const Duration(milliseconds: 220),
-          child: activeChat == null
-              ? recentTile()
-              : StreamBuilder<ActiveChatEvent>(
-                  stream: activeChat.changes,
-                  builder: (_, _) => recentTile(),
-                ),
-        ),
-      );
-    }
-    return rows;
-  }
-
-  Future<void> _stopSession(SavedConnection connection, Session session) async {
-    final activeChats = _activeChats;
-    if (activeChats == null) {
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).chaStopFailed)),
-        kind: HermesNoticeKind.error,
-      );
-      return;
-    }
-    try {
-      final result = await activeChats.stopSessionWork(
-        connection: connection,
-        session: session,
-      );
-      if (!result.allBackgroundWorkStopped && mounted) {
-        HermesNotice.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              Strings.of(
-                context,
-              ).chaBackgroundWorkRemaining(result.remainingBackgroundTasks),
-            ),
-          ),
-          kind: HermesNoticeKind.warning,
-        );
-      }
-    } catch (_) {
-      if (!mounted) return;
-      HermesNotice.of(context).showSnackBar(
-        SnackBar(content: Text(Strings.of(context).chaStopFailed)),
-        kind: HermesNoticeKind.error,
-      );
-    }
   }
 
   void _openChat(
@@ -1883,20 +1548,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     _newChat(initialAttachmentSource: source);
   }
 
-  void _openSessions() {
-    final conn = _active;
-    if (conn == null) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => SessionListScreen(
-          connection: conn,
-          connManager: widget.connManager,
-        ),
-      ),
-    ).then((_) => _refreshWhenUncovered());
-  }
-
   /// Envía el comando de arranque al agente local (Termux background) y sondea
   /// hasta que responde. Cuando arranca, refresca el estado del home.
   Future<void> _startLocalAgent() async {
@@ -1970,8 +1621,43 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     });
   }
 
-  Widget _buildPromptStage({required bool enabled, required bool dimmed}) {
+  /// The calm card's «Pregunta a Hermes…»: the existing Home composer
+  /// (draft, attachments, dictation, voice) that starts a new chat.
+  Widget _buildComposer({required bool enabled, required bool dimmed}) {
     _ensureHomeDraftLoaded();
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      // While the user types, the card stays the composer (see
+      // [_heroWhileTyping]); only a change of focus repaints Home.
+      onFocusChange: (focused) {
+        if (focused != _composerFocused) {
+          setState(() => _composerFocused = focused);
+        }
+      },
+      child: Opacity(
+        opacity: dimmed ? 0.55 : 1,
+        child: HomePromptComposer(
+          key: ValueKey('home-prompt-composer-${_homeDraftScope ?? ''}'),
+          restoredText: _homeDraftRestoredText,
+          onTextChanged: _onHomeDraftChanged,
+          hintText: Strings.of(context).homeAskHermes,
+          attachmentTooltip: Strings.of(context).chaAttachTooltip,
+          dictationTooltip: Strings.of(context).chaVoiceDictationTooltip,
+          voiceTooltip: Strings.of(context).chaVoiceModeTooltip,
+          sendTooltip: Strings.of(context).chaSendTooltip,
+          enabled: enabled,
+          onAttachmentSelected: _selectHomeAttachment,
+          onDictationPressed: () => _newChat(initialDictation: true),
+          onVoicePressed: () => _newChat(initialVoiceMode: true),
+          onSubmitted: (prompt) => _newChat(initialPrompt: prompt),
+        ),
+      ),
+    );
+  }
+
+  /// The pet rests on the hero card, as it rested on the composer before.
+  Widget _buildCompanionStage(Widget composer) {
     final colors = Theme.of(context).hermes;
     final app = context.findAncestorStateOfType<HermesAppState>();
     final controller = app?.companion;
@@ -1981,25 +1667,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         : _healthOk
         ? HermesSparkMood.idle
         : HermesSparkMood.offline;
-
-    final composer = Opacity(
-      opacity: dimmed ? 0.55 : 1,
-      child: HomePromptComposer(
-        key: ValueKey('home-prompt-composer-${_homeDraftScope ?? ''}'),
-        restoredText: _homeDraftRestoredText,
-        onTextChanged: _onHomeDraftChanged,
-        hintText: Strings.of(context).homeAskHermes,
-        attachmentTooltip: Strings.of(context).chaAttachTooltip,
-        dictationTooltip: Strings.of(context).chaVoiceDictationTooltip,
-        voiceTooltip: Strings.of(context).chaVoiceModeTooltip,
-        sendTooltip: Strings.of(context).chaSendTooltip,
-        enabled: enabled,
-        onAttachmentSelected: _selectHomeAttachment,
-        onDictationPressed: () => _newChat(initialDictation: true),
-        onVoicePressed: () => _newChat(initialVoiceMode: true),
-        onSubmitted: (prompt) => _newChat(initialPrompt: prompt),
-      ),
-    );
 
     if (controller == null) return composer;
 
@@ -2116,6 +1783,575 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     );
   }
 
+  DateTime _clock() => (widget.clockOverride ?? DateTime.now)();
+
+  MissionSnapshotCache get _missionCache =>
+      widget.missionSnapshotCacheOverride ?? MissionSnapshotCache.shared;
+
+  BotRosterRegistry get _rosterRegistry =>
+      widget.rosterRegistryOverride ?? BotRosterRegistry.shared;
+
+  /// Home repaints when Bot Mode publishes a read, a room is marked seen or
+  /// the shared roster changes; held while Home is covered.
+  void _bindHomeSources() {
+    final connectionId =
+        _active?.id ?? widget.connManager.activeConnectionId.value;
+    final store = connectionId == null
+        ? null
+        : _rosterRegistry.store(connectionId);
+    if (_homeSources == null || !identical(store, _homeSourcesStore)) {
+      _homeSourcesStore = store;
+      _homeSources = Listenable.merge([
+        _missionCache.revision,
+        RoomLocalPrefs.changes,
+        ?store,
+      ]);
+    }
+    _homeSourcesGate.bind(context, _homeSources);
+  }
+
+  /// One cron list read per minute at most, for «Próximo».
+  Future<void> _refreshCron(SavedConnection conn) async {
+    final loader =
+        widget.cronJobsLoader ??
+        (widget.clientFactory == null ? _defaultCronLoader : null);
+    if (loader == null || conn.kind == InstanceKind.localhost) return;
+    final profile = widget.connManager.activeProfileFor(conn.id);
+    final scope = '${conn.id}\u0000$profile';
+    final now = DateTime.now();
+    final last = _cronReadAt;
+    if (scope == _cronScope &&
+        last != null &&
+        now.difference(last) < const Duration(minutes: 1)) {
+      return;
+    }
+    _cronReadAt = now;
+    final epoch = ++_cronEpoch;
+    List<CronJob>? jobs;
+    try {
+      jobs = await loader(conn, profile);
+    } catch (error) {
+      debugPrint('[home-dashboard] cron list failed (${error.runtimeType})');
+      jobs = null;
+    }
+    if (!mounted || epoch != _cronEpoch || _active?.id != conn.id) return;
+    setState(() {
+      _cronJobs = jobs;
+      _cronScope = scope;
+      _activityRevision++;
+    });
+  }
+
+  static Future<List<CronJob>> _defaultCronLoader(
+    SavedConnection conn,
+    String profile,
+  ) async {
+    final client = DashboardClient.lazy(conn);
+    try {
+      return await CronRepository(client, profile: profile).listJobs();
+    } finally {
+      client.close();
+    }
+  }
+
+  /// The light Home's derived state, recomputed only when one of its
+  /// inputs changed (notification revision, list identities, approvals,
+  /// the minute): a rebuild for anything else reuses it.
+  HomeNow _homeNowFor(SavedConnection conn) {
+    final service = _activeChats;
+    final now = _clock();
+    final readOnly = conn.readOnly;
+    final ownerProfile = Session.profileOwner(
+      widget.connManager.activeProfileFor(conn.id),
+    );
+    final snapshot = _missionCache.read(conn);
+    final store = _rosterRegistry.store(conn.id);
+    final recents = _recentSessions;
+    final chats = service == null
+        ? const <ActiveChat>[]
+        : missionActiveChats(service, conn.id, recents).toList();
+    final key = <Object?>[
+      _activityRevision,
+      conn.id,
+      ownerProfile,
+      readOnly,
+      recents,
+      _archive,
+      _cronJobs,
+      _activeRoster,
+      snapshot,
+      store.snapshot,
+      _answeredRoomApprovals.length,
+      service?.liveStatusRevision.value,
+      service?.activeIds.value,
+      RoomLocalPrefs.changes.value,
+      now.millisecondsSinceEpoch ~/ Duration.millisecondsPerMinute,
+      Localizations.localeOf(context),
+      for (final chat in chats) chat.pendingApproval,
+    ];
+    final cached = _homeNow;
+    if (cached != null && _sameKey(key, _homeNowKey)) return cached;
+    final derived = _deriveHomeNow(
+      conn,
+      service: service,
+      chats: chats,
+      snapshot: snapshot,
+      store: store,
+      now: now,
+      readOnly: readOnly,
+    );
+    _homeNowKey = key;
+    _homeNow = derived;
+    return derived;
+  }
+
+  static bool _sameKey(List<Object?> a, List<Object?>? b) {
+    if (b == null || a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final x = a[i];
+      final y = b[i];
+      if (x is List || x is Map || x is Set) {
+        if (!identical(x, y)) return false;
+      } else if (x != y) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  HomeNow _deriveHomeNow(
+    SavedConnection conn, {
+    required ActiveChatService? service,
+    required List<ActiveChat> chats,
+    required MissionBackendSnapshot? snapshot,
+    required BotRosterStore store,
+    required DateTime now,
+    required bool readOnly,
+  }) {
+    final strings = Strings.of(context);
+    final archive = _archive;
+    final recents = _visibleRecentSessions;
+
+    // Chats: the Home recents with their live status (same derivation as
+    // the chat pill and Conversaciones) and the server's unread flag.
+    final chatItems = <HomeChatItem>[];
+    final keyById = <String, String>{};
+    for (final session in recents) {
+      keyById[session.id] = session.logicalId;
+      keyById[session.logicalId] = session.logicalId;
+      final activeChat = service?.of(
+        conn.id,
+        session.id,
+        profile: session.profile,
+      );
+      final status = resolveSessionLiveStatus(
+        chat: activeChat?.liveStatus,
+        chatAuthoritative:
+            activeChat != null &&
+            (activeChat.hasDesktopRuntime || activeChat.lastTerminalAt != null),
+        chatSettledAt: activeChat?.lastTerminalAt,
+        global: _globalActivityFor(conn, session),
+      );
+      // A stale roster can only preserve visual continuity while the
+      // next read is pending; it is never current work for Inicio.
+      final working =
+          status.turnLive &&
+          status.phase != SessionLivePhase.waitingForUser &&
+          !status.stale;
+      DateTime? since;
+      if (working) {
+        since = activeChat?.turnClockOrigin;
+        if (since == null) {
+          for (final row in _activeRoster) {
+            final stored = row.storedSessionId;
+            if (stored == session.id || stored == session.logicalId) {
+              since = row.startedAt;
+              break;
+            }
+          }
+        }
+      }
+      final preview = sessionListPreview(session);
+      chatItems.add(
+        HomeChatItem(
+          key: session.logicalId,
+          title:
+              archive?.titleForSession(session, strings: strings) ??
+              localizedSessionTitle(strings, session),
+          preview: session.hasLocalDraft
+              ? [_sentenceCase(strings.slDraftBadge), ?preview].join(' · ')
+              : preview ?? '',
+          at: DateTime.fromMillisecondsSinceEpoch(
+            (session.lastActivityAt * 1000).round(),
+          ),
+          unread:
+              !working &&
+              (archive?.isSessionUnread(session) ?? session.unread == true),
+          working: working,
+          workingSince: since,
+          step: working && status.phase == SessionLivePhase.runningTool
+              ? sessionLiveStatusLabel(strings, status)
+              : null,
+          ref: session,
+        ),
+      );
+    }
+
+    String? botName(String profile) {
+      final info = store.profile(profile);
+      final title = info?.botTitle?.trim();
+      if (title != null && title.isNotEmpty) return title;
+      return profile;
+    }
+
+    // Approvals: attached chats (any profile of this connection), then the
+    // hosted rooms of the Bots read when it is recent enough.
+    final approvals = <HomeApprovalItem>[
+      ...homeChatApprovals(
+        chats,
+        readOnly: readOnly,
+        chatKey: (chat) =>
+            keyById[chat.storedSessionId ?? chat.sessionId] ??
+            keyById[chat.sessionId],
+        whereOf: (chat) => _isBotChat(chat) ? '' : chat.sessionTitle,
+        actorOf: (chat) => _isBotChat(chat)
+            ? botName(Session.profileOwner(chat.sessionProfile))
+            : null,
+      ),
+    ];
+    final groups = snapshot?.hostedGroups ?? HostedGroupsSnapshot.empty;
+    String roomTitle(HostedGroupRoom room) =>
+        snapshot?.roomIdentity(room)?.name ?? room.name;
+    final roomPrefs = SharedPreferencesRoomPrefs(widget.connManager.prefs);
+    if (snapshot != null &&
+        now.difference(snapshot.loadedAt) <= _roomApprovalMaxAge) {
+      approvals.addAll(
+        homeRoomApprovals(
+          groups,
+          AttentionSummary.fromSnapshot(groups, acks: roomPrefs.acksFor),
+          titleOf: roomTitle,
+          readOnly: readOnly,
+        ).where((item) => !_answeredRoomApprovals.contains(item.key)),
+      );
+    }
+
+    final profiles = store.isLive
+        ? store.profiles
+        : (snapshot?.profiles ?? const <AgentProfile>[]);
+    return HomeNow.derive(
+      approvals: approvals,
+      chats: chatItems,
+      rooms: homeRoomNews(
+        groups,
+        acksFor: roomPrefs.acksFor,
+        titleOf: roomTitle,
+      ),
+      team: homeTeam(
+        profiles: profiles,
+        activeSessions: _activeRoster,
+        observedAt: _activeRosterAt,
+        liveChats: service == null
+            ? const []
+            : missionLiveChats(service, conn.id, _recentSessions),
+        now: now,
+      ),
+      automations: _cronJobs == null
+          ? null
+          : homeAutomations(_cronJobs!, parseTime: cronParseTime),
+      now: now,
+    );
+  }
+
+  static bool _isBotChat(ActiveChat chat) =>
+      chat.sessionId.startsWith('mob-bot-');
+
+  late final HomeNowActions _homeActions = HomeNowActions(
+    answer: _answerApproval,
+    viewApproval: _viewApproval,
+    openChat: (chat) {
+      if (chat.ref case final Session session) _openChat(session);
+    },
+    openRoom: (room) => _openInBots(
+      MissionControlOpenTarget.room(sessionId: '', roomId: room.key),
+    ),
+    openBot: (bot) => _openInBots(
+      MissionControlOpenTarget.bot(
+        sessionId:
+            (bot.ref is AgentProfile
+                ? (bot.ref as AgentProfile).canonicalBotChatSessionId
+                : null) ??
+            '',
+        profile: bot.profileName,
+      ),
+    ),
+    openAutomation: (_) => _openAutomations(),
+  );
+
+  /// Answers with the request's own existing path: the attached chat's
+  /// `resolveApproval`, or `groups.approve` for a room.
+  Future<void> _answerApproval(
+    HomeApprovalItem item, {
+    required bool allow,
+  }) async {
+    final conn = _active;
+    if (conn == null) return;
+    if (conn.readOnly) {
+      showReadOnlyNotice(context);
+      return;
+    }
+    final choice = allow ? ApprovalScope.once.wire : ApprovalScope.deny.wire;
+    try {
+      switch (item.ref) {
+        case final HomeChatApprovalRef ref:
+          await ref.resolve(choice);
+        case final HomeRoomApprovalRef ref:
+          await (widget.roomApproveOverride ?? _pooledRoomApprove)(
+            conn,
+            roomId: ref.room.roomId,
+            action: ref.action,
+            choice: choice,
+          );
+          _answeredRoomApprovals.add(item.key);
+      }
+    } catch (error) {
+      debugPrint(
+        '[home-dashboard] approval answer failed (${error.runtimeType})',
+      );
+      if (mounted) {
+        HermesNotice.of(context).showSnackBar(
+          SnackBar(content: Text(Strings.of(context).inicioApprovalFailed)),
+          kind: HermesNoticeKind.error,
+        );
+      }
+    }
+    if (mounted) setState(() => _activityRevision++);
+  }
+
+  static Future<void> _pooledRoomApprove(
+    SavedConnection connection, {
+    required String roomId,
+    required RoomApprovalAction action,
+    required String choice,
+  }) => pooledRoomApprove(
+    connection,
+    roomId: roomId,
+    action: action,
+    choice: choice,
+  );
+
+  void _viewApproval(HomeApprovalItem item) {
+    switch (item.ref) {
+      case final HomeRoomApprovalRef ref:
+        _openInBots(
+          MissionControlOpenTarget.room(sessionId: '', roomId: ref.room.roomId),
+        );
+      case final HomeChatApprovalRef ref:
+        final chat = ref.chat;
+        final profile = Session.profileOwner(chat.sessionProfile);
+        if (_isBotChat(chat)) {
+          _openInBots(
+            MissionControlOpenTarget.bot(
+              sessionId: chat.storedSessionId ?? '',
+              profile: profile,
+            ),
+          );
+          return;
+        }
+        final id = chat.storedSessionId ?? chat.sessionId;
+        final session =
+            _recentSessions
+                .where((s) => s.id == id || s.logicalId == id)
+                .firstOrNull ??
+            Session(
+              id: id,
+              title: chat.sessionTitle,
+              model: 'hermes-agent',
+              source: 'mobile',
+              messageCount: 1,
+              isActive: true,
+              preview: '',
+              startedAt: 0,
+              profile: profile,
+            );
+        _openChat(session);
+    }
+  }
+
+  /// Bot Chats and rooms open through Bot Mode, as notifications do: the
+  /// canonical chat or the room (landing on its «new» divider) on top.
+  void _openInBots(MissionControlOpenTarget target) {
+    final conn = _active;
+    if (conn == null) return;
+    final override = widget.botsOpenOverride;
+    if (override != null) {
+      override(target);
+      return;
+    }
+    final navigator = Navigator.of(context);
+    if (MissionControlScreen.openInExisting(navigator, conn.id, target)) {
+      return;
+    }
+    navigator
+        .push(
+          MissionControlOwnerRoute<void>(
+            builder: (_) => MissionControlScreen(
+              connection: conn,
+              connManager: widget.connManager,
+              activeChats: _activeChats,
+              initialOpenTarget: target,
+            ),
+          ),
+        )
+        .then((_) => _refreshWhenUncovered());
+  }
+
+  void _openAutomations() {
+    final conn = _active;
+    if (conn == null) return;
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                CronScreen(connection: conn, connManager: widget.connManager),
+          ),
+        )
+        .then((_) {
+          _cronReadAt = null;
+          _refreshWhenUncovered();
+        });
+  }
+
+  /// The hero while the user types in the calm composer: it stays the
+  /// composer (an arriving card would take the half-typed text away).
+  HomeHero _heroWhileTyping(HomeHero hero) =>
+      _composerFocused && hero is! HomeHeroCalm ? const HomeHeroCalm([]) : hero;
+
+  Widget _buildHomeNow(
+    SavedConnection active, {
+    required List<Widget> banners,
+    required bool remoteOffline,
+    required double bottomClearance,
+  }) {
+    final home = _homeNowFor(active);
+    final clock = _clock();
+    final strings = Strings.of(context);
+    final status = HomeStatusBlock(
+      now: home,
+      clock: clock,
+      onOpenBot: _homeActions.openBot,
+    );
+    final hero = _buildCompanionStage(
+      HomeHeroCard(
+        hero: _heroWhileTyping(home.hero),
+        actions: _homeActions,
+        clock: clock,
+        now: _clock,
+        composer: _buildComposer(
+          enabled: !remoteOffline,
+          dimmed: remoteOffline,
+        ),
+      ),
+    );
+    final proximo = home.proximo;
+    final next = proximo?.automation.nextRun;
+    final secondary = <Widget>[
+      // A failed refresh keeps the last good list, but still says so and
+      // offers the retry.
+      if (_recentListFailed && !remoteOffline)
+        _ProfileListErrorCard(
+          profile: ProfileScopeLabel.display(
+            strings,
+            widget.connManager.activeProfileFor(active.id),
+          ),
+          onRetry: _refreshStatus,
+        ),
+      if (home.retomar.isNotEmpty)
+        HomeRetomarSection(
+          rows: home.retomar,
+          actions: _homeActions,
+          clock: clock,
+        ),
+      if (proximo != null)
+        HomeProximoLine(
+          proximo: proximo,
+          when: next == null
+              ? ''
+              : hermesFormatNextRun(strings, next, now: clock),
+          onTap: _homeActions.openAutomation,
+        ),
+    ];
+    final primary = <Widget>[
+      ...banners,
+      status,
+      const SizedBox(height: 22),
+      hero,
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Expanded width (tablet, unfolded): hero and status on the left,
+        // Retomar and Próximo on the right.
+        final wide = constraints.maxWidth >= 840;
+        final padding = EdgeInsets.fromLTRB(
+          wide ? 40 : 22,
+          wide ? 28 : 18,
+          wide ? 40 : 22,
+          bottomClearance,
+        );
+        if (wide) {
+          return ListView(
+            key: const ValueKey('home-now-list'),
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: padding,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 5,
+                    child: Column(
+                      key: const ValueKey('home-now-primary'),
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: primary,
+                    ),
+                  ),
+                  const SizedBox(width: 40),
+                  Expanded(
+                    flex: 4,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Column(
+                        key: const ValueKey('home-now-secondary'),
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: _spaced(secondary),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          );
+        }
+        return ListView(
+          key: const ValueKey('home-now-list'),
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: padding,
+          children: [
+            ...primary,
+            if (secondary.isNotEmpty) const SizedBox(height: 28),
+            ..._spaced(secondary),
+          ],
+        );
+      },
+    );
+  }
+
+  static List<Widget> _spaced(List<Widget> children) => [
+    for (var i = 0; i < children.length; i++) ...[
+      if (i > 0) const SizedBox(height: 14),
+      children[i],
+    ],
+  ];
+
   @override
   Widget build(BuildContext context) =>
       EnclosingRoute(onRoute: _attachRoute, child: _buildScreen(context));
@@ -2127,7 +2363,6 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
         _healthOk &&
         (_dashboardAuth == DashboardAuthCheck.invalidCredentials ||
             _dashboardAuth == DashboardAuthCheck.loginRequired);
-    final recentLimit = _homeRecentLimit();
     if (!_initialLoadComplete) {
       return Scaffold(
         backgroundColor: colors.background,
@@ -2399,119 +2634,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
                   ),
                 );
               }
-              final content = Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        ...banners,
-                        const SizedBox(height: 8),
-                        // La mascota vive únicamente sobre la pista del compositor.
-                        // Sin Companion o con teclado, el input recupera ese espacio.
-                        FadeSlideIn(
-                          delayMs: reduceMotion ? 0 : 30,
-                          duration: reduceMotion
-                              ? Duration.zero
-                              : const Duration(milliseconds: 220),
-                          child: _buildPromptStage(
-                            enabled: !isRemoteAndOffline,
-                            dimmed: isRemoteAndOffline,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: RefreshIndicator(
-                      color: colors.accent,
-                      onRefresh: _refreshStatus,
-                      child: ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: EdgeInsets.fromLTRB(
-                          20,
-                          14,
-                          20,
-                          dockBottomClearance,
-                        ),
-                        children: [
-                          // A failed refresh keeps the last good list, but
-                          // still says so and offers the retry above it.
-                          if (_recentListFailed && !isRemoteAndOffline) ...[
-                            const SizedBox(height: 10),
-                            _ProfileListErrorCard(
-                              profile: ProfileScopeLabel.display(
-                                Strings.of(context),
-                                widget.connManager.activeProfileFor(active.id),
-                              ),
-                              onRetry: _refreshStatus,
-                            ),
-                          ],
-                          if (_visibleRecentSessions.isNotEmpty) ...[
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                left: 4,
-                                bottom: 2,
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      Strings.of(context).homeChatsSection,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: colors.textSecondary,
-                                      ),
-                                    ),
-                                  ),
-                                  TextButton(
-                                    onPressed: _openSessions,
-                                    style: TextButton.styleFrom(
-                                      minimumSize: const Size(48, 44),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                      ),
-                                      foregroundColor: colors.accentHover,
-                                    ),
-                                    child: Text(
-                                      Strings.of(context).homeSearch,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: colors.accentHover,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            ..._buildRecentRows(active, recentLimit),
-                          ] else if (!_recentListFailed &&
-                              !isRemoteAndOffline) ...[
-                            const SizedBox(height: 10),
-                            HermesEmptyState(
-                              key: const ValueKey('home-empty-conversations'),
-                              compact: true,
-                              title: Strings.of(
-                                context,
-                              ).homeEmptyConversationsTitle,
-                              body: Strings.of(
-                                context,
-                              ).homeEmptyConversationsBody,
-                              padding: const EdgeInsets.fromLTRB(
-                                18,
-                                18,
-                                18,
-                                22,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
+              final content = RefreshIndicator(
+                color: colors.accent,
+                onRefresh: _refreshStatus,
+                child: _buildHomeNow(
+                  active,
+                  banners: banners,
+                  remoteOffline: isRemoteAndOffline,
+                  bottomClearance: dockBottomClearance,
+                ),
               );
               return content;
             }(),
@@ -3026,360 +3157,8 @@ class _RemoteInstanceOfflineCardState
   }
 }
 
-class _RecentGroupHeader extends StatelessWidget {
-  const _RecentGroupHeader({
-    required this.label,
-    required this.first,
-    super.key,
-  });
-
-  final String label;
-  final bool first;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    return Semantics(
-      header: true,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(6, first ? 2 : 14, 6, 5),
-        child: Text(
-          label.toUpperCase(),
-          style: TextStyle(
-            fontSize: 10.5,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.9,
-            color: colors.textSecondary.withValues(alpha: 0.86),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 String _sentenceCase(String value) =>
     value.isEmpty ? value : '${value[0].toUpperCase()}${value.substring(1)}';
-
-/// Línea de actividad en curso: píldora con tinte propio, punto de estado y
-/// texto en peso medio.
-///
-/// Antes era un `Text` del mismo tamaño y peso que la vista previa normal,
-/// pintado con `colors.secondary` a pelo: en la mayoría de temas se leía
-/// lavado y no se distinguía del título, así que no se sabía qué estaba
-/// haciendo la conversación. El tinte de fondo + el punto + el peso dan la
-/// diferencia sin depender de que el `secondary` del tema tenga contraste.
-class _ActivityLine extends StatelessWidget {
-  const _ActivityLine({
-    required this.label,
-    this.tone = SessionStatusTone.working,
-    super.key,
-  });
-
-  final String label;
-
-  /// Semantic state: the dot, tint and text share its colour.
-  final SessionStatusTone tone;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final tone = sessionStatusColor(colors, this.tone);
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: tone.withValues(alpha: 0.13),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 6,
-              height: 6,
-              decoration: BoxDecoration(color: tone, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.2,
-                  fontWeight: FontWeight.w600,
-                  color: tone,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _RecentSessionTile extends StatelessWidget {
-  final Session session;
-  final String title;
-  final HomeRecentSummary summary;
-  final String? activityLabel;
-  final SessionStatusTone activityTone;
-  final String relativeTime;
-  final VoidCallback onTap;
-  final Future<void> Function()? onStop;
-  final VoidCallback? onManage;
-
-  const _RecentSessionTile({
-    required this.session,
-    required this.title,
-    required this.summary,
-    required this.activityLabel,
-    this.activityTone = SessionStatusTone.working,
-    required this.relativeTime,
-    required this.onTap,
-    this.onStop,
-    this.onManage,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final strings = Strings.of(context);
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    final userPreview = humanReadableSessionPreview(summary.user);
-    final assistantPreview = humanReadableSessionPreview(summary.assistant);
-    final assistantText = assistantPreview == null
-        ? null
-        : projectAssistantOperationalArtifacts(
-            assistantPreview,
-            subagentLabel: strings.subagentActivityItem,
-            resultLabel: strings.commonResult,
-          ).visibleMarkdown;
-    final assistantOrActivity = activityLabel ?? assistantText;
-    // Borrador: texto descriptivo hilado en la línea de vista previa
-    // ("Borrador · Resume los cambios…"), como el mockup de Conversaciones, en
-    // vez de una píldora "BORRADOR" en mayúsculas junto al título — las
-    // "cajitas feas" que pedía quitar el mantenedor.
-    final basePreview = assistantText ?? userPreview;
-    final previewText = session.hasLocalDraft
-        ? <String>[
-            _sentenceCase(strings.slDraftBadge),
-            ?basePreview,
-          ].join(' · ')
-        : basePreview;
-    // Desktop's sidebar paints the session's own preview or no line at all
-    // (session-row.tsx); no placeholder stands in for a missing preview.
-    final visiblePreview = previewText;
-
-    // Fila ligera: jerarquía por texto y divisor, sin cards pesadas.
-    // Semantics compone una descripción legible para TalkBack (título, turno
-    // reciente y estado); ExcludeSemantics evita repeticiones.
-    final tile = Semantics(
-      button: true,
-      explicitChildNodes: onStop != null,
-      onLongPress: onManage,
-      label: [
-        strings.homeSemanticChat(title, session.messageCount),
-        ?userPreview,
-        ?assistantOrActivity,
-        if (session.hasLocalDraft) strings.slDraftBadge,
-      ].join(', '),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        onLongPress: onManage,
-        child: Container(
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(color: colors.divider.withValues(alpha: 0.55)),
-            ),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 13),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: ExcludeSemantics(
-                  child: AnimatedSize(
-                    duration: reduceMotion
-                        ? Duration.zero
-                        : const Duration(milliseconds: 180),
-                    curve: Curves.easeOutCubic,
-                    alignment: Alignment.topLeft,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w500,
-                            fontSize: 15,
-                            color: colors.textPrimary,
-                          ),
-                        ),
-                        AnimatedSwitcher(
-                          duration: reduceMotion
-                              ? Duration.zero
-                              : const Duration(milliseconds: 160),
-                          switchInCurve: Curves.easeOut,
-                          switchOutCurve: Curves.easeIn,
-                          child: activityLabel != null
-                              ? Padding(
-                                  // ss1215: the live line updates in place
-                                  // (tool → thinking → waiting); only the
-                                  // switch to/from the preview animates.
-                                  key: const ValueKey('activity-live'),
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: _ActivityLine(
-                                    key: ValueKey(
-                                      'home-activity-${session.id}',
-                                    ),
-                                    label: activityLabel!,
-                                    tone: activityTone,
-                                  ),
-                                )
-                              : visiblePreview == null
-                              ? const SizedBox.shrink(
-                                  key: ValueKey('preview-none'),
-                                )
-                              : Padding(
-                                  key: ValueKey('preview-$visiblePreview'),
-                                  padding: const EdgeInsets.only(top: 3),
-                                  child: Text(
-                                    visiblePreview,
-                                    key: session.hasLocalDraft
-                                        ? ValueKey('home-draft-${session.id}')
-                                        : null,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 12.5,
-                                      height: 1.2,
-                                      color: colors.textSecondary,
-                                    ),
-                                  ),
-                                ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              if (onStop != null) ...[
-                const SizedBox(width: 8),
-                SessionRowStopControl(onStop: onStop!),
-              ],
-              const SizedBox(width: 12),
-              ExcludeSemantics(
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    relativeTime,
-                    // WCAG AA: el tiempo es información real → textSecondary (≥4.5:1).
-                    style: TextStyle(fontSize: 11, color: colors.textSecondary),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (onManage == null) return tile;
-    return Dismissible(
-      key: ValueKey('home-recent-swipe-${session.id}'),
-      direction: DismissDirection.endToStart,
-      dismissThresholds: const {DismissDirection.endToStart: 0.32},
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 18),
-        decoration: BoxDecoration(
-          color: colors.background,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              strings.slSwipeManage,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: colors.textSecondary,
-              ),
-            ),
-            const SizedBox(width: 7),
-            Icon(Icons.tune_rounded, size: 20, color: colors.textSecondary),
-          ],
-        ),
-      ),
-      confirmDismiss: (_) async {
-        onManage?.call();
-        // El arrastre abre acciones; nunca modifica ni elimina por sí solo.
-        return false;
-      },
-      child: tile,
-    );
-  }
-}
-
-/// Envoltorio público de la fila de "recientes" para blindar con widget tests
-/// su presentación (borrador hilado, actividad legible) sin levantar el
-/// dashboard completo con su red, su companion y su compositor.
-@visibleForTesting
-class HomeRecentSessionTileForTesting extends StatelessWidget {
-  const HomeRecentSessionTileForTesting({
-    required this.sessionId,
-    required this.title,
-    this.userPreview,
-    this.assistantPreview,
-    this.activityLabel,
-    this.activityTone = SessionStatusTone.working,
-    this.hasLocalDraft = false,
-    this.relativeTime = '12:40',
-    this.onStop,
-    super.key,
-  });
-
-  final String sessionId;
-  final String title;
-  final String? userPreview;
-  final String? assistantPreview;
-  final String? activityLabel;
-  final SessionStatusTone activityTone;
-  final bool hasLocalDraft;
-  final String relativeTime;
-  final Future<void> Function()? onStop;
-
-  @override
-  Widget build(BuildContext context) => _RecentSessionTile(
-    session: Session(
-      id: sessionId,
-      title: title,
-      model: 'hermes-agent',
-      source: 'mobile',
-      messageCount: 2,
-      isActive: false,
-      preview: userPreview ?? '',
-      startedAt: 1,
-      hasLocalDraft: hasLocalDraft,
-    ),
-    title: title,
-    summary: HomeRecentSummary(user: userPreview, assistant: assistantPreview),
-    activityLabel: activityLabel,
-    activityTone: activityTone,
-    relativeTime: relativeTime,
-    onTap: () {},
-    onStop: onStop,
-  );
-}
-
-enum _RecentAction { rename, delete }
 
 /// Console-style welcome shown when no Gateway connections exist yet.
 class _EmptyHomeState extends StatelessWidget {

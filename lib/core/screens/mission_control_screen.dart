@@ -31,6 +31,7 @@ import '../bots/ui/room/room_prefs.dart';
 import '../bots/ui/room/room_screen.dart';
 import '../bots/ui/room/room_sheets.dart' show showRoomMembersSheet;
 import '../bots/state/bot_presence.dart';
+import '../bots/state/mission_live_chats.dart';
 import '../bots/state/bot_roster_meta.dart';
 import '../bots/ui/profile/bot_profile_screen.dart';
 import '../bots/ui/roster/dots_home_view.dart';
@@ -432,10 +433,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final store = _rosterStore;
     final profiles = store.isLive
         ? store.profiles
-        : _roster.withPendingMutations(
-            widget.connection.id,
-            snapshot.profiles,
-          );
+        : _roster.withPendingMutations(widget.connection.id, snapshot.profiles);
     if (identical(profiles, snapshot.profiles)) return snapshot;
     return MissionBackendSnapshot(
       profiles: profiles,
@@ -1194,92 +1192,24 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     _liveSubscriptions.clear();
   }
 
-  Iterable<ActiveChat> _resolveActiveChats(ActiveChatService service) sync* {
-    final seen = <ActiveChat>{};
-    for (final rawId in service.activeIds.value) {
-      try {
-        final decoded = jsonDecode(rawId);
-        if (decoded is! List || decoded.length != 3) continue;
-        final connectionId = decoded[0];
-        final profile = decoded[1];
-        final sessionId = decoded[2];
-        if (connectionId != widget.connection.id ||
-            profile is! String ||
-            sessionId is! String) {
-          continue;
-        }
-        final chat = service.of(
-          widget.connection.id,
-          sessionId,
-          profile: profile,
-        );
-        if (chat != null && seen.add(chat)) yield chat;
-      } catch (_) {
-        // Active ids are internal opaque identities. Ignore a malformed value
-        // instead of letting observability take down the existing chat path.
-      }
-    }
-    for (final session in _snapshot?.sessions ?? const <Session>[]) {
-      final owner = session.profile?.trim();
-      if (owner == null || owner.isEmpty) continue;
-      final chat = service.of(widget.connection.id, session.id, profile: owner);
-      if (chat != null && seen.add(chat)) yield chat;
-    }
-  }
+  Iterable<ActiveChat> _resolveActiveChats(ActiveChatService service) =>
+      missionActiveChats(
+        service,
+        widget.connection.id,
+        _snapshot?.sessions ?? const <Session>[],
+      );
 
   List<MissionLiveChat> _liveChats() {
     final service = _activeChats;
     if (service == null) return const [];
-    final sessions = _snapshot?.sessions ?? const <Session>[];
-    final sessionByIdentity = <String, Session>{};
-    final sessionsById = <String, List<Session>>{};
-    for (final session in sessions) {
-      final owner = session.profile?.trim();
-      if (owner != null && owner.isNotEmpty) {
-        sessionByIdentity['$owner\u0000${session.id}'] = session;
-        sessionByIdentity['$owner\u0000${session.logicalId}'] = session;
-      }
-      sessionsById.putIfAbsent(session.id, () => []).add(session);
-      sessionsById.putIfAbsent(session.logicalId, () => []).add(session);
-    }
-    return _resolveActiveChats(service)
-        .map((chat) {
-          final profile = Session.profileOwner(chat.sessionProfile);
-          final storedId = chat.storedSessionId;
-          final lookupId = storedId ?? chat.sessionId;
-          final idMatches = sessionsById[lookupId] ?? const <Session>[];
-          final session =
-              sessionByIdentity['$profile\u0000$lookupId'] ??
-              sessionByIdentity['$profile\u0000${chat.sessionId}'] ??
-              (idMatches.length == 1 ? idMatches.single : null);
-          return MissionLiveChat(
-            profileName: profile,
-            sessionId: storedId ?? chat.sessionId,
-            title: chat.sessionTitle,
-            phase: _missionPhase(chat),
-            approval: chat.pendingApproval,
-            model: session?.model,
-            settledAt: chat.lastTerminalAt,
-            botChat: chat.sessionId == 'mob-bot-$profile',
-            subagentCount: chat.safeActiveSubagentCount,
-          );
-        })
-        .toList(growable: false);
+    return missionLiveChats(
+      service,
+      widget.connection.id,
+      _snapshot?.sessions ?? const <Session>[],
+    );
   }
 
-  MissionLivePhase _missionPhase(ActiveChat chat) {
-    if (chat.pendingApproval != null) {
-      return MissionLivePhase.approvalRequired;
-    }
-    if (chat.state == ChatPipelineState.failed) return MissionLivePhase.error;
-    return switch (chat.activityKind) {
-      ChatActivityKind.thinking => MissionLivePhase.thinking,
-      ChatActivityKind.usingTools => MissionLivePhase.working,
-      ChatActivityKind.responding => MissionLivePhase.responding,
-      ChatActivityKind.awaitingApproval => MissionLivePhase.approvalRequired,
-      null => MissionLivePhase.idle,
-    };
-  }
+  MissionLivePhase _missionPhase(ActiveChat chat) => missionPhaseOf(chat);
 
   MissionProjection _projection(MissionBackendSnapshot snapshot) =>
       MissionProjector.build(
@@ -1331,12 +1261,18 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     }
   }
 
-  BotProfileGateway? get _botProfileGateway => widget.botProfileGateway ??
-      (_profileAssetsGateway is BotProfileGateway ? _profileAssetsGateway as BotProfileGateway : null);
+  BotProfileGateway? get _botProfileGateway =>
+      widget.botProfileGateway ??
+      (_profileAssetsGateway is BotProfileGateway
+          ? _profileAssetsGateway as BotProfileGateway
+          : null);
   bool _sectionBusy = false;
 
-  Future<void> _applySections(Map<String, BotSectionChange> changes,
-      {bool deletion = false, Map<String, BotSectionChange>? undo}) async {
+  Future<void> _applySections(
+    Map<String, BotSectionChange> changes, {
+    bool deletion = false,
+    Map<String, BotSectionChange>? undo,
+  }) async {
     final gateway = _botProfileGateway;
     if (gateway == null || widget.connection.readOnly || _sectionBusy) return;
     setState(() => _sectionBusy = true);
@@ -1346,7 +1282,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final failed = <String, BotSectionChange>{};
     for (final entry in changes.entries) {
       try {
-        await writer.setSection(entry.key, id: entry.value.id, name: entry.value.name);
+        await writer.setSection(
+          entry.key,
+          id: entry.value.id,
+          name: entry.value.name,
+        );
       } catch (_) {
         failed[entry.key] = entry.value;
       }
@@ -1386,7 +1326,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 
   Future<void> _moveBotToSection([AgentProfile? profile]) async {
-    if (_sectionBusy || _botProfileGateway == null || widget.connection.readOnly) {
+    if (_sectionBusy ||
+        _botProfileGateway == null ||
+        widget.connection.readOnly) {
       return;
     }
     final profiles = _snapshot?.profiles ?? const <AgentProfile>[];
@@ -1397,31 +1339,57 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   Future<void> _sectionMenu(String sectionId, String sectionName) async {
     if (_sectionBusy || widget.connection.readOnly) return;
-    final action = await showHermesFloatingSurface<String>(context: context,
+    final action = await showHermesFloatingSurface<String>(
+      context: context,
       builder: (context) {
         final s = Strings.of(context);
-        return Column(mainAxisSize: MainAxisSize.min, children: [
-          ListTile(title: Text(s.botSectionRename), leading: const Icon(Icons.edit_outlined),
-            onTap: () => Navigator.pop(context, 'rename')),
-          ListTile(title: Text(s.botSectionDelete), leading: const Icon(Icons.delete_outline),
-            onTap: () => Navigator.pop(context, 'delete')),
-        ]);
-      });
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(s.botSectionRename),
+              leading: const Icon(Icons.edit_outlined),
+              onTap: () => Navigator.pop(context, 'rename'),
+            ),
+            ListTile(
+              title: Text(s.botSectionDelete),
+              leading: const Icon(Icons.delete_outline),
+              onTap: () => Navigator.pop(context, 'delete'),
+            ),
+          ],
+        );
+      },
+    );
     if (action == null || !mounted) return;
     final profiles = _snapshot?.profiles ?? const <AgentProfile>[];
     if (action == 'rename') {
       final name = await botSectionNameDialog(context, initial: sectionName);
       if (name == null || !mounted) return;
-      await _applySections(BotSectionService.members(profiles, sectionId,
-        BotSectionChange(sectionId, name)));
+      await _applySections(
+        BotSectionService.members(
+          profiles,
+          sectionId,
+          BotSectionChange(sectionId, name),
+        ),
+      );
     } else {
       final undo = <String, BotSectionChange>{
         for (final profile in profiles)
           if (profile.botSectionId == sectionId)
-            profile.name: BotSectionChange(sectionId, profile.botSectionName ?? sectionName),
+            profile.name: BotSectionChange(
+              sectionId,
+              profile.botSectionName ?? sectionName,
+            ),
       };
-      await _applySections(BotSectionService.members(profiles, sectionId,
-        const BotSectionChange(null, null)), deletion: true, undo: undo);
+      await _applySections(
+        BotSectionService.members(
+          profiles,
+          sectionId,
+          const BotSectionChange(null, null),
+        ),
+        deletion: true,
+        undo: undo,
+      );
     }
   }
 
@@ -1433,12 +1401,14 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     try {
       final loader = widget.remoteBotLoader;
       if (loader != null) {
-        profile = (await loader(connection))
-            .singleWhere((candidate) => candidate.name == profile.name);
+        profile = (await loader(
+          connection,
+        )).singleWhere((candidate) => candidate.name == profile.name);
       } else {
         lease = SharedGatewayPool.instance.acquire(connection);
-        profile = (await lease.client.listProfiles(includeSessions: true))
-            .singleWhere((candidate) => candidate.name == profile.name);
+        profile = (await lease.client.listProfiles(
+          includeSessions: true,
+        )).singleWhere((candidate) => candidate.name == profile.name);
       }
     } catch (_) {
       if (mounted) {
@@ -1487,22 +1457,47 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   }
 
   void _remoteBotDetails(SavedConnection connection, AgentProfile profile) {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => MissionControlScreen(
-      connection: connection, connManager: widget.connManager)));
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MissionControlScreen(
+          connection: connection,
+          connManager: widget.connManager,
+        ),
+      ),
+    );
   }
 
   Future<void> _openRecentSession(MissionAgent agent) async {
     final recent = agent.profile.lastSession;
-    if (recent == null) { await _openChat(agent); return; }
-    final session = Session(id: recent.id, title: recent.title,
-      profile: agent.profile.name, isDefaultProfile: agent.profile.isDefault,
-      model: agent.profile.model, source: 'desktop',
-      messageCount: recent.messageCount, isActive: true, preview: recent.preview,
-      startedAt: recent.startedAt ?? 0);
+    if (recent == null) {
+      await _openChat(agent);
+      return;
+    }
+    final session = Session(
+      id: recent.id,
+      title: recent.title,
+      profile: agent.profile.name,
+      isDefaultProfile: agent.profile.isDefault,
+      model: agent.profile.model,
+      source: 'desktop',
+      messageCount: recent.messageCount,
+      isActive: true,
+      preview: recent.preview,
+      startedAt: recent.startedAt ?? 0,
+    );
     final observer = widget.botChatOpenObserver;
-    if (observer != null) { observer(session); return; }
-    await openChatFromSection<void>(context, builder: (_) => ChatScreen(
-      connection: widget.connection, session: session, initialStoredSessionId: recent.id));
+    if (observer != null) {
+      observer(session);
+      return;
+    }
+    await openChatFromSection<void>(
+      context,
+      builder: (_) => ChatScreen(
+        connection: widget.connection,
+        session: session,
+        initialStoredSessionId: recent.id,
+      ),
+    );
   }
 
   Future<void> _duplicateBot(MissionAgent agent) async {
@@ -1538,7 +1533,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         );
       }
     } finally {
-      if (mounted) { setState(() => _sectionBusy = false); await _load(refresh: true); }
+      if (mounted) {
+        setState(() => _sectionBusy = false);
+        await _load(refresh: true);
+      }
     }
   }
 
@@ -1724,7 +1722,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (worker != null &&
         BotPresence.workerIsFresh(worker, now) &&
         worker.title.trim().isNotEmpty) {
-      items.add(BotNowItem(label: strings.botProfileWorkingOn(worker.title.trim())));
+      items.add(
+        BotNowItem(label: strings.botProfileWorkingOn(worker.title.trim())),
+      );
     }
     final service = _activeChats;
     if (service != null) {
@@ -1771,11 +1771,13 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       };
       if (seats.isEmpty) continue;
       roomCount++;
-      final needs = (attention.room(room.roomId)?.items ?? const [])
-          .any((item) => seats.contains(item.memberId));
-      final seatWorking = BotRoomSeat.forProfile(profile.name, groups).any(
-        (seat) => seat.roomId == room.roomId && seat.running,
+      final needs = (attention.room(room.roomId)?.items ?? const []).any(
+        (item) => seats.contains(item.memberId),
       );
+      final seatWorking = BotRoomSeat.forProfile(
+        profile.name,
+        groups,
+      ).any((seat) => seat.roomId == room.roomId && seat.running);
       if (needs) {
         items.add(
           BotNowItem(
@@ -1850,7 +1852,8 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           onTasks: () => unawaited(_openTasks(assignee: name)),
           onEditIdentity: readOnly
               ? null
-              : () => unawaited(_openProfileEditor(_currentAgent(agent).profile)),
+              : () =>
+                    unawaited(_openProfileEditor(_currentAgent(agent).profile)),
           onChanged: () => unawaited(_load(refresh: true)),
           moreActions: [
             BotProfileAction(
@@ -1972,26 +1975,73 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Future<void> _manageBotRooms([MissionAgent? agent]) async {
     final snapshot = _snapshot;
     if (snapshot == null) return;
-    final rooms = snapshot.hostedGroups.rooms.where((r) => !r.disbanded && (agent == null || r.members.any((m) =>
-      m.owner.connectionId == r.authorityGatewayId && m.owner.profile == agent.profile.name))).toList();
-    final selected = await showHermesFloatingSurface<String>(context: context,
-      builder: (context) => ListView(shrinkWrap: true, children: [
-        for (final room in rooms) ListTile(title: Text(room.name), leading: const Icon(Icons.forum_outlined),
-          trailing: !widget.connection.readOnly && _profileAssetsGateway is BotRoomLinkGateway && room.members.any((m) => m.owner.connectionId != room.authorityGatewayId)
-            ? IconButton(icon: const Icon(Icons.link), tooltip: Strings.of(context).botReconnectRoom,
-                onPressed: () => Navigator.pop(context, 'link:${room.roomId}')) : null,
-          onTap: () => Navigator.pop(context, room.roomId)),
-        if (_canCreateHostedRoom) ListTile(title: Text(MissionControlCopy.of(context).createSharedRoom),
-          leading: const Icon(Icons.add), onTap: () => Navigator.pop(context, 'new')),
-        Padding(padding: const EdgeInsets.all(20), child: Text(Strings.of(context).botRoomMembersUnavailable)),
-      ]));
+    final rooms = snapshot.hostedGroups.rooms
+        .where(
+          (r) =>
+              !r.disbanded &&
+              (agent == null ||
+                  r.members.any(
+                    (m) =>
+                        m.owner.connectionId == r.authorityGatewayId &&
+                        m.owner.profile == agent.profile.name,
+                  )),
+        )
+        .toList();
+    final selected = await showHermesFloatingSurface<String>(
+      context: context,
+      builder: (context) => ListView(
+        shrinkWrap: true,
+        children: [
+          for (final room in rooms)
+            ListTile(
+              title: Text(room.name),
+              leading: const Icon(Icons.forum_outlined),
+              trailing:
+                  !widget.connection.readOnly &&
+                      _profileAssetsGateway is BotRoomLinkGateway &&
+                      room.members.any(
+                        (m) => m.owner.connectionId != room.authorityGatewayId,
+                      )
+                  ? IconButton(
+                      icon: const Icon(Icons.link),
+                      tooltip: Strings.of(context).botReconnectRoom,
+                      onPressed: () =>
+                          Navigator.pop(context, 'link:${room.roomId}'),
+                    )
+                  : null,
+              onTap: () => Navigator.pop(context, room.roomId),
+            ),
+          if (_canCreateHostedRoom)
+            ListTile(
+              title: Text(MissionControlCopy.of(context).createSharedRoom),
+              leading: const Icon(Icons.add),
+              onTap: () => Navigator.pop(context, 'new'),
+            ),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Text(Strings.of(context).botRoomMembersUnavailable),
+          ),
+        ],
+      ),
+    );
     if (!mounted || selected == null) return;
-    if (selected == 'new') { await _createHostedRoom(initialProfile: agent?.profile.name); }
-    else if (selected.startsWith('link:')) {
+    if (selected == 'new') {
+      await _createHostedRoom(initialProfile: agent?.profile.name);
+    } else if (selected.startsWith('link:')) {
       try {
         final peers = await _loadRoomPeers();
-        final room = _snapshot!.hostedGroups.rooms.singleWhere((r) => r.roomId == selected.substring(5) && !r.disbanded);
-        final matches = peers.where((p) => room.members.any((m) => m.owner.connectionId == p.catalog['installation_id'] && m.owner.profile == p.profile.name)).toList();
+        final room = _snapshot!.hostedGroups.rooms.singleWhere(
+          (r) => r.roomId == selected.substring(5) && !r.disbanded,
+        );
+        final matches = peers
+            .where(
+              (p) => room.members.any(
+                (m) =>
+                    m.owner.connectionId == p.catalog['installation_id'] &&
+                    m.owner.profile == p.profile.name,
+              ),
+            )
+            .toList();
         if (matches.isEmpty) throw StateError('No reachable room peers');
         await _attachRoomPeers(room, matches);
       } catch (_) {
@@ -2002,9 +2052,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           );
         }
       }
-    }
-    else if (_snapshot case final current?) {
-      await _openInitialTarget(MissionControlOpenTarget.room(sessionId: '', roomId: selected), current);
+    } else if (_snapshot case final current?) {
+      await _openInitialTarget(
+        MissionControlOpenTarget.room(sessionId: '', roomId: selected),
+        current,
+      );
     }
   }
 
@@ -2084,8 +2136,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
 
   void _openRoutines({String? profile}) => Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) =>
-          CronScreen(connection: widget.connection, profileOverride: profile, botRoutines: profile != null),
+      builder: (_) => CronScreen(
+        connection: widget.connection,
+        profileOverride: profile,
+        botRoutines: profile != null,
+      ),
     ),
   );
 
@@ -2140,15 +2195,26 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final snapshot = _snapshot;
     if (snapshot == null) return;
     var target = widget.connection;
-    final connections = widget.connManager.getConnections().where((c) => !c.readOnly).toList();
+    final connections = widget.connManager
+        .getConnections()
+        .where((c) => !c.readOnly)
+        .toList();
     if (connections.length > 1) {
-      final selected = await showHermesFloatingSurface<SavedConnection>(context: context,
-        builder: (context) => ListView(shrinkWrap: true, children: [
-          ListTile(title: Text(Strings.of(context).botCreateOn)),
-          for (final connection in connections) ListTile(
-            title: Text(connection.label), leading: const Icon(Icons.dns_outlined),
-            onTap: () => Navigator.pop(context, connection)),
-        ]));
+      final selected = await showHermesFloatingSurface<SavedConnection>(
+        context: context,
+        builder: (context) => ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(title: Text(Strings.of(context).botCreateOn)),
+            for (final connection in connections)
+              ListTile(
+                title: Text(connection.label),
+                leading: const Icon(Icons.dns_outlined),
+                onTap: () => Navigator.pop(context, connection),
+              ),
+          ],
+        ),
+      );
       if (selected == null || !mounted) return;
       target = selected;
     }
@@ -2176,14 +2242,31 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       );
       if (!mounted || created == null) return;
       if (remote != null) {
-        final profile = (await remote.listProfiles()).where((p) => p.name == created).single;
+        final profile = (await remote.listProfiles())
+            .where((p) => p.name == created)
+            .single;
         if (!mounted) return;
-        final session = Session(id: 'mob-bot-$created', title: 'Bot Chat',
-          model: profile.model, source: 'mobile-bot', messageCount: 0,
-          isActive: true, preview: '', startedAt: DateTime.now().millisecondsSinceEpoch / 1000,
-          profile: created, isDefaultProfile: false);
-        await openChatFromSection<void>(context, builder: (_) => buildBotChatDestination(
-          connection: target, session: session, initialStoredSessionId: null, profile: profile));
+        final session = Session(
+          id: 'mob-bot-$created',
+          title: 'Bot Chat',
+          model: profile.model,
+          source: 'mobile-bot',
+          messageCount: 0,
+          isActive: true,
+          preview: '',
+          startedAt: DateTime.now().millisecondsSinceEpoch / 1000,
+          profile: created,
+          isDefaultProfile: false,
+        );
+        await openChatFromSection<void>(
+          context,
+          builder: (_) => buildBotChatDestination(
+            connection: target,
+            session: session,
+            initialStoredSessionId: null,
+            profile: profile,
+          ),
+        );
         return;
       }
       await _load(refresh: true);
@@ -2197,7 +2280,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       final freshSnapshot = _snapshot;
       if (freshSnapshot == null) return;
       for (final agent in _projection(freshSnapshot).agents) {
-        if (agent.profile.name == created) { await _openChat(agent); return; }
+        if (agent.profile.name == created) {
+          await _openChat(agent);
+          return;
+        }
       }
     } catch (_) {
       if (mounted) {
@@ -2206,7 +2292,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           kind: HermesNoticeKind.error,
         );
       }
-    } finally { remoteLease?.release(); }
+    } finally {
+      remoteLease?.release();
+    }
   }
 
   Future<void> _showWorkspaceSelector() async {
@@ -2323,24 +2411,25 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           maxWidth: 420,
           maxHeightFactor: 0.6,
           builder: (sheetContext) {
-            Widget item(String value, IconData icon, String label,
-                    {bool destructive = false}) =>
-                ListTile(
-                  key: ValueKey('roster-room-action-$value'),
-                  leading: Icon(
-                    icon,
-                    color: destructive
-                        ? Theme.of(sheetContext).hermes.error
-                        : null,
-                  ),
-                  title: Text(
-                    label,
-                    style: destructive
-                        ? TextStyle(color: Theme.of(sheetContext).hermes.error)
-                        : null,
-                  ),
-                  onTap: () => Navigator.pop(sheetContext, value),
-                );
+            Widget item(
+              String value,
+              IconData icon,
+              String label, {
+              bool destructive = false,
+            }) => ListTile(
+              key: ValueKey('roster-room-action-$value'),
+              leading: Icon(
+                icon,
+                color: destructive ? Theme.of(sheetContext).hermes.error : null,
+              ),
+              title: Text(
+                label,
+                style: destructive
+                    ? TextStyle(color: Theme.of(sheetContext).hermes.error)
+                    : null,
+              ),
+              onTap: () => Navigator.pop(sheetContext, value),
+            );
             return SafeArea(
               top: false,
               child: ListView(
@@ -2361,7 +2450,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
                     ),
                   ),
                   item('open', Icons.forum_outlined, strings.missionOpenRoom),
-                  item('members', Icons.group_outlined, strings.roomMenuMembers),
+                  item(
+                    'members',
+                    Icons.group_outlined,
+                    strings.roomMenuMembers,
+                  ),
                   if (can(GroupMethod.rename))
                     item('rename', Icons.edit_outlined, copy.renameSharedRoom),
                   if (can(GroupMethod.stop))
@@ -2421,8 +2514,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         final name = await _promptRoomName(room.name);
         if (name == null || !mounted) return;
         await mutate(
-          (source, room, generation) =>
-              source.renameHostedGroup(room, name: name, generation: generation),
+          (source, room, generation) => source.renameHostedGroup(
+            room,
+            name: name,
+            generation: generation,
+          ),
         );
       case 'stop':
         if (!await _confirmRoomAction(copy.stopSharedRoom)) return;
@@ -2492,8 +2588,6 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     );
     return mounted && confirmed == true;
   }
-
-
 
   MissionHostedGroupsDataSource? get _hostedGroupsDataSource {
     final source = _dataSource;
@@ -2573,9 +2667,15 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Future<List<_RoomPeerCandidate>> _loadRoomPeers() async {
     final home = _profileAssetsGateway;
     if (home is! BotRoomLinkGateway || widget.connection.readOnly) return [];
-    final capabilities = await (home as BotRoomLinkGateway).roomLinkRequest('groups.capabilities', {});
-    if (capabilities['driver'] != true || capabilities['methods'] is! List ||
-        !(capabilities['methods'] as List).contains('groups.peer.register')) { return []; }
+    final capabilities = await (home as BotRoomLinkGateway).roomLinkRequest(
+      'groups.capabilities',
+      {},
+    );
+    if (capabilities['driver'] != true ||
+        capabilities['methods'] is! List ||
+        !(capabilities['methods'] as List).contains('groups.peer.register')) {
+      return [];
+    }
     final connections = widget.connManager.getConnections().where(
       (c) => c.id != widget.connection.id && !c.readOnly,
     );
@@ -2587,25 +2687,40 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         try {
           final profiles = await client.listProfiles(includeSessions: false);
           // One socket per connection: its per-profile probes share it.
-          final probes = await Future.wait(profiles.map((profile) async {
-            try {
-              final caps = await client.roomLinkRequest('groups.capabilities', {'profile': profile.name});
-              final catalog = BotRoomLink.catalog(caps, profile.name);
-              if (catalog != null && catalog['installation_id'] != capabilities['authority_gateway_id'] &&
-                  caps['methods'] is List && (caps['methods'] as List).contains('groups.peer.invite')) {
-                return _RoomPeerCandidate(connection, profile, catalog);
+          final probes = await Future.wait(
+            profiles.map((profile) async {
+              try {
+                final caps = await client.roomLinkRequest(
+                  'groups.capabilities',
+                  {'profile': profile.name},
+                );
+                final catalog = BotRoomLink.catalog(caps, profile.name);
+                if (catalog != null &&
+                    catalog['installation_id'] !=
+                        capabilities['authority_gateway_id'] &&
+                    caps['methods'] is List &&
+                    (caps['methods'] as List).contains('groups.peer.invite')) {
+                  return _RoomPeerCandidate(connection, profile, catalog);
+                }
+              } catch (_) {
+                /* That profile never becomes a selectable peer. */
               }
-            } catch (_) { /* That profile never becomes a selectable peer. */ }
-            return null;
-          }));
+              return null;
+            }),
+          );
           return probes.whereType<_RoomPeerCandidate>().toList();
-        } finally { lease.release(); }
+        } finally {
+          lease.release();
+        }
       },
       keyOf: (candidate) => candidate.key,
     );
   }
 
-  Future<void> _attachRoomPeers(HostedGroupRoom room, List<_RoomPeerCandidate> peers) async {
+  Future<void> _attachRoomPeers(
+    HostedGroupRoom room,
+    List<_RoomPeerCandidate> peers,
+  ) async {
     final home = _profileAssetsGateway;
     if (home is! BotRoomLinkGateway || widget.connection.readOnly) return;
     final failed = <_RoomPeerCandidate>[];
@@ -2613,17 +2728,32 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       final lease = SharedGatewayPool.instance.acquire(peer.connection);
       final client = lease.client;
       try {
-        if (!widget.connManager.getConnections().any((c) => c.id == peer.connection.id &&
-            !c.readOnly && c.gatewayUrl == peer.connection.gatewayUrl && c.apiKey == peer.connection.apiKey)) {
+        if (!widget.connManager.getConnections().any(
+          (c) =>
+              c.id == peer.connection.id &&
+              !c.readOnly &&
+              c.gatewayUrl == peer.connection.gatewayUrl &&
+              c.apiKey == peer.connection.apiKey,
+        )) {
           throw StateError('Room connection changed');
         }
-        final member = room.members.singleWhere((m) =>
-          m.owner.connectionId == peer.catalog['installation_id'] && m.owner.profile == peer.profile.name);
+        final member = room.members.singleWhere(
+          (m) =>
+              m.owner.connectionId == peer.catalog['installation_id'] &&
+              m.owner.profile == peer.profile.name,
+        );
         await BotRoomLink((home as BotRoomLinkGateway).roomLinkRequest).attach(
-          room: room, memberId: member.memberId, profile: peer.profile.name,
-          target: client.roomLinkRequest, expectedCatalog: peer.catalog);
-      } catch (_) { failed.add(peer); }
-      finally { lease.release(); }
+          room: room,
+          memberId: member.memberId,
+          profile: peer.profile.name,
+          target: client.roomLinkRequest,
+          expectedCatalog: peer.catalog,
+        );
+      } catch (_) {
+        failed.add(peer);
+      } finally {
+        lease.release();
+      }
     }
     if (mounted && failed.isNotEmpty) {
       final s = Strings.of(context);
@@ -2667,7 +2797,13 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         connectionId: widget.connection.id,
         profiles: snapshot.profiles,
         initialProfile: initialProfile,
-        loadPeers: _profileAssetsGateway is BotRoomLinkGateway && widget.connManager.getConnections().any((c) => c.id != widget.connection.id && !c.readOnly) ? _loadRoomPeers : null,
+        loadPeers:
+            _profileAssetsGateway is BotRoomLinkGateway &&
+                widget.connManager.getConnections().any(
+                  (c) => c.id != widget.connection.id && !c.readOnly,
+                )
+            ? _loadRoomPeers
+            : null,
         avatarCache: _profileAvatarCache,
       ),
     );
@@ -2946,21 +3082,21 @@ class _MissionControlScreenState extends State<MissionControlScreen>
           ),
         ),
       ValueListenableBuilder<bool>(
-          valueListenable: _rosterSearchOpen,
-          builder: (context, open, _) => Padding(
-            padding: const EdgeInsetsDirectional.only(end: 6),
-            child: IconButton(
-              key: const ValueKey('roster-search'),
-              tooltip: strings.rosterSearch,
-              style: round,
-              icon: Icon(
-                open ? Icons.close_rounded : Icons.search_rounded,
-                size: 21,
-              ),
-              onPressed: () => _rosterSearchOpen.value = !open,
+        valueListenable: _rosterSearchOpen,
+        builder: (context, open, _) => Padding(
+          padding: const EdgeInsetsDirectional.only(end: 6),
+          child: IconButton(
+            key: const ValueKey('roster-search'),
+            tooltip: strings.rosterSearch,
+            style: round,
+            icon: Icon(
+              open ? Icons.close_rounded : Icons.search_rounded,
+              size: 21,
             ),
+            onPressed: () => _rosterSearchOpen.value = !open,
           ),
         ),
+      ),
       Padding(
         padding: const EdgeInsetsDirectional.only(end: 10),
         child: IconButton(
@@ -2982,7 +3118,9 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       !widget.connection.readOnly && _botProfileGateway != null;
 
   bool get _hasNewMenu =>
-      _canCreateBot || _canCreateHostedRoom || _canManageSections ||
+      _canCreateBot ||
+      _canCreateHostedRoom ||
+      _canManageSections ||
       _snapshot != null;
 
   Future<void> _showNewMenu() async {
@@ -3231,8 +3369,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             onRemoteOpen: _openRemoteBot,
             onRemoteDetails: _remoteBotDetails,
             onAttention:
-                projection.approvals.isNotEmpty ||
-                    projection.blockedCount > 0
+                projection.approvals.isNotEmpty || projection.blockedCount > 0
                 ? () => unawaited(_openAttention())
                 : null,
             attentionSummary: copy.attentionSummary(
@@ -3257,13 +3394,15 @@ Future<List<R>> gatherRoomPeerCandidates<C, R>({
   required Future<List<R>> Function(C connection) probeConnection,
   required String Function(R candidate) keyOf,
 }) async {
-  final perConnection = await Future.wait(connections.map((connection) async {
-    try {
-      return await probeConnection(connection);
-    } catch (_) {
-      return <R>[];
-    }
-  }));
+  final perConnection = await Future.wait(
+    connections.map((connection) async {
+      try {
+        return await probeConnection(connection);
+      } catch (_) {
+        return <R>[];
+      }
+    }),
+  );
   final seen = <String>{};
   return [
     for (final candidates in perConnection)
@@ -3285,7 +3424,11 @@ final class _HostedGroupDraft {
   final List<HostedGroupCreateMember> members;
 
   final List<_RoomPeerCandidate> peers;
-  const _HostedGroupDraft({required this.name, required this.members, this.peers = const []});
+  const _HostedGroupDraft({
+    required this.name,
+    required this.members,
+    this.peers = const [],
+  });
 }
 
 class _HostedGroupCreateDialog extends StatefulWidget {
@@ -3322,16 +3465,23 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
     try {
       final peers = await widget.loadPeers!();
       if (mounted) {
-        setState(() { _peers = peers; _selectedPeers.retainAll(peers.map((p) => p.key)); });
+        setState(() {
+          _peers = peers;
+          _selectedPeers.retainAll(peers.map((p) => p.key));
+        });
       }
-    } catch (_) { if (mounted) setState(() => _peers = []); }
-    finally { if (mounted) setState(() => _peersLoading = false); }
+    } catch (_) {
+      if (mounted) setState(() => _peers = []);
+    } finally {
+      if (mounted) setState(() => _peersLoading = false);
+    }
   }
 
   @override
   void initState() {
     super.initState();
-    if (widget.initialProfile != null && widget.profiles.any((p) => p.name == widget.initialProfile)) {
+    if (widget.initialProfile != null &&
+        widget.profiles.any((p) => p.name == widget.initialProfile)) {
       _selected.add(widget.initialProfile!);
     }
   }
@@ -3370,20 +3520,41 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
     if (name.isEmpty || (_selected.isEmpty && _selectedPeers.isEmpty)) return;
     final members = <HostedGroupCreateMember>[
       for (final profile in widget.profiles)
-        if (_selected.contains(profile.name)) HostedGroupCreateMember.localProfile(profile: profile.name, handle: profile.name),
+        if (_selected.contains(profile.name))
+          HostedGroupCreateMember.localProfile(
+            profile: profile.name,
+            handle: profile.name,
+          ),
     ];
-    final peers = [for (final peer in _peers ?? <_RoomPeerCandidate>[]) if (_selectedPeers.contains(peer.key)) peer];
+    final peers = [
+      for (final peer in _peers ?? <_RoomPeerCandidate>[])
+        if (_selectedPeers.contains(peer.key)) peer,
+    ];
     final handles = members.map((m) => m.handle).toSet();
     for (final peer in peers) {
       var suffix = 1;
       var handle = peer.profile.name;
-      while (!handles.add(handle)) { handle = '${peer.profile.name}-${suffix++}'; }
-      members.add(HostedGroupCreateMember.peer(profile: peer.profile.name, handle: handle,
-        peerId: peer.catalog['installation_id'] as String,
-        installationId: peer.catalog['installation_id'] as String,
-        capabilityDigest: peer.catalog['catalog_digest'] as String));
+      while (!handles.add(handle)) {
+        handle = '${peer.profile.name}-${suffix++}';
+      }
+      members.add(
+        HostedGroupCreateMember.peer(
+          profile: peer.profile.name,
+          handle: handle,
+          peerId: peer.catalog['installation_id'] as String,
+          installationId: peer.catalog['installation_id'] as String,
+          capabilityDigest: peer.catalog['catalog_digest'] as String,
+        ),
+      );
     }
-    Navigator.pop(context, _HostedGroupDraft(name: name, members: List.unmodifiable(members), peers: peers));
+    Navigator.pop(
+      context,
+      _HostedGroupDraft(
+        name: name,
+        members: List.unmodifiable(members),
+        peers: peers,
+      ),
+    );
   }
 
   void _toggle(String profileName) => setState(() {
@@ -3399,7 +3570,9 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
     final colors = Theme.of(context).hermes;
     final extra = _RoomsAreaCopy.of(context);
     final visibleProfiles = _visibleProfiles;
-    final canSubmit = _name.text.trim().isNotEmpty && (_selected.isNotEmpty || _selectedPeers.isNotEmpty);
+    final canSubmit =
+        _name.text.trim().isNotEmpty &&
+        (_selected.isNotEmpty || _selectedPeers.isNotEmpty);
     // El inset del teclado NO se vuelve a sumar aquí. La superficie flotante
     // (`_HermesFloatingSurfaceFrame`, `hermes_premium_ui.dart`) ya lo aplica
     // dos veces por su cuenta: desplaza el diálogo con
@@ -3479,7 +3652,9 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
                       ),
                       if (_selected.isNotEmpty || _selectedPeers.isNotEmpty)
                         Text(
-                          widget.copy.roomMemberCount(_selected.length + _selectedPeers.length),
+                          widget.copy.roomMemberCount(
+                            _selected.length + _selectedPeers.length,
+                          ),
                           key: const ValueKey(
                             'mission-hosted-create-selected-count',
                           ),
@@ -3553,16 +3728,28 @@ class _HostedGroupCreateDialogState extends State<_HostedGroupCreateDialog> {
                         onTap: () => _toggle(profile.name),
                       ),
                   if (widget.loadPeers != null) ...[
-                    TextButton.icon(onPressed: _peersLoading ? null : _readPeers,
-                      icon: const Icon(Icons.public), label: Text(Strings.of(context).botOtherConnections)),
+                    TextButton.icon(
+                      onPressed: _peersLoading ? null : _readPeers,
+                      icon: const Icon(Icons.public),
+                      label: Text(Strings.of(context).botOtherConnections),
+                    ),
                     if (_peersLoading) const LinearProgressIndicator(),
-                    if (_peers != null && _peers!.isEmpty) Text(Strings.of(context).botRoomLinkUnavailable),
+                    if (_peers != null && _peers!.isEmpty)
+                      Text(Strings.of(context).botRoomLinkUnavailable),
                     for (final peer in _peers ?? <_RoomPeerCandidate>[])
-                      CheckboxListTile(contentPadding: EdgeInsets.zero,
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
                         title: Text(peer.profile.botTitle ?? peer.profile.name),
                         subtitle: Text(peer.connection.label),
                         value: _selectedPeers.contains(peer.key),
-                        onChanged: (v) => setState(() { if (v == true) { _selectedPeers.add(peer.key); } else { _selectedPeers.remove(peer.key); } })),
+                        onChanged: (v) => setState(() {
+                          if (v == true) {
+                            _selectedPeers.add(peer.key);
+                          } else {
+                            _selectedPeers.remove(peer.key);
+                          }
+                        }),
+                      ),
                   ],
                 ],
               ),
@@ -4043,7 +4230,9 @@ class _BotsTabState extends State<_BotsTab> {
     final groups = widget.snapshot.hostedGroups;
     final revision = RoomLocalPrefs.changes.value;
     final cached = _attentionCache;
-    if (cached != null && identical(cached.$1, groups) && cached.$2 == revision) {
+    if (cached != null &&
+        identical(cached.$1, groups) &&
+        cached.$2 == revision) {
       return cached.$3;
     }
     final prefs = SharedPreferencesRoomPrefs(widget.prefs);
@@ -4098,9 +4287,7 @@ class _BotsTabState extends State<_BotsTab> {
       onAttention: widget.onAttention,
       attentionSummary: widget.attentionSummary,
       onRefresh: widget.onRefresh,
-      header: [
-        if (unsupported) _MessageCard(text: copy.profilesUnavailable),
-      ],
+      header: [if (unsupported) _MessageCard(text: copy.profilesUnavailable)],
       emptyState: _LoungeEmptyState(
         icon: Icons.smart_toy_outlined,
         message: copy.noBots,

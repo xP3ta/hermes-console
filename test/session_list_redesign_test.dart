@@ -624,20 +624,18 @@ void main() {
       gateway.emit('message.complete', const {'text': 'proceso iniciado'});
       await done.timeout(const Duration(seconds: 1));
 
-      await pump(
-        tester,
-        [
-          _row(
-            'background-1',
-            title: 'Informe prolongado',
-            lastActive: nowSeconds(),
-          ),
-        ],
-        activeChats: activeChats,
-      );
-      await _pumpUntil(tester, find.text('Informe prolongado'));
+      await pump(tester, [
+        _row(
+          'background-1',
+          title: 'Informe prolongado',
+          lastActive: nowSeconds(),
+        ),
+      ], activeChats: activeChats);
+      await _pumpUntil(tester, find.textContaining('Informe prolongado'));
 
-      final strings = Strings.of(tester.element(find.byType(SessionListScreen)));
+      final strings = Strings.of(
+        tester.element(find.byType(SessionListScreen)),
+      );
       expect(find.text(strings.chaBackgroundActivityCount(1)), findsOneWidget);
       expect(
         find.byKey(const ValueKey('session-running-background-1')),
@@ -707,20 +705,18 @@ void main() {
       expect(chat.desktopManualCompressionInFlight, isFalse);
       expect(chat.sessionActivity.active, isFalse);
 
-      await pump(
-        tester,
-        [
-          _row(
-            'compacting-1',
-            title: 'Sesión compactando',
-            lastActive: nowSeconds(),
-          ),
-        ],
-        activeChats: activeChats,
-      );
+      await pump(tester, [
+        _row(
+          'compacting-1',
+          title: 'Sesión compactando',
+          lastActive: nowSeconds(),
+        ),
+      ], activeChats: activeChats);
       await _pumpUntil(tester, find.text('Sesión compactando'));
 
-      final strings = Strings.of(tester.element(find.byType(SessionListScreen)));
+      final strings = Strings.of(
+        tester.element(find.byType(SessionListScreen)),
+      );
       expect(
         find.byKey(const ValueKey('session-running-compacting-1')),
         findsOneWidget,
@@ -761,102 +757,100 @@ void main() {
     },
   );
 
-  testWidgets(
-    'inicio pinta el roster frío por id durable, nunca por título',
-    (tester) async {
-      tester.view.physicalSize = const Size(1170, 2532);
-      tester.view.devicePixelRatio = 3;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets('inicio pinta el roster frío por id durable, nunca por título', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
-      final prefs = await SharedPreferences.getInstance();
-      final manager = await ConnectionManager.create(prefs);
-      await manager.saveConnection(
-        'Redesign QA',
-        '127.0.0.1',
-        8642,
-        'gateway-key',
-        kind: InstanceKind.vps,
-      );
-      final connection = manager.getConnections().single;
-      final aggregate = GlobalActivityAggregate.inMemory();
-      final activeChats = ActiveChatService(
-        globalActivity: aggregate,
-        compressionRestoreStore: testCompressionRestoreStore(),
-      );
-      addTearDown(activeChats.dispose);
-      final generation = aggregate.beginRosterRequest(
-        connection.id,
-        'default',
-      );
-      aggregate.applyRoster(
-        connectionId: connection.id,
-        profile: 'default',
-        replayEpoch: 'cold-start',
-        requestGeneration: generation,
-        roster: const DesktopActiveSessionList(
-          sessions: [
-            DesktopActiveSession(
-              runtimeSessionId: 'runtime-busy-row',
-              storedSessionId: 'busy-row',
-              status: 'working',
-            ),
-          ],
-        ),
-      );
-      final now = DateTime.now().millisecondsSinceEpoch / 1000;
-      final client = _HomeActivityClient(
+    final prefs = await SharedPreferences.getInstance();
+    final manager = await ConnectionManager.create(prefs);
+    await manager.saveConnection(
+      'Redesign QA',
+      '127.0.0.1',
+      8642,
+      'gateway-key',
+      kind: InstanceKind.vps,
+    );
+    final connection = manager.getConnections().single;
+    final aggregate = GlobalActivityAggregate.inMemory();
+    final activeChats = ActiveChatService(
+      globalActivity: aggregate,
+      compressionRestoreStore: testCompressionRestoreStore(),
+    );
+    addTearDown(activeChats.dispose);
+    final generation = aggregate.beginRosterRequest(connection.id, 'default');
+    aggregate.applyRoster(
+      connectionId: connection.id,
+      profile: 'default',
+      replayEpoch: 'cold-start',
+      requestGeneration: generation,
+      roster: const DesktopActiveSessionList(
         sessions: [
-          Session(
-            id: 'busy-row',
-            title: 'Título repetido',
-            model: 'hermes-agent',
-            source: 'mobile',
-            messageCount: 2,
-            isActive: false,
-            preview: 'Fila ocupada',
-            startedAt: now,
-          ),
-          Session(
-            id: 'idle-row',
-            title: 'Título repetido',
-            model: 'hermes-agent',
-            source: 'mobile',
-            messageCount: 2,
-            isActive: false,
-            preview: 'Fila inactiva',
-            startedAt: now - 1,
+          DesktopActiveSession(
+            runtimeSessionId: 'runtime-busy-row',
+            storedSessionId: 'busy-row',
+            status: 'working',
           ),
         ],
-      );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          locale: const Locale('es'),
-          theme: AppTheme.fromId('dark'),
-          localizationsDelegates: Strings.localizationsDelegates,
-          supportedLocales: Strings.supportedLocales,
-          home: HomeDashboardScreen(
-            connManager: manager,
-            clientFactory: (_) => client,
-            activeChatsOverride: activeChats,
-          ),
+      ),
+    );
+    final now = DateTime.now().millisecondsSinceEpoch / 1000;
+    final client = _HomeActivityClient(
+      sessions: [
+        Session(
+          id: 'busy-row',
+          title: 'Título repetido',
+          model: 'hermes-agent',
+          source: 'mobile',
+          messageCount: 2,
+          isActive: false,
+          preview: 'Fila ocupada',
+          startedAt: now,
         ),
-      );
-      await _pumpUntil(tester, find.text('Título repetido'));
+        Session(
+          id: 'idle-row',
+          title: 'Título repetido',
+          model: 'hermes-agent',
+          source: 'mobile',
+          messageCount: 2,
+          isActive: false,
+          preview: 'Fila inactiva',
+          startedAt: now - 1,
+        ),
+      ],
+    );
 
-      expect(
-        find.byKey(const ValueKey('home-activity-busy-row')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('home-activity-idle-row')),
-        findsNothing,
-      );
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump(const Duration(seconds: 10));
-    },
-  );
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('es'),
+        theme: AppTheme.fromId('dark'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        home: HomeDashboardScreen(
+          connManager: manager,
+          clientFactory: (_) => client,
+          activeChatsOverride: activeChats,
+        ),
+      ),
+    );
+    await _pumpUntil(tester, find.text('Título repetido'));
+
+    // Inicio v3: the working chat is the hero card, matched by its
+    // durable id (both rows share the title).
+    expect(
+      find.byKey(const ValueKey('home-hero-working:busy-row')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('home-hero-working:idle-row')),
+      findsNothing,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 10));
+  });
 
   testWidgets(
     'inicio hidrata active_list y exige dos ausencias antes de quedar inactivo',
@@ -929,7 +923,7 @@ void main() {
       );
       await _pumpUntil(
         tester,
-        find.byKey(const ValueKey('home-activity-cold-running')),
+        find.byKey(const ValueKey('home-hero-working:cold-running')),
       );
       expect(rosterReads, greaterThanOrEqualTo(1));
       final initialRosterReads = rosterReads;
@@ -953,7 +947,7 @@ void main() {
       }
       expect(client.sessionReads, greaterThan(initialSessionReads));
       expect(
-        find.byKey(const ValueKey('home-activity-cold-running')),
+        find.byKey(const ValueKey('home-hero-working:cold-running')),
         findsOneWidget,
       );
 
@@ -979,8 +973,10 @@ void main() {
             ?.stale,
         isTrue,
       );
+      // The first absence remains visually continuous while the next read
+      // settles; the second absence below removes it.
       expect(
-        find.byKey(const ValueKey('home-activity-cold-running')),
+        find.byKey(const ValueKey('home-hero-working:cold-running')),
         findsOneWidget,
       );
 
@@ -1003,61 +999,135 @@ void main() {
       expect(rosterReads, greaterThanOrEqualTo(initialRosterReads + 3));
       await tester.pump(const Duration(milliseconds: 250));
       expect(
-        find.byKey(const ValueKey('home-activity-cold-running')),
+        find.byKey(const ValueKey('home-hero-working:cold-running')),
         findsNothing,
       );
-      expect(find.text('Vista previa actualizada'), findsOneWidget);
+      // Calm again; the refreshed chat is the «Seguir con…» starter.
+      expect(find.byKey(const ValueKey('home-hero-calm')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('home-starter-continue:cold-running')),
+        findsOneWidget,
+      );
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(seconds: 10));
     },
   );
 
-  testWidgets(
-    'inicio conserva el proceso de fondo tras acabar el turno',
-    (tester) async {
-      tester.view.physicalSize = const Size(1170, 2532);
-      tester.view.devicePixelRatio = 3;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets('inicio conserva el proceso de fondo tras acabar el turno', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
-      final prefs = await SharedPreferences.getInstance();
-      final manager = await ConnectionManager.create(prefs);
-      await manager.saveConnection(
-        'Redesign QA',
-        '127.0.0.1',
-        8642,
-        'gateway-key',
-        kind: InstanceKind.vps,
-      );
-      final connection = manager.getConnections().single;
-      final gateway = _ProcessActivityGateway();
-      final activeChats = ActiveChatService(
-        compressionRestoreStore: testCompressionRestoreStore(),
-      );
-      addTearDown(activeChats.dispose);
-      addTearDown(gateway.close);
-      final chat = activeChats.attach(
-        connection: connection,
-        sessionId: 'background-1',
-        sessionTitle: 'Informe prolongado',
-        desktopGateway: gateway,
-        disableForegroundKeepAlive: true,
-      )..smoothStreaming = false;
-      expect(
-        await chat.send(
-          fullText: 'genera el informe',
-          model: 'hermes-agent',
-          history: const [],
+    final prefs = await SharedPreferences.getInstance();
+    final manager = await ConnectionManager.create(prefs);
+    await manager.saveConnection(
+      'Redesign QA',
+      '127.0.0.1',
+      8642,
+      'gateway-key',
+      kind: InstanceKind.vps,
+    );
+    final connection = manager.getConnections().single;
+    final gateway = _ProcessActivityGateway();
+    final activeChats = ActiveChatService(
+      compressionRestoreStore: testCompressionRestoreStore(),
+    );
+    addTearDown(activeChats.dispose);
+    addTearDown(gateway.close);
+    final chat = activeChats.attach(
+      connection: connection,
+      sessionId: 'background-1',
+      sessionTitle: 'Informe prolongado',
+      desktopGateway: gateway,
+      disableForegroundKeepAlive: true,
+    )..smoothStreaming = false;
+    expect(
+      await chat.send(
+        fullText: 'genera el informe',
+        model: 'hermes-agent',
+        history: const [],
+      ),
+      isTrue,
+    );
+    await chat.refreshBackgroundProcessesForTesting();
+    final done = chat.changes.firstWhere(
+      (event) => event == ActiveChatEvent.done,
+    );
+    gateway.emit('message.complete', const {'text': 'proceso iniciado'});
+    await done.timeout(const Duration(seconds: 1));
+    activeChats.globalActivity.applyRoster(
+      connectionId: connection.id,
+      profile: 'default',
+      replayEpoch: 'current',
+      requestGeneration: activeChats.globalActivity.beginRosterRequest(
+        connection.id,
+        'default',
+      ),
+      roster: const DesktopActiveSessionList(
+        sessions: [
+          DesktopActiveSession(
+            runtimeSessionId: 'runtime-background-1',
+            storedSessionId: 'background-1',
+            status: 'working',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('es'),
+        theme: AppTheme.fromId('dark'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        home: HomeDashboardScreen(
+          connManager: manager,
+          clientFactory: (_) => _HomeActivityClient(),
+          activeChatsOverride: activeChats,
         ),
-        isTrue,
-      );
-      await chat.refreshBackgroundProcessesForTesting();
-      final done = chat.changes.firstWhere(
-        (event) => event == ActiveChatEvent.done,
-      );
-      gateway.emit('message.complete', const {'text': 'proceso iniciado'});
-      await done.timeout(const Duration(seconds: 1));
+      ),
+    );
+    await _pumpUntil(tester, find.textContaining('Informe prolongado'));
+
+    final strings = Strings.of(
+      tester.element(find.byType(HomeDashboardScreen)),
+    );
+    // Inicio v3: a chat whose turn ended but keeps a background process
+    // is not «working» (the hero shows turns only).
+    expect(
+      find.byKey(const ValueKey('home-hero-working:background-1')),
+      findsNothing,
+    );
+
+    gateway.snapshot = const AgentCenterSnapshot(
+      snapshots: [],
+      processes: [
+        BackgroundProcessEntry(
+          opaqueId: 'process-1',
+          status: AgentCenterStatus.completed,
+          uptimeSeconds: 4,
+        ),
+      ],
+    );
+    await chat.refreshBackgroundProcessesForTesting();
+    expect(chat.hasActiveBackgroundProcesses, isFalse);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    // re1215: the busy roster row was read right after this chat saw its
+    // own turn end (Hermes clears `running` after post-processing and may
+    // run a background review); it is the finished turn, not new work.
+    expect(find.text(strings.ss1215StatusWorking), findsNothing);
+    expect(
+      find.byKey(const ValueKey('home-hero-working:background-1')),
+      findsNothing,
+    );
+
+    for (var probe = 0; probe < 2; probe++) {
       activeChats.globalActivity.applyRoster(
         connectionId: connection.id,
         profile: 'default',
@@ -1066,97 +1136,26 @@ void main() {
           connection.id,
           'default',
         ),
-        roster: const DesktopActiveSessionList(
-          sessions: [
-            DesktopActiveSession(
-              runtimeSessionId: 'runtime-background-1',
-              storedSessionId: 'background-1',
-              status: 'working',
-            ),
-          ],
-        ),
+        roster: const DesktopActiveSessionList(),
       );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          locale: const Locale('es'),
-          theme: AppTheme.fromId('dark'),
-          localizationsDelegates: Strings.localizationsDelegates,
-          supportedLocales: Strings.supportedLocales,
-          home: HomeDashboardScreen(
-            connManager: manager,
-            clientFactory: (_) => _HomeActivityClient(),
-            activeChatsOverride: activeChats,
-          ),
-        ),
-      );
-      await _pumpUntil(tester, find.text('Informe prolongado'));
-
-      final strings = Strings.of(
-        tester.element(find.byType(HomeDashboardScreen)),
-      );
-      expect(find.text(strings.chaBackgroundActivityCount(1)), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('home-activity-background-1')),
-        findsOneWidget,
-      );
-
-      gateway.snapshot = const AgentCenterSnapshot(
-        snapshots: [],
-        processes: [
-          BackgroundProcessEntry(
-            opaqueId: 'process-1',
-            status: AgentCenterStatus.completed,
-            uptimeSeconds: 4,
-          ),
-        ],
-      );
-      await chat.refreshBackgroundProcessesForTesting();
-      expect(chat.hasActiveBackgroundProcesses, isFalse);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-
-      expect(find.text(strings.slActivityBackground), findsNothing);
-      expect(find.text(strings.chaBackgroundActivityCount(1)), findsNothing);
-      // re1215: the busy roster row was read right after this chat saw its
-      // own turn end (Hermes clears `running` after post-processing and may
-      // run a background review); it is the finished turn, not new work.
-      expect(find.text(strings.ss1215StatusWorking), findsNothing);
-      expect(
-        find.byKey(const ValueKey('home-activity-background-1')),
-        findsNothing,
-      );
-
-      for (var probe = 0; probe < 2; probe++) {
-        activeChats.globalActivity.applyRoster(
-          connectionId: connection.id,
-          profile: 'default',
-          replayEpoch: 'current',
-          requestGeneration: activeChats.globalActivity.beginRosterRequest(
-            connection.id,
-            'default',
-          ),
-          roster: const DesktopActiveSessionList(),
-        );
-      }
-      expect(
-        activeChats.globalActivity.activityFor(
-          connection.id,
-          'default',
-          'background-1',
-        ),
-        isNull,
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(
-        find.byKey(const ValueKey('home-activity-background-1')),
-        findsNothing,
-      );
-      await tester.pump(const Duration(seconds: 10));
-    },
-  );
+    }
+    expect(
+      activeChats.globalActivity.activityFor(
+        connection.id,
+        'default',
+        'background-1',
+      ),
+      isNull,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(
+      find.byKey(const ValueKey('home-hero-working:background-1')),
+      findsNothing,
+    );
+    await tester.pump(const Duration(seconds: 10));
+  });
 
   testWidgets(
     'el anillo del punto en vivo repinta solo el punto, no la fila entera',
@@ -1237,8 +1236,9 @@ void main() {
       );
       expect(painted, isNotEmpty, reason: 'the ring itself keeps animating');
       // Leaving the screen (opaque route on top) stops the ticker.
-      Navigator.of(tester.element(find.byType(SessionListScreen)))
-          .push(MaterialPageRoute<void>(builder: (_) => const SizedBox()));
+      Navigator.of(
+        tester.element(find.byType(SessionListScreen)),
+      ).push(MaterialPageRoute<void>(builder: (_) => const SizedBox()));
       await tester.pumpAndSettle();
     },
   );
@@ -1319,10 +1319,7 @@ void main() {
       // La actividad ocupa la línea de vista previa (estructura del mockup) y
       // se anuncia como un único nodo accesible.
       expect(find.bySemanticsLabel('Trabajando…'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('session-row-stop')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('session-row-stop')), findsOneWidget);
       expect(
         find.byKey(const ValueKey('session-running-live-2')),
         findsNothing,
@@ -1455,7 +1452,7 @@ void main() {
             ),
           ),
         );
-        await _pumpUntil(tester, find.text('Informe prolongado'));
+        await _pumpUntil(tester, find.textContaining('Informe prolongado'));
 
         final visibleRebuilds = await countRebuilds(
           tester,
@@ -1492,7 +1489,7 @@ void main() {
           },
         );
         expect(returnRebuilds, greaterThan(0));
-        expect(find.text('Informe prolongado'), findsOneWidget);
+        expect(find.textContaining('Informe prolongado'), findsOneWidget);
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump(const Duration(seconds: 10));
       },
@@ -1526,4 +1523,3 @@ final class _MemoryRestoreStorage implements CompressionRestoreStorage {
   @override
   Future<void> write(String value) async => this.value = value;
 }
-
