@@ -275,6 +275,12 @@ class RoomMessageTile extends StatelessWidget {
   final VoidCallback? onOpenThread;
   final ValueChanged<String>? onMention;
 
+  /// rp1215: tap on the quote chip (shows the quoted message).
+  final VoidCallback? onOpenQuote;
+
+  /// rp1215: this owner message was just shown from a quote chip.
+  final bool highlighted;
+
   const RoomMessageTile({
     super.key,
     required this.entry,
@@ -285,6 +291,8 @@ class RoomMessageTile extends StatelessWidget {
     this.onReplyInThread,
     this.onOpenThread,
     this.onMention,
+    this.onOpenQuote,
+    this.highlighted = false,
   });
 
   static const double faceSize = 28;
@@ -343,6 +351,77 @@ class RoomMessageTile extends StatelessWidget {
     );
   }
 
+  /// rp1215: «↪ You: Mira por ejemplo las fotos…» above a reply, one line;
+  /// tapping it shows the quoted message.
+  Widget? _quoteChip(BuildContext context) {
+    final quote = entry.quote;
+    if (quote == null) return null;
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    // Not part of the reply's selectable text: copying a reply never
+    // carries «You: …» along.
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: SelectionContainer.disabled(
+        child: Semantics(
+          button: onOpenQuote != null,
+          label: s.rp1215QuoteSemantics(quote.preview),
+          excludeSemantics: true,
+          child: InkWell(
+            key: ValueKey('room-quote-${entry.event.eventId}'),
+            borderRadius: BorderRadius.circular(8),
+            onTap: onOpenQuote,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 40),
+              child: Row(
+                children: [
+                  Container(
+                    width: 2,
+                    height: 16,
+                    margin: const EdgeInsets.only(left: 2, right: 6),
+                    decoration: BoxDecoration(
+                      color: colors.accent.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Icon(
+                    Icons.subdirectory_arrow_right_rounded,
+                    size: 14,
+                    color: colors.textSecondary,
+                  ),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(
+                            text: '${s.roomYou}: ',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: colors.textSecondary,
+                            ),
+                          ),
+                          TextSpan(text: quote.preview),
+                        ],
+                      ),
+                      key: ValueKey('room-quote-text-${entry.event.eventId}'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textTertiary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget? _threadSummary(BuildContext context) {
     final thread = entry.thread;
     if (thread == null) return null;
@@ -396,6 +475,8 @@ class RoomMessageTile extends StatelessWidget {
     final time = roomClock(roomEventTime(event));
     final summary = _threadSummary(context);
     if (entry.isUser) {
+      final reduceMotion =
+          MediaQuery.maybeDisableAnimationsOf(context) ?? false;
       return Padding(
         key: ValueKey('room-message-${event.eventId}'),
         padding: EdgeInsets.only(
@@ -404,49 +485,63 @@ class RoomMessageTile extends StatelessWidget {
           top: entry.firstOfRun ? 10 : 3,
           bottom: 2,
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            ChatMessageSelectionArea(
-              selectionIdentity: event.eventId,
-              child: Container(
-                key: ValueKey('room-user-bubble-${event.eventId}'),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 9,
-                ),
-                decoration: BoxDecoration(
-                  color: colors.surfaceVariant.withValues(alpha: 0.75),
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(18),
-                    topRight: Radius.circular(18),
-                    bottomLeft: Radius.circular(18),
-                    bottomRight: Radius.circular(5),
+        // rp1215: brief accent wash when a quote chip brought the reader
+        // here. Always mounted, so marking it never remounts the bubble.
+        child: AnimatedContainer(
+          key: ValueKey('room-highlight-${event.eventId}'),
+          duration: reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 220),
+          decoration: BoxDecoration(
+            color: highlighted
+                ? colors.accent.withValues(alpha: 0.14)
+                : colors.accent.withValues(alpha: 0),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              ChatMessageSelectionArea(
+                selectionIdentity: event.eventId,
+                child: Container(
+                  key: ValueKey('room-user-bubble-${event.eventId}'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 9,
                   ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [_markdown(context), ..._attachments()],
+                  decoration: BoxDecoration(
+                    color: colors.surfaceVariant.withValues(alpha: 0.75),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(18),
+                      topRight: Radius.circular(18),
+                      bottomLeft: Radius.circular(18),
+                      bottomRight: Radius.circular(5),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [_markdown(context), ..._attachments()],
+                  ),
                 ),
               ),
-            ),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (onReplyInThread != null)
-                  ChatMessageActionButton(
-                    key: ValueKey('room-reply-${event.eventId}'),
-                    icon: Icons.reply_rounded,
-                    iconSize: 15,
-                    label: Strings.of(context).roomReplyInThread,
-                    onPressed: onReplyInThread,
-                  ),
-                ChatMessageTimestamp(time),
-              ],
-            ),
-            ?summary,
-          ],
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (onReplyInThread != null)
+                    ChatMessageActionButton(
+                      key: ValueKey('room-reply-${event.eventId}'),
+                      icon: Icons.reply_rounded,
+                      iconSize: 15,
+                      label: Strings.of(context).roomReplyInThread,
+                      onPressed: onReplyInThread,
+                    ),
+                  ChatMessageTimestamp(time),
+                ],
+              ),
+              ?summary,
+            ],
+          ),
         ),
       );
     }
@@ -489,37 +584,46 @@ class RoomMessageTile extends StatelessWidget {
             ? Row(
                 key: ValueKey('room-run-header-${event.eventId}'),
                 children: [
-                  RoomMemberFace(
-                    key: ValueKey('room-face-${event.eventId}'),
-                    member: member,
-                    fallbackName: name,
-                    profile: profile,
-                    avatarCache: avatarCache,
-                    size: faceSize,
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w700,
-                        color: identity,
-                      ),
+                  // Face, name and time take everything left of the actions;
+                  // the name is the only flexible child there, so it uses
+                  // all of that width and ellipsizes only when it truly
+                  // runs out (a Spacer next to it used to take half).
+                  Expanded(
+                    child: Row(
+                      children: [
+                        RoomMemberFace(
+                          key: ValueKey('room-face-${event.eventId}'),
+                          member: member,
+                          fallbackName: name,
+                          profile: profile,
+                          avatarCache: avatarCache,
+                          size: faceSize,
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700,
+                              color: identity,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          time,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontFamily: 'monospace',
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    time,
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontFamily: 'monospace',
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                  const Spacer(),
                   _actions(context),
                 ],
               )
@@ -527,6 +631,7 @@ class RoomMessageTile extends StatelessWidget {
         children: [
           if (!entry.firstOfRun)
             Align(alignment: Alignment.centerRight, child: _actions(context)),
+          ?_quoteChip(context),
           card,
           ?summary,
         ],

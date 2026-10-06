@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/ui/room/room_dictation.dart';
@@ -19,6 +20,7 @@ import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/artifact_export_service.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/attachment_card.dart';
+import 'package:hermes_android/core/widgets/chat/chat_message_frame.dart';
 import 'package:hermes_android/core/widgets/chat/chat_message_selection_area.dart';
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/core/widgets/markdown_table.dart';
@@ -415,8 +417,17 @@ void main() {
         child: app,
       ),
     );
-    for (final word in ['Roomanswer', 'Roomquestion']) {
-      final target = find.textContaining(word, findRichText: true).first;
+    for (final (word, id) in [
+      ('Roomanswer', m['event_id']),
+      ('Roomquestion', u['event_id']),
+    ]) {
+      // In the message itself (a reply's quote chip repeats the question).
+      final target = find
+          .descendant(
+            of: find.byKey(ValueKey('room-message-$id')),
+            matching: find.textContaining(word, findRichText: true),
+          )
+          .first;
       await tester.longPressAt(tester.getTopLeft(target) + const Offset(8, 8));
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('Copy'), findsOneWidget, reason: word);
@@ -1630,6 +1641,364 @@ void main() {
         find.text('This connection cannot upload files to the server.'),
         findsNWidgets(2),
       );
+    });
+  });
+
+  group('rp1215 reply quote chip', () {
+    testWidgets('a reply shows one quiet line quoting the round trigger', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final u = seq.user('**Mira** por ejemplo las fotos de ayer @builder');
+      final disc = u['event_id'] as String;
+      final reply = seq.member('m-builder', 'builder', 'Vistas.', disc);
+      await _pump(tester, events: [u, reply]);
+      final chip = find.byKey(ValueKey('room-quote-${reply['event_id']}'));
+      expect(chip, findsOneWidget);
+      final text = tester.widget<Text>(
+        find.byKey(ValueKey('room-quote-text-${reply['event_id']}')),
+      );
+      expect(
+        text.textSpan!.toPlainText(),
+        'You: Mira por ejemplo las fotos de ayer @builder',
+      );
+      expect(text.maxLines, 1);
+      // Above the reply card, inside its frame.
+      final card = find.byKey(
+        ValueKey('room-member-card-${reply['event_id']}'),
+      );
+      expect(
+        tester.getRect(chip).bottom,
+        lessThanOrEqualTo(tester.getRect(card).top),
+      );
+      expect(find.byKey(ValueKey('room-quote-${u['event_id']}')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('no chip when the server names no message of the log', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final u = seq.user('hola');
+      final reply = seq.member(
+        'm-builder',
+        'builder',
+        'Buenas.',
+        'user:gone',
+        thread: 't-gone',
+      );
+      await _pump(tester, events: [u, reply]);
+      expect(
+        find.byKey(ValueKey('room-member-card-${reply['event_id']}')),
+        findsOneWidget,
+        reason: 'precondition: the reply is on screen',
+      );
+      expect(
+        find.byKey(ValueKey('room-quote-${reply['event_id']}')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('tap scrolls to the quoted message and washes it briefly', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final first = seq.user('Mira por ejemplo las fotos', thread: 't1');
+      final firstDisc = first['event_id'] as String;
+      final late = seq.member(
+        'm-builder',
+        'builder',
+        'Las fotos están bien.',
+        firstDisc,
+        thread: 't1',
+      );
+      await _pump(tester, events: [first, late]);
+
+      final target = find.byKey(ValueKey('room-message-${first['event_id']}'));
+      final highlight = find.byKey(
+        ValueKey('room-highlight-${first['event_id']}'),
+      );
+      final lateQuote = find.byKey(ValueKey('room-quote-${late['event_id']}'));
+      await tester.ensureVisible(lateQuote);
+      await tester.pump();
+      await tester.tap(lateQuote);
+      for (var i = 0; i < 40; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(target, findsOneWidget);
+      final viewport = tester.getRect(
+        find.byKey(const ValueKey('room-transcript')),
+      );
+      final rect = tester.getRect(target);
+      expect(rect.top, greaterThanOrEqualTo(viewport.top - 0.5));
+      expect(rect.bottom, lessThanOrEqualTo(viewport.bottom + 0.5));
+      await tester.pump(const Duration(milliseconds: 300));
+      Color wash() =>
+          (tester.widget<AnimatedContainer>(highlight).decoration!
+                  as BoxDecoration)
+              .color!;
+      expect(wash().a, greaterThan(0.05), reason: 'briefly highlighted');
+
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      expect(wash().a, 0, reason: 'the wash fades by itself');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('tap on a reply to an old message brings it from far above', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final first = seq.user(
+        'Mira por ejemplo las fotos de ayer',
+        thread: 't1',
+      );
+      final firstDisc = first['event_id'] as String;
+      final filler = <Map<String, dynamic>>[];
+      for (var i = 0; i < 24; i++) {
+        final u = seq.user(
+          'Otra pregunta $i con algo de texto',
+          thread: 't$i-x',
+        );
+        filler
+          ..add(u)
+          ..add(
+            seq.member(
+              'm-lead',
+              'lead',
+              'Respuesta $i.\n\nCon un segundo párrafo para ocupar sitio.',
+              u['event_id'] as String,
+              thread: 't$i-x',
+            ),
+          );
+      }
+      final late = seq.member(
+        'm-builder',
+        'builder',
+        'La tercera foto es la mejor.',
+        firstDisc,
+        thread: 't1',
+      );
+      await _pump(tester, events: [first, ...filler, late]);
+
+      final target = find.byKey(ValueKey('room-message-${first['event_id']}'));
+      expect(target, findsNothing, reason: 'precondition: not built yet');
+      final lateQuote = find.byKey(ValueKey('room-quote-${late['event_id']}'));
+      expect(lateQuote, findsOneWidget, reason: 'precondition: chip on screen');
+      await tester.tap(lateQuote);
+      for (var i = 0; i < 60; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(target, findsOneWidget, reason: 'the quoted message is built');
+      final viewport = tester.getRect(
+        find.byKey(const ValueKey('room-transcript')),
+      );
+      final rect = tester.getRect(target);
+      expect(rect.top, greaterThanOrEqualTo(viewport.top - 0.5));
+      expect(rect.bottom, lessThanOrEqualTo(viewport.bottom + 0.5));
+      await tester.pump(const Duration(milliseconds: 300));
+      final wash =
+          (tester
+                      .widget<AnimatedContainer>(
+                        find.byKey(
+                          ValueKey('room-highlight-${first['event_id']}'),
+                        ),
+                      )
+                      .decoration!
+                  as BoxDecoration)
+              .color!;
+      expect(wash.a, greaterThan(0.05), reason: 'highlighted once shown');
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  testWidgets('rp1215 tap reveals a quoted message from the middle of a '
+      'long log fully, above the composer', (tester) async {
+    // Older history above the quoted message, so the list can scroll past
+    // it: walking up only builds it, the reveal must bring it into view.
+    final seq = EventSeq();
+    List<Map<String, dynamic>> pairs(String tag, int n) => [
+      for (var i = 0; i < n; i++)
+        ...() {
+          final u = seq.user('Pregunta $tag $i', thread: 't$tag$i');
+          return [
+            u,
+            seq.member(
+              'm-lead',
+              'lead',
+              'Respuesta $tag $i.\n\nCon un segundo párrafo.',
+              u['event_id'] as String,
+              thread: 't$tag$i',
+            ),
+          ];
+        }(),
+    ];
+    final older = pairs('a', 12);
+    final quoted = seq.user('Mira por ejemplo las fotos', thread: 't1');
+    final newer = pairs('b', 16);
+    final reply = seq.member(
+      'm-builder',
+      'builder',
+      'La tercera foto es la mejor.',
+      quoted['event_id'] as String,
+      thread: 't1',
+    );
+    await _pump(tester, events: [...older, quoted, ...newer, reply]);
+    final target = find.byKey(ValueKey('room-message-${quoted['event_id']}'));
+    expect(target, findsNothing, reason: 'precondition: not built yet');
+    await tester.tap(find.byKey(ValueKey('room-quote-${reply['event_id']}')));
+    for (var i = 0; i < 60; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(target, findsOneWidget);
+    final viewport = tester.getRect(
+      find.byKey(const ValueKey('room-transcript')),
+    );
+    final composerTop = tester.getRect(find.byType(ConsoleComposer)).top;
+    final rect = tester.getRect(target);
+    expect(rect.top, greaterThanOrEqualTo(viewport.top - 0.5));
+    expect(rect.bottom, lessThanOrEqualTo(composerTop + 0.5));
+    final position = tester
+        .state<ScrollableState>(
+          find
+              .descendant(
+                of: find.byKey(const ValueKey('room-transcript')),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        )
+        .position;
+    expect(
+      position.pixels,
+      lessThan(position.maxScrollExtent - 1),
+      reason: 'precondition: not simply parked at the oldest edge',
+    );
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  group('room member header', () {
+    // The header's clock is 'monospace'; without a real mono font the test
+    // default paints every glyph 1 em wide and the clock eats the row.
+    setUpAll(() async {
+      final loader = FontLoader('monospace')
+        ..addFont(rootBundle.load('assets/fonts/JetBrainsMono.ttf'));
+      await loader.load();
+    });
+
+    Future<void> scaleText(WidgetTester tester, double factor) async {
+      tester.platformDispatcher.textScaleFactorTestValue = factor;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    }
+
+    testWidgets('the name uses the free width before the actions '
+        '(360 dp, text ×1.3)', (tester) async {
+      await scaleText(tester, 1.3);
+      final seq = EventSeq();
+      final u = seq.user('¿Subimos el vídeo hoy?');
+      final reply = seq.member(
+        'm-review',
+        'review',
+        'Sí, si cortamos el final.',
+        u['event_id'] as String,
+      );
+      await _pump(tester, events: [u, reply]);
+      expect(
+        tester.view.physicalSize.width / tester.view.devicePixelRatio,
+        360,
+        reason: 'precondition: phone width',
+      );
+      final header = find.byKey(
+        ValueKey('room-run-header-${reply['event_id']}'),
+      );
+      final name = find.descendant(
+        of: header,
+        matching: find.text('console-review'),
+      );
+      expect(name, findsOneWidget);
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.descendant(of: name, matching: find.byType(RichText)),
+      );
+      expect(
+        paragraph.textScaler.scale(10) / 10,
+        closeTo(1.3, 0.01),
+        reason: 'precondition: the name is painted at 1.3×',
+      );
+      expect(
+        paragraph.didExceedMaxLines,
+        isFalse,
+        reason: 'there is free room in the row: no ellipsis',
+      );
+      expect(
+        paragraph.size.width,
+        greaterThanOrEqualTo(
+          paragraph.getMaxIntrinsicWidth(double.infinity) - 0.5,
+        ),
+      );
+      // The actions keep their place at the right edge of the row.
+      final copy = find.descendant(
+        of: header,
+        matching: find.byType(ChatCopyMessageButton),
+      );
+      expect(
+        tester.getRect(copy).left,
+        greaterThanOrEqualTo(tester.getRect(name).right),
+      );
+      expect(
+        tester.getRect(header).right -
+            tester
+                .getRect(
+                  find.byKey(ValueKey('room-reply-${reply['event_id']}')),
+                )
+                .right,
+        lessThan(1),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a name longer than the row still ellipsizes cleanly', (
+      tester,
+    ) async {
+      await scaleText(tester, 1.3);
+      final longName = 'console-${'muy-largo-' * 6}review';
+      final seq = EventSeq();
+      final u = seq.user('Hola');
+      final reply = seq.member(
+        'm-review',
+        'review',
+        'Hola.',
+        u['event_id'] as String,
+      );
+      await _pump(
+        tester,
+        events: [u, reply],
+        room: buildRoom(
+          members: [memberJson('m-review', 'review', displayName: longName)],
+        ),
+      );
+      final header = find.byKey(
+        ValueKey('room-run-header-${reply['event_id']}'),
+      );
+      final name = find.descendant(of: header, matching: find.text(longName));
+      expect(name, findsOneWidget);
+      expect(
+        tester
+            .renderObject<RenderParagraph>(
+              find.descendant(of: name, matching: find.byType(RichText)),
+            )
+            .didExceedMaxLines,
+        isTrue,
+      );
+      expect(
+        tester
+            .getRect(find.byKey(ValueKey('room-reply-${reply['event_id']}')))
+            .right,
+        lessThanOrEqualTo(tester.getRect(header).right + 0.5),
+      );
+      expect(tester.takeException(), isNull, reason: 'no overflow');
     });
   });
 }

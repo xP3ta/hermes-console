@@ -84,6 +84,7 @@ import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
 import 'package:hermes_android/core/widgets/chat/chat_message_frame.dart'
     show ChatMessageHeader;
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
+import 'package:hermes_android/core/widgets/chat/chat_replying_indicator.dart';
 import 'package:hermes_android/core/screens/lock_screen.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
 import 'package:hermes_android/core/services/session_archive.dart';
@@ -26806,15 +26807,20 @@ void main() {
                 .byKey(chatLiveAssistantViewportKey)
                 .evaluate()
                 .length,
+            // rp1215: before the first text the live header says «está
+            // respondiendo…» (ChatReplyingIndicator) instead.
             'workingHeaders': find
                 .byWidgetPredicate(
                   (widget) =>
-                      widget is Text &&
-                      widget.data == 'Trabajando…' &&
-                      (widget.key ==
-                              const ValueKey('assistant-header-working') ||
-                          widget.key ==
-                              const ValueKey('thinking-trace-live-in-pill')),
+                      widget is ChatReplyingIndicator ||
+                      (widget is Text &&
+                          widget.data == 'Trabajando…' &&
+                          (widget.key ==
+                                  const ValueKey('assistant-header-working') ||
+                              widget.key ==
+                                  const ValueKey(
+                                    'thinking-trace-live-in-pill',
+                                  ))),
                 )
                 .evaluate()
                 .length,
@@ -29905,12 +29911,16 @@ void main() {
       expect(chat.activeSubagentCount, 1);
       expect(find.byType(ThinkingTraceCard), findsOneWidget);
 
+      // rp1215: before the first text the live header says «está
+      // respondiendo…» (ChatReplyingIndicator) instead of «Trabajando…».
       Finder workingHeaders() => find.byWidgetPredicate(
         (widget) =>
-            widget is Text &&
-            widget.data == 'Trabajando…' &&
-            (widget.key == const ValueKey('assistant-header-working') ||
-                widget.key == const ValueKey('thinking-trace-live-in-pill')),
+            widget is ChatReplyingIndicator ||
+            (widget is Text &&
+                widget.data == 'Trabajando…' &&
+                (widget.key == const ValueKey('assistant-header-working') ||
+                    widget.key ==
+                        const ValueKey('thinking-trace-live-in-pill'))),
       );
       expect(workingHeaders(), findsOneWidget);
 

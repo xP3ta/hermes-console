@@ -10150,5 +10150,33 @@
       }
     }
   },
-  "rt1215Thinking": "Pensamiento"
+  "rt1215Thinking": "Pensamiento",
+  "rp1215Replying": "está respondiendo…",
+  "rp1215Thinking": "está pensando…",
+  "rp1215NameReplying": "{name} está respondiendo",
+  "@rp1215NameReplying": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rp1215NameThinking": "{name} está pensando",
+  "@rp1215NameThinking": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rp1215BubbleSent": "Enviado",
+  "rp1215BubbleQueued": "En cola",
+  "rp1215QuoteSemantics": "Responde a tu mensaje: {preview}. Toca para verlo.",
+  "@rp1215QuoteSemantics": {
+    "placeholders": {
+      "preview": {
+        "type": "String"
+      }
+    }
+  }
 }
