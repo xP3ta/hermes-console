@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/chat_prompt_sheet.dart';
+import 'package:hermes_android/core/widgets/console_loader.dart';
 
 Widget _host(
   ValueNotifier<ChatPromptSheetModel> model, {
@@ -110,6 +111,13 @@ void main() {
     expect(find.byKey(const ValueKey('chat-prompt-more')), findsNothing);
     expect(
       find.byKey(const ValueKey('chat-prompt-loading')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('chat-prompt-loading')),
+        matching: find.byType(ConsoleLoader),
+      ),
       findsOneWidget,
     );
   });

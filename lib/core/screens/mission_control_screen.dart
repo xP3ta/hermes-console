@@ -70,6 +70,7 @@ import 'profile_editor_screen.dart';
 import 'profile_flows.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
@@ -4639,7 +4640,7 @@ class _CenteredState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (loading)
-              const CircularProgressIndicator()
+              const ConsoleLoader.large(showLabel: false)
             else
               Icon(icon, size: 42, color: colors.textDisabled),
             const SizedBox(height: 14),

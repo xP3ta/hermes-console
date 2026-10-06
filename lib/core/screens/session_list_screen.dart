@@ -60,6 +60,7 @@ import 'session_branches_screen.dart';
 import 'session_detail_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/session_status_tone.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
@@ -2902,13 +2903,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                           return const Padding(
                             padding: EdgeInsets.symmetric(vertical: 14),
                             child: Center(
-                              child: SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              ),
+                              child: ConsoleLoader.small(dimension: 20),
                             ),
                           );
                         }

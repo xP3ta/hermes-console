@@ -18,6 +18,7 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/ssh_host_key_dialog.dart';
 import '../widgets/ssh_transfer_bar.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
@@ -318,7 +319,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
 
   Widget _list_(HermesThemeColors colors) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+      return const Center(child: ConsoleLoader.large());
     }
     if (_error != null) {
       return Center(

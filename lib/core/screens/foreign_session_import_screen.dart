@@ -9,6 +9,7 @@ import '../widgets/chat/chat_markdown_body.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
+import '../widgets/console_loader.dart';
 
 /// Browse Claude Code / Codex sessions found on the server and import one
 /// into Hermes history. Reached from the Conversations overflow menu.
@@ -176,7 +177,7 @@ class _ForeignSessionImportScreenState
           if (_controller.loading)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
-              child: Center(child: CircularProgressIndicator()),
+              child: Center(child: ConsoleLoader.medium(showLabel: true)),
             )
           else if (_controller.hasMore)
             Align(

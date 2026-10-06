@@ -11,6 +11,7 @@ import 'package:hermes_android/core/services/kanban_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/widgets/console_loader.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -122,6 +123,13 @@ void main() {
       );
       expect(
         find.byKey(const ValueKey('kanban-task-detail-loading')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('kanban-task-detail-loading')),
+          matching: find.byType(ConsoleLoader),
+        ),
         findsOneWidget,
       );
 

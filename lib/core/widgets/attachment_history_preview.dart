@@ -16,6 +16,7 @@ import 'attachment_card.dart';
 import 'attachment_preview.dart';
 import 'hermes_app_bar.dart';
 import 'hermes_notice.dart';
+import 'console_loader.dart';
 
 @visibleForTesting
 const attachmentDocumentPreviewChannelName = 'hermes/document_preview';
@@ -291,9 +292,9 @@ class _AttachmentBytesPreviewScreenState
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 16),
-                    Text(strings.chaAttachmentPreviewLoading),
+                    ConsoleLoader.large(
+                      label: strings.chaAttachmentPreviewLoading,
+                    ),
                   ],
                 ),
               );
@@ -465,7 +466,7 @@ class _PdfBytesPreviewState extends State<_PdfBytesPreview> {
       future: _renderPage(0),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: ConsoleLoader.medium());
         }
         if (snapshot.hasError || snapshot.data == null) {
           return _BinaryBytesPreview(
@@ -523,7 +524,7 @@ class _LazyPdfPage extends StatelessWidget {
                 future: rendered,
                 builder: (context, snapshot) {
                   if (snapshot.connectionState != ConnectionState.done) {
-                    return const Center(child: CircularProgressIndicator());
+                    return const Center(child: ConsoleLoader.medium());
                   }
                   final result = snapshot.data;
                   if (snapshot.hasError || result == null) {

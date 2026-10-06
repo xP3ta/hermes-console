@@ -14,6 +14,7 @@ import 'package:hermes_android/core/services/mission_snapshot_cache.dart';
 import 'package:hermes_android/core/services/mission_snapshot_prewarm.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/console_loader.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -194,6 +195,11 @@ void main() {
         findsNothing,
         reason: 'a warm open revalidates quietly, like Desktop',
       );
+      expect(
+        find.byType(ConsoleLoader),
+        findsNothing,
+        reason: 'a warm open revalidates quietly, like Desktop',
+      );
       // The background revalidation is already on the wire.
       expect(server.count('profiles.list'), 1);
       expect(server.count('kanban.board'), 1);
@@ -201,6 +207,7 @@ void main() {
       // It stays quiet while the server takes its time.
       await tester.pump(const Duration(seconds: 3));
       expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(ConsoleLoader), findsNothing);
 
       server.network.complete();
       await tester.pump();
@@ -314,6 +321,7 @@ void main() {
       await tester.pump();
       await _idle(tester, const Duration(seconds: 31));
       expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(ConsoleLoader), findsNothing);
       expect(server.count('profiles.list'), 1, reason: 'no concurrent read');
       expect(server.count('kanban.board'), 1, reason: 'no concurrent read');
 
@@ -373,6 +381,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(pullDone, isTrue, reason: 'the pull ends with the joined read');
       expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(ConsoleLoader), findsNothing);
       expect(server.count('kanban.board'), 1, reason: 'still one full read');
       expect(
         server.count('profiles.list'),
@@ -402,11 +411,13 @@ void main() {
       _host(manager, server.repository(), MissionSnapshotCache()),
     );
     expect(find.text('Loading profiles…'), findsOneWidget);
+    expect(find.byType(ConsoleLoader), findsOneWidget);
     server.network.complete();
     await tester.pump();
     await tester.pump();
     expect(_rosterLines, findsWidgets);
     expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(ConsoleLoader), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -422,6 +433,7 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(ConsoleLoader), findsNothing);
 
     server.network = Completer<void>();
     final pull = tester.state<RefreshIndicatorState>(

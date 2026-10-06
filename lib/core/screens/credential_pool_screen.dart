@@ -5,6 +5,7 @@ import '../services/connection_manager.dart';
 import '../services/credential_pool_api.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_premium_ui.dart';
+import '../widgets/console_loader.dart';
 
 class CredentialPoolScreen extends StatefulWidget {
   final SavedConnection connection;
@@ -65,7 +66,7 @@ class _CredentialPoolScreenState extends State<CredentialPoolScreen> {
               body: s.mdlCredentialPoolLoadError,
             )
           : pool == null
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: ConsoleLoader.large())
           : pool.providers.isEmpty
           ? HermesEmptyState(
               icon: Icons.key_off_outlined,

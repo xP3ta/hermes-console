@@ -12,6 +12,7 @@ import '../widgets/mcp_provisioning_surface.dart';
 import '../widgets/webhook_admin_surfaces.dart';
 import 'admin_integrations_copy.dart';
 import 'lock_screen.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
@@ -493,7 +494,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
       );
     }
     if (_loadingWebhooks && _webhooks == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: ConsoleLoader.large());
     }
     final failure = _webhooksFailure;
     if (failure != null && _webhooks == null) {
@@ -508,7 +509,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
     }
     final snapshot = _webhooks;
     if (snapshot == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: ConsoleLoader.large());
     }
     return RefreshIndicator(
       onRefresh: () => _loadWebhooks(force: true),
@@ -611,7 +612,7 @@ class _AdminIntegrationsScreenState extends State<AdminIntegrationsScreen> {
       );
     }
     if (_loadingA2a && _a2a == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: ConsoleLoader.large());
     }
     final failure = _a2aFailure;
     if (failure != null && _a2a == null) {

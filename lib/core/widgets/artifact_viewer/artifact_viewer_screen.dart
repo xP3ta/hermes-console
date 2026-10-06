@@ -19,6 +19,7 @@ import '../hermes_app_bar.dart';
 import '../hermes_notice.dart';
 import 'artifact_html_policy.dart';
 import 'code_view_prefs.dart';
+import '../console_loader.dart';
 
 /// Bytes rendered before the viewer asks the user to "Mostrar todo".
 const int artifactViewerInitialRenderBytes = 1024 * 1024;
@@ -274,7 +275,7 @@ class _ArtifactViewerScreenState extends State<ArtifactViewerScreen> {
           future: _bytes,
           builder: (context, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
-              return const Center(child: CircularProgressIndicator());
+              return const Center(child: ConsoleLoader.large());
             }
             final bytes = snapshot.data;
             if (snapshot.hasError || bytes == null) {

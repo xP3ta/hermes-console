@@ -38,6 +38,7 @@ import '../widgets/bot_avatar_generate_button.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import 'mission_control_copy.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
@@ -1496,7 +1497,7 @@ class _BotCreateScreenState extends State<BotCreateScreen> {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Padding(
               padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(child: CircularProgressIndicator()),
+              child: Center(child: ConsoleLoader.medium(showLabel: true)),
             );
           }
           final gallery = snapshot.data;

@@ -14,6 +14,7 @@ import 'capabilities_repository.dart';
 import 'capability_models.dart';
 import 'capability_ui.dart';
 import 'connector_policy.dart';
+import '../widgets/console_loader.dart';
 
 class ConnectorDetailScreen extends StatefulWidget {
   final HostedConnector connector;
@@ -277,9 +278,7 @@ class _ConnectorDetailScreenState extends State<ConnectorDetailScreen> {
         const Padding(
           padding: EdgeInsets.only(top: 48),
           child: Center(
-            child: CircularProgressIndicator(
-              key: ValueKey('cph-connector-busy'),
-            ),
+            child: ConsoleLoader.large(key: ValueKey('cph-connector-busy')),
           ),
         ),
       );

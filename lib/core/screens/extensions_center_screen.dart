@@ -15,6 +15,7 @@ import '../widgets/mcp_provisioning_surface.dart';
 import 'admin_integrations_copy.dart';
 import 'admin_integrations_screen.dart';
 import 'lock_screen.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
@@ -660,7 +661,7 @@ class _ExtensionsCenterScreenState extends State<ExtensionsCenterScreen> {
       ),
       body: SafeArea(
         child: _loading && inventory == null
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(child: ConsoleLoader.large())
             : _failure != null && inventory == null
             ? _ExtensionsFailure(
                 message: _extensionsFailureText(_failure!, strings),

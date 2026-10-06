@@ -5,6 +5,7 @@ import '../services/bridge_client.dart';
 import '../utils/api_error.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
+import '../widgets/console_loader.dart';
 
 /// Resultado del alta de credenciales del Dashboard vía bridge.
 class DashboardCredsResult {
@@ -179,7 +180,7 @@ class _DashboardSetupScreenState extends State<DashboardSetupScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(Strings.of(context).dashAccessTitle)),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: ConsoleLoader.large())
           : _error != null
           ? _ErrorView(error: _error!, onRetry: _probe)
           : ListView(

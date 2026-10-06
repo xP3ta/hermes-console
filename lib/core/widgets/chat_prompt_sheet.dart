@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 import 'hermes_premium_ui.dart';
+import 'console_loader.dart';
 
 /// State painted by [ChatPromptSheet]; owned by whoever opens the sheet.
 @immutable
@@ -108,7 +109,7 @@ class ChatPromptSheet extends StatelessWidget {
                             horizontal: 16,
                             vertical: 12,
                           ),
-                          child: LinearProgressIndicator(),
+                          child: Center(child: ConsoleLoader.small()),
                         );
                       }
                       return _LoadEarlierRow(

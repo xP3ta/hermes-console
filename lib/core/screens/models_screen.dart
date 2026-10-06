@@ -34,6 +34,7 @@ import 'custom_endpoints_section.dart';
 import 'external_provider_screen.dart';
 import 'local_models_screen.dart';
 import 'moa_recipe_screen.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
@@ -1550,7 +1551,7 @@ class _ModelsScreenState extends State<ModelsScreen>
 
   Widget _buildBody(HermesThemeColors colors) {
     final s = Strings.of(context);
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return const Center(child: ConsoleLoader.large());
 
     // Fallback: la gestión del Dashboard falló pero el gateway sí listó modelos
     // con el mismo token. Mostramos la lista (solo lectura) para que se vean.

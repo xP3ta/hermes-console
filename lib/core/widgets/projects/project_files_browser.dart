@@ -26,6 +26,7 @@ import '../hermes_notice.dart';
 import '../hermes_ui.dart' show HermesPanel;
 import 'project_file_icons.dart';
 import 'project_text_editor_screen.dart';
+import '../console_loader.dart';
 
 /// Server cap of the Dashboard upload routes (`_MANAGED_FILE_MAX_BYTES`).
 const int projectUploadMaxBytes = 100 * 1024 * 1024;
@@ -841,7 +842,7 @@ class _ProjectFilesBrowserState extends State<ProjectFilesBrowser> {
       children.add(
         const Padding(
           padding: EdgeInsets.only(top: 24),
-          child: Center(child: CircularProgressIndicator()),
+          child: Center(child: ConsoleLoader.medium(showLabel: true)),
         ),
       );
     } else if (listing.error != null) {

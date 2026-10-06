@@ -12,6 +12,7 @@ import '../services/chat_content_extractor.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
+import '../widgets/console_loader.dart';
 import '../widgets/hermes_premium_ui.dart'
     show HermesSearchField, HermesSegment, HermesSegmentedControl;
 import '../widgets/hermes_ui.dart' show HermesSecondaryButton;
@@ -235,10 +236,7 @@ class _ChatContentScreenState extends State<ChatContentScreen> {
           child: _loadingOlder
               ? const Padding(
                   padding: EdgeInsets.all(HermesSpace.x3),
-                  child: SizedBox.square(
-                    dimension: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+                  child: ConsoleLoader.small(dimension: 20),
                 )
               : HermesSecondaryButton(
                   key: const ValueKey('sa1215-load-older'),
