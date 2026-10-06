@@ -285,4 +285,88 @@ void main() {
       expect(withRetry.rows.single.retryOffered, isTrue);
     });
   });
+
+  group('rp1215 reply quote from the server round trigger', () {
+    List<RoomMessageEntry> entriesOf(List<Map<String, dynamic>> raw) =>
+        buildRoomTranscript(
+          events: buildLog(raw).events,
+          members: buildRoom().members,
+        ).whereType<RoomMessageEntry>().toList();
+
+    test('a member reply quotes the message.user named by '
+        'discussion_event_id, as one plain line', () {
+      final seq = EventSeq();
+      final u = seq.user('**Mira** por ejemplo\nlas fotos de ayer');
+      final disc = u['event_id'] as String;
+      final reply = seq.member('m-builder', 'builder', 'Vistas.', disc);
+      final entries = entriesOf([u, reply]);
+      final quote = entries[1].quote;
+      expect(quote, isNotNull);
+      expect(quote!.eventId, disc);
+      expect(quote.preview, 'Mira por ejemplo las fotos de ayer');
+      expect(entries[0].quote, isNull, reason: 'the owner bubble quotes none');
+    });
+
+    test('replies to an earlier message quote it, not the newest one', () {
+      final seq = EventSeq();
+      final first = seq.user('Mira las fotos', thread: 't1');
+      final second = seq.user('Y el vídeo', thread: 't2');
+      final firstDisc = first['event_id'] as String;
+      final secondDisc = second['event_id'] as String;
+      final late = seq.member(
+        'm-builder',
+        'builder',
+        'Fotos vistas',
+        firstDisc,
+        thread: 't1',
+      );
+      final other = seq.member(
+        'm-review',
+        'review',
+        'Vídeo visto',
+        secondDisc,
+        thread: 't2',
+      );
+      final entries = entriesOf([first, second, late, other]);
+      expect(entries[2].quote?.eventId, firstDisc);
+      expect(entries[2].quote?.preview, 'Mira las fotos');
+      expect(entries[3].quote?.eventId, secondDisc);
+    });
+
+    test('every reply of the round quotes the same trigger, once per run', () {
+      final seq = EventSeq();
+      final u = seq.user('Revisad esto');
+      final disc = u['event_id'] as String;
+      final a = seq.member('m-builder', 'builder', 'uno', disc);
+      final b = seq.member('m-builder', 'builder', 'dos', disc);
+      final c = seq.member('m-review', 'review', 'tres', disc);
+      final d = seq.member('m-review', 'review', 'cuatro', disc, round: 1);
+      final entries = entriesOf([u, a, b, c, d]);
+      expect(entries.map((e) => e.quote?.eventId), [
+        null,
+        disc,
+        null, // same speaker, same discussion: the run already says it
+        disc,
+        disc, // a new round divider starts a new run
+      ]);
+    });
+
+    test('no quote when the trigger is not in the log or unknown', () {
+      final seq = EventSeq();
+      final reply = seq.member('m-builder', 'builder', 'hola', 'user:gone');
+      expect(entriesOf([reply]).single.quote, isNull);
+    });
+
+    test('an attachment-only message quotes its file names', () {
+      final seq = EventSeq();
+      final u = seq.user(
+        appendRoomAttachmentSuffix('', const [
+          RoomAttachmentRef(name: 'shot.png', path: '/home/h/uploads/1.png'),
+        ]),
+      );
+      final disc = u['event_id'] as String;
+      final reply = seq.member('m-builder', 'builder', 'ok', disc);
+      expect(entriesOf([u, reply])[1].quote?.preview, 'shot.png');
+    });
+  });
 }

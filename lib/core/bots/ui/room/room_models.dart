@@ -10,6 +10,7 @@ import 'package:flutter/painting.dart' show Color, HSLColor;
 
 import '../../../models/agent_profile.dart';
 import '../../../models/hosted_groups.dart';
+import '../../../utils/plain_preview.dart';
 import '../../../utils/unread_rules.dart';
 import '../../../models/room_member_status.dart' show resolveRoomRecipients;
 import '../../../widgets/mission_profile_avatar.dart'
@@ -332,6 +333,22 @@ final class RoomThreadSummary {
   });
 }
 
+/// rp1215: the owner's message a member reply answers, from the server's
+/// own coordinate: every `message.member` carries `discussion_event_id`, the
+/// event id of the `message.user` that opened its discussion (the round
+/// trigger, `gateway/hosted_room_discussion.py::_turn_coordinates`). Hermes
+/// publishes no finer `reply_to`, so all replies of a round quote the same
+/// message. Never guessed: no quote when that message is not in the log.
+final class RoomReplyQuote {
+  /// Event id of the quoted `message.user`.
+  final String eventId;
+
+  /// One-line plain preview of its text (or its attachment names).
+  final String preview;
+
+  const RoomReplyQuote({required this.eventId, required this.preview});
+}
+
 final class RoomMessageEntry extends RoomTranscriptEntry {
   final HostedGroupEvent event;
   final RoomMessageBody body;
@@ -339,12 +356,16 @@ final class RoomMessageEntry extends RoomTranscriptEntry {
   final bool firstOfRun;
   final RoomThreadSummary? thread;
 
+  /// Owner message this member reply answers (first reply of a run only).
+  final RoomReplyQuote? quote;
+
   const RoomMessageEntry({
     required this.event,
     required this.body,
     required this.member,
     required this.firstOfRun,
     this.thread,
+    this.quote,
   });
 
   bool get isUser => event.actor.kind == 'user';
@@ -454,6 +475,31 @@ List<RoomTranscriptEntry> buildRoomTranscript({
     }
   }
 
+  final userMessages = <String, HostedGroupEvent>{
+    for (final e in messages)
+      if (e.kind == 'message.user') e.eventId: e,
+  };
+  // One preview per quoted message, however many replies quote it.
+  final quotes = <String, RoomReplyQuote?>{};
+  RoomReplyQuote? quoteFor(HostedGroupEvent e) {
+    if (e.kind != 'message.member') return null;
+    final trigger = userMessages[e.activity.discussionId];
+    if (trigger == null) return null;
+    return quotes.putIfAbsent(trigger.eventId, () {
+      final body = parseRoomMessageText(trigger.publicText!);
+      // Bounded: a pasted page must not cost a full Markdown pass.
+      final head = body.text.length > 600
+          ? String.fromCharCodes(body.text.runes.take(600))
+          : body.text;
+      var preview = plainPreview(head, maxChars: 120);
+      if (preview.isEmpty) {
+        preview = body.attachments.map((a) => a.name).join(', ');
+      }
+      if (preview.isEmpty) return null;
+      return RoomReplyQuote(eventId: trigger.eventId, preview: preview);
+    });
+  }
+
   final out = <RoomTranscriptEntry>[];
   HostedGroupEvent? previous;
   var breakRun = true;
@@ -522,6 +568,11 @@ List<RoomTranscriptEntry> buildRoomTranscript({
             : roomMemberForActor(e.actor, members),
         firstOfRun: firstOfRun,
         thread: summary,
+        // Once per run of the same discussion: a speaker's follow-up
+        // bubbles answer the same message.
+        quote: firstOfRun || _discussionOf(previous) != discussion
+            ? quoteFor(e)
+            : null,
       ),
     );
     breakRun = summary != null;

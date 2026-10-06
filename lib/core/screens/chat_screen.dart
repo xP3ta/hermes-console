@@ -17,6 +17,7 @@ import '../services/message_reaction_prefs.dart';
 import '../widgets/chat/chat_markdown_body.dart';
 import '../widgets/chat/message_reaction_bar.dart';
 import '../widgets/chat/chat_message_frame.dart';
+import '../widgets/chat/chat_replying_indicator.dart';
 import '../widgets/chat/composer_pasted_image.dart';
 import '../widgets/chat/console_composer.dart';
 import '../widgets/chat/chat_message_selection_area.dart';
@@ -17817,6 +17818,52 @@ class _ChatScreenState extends State<ChatScreen>
     };
   }
 
+  /// rp1215: the user bubbles of the running turn. Newest first, the units
+  /// above the answered prompt can only be the live answer (one bubble per
+  /// turn), tool groups and messages queued behind it; anything else means
+  /// the turn has no prompt row here (started elsewhere) and nothing is
+  /// marked rather than guessing.
+  ({Map<String, dynamic>? answering, Set<Map<String, dynamic>> queued})
+  _liveUserTurnMarks() {
+    final queued = Set<Map<String, dynamic>>.identity();
+    if (!_chat.isStreaming || _compressingSession) {
+      return (answering: null, queued: queued);
+    }
+    final messages = _messages;
+    var passedAnswer = false;
+    for (final plan in _currentRenderProjection.units) {
+      switch (plan) {
+        case ChatToolActivityUnitPlan():
+          continue;
+        case ChatMessageUnitPlan(:final messageIndex):
+          if (passedAnswer || messages[messageIndex]['role'] != 'assistant') {
+            return (answering: null, queued: queued);
+          }
+          passedAnswer = true;
+        case ChatUserTurnUnitPlan(:final primaryMessageIndex):
+          final message = messages[primaryMessageIndex];
+          if (message['_desktopAcceptedQueued'] == true) {
+            queued.add(message);
+            continue;
+          }
+          return (answering: message, queued: queued);
+      }
+    }
+    return (answering: null, queued: queued);
+  }
+
+  /// «Enviado» until the turn really started, then who is replying.
+  String _answeringStatusLabel() {
+    final s = Strings.of(context);
+    final started =
+        _chat.desktopTurnStartedAt != null ||
+        _pipelineState == ChatPipelineState.executing ||
+        _pipelineState == ChatPipelineState.streaming;
+    return started
+        ? s.rp1215NameReplying(displayAgentName(_assistantName))
+        : s.rp1215BubbleSent;
+  }
+
   Widget _buildActiveThinkingState() {
     // La compresión no es actividad del modelo. Mostrar a la vez esta tarjeta,
     // el estado del composer y el uso de contexto hacía que una operación
@@ -17831,7 +17878,11 @@ class _ChatScreenState extends State<ChatScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            _AssistantLiveHeader(agentName: _assistantName, mood: mood),
+            _AssistantLiveHeader(
+              agentName: _assistantName,
+              mood: mood,
+              compact: _chatPreferences.density == TranscriptDensity.compact,
+            ),
           ],
         );
       },
@@ -17869,12 +17920,22 @@ class _ChatScreenState extends State<ChatScreen>
           supplements.isEmpty) {
         return const SizedBox.shrink();
       }
+      final marks = _liveUserTurnMarks();
+      final answering = identical(marks.answering, unit.primary);
       return _UserMessage(
         content: content,
         verbose: _devDiagnostics,
         metadata: unit.primary,
         compact: compact,
         supplements: supplements,
+        status: answering
+            ? _answeringStatusLabel()
+            : marks.queued.contains(unit.primary)
+            ? Strings.of(context).rp1215BubbleQueued
+            : null,
+        answering:
+            answering &&
+            (marks.queued.isNotEmpty || _chat.queuedEntries.isNotEmpty),
         onEdit:
             content == rawContent &&
                 unit.supplements.isEmpty &&
@@ -21331,8 +21392,18 @@ class _UserMessage extends StatelessWidget {
   final ValueChanged<String>? onSaveEdit;
   final bool compact;
 
+  /// rp1215: small line under the bubble while its turn is open («Enviado»,
+  /// «Hermes está respondiendo», «En cola»); `null` once answered.
+  final String? status;
+
+  /// rp1215: this is the bubble being answered while other messages wait;
+  /// its left edge takes the accent.
+  final bool answering;
+
   const _UserMessage({
     required this.content,
+    this.status,
+    this.answering = false,
     this.verbose = false,
     this.metadata = const {},
     this.supplements = const [],
@@ -21425,6 +21496,7 @@ class _UserMessage extends StatelessWidget {
       enabled: !editing,
       selectionIdentity: metadata['message_id'] ?? metadata['id'] ?? metadata,
       child: Padding(
+        key: const ValueKey('user-turn-row'),
         padding: EdgeInsets.only(
           left: 56,
           right: 12,
@@ -21438,141 +21510,148 @@ class _UserMessage extends StatelessWidget {
               key: const ValueKey('user-message-bubble'),
               child: _BubbleSizeReporter(
                 holder: bubbleSize,
-                child: Container(
-                  // Mientras se edita la burbuja se ensancha al ancho máximo de
-                  // una burbuja normal (alineada a la derecha) para que el texto
-                  // tenga sitio, en vez de quedarse con el ancho del original.
-                  width: editing ? double.infinity : null,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: compact ? 8 : 11,
-                  ),
-                  // Burbuja estilo Claude: panel suave uniforme, redondeado, SIN
-                  // borde. El mensaje del agente va en texto plano; el del usuario
-                  // en esta burbuja sutil.
-                  decoration: BoxDecoration(
-                    color: colors.surfaceVariant.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: editing
-                      ? InlineMessageEditor(
-                          initialText: editingText ?? parsed.text.trim(),
-                          draftText: editingDraft,
-                          saving: editSaving,
-                          attachments: parsed.attachments.isEmpty
-                              ? null
-                              : _buildAttachmentCards(
-                                  context,
-                                  parsed.attachments,
-                                ),
-                          onCancel: onCancelEdit!,
-                          onSave: onSaveEdit!,
-                        )
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (metaLines.isNotEmpty)
-                              _MetaBlock(lines: metaLines, onDark: true),
-                            if (parsed.attachments.isNotEmpty)
-                              Padding(
-                                padding: EdgeInsets.only(
-                                  bottom: parsed.text.isNotEmpty ? 8 : 0,
-                                ),
-                                child: _buildAttachmentCards(
-                                  context,
-                                  parsed.attachments,
-                                ),
-                              ),
-                            if (parsed.text.isNotEmpty)
-                              MarkdownBody(
-                                data: parsed.text,
-                                selectable: false,
-                                // Respeta los saltos de línea simples (CommonMark los
-                                // colapsaría en espacios → texto "todo junto").
-                                softLineBreak: true,
-                                onTapLink: (text, href, title) =>
-                                    openChatMarkdownLink(context, href),
-                                styleSheet: _userSheet(theme, colors),
-                              ),
-                            if (supplements.isNotEmpty) ...[
-                              const SizedBox(height: 11),
-                              Divider(
-                                height: 1,
-                                color: colors.divider.withValues(alpha: 0.45),
-                              ),
-                              const SizedBox(height: 9),
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.add_comment_outlined,
-                                    size: 14,
-                                    color: colors.accent,
+                // Always present (painter or not), so marking the bubble
+                // never remounts it or an inline editor inside it.
+                child: CustomPaint(
+                  foregroundPainter: answering
+                      ? UserBubbleAccentEdgePainter(colors.accent)
+                      : null,
+                  child: Container(
+                    // Mientras se edita la burbuja se ensancha al ancho máximo de
+                    // una burbuja normal (alineada a la derecha) para que el texto
+                    // tenga sitio, en vez de quedarse con el ancho del original.
+                    width: editing ? double.infinity : null,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: compact ? 8 : 11,
+                    ),
+                    // Burbuja estilo Claude: panel suave uniforme, redondeado, SIN
+                    // borde. El mensaje del agente va en texto plano; el del usuario
+                    // en esta burbuja sutil.
+                    decoration: BoxDecoration(
+                      color: colors.surfaceVariant.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: editing
+                        ? InlineMessageEditor(
+                            initialText: editingText ?? parsed.text.trim(),
+                            draftText: editingDraft,
+                            saving: editSaving,
+                            attachments: parsed.attachments.isEmpty
+                                ? null
+                                : _buildAttachmentCards(
+                                    context,
+                                    parsed.attachments,
                                   ),
-                                  const SizedBox(width: 6),
-                                  Flexible(
-                                    child: Text(
-                                      Strings.of(
-                                        context,
-                                      ).chaSteerSupplementsLabel,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
-                                        color: colors.textSecondary,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 7),
-                              for (
-                                var index = 0;
-                                index < supplements.length;
-                                index++
-                              )
+                            onCancel: onCancelEdit!,
+                            onSave: onSaveEdit!,
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (metaLines.isNotEmpty)
+                                _MetaBlock(lines: metaLines, onDark: true),
+                              if (parsed.attachments.isNotEmpty)
                                 Padding(
                                   padding: EdgeInsets.only(
-                                    bottom: index == supplements.length - 1
-                                        ? 0
-                                        : 7,
+                                    bottom: parsed.text.isNotEmpty ? 8 : 0,
                                   ),
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Container(
-                                        width: 2,
-                                        height: 18,
-                                        margin: const EdgeInsets.only(
-                                          top: 2,
-                                          right: 8,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: colors.accent.withValues(
-                                            alpha: 0.55,
-                                          ),
-                                          borderRadius: BorderRadius.circular(
-                                            2,
-                                          ),
-                                        ),
-                                      ),
-                                      Expanded(
-                                        child: Text(
-                                          supplements[index],
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            height: 1.35,
-                                            color: colors.textPrimary,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
+                                  child: _buildAttachmentCards(
+                                    context,
+                                    parsed.attachments,
                                   ),
                                 ),
+                              if (parsed.text.isNotEmpty)
+                                MarkdownBody(
+                                  data: parsed.text,
+                                  selectable: false,
+                                  // Respeta los saltos de línea simples (CommonMark los
+                                  // colapsaría en espacios → texto "todo junto").
+                                  softLineBreak: true,
+                                  onTapLink: (text, href, title) =>
+                                      openChatMarkdownLink(context, href),
+                                  styleSheet: _userSheet(theme, colors),
+                                ),
+                              if (supplements.isNotEmpty) ...[
+                                const SizedBox(height: 11),
+                                Divider(
+                                  height: 1,
+                                  color: colors.divider.withValues(alpha: 0.45),
+                                ),
+                                const SizedBox(height: 9),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.add_comment_outlined,
+                                      size: 14,
+                                      color: colors.accent,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                      child: Text(
+                                        Strings.of(
+                                          context,
+                                        ).chaSteerSupplementsLabel,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          color: colors.textSecondary,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 7),
+                                for (
+                                  var index = 0;
+                                  index < supplements.length;
+                                  index++
+                                )
+                                  Padding(
+                                    padding: EdgeInsets.only(
+                                      bottom: index == supplements.length - 1
+                                          ? 0
+                                          : 7,
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          width: 2,
+                                          height: 18,
+                                          margin: const EdgeInsets.only(
+                                            top: 2,
+                                            right: 8,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: colors.accent.withValues(
+                                              alpha: 0.55,
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              2,
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Text(
+                                            supplements[index],
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              height: 1.35,
+                                              color: colors.textPrimary,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                              ],
                             ],
-                          ],
-                        ),
+                          ),
+                  ),
                 ),
               ),
             ),
@@ -21636,6 +21715,20 @@ class _UserMessage extends StatelessWidget {
                       color: colors.textSecondary,
                     ),
                   ),
+                  if (status != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3, left: 4),
+                      child: Text(
+                        status!,
+                        key: const ValueKey('user-bubble-status'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: colors.textTertiary,
+                        ),
+                      ),
+                    ),
                   if (timestamp != null) ChatMessageTimestamp(timestamp),
                 ],
               ),
@@ -21897,34 +21990,61 @@ class _AssistantAvatarHeader extends StatelessWidget {
   }
 }
 
-/// Cabecera del turno en vivo antes de que haya texto: el estado lo cuenta la
-/// pastilla sobre el compositor; aquí, una sola palabra apagada.
+/// Cabecera del turno en vivo antes de que haya texto: la cara y el nombre en
+/// el mismo sitio que tendrá la respuesta, y debajo «está respondiendo…» con
+/// puntos (rp1215). Qué hace el turno lo cuenta la pastilla sobre el
+/// compositor, no esta línea.
 class _AssistantLiveHeader extends StatelessWidget {
-  const _AssistantLiveHeader({required this.agentName, required this.mood});
+  const _AssistantLiveHeader({
+    required this.agentName,
+    required this.mood,
+    required this.compact,
+  });
 
   final String agentName;
   final HermesSparkMood mood;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
+    // Same insets as the answer's ChatMessageFrame: when the first text
+    // arrives the face and the name stay where they are.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 7, 16, 0),
+      padding: EdgeInsets.fromLTRB(12, compact ? 5 : 11, 16, 0),
       child: _AssistantAvatarHeader(
         name: agentName,
         mood: mood,
         animate: true,
-        subtitle: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Text(
-            Strings.of(context).liveHeaderWorking,
-            key: const ValueKey('assistant-header-working'),
-            style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
-          ),
+        subtitle: _replyingSubtitle(
+          context,
+          agentName,
+          thinking: false,
+          labelKey: const ValueKey('assistant-header-working'),
         ),
       ),
     );
   }
+}
+
+/// rp1215: the second header line of a live turn with no answer text yet.
+Widget _replyingSubtitle(
+  BuildContext context,
+  String agentName, {
+  required bool thinking,
+  Key? labelKey,
+}) {
+  final s = Strings.of(context);
+  final name = displayAgentName(agentName);
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: ChatReplyingIndicator(
+      label: thinking ? s.rp1215Thinking : s.rp1215Replying,
+      semanticsLabel: thinking
+          ? s.rp1215NameThinking(name)
+          : s.rp1215NameReplying(name),
+      labelKey: labelKey,
+    ),
+  );
 }
 
 final class _ConnectionCardBinding {
@@ -22386,7 +22506,23 @@ class _AssistantMessage extends StatelessWidget {
                       name: agentName,
                       mood: headerMood,
                       animate: headerAnimated,
-                      subtitle: summary,
+                      // rp1215: until the first answer text, the live turn
+                      // says who is replying (or thinking, while only
+                      // reasoning arrived); the pill keeps the detail.
+                      subtitle:
+                          activityActive &&
+                              !waitingForUser &&
+                              !stopped &&
+                              answer.trim().isEmpty
+                          ? _replyingSubtitle(
+                              context,
+                              agentName,
+                              thinking: activityEvents.every(
+                                (event) =>
+                                    event.kind == ChatTraceEventKind.reasoning,
+                              ),
+                            )
+                          : summary,
                       actions: headerActions(),
                     ),
                     details,

@@ -415,8 +415,17 @@ void main() {
         child: app,
       ),
     );
-    for (final word in ['Roomanswer', 'Roomquestion']) {
-      final target = find.textContaining(word, findRichText: true).first;
+    for (final (word, id) in [
+      ('Roomanswer', m['event_id']),
+      ('Roomquestion', u['event_id']),
+    ]) {
+      // In the message itself (a reply's quote chip repeats the question).
+      final target = find
+          .descendant(
+            of: find.byKey(ValueKey('room-message-$id')),
+            matching: find.textContaining(word, findRichText: true),
+          )
+          .first;
       await tester.longPressAt(tester.getTopLeft(target) + const Offset(8, 8));
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('Copy'), findsOneWidget, reason: word);
@@ -1630,6 +1639,97 @@ void main() {
         find.text('This connection cannot upload files to the server.'),
         findsNWidgets(2),
       );
+    });
+  });
+
+  group('rp1215 reply quote chip', () {
+    testWidgets('a reply shows one quiet line quoting the round trigger', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final u = seq.user('**Mira** por ejemplo las fotos de ayer @builder');
+      final disc = u['event_id'] as String;
+      final reply = seq.member('m-builder', 'builder', 'Vistas.', disc);
+      await _pump(tester, events: [u, reply]);
+      final chip = find.byKey(ValueKey('room-quote-${reply['event_id']}'));
+      expect(chip, findsOneWidget);
+      final text = tester.widget<Text>(
+        find.byKey(ValueKey('room-quote-text-${reply['event_id']}')),
+      );
+      expect(
+        text.textSpan!.toPlainText(),
+        'You: Mira por ejemplo las fotos de ayer @builder',
+      );
+      expect(text.maxLines, 1);
+      // Above the reply card, inside its frame.
+      final card = find.byKey(
+        ValueKey('room-member-card-${reply['event_id']}'),
+      );
+      expect(
+        tester.getRect(chip).bottom,
+        lessThanOrEqualTo(tester.getRect(card).top),
+      );
+      expect(find.byKey(ValueKey('room-quote-${u['event_id']}')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('no chip when the server names no message of the log', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final u = seq.user('hola');
+      final reply = seq.member('m-builder', 'builder', 'hola', 'user:gone');
+      await _pump(tester, events: [u, reply]);
+      expect(
+        find.byKey(ValueKey('room-quote-${reply['event_id']}')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('tap scrolls to the quoted message and washes it briefly', (
+      tester,
+    ) async {
+      final seq = EventSeq();
+      final first = seq.user('Mira por ejemplo las fotos', thread: 't1');
+      final firstDisc = first['event_id'] as String;
+      final late = seq.member(
+        'm-builder',
+        'builder',
+        'Las fotos están bien.',
+        firstDisc,
+        thread: 't1',
+      );
+      await _pump(tester, events: [first, late]);
+
+      final target = find.byKey(ValueKey('room-message-${first['event_id']}'));
+      final highlight = find.byKey(
+        ValueKey('room-message-highlight-${first['event_id']}'),
+      );
+      final lateQuote = find.byKey(ValueKey('room-quote-${late['event_id']}'));
+      await tester.ensureVisible(lateQuote);
+      await tester.pump();
+      await tester.tap(lateQuote);
+      for (var i = 0; i < 40; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(target, findsOneWidget);
+      final viewport = tester.getRect(
+        find.byKey(const ValueKey('room-transcript')),
+      );
+      final rect = tester.getRect(target);
+      expect(rect.top, greaterThanOrEqualTo(viewport.top - 0.5));
+      expect(rect.bottom, lessThanOrEqualTo(viewport.bottom + 0.5));
+      await tester.pump(const Duration(milliseconds: 300));
+      Color wash() =>
+          (tester.widget<AnimatedContainer>(highlight).decoration!
+                  as BoxDecoration)
+              .color!;
+      expect(wash().a, greaterThan(0.05), reason: 'briefly highlighted');
+
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      expect(wash().a, 0, reason: 'the wash fades by itself');
+      expect(tester.takeException(), isNull);
     });
   });
 }
