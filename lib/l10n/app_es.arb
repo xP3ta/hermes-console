@@ -10219,5 +10219,6 @@
   "rpl1215ReplySummarize": "Resúmelo",
   "rpl1215SmartSuggest": "Sugerir respuestas con IA",
   "rpl1215SettingTitle": "Respuestas rápidas",
-  "rpl1215SettingSubtitle": "Propuestas de respuesta al terminar cada turno. ✨ solo consulta al modelo si la tocas."
+  "rpl1215SettingSubtitle": "Propuestas de respuesta al terminar cada turno. ✨ solo consulta al modelo si la tocas.",
+  "cmp1215PasteImage": "Pegar imagen"
 }

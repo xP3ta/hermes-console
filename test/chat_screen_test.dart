@@ -56,6 +56,7 @@ import 'package:hermes_android/core/models/command_descriptor.dart';
 import 'package:hermes_android/core/models/desktop_active_session.dart';
 import 'package:hermes_android/core/models/desktop_compression_result.dart';
 
+import 'support/clipboard_image_fake.dart';
 import 'support/fake_webview_platform.dart';
 import 'package:hermes_android/core/widgets/artifact_viewer/artifact_viewer_screen.dart';
 import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
@@ -12507,6 +12508,168 @@ void main() {
       findsOneWidget,
     );
     await tester.pump(const Duration(seconds: 10));
+  });
+
+  group('mantener pulsado → "Pegar imagen" del portapapeles de Android', () {
+    final png = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+      'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    );
+
+    void mockPaths() {
+      final temp = Directory.systemTemp.createTempSync('chat-clip-image-');
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, (call) async => temp.path);
+      addTearDown(
+        () => TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null),
+      );
+    }
+
+    List<AttachmentCard> composerCards(WidgetTester tester) => tester
+        .widgetList<AttachmentCard>(find.byType(AttachmentCard))
+        .where((card) => card.onRemove != null)
+        .toList();
+
+    Future<void> pasteImageFromMenu(WidgetTester tester) async {
+      await openComposerTextMenu(tester, find.byType(TextField).last);
+      expect(find.text('Pegar imagen'), findsOneWidget);
+      await tester.tap(find.text('Pegar imagen'));
+      for (var i = 0; i < 10; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
+    }
+
+    testWidgets('chat principal: la imagen copiada entra como adjunto', (
+      tester,
+    ) async {
+      mockPaths();
+      final clipboard = FakeNativeClipboard(
+        read: {'mimeType': 'image/png', 'name': 'captura.png', 'bytes': png},
+      )..install();
+      await pumpChat(
+        tester,
+        attachmentMaterializer: (attachment) async => attachment,
+      );
+      await pasteImageFromMenu(tester);
+      await pumpUntilReal(
+        tester,
+        () => composerCards(tester).isNotEmpty,
+        timeoutMessage: 'clipboard image did not reach the composer',
+      );
+
+      expect(clipboard.calls, containsAllInOrder(['hasImage', 'readImage']));
+      expect(composerCards(tester).single.name, 'pasted-image.png');
+      await tester.pump(const Duration(seconds: 10));
+    });
+
+    testWidgets('sin imagen en el portapapeles no aparece "Pegar imagen"', (
+      tester,
+    ) async {
+      final clipboard = FakeNativeClipboard(hasImage: false)..install();
+      await pumpChat(tester);
+      await openComposerTextMenu(tester, find.byType(TextField).last);
+
+      expect(clipboard.calls, ['hasImage']);
+      expect(find.text('Pegar imagen'), findsNothing);
+      await tester.pump(const Duration(seconds: 10));
+    });
+
+    testWidgets('Bot Chat: la imagen copiada se adjunta y se envía', (
+      tester,
+    ) async {
+      mockPaths();
+      FakeNativeClipboard(
+        read: {'mimeType': 'image/png', 'name': 'grafica.png', 'bytes': png},
+      ).install();
+      final gateway = _SubmissionGateway();
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-bot-clip-paste'),
+        desktopGateway: gateway,
+        session: _session().copyWith(source: 'mobile-bot'),
+        missionBotProfile: const AgentProfile(name: 'Sol'),
+        attachmentMaterializer: (attachment) async => attachment,
+        attachmentPrivateCopyDeleter: (_) async => true,
+        initialPreferences: {
+          'approval_global_mode': ApprovalMode.yolo.storageKey,
+        },
+      );
+      await pasteImageFromMenu(tester);
+      await pumpUntilReal(
+        tester,
+        () => composerCards(tester).isNotEmpty,
+        timeoutMessage: 'clipboard image did not reach the Bot Chat composer',
+      );
+      expect(composerCards(tester).single.name, 'pasted-image.png');
+
+      await tester.enterText(find.byType(TextField).last, 'mira esto');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(const ValueKey('send')));
+      for (var i = 0; i < 80 && gateway.submissions.isEmpty; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(gateway.submissions, hasLength(1));
+      expect(gateway.imageAttachCalls, 1);
+      expect(gateway.submissions.single, contains('pasted-image.png'));
+      gateway.emitComplete();
+      await tester.pump(const Duration(seconds: 10));
+    });
+
+    for (final (label, read) in [
+      (
+        'demasiado grande (rechazada en nativo)',
+        <String, Object?>{
+          'mimeType': 'image/png',
+          'name': 'enorme.png',
+          'tooLarge': true,
+        },
+      ),
+      (
+        'de un tipo no admitido',
+        <String, Object?>{
+          'mimeType': 'image/bmp',
+          'name': 'raro.bmp',
+          'bytes': Uint8List.fromList([0x42, 0x4d, 1, 2]),
+        },
+      ),
+    ]) {
+      testWidgets('imagen $label: aviso de siempre y ningún adjunto', (
+        tester,
+      ) async {
+        mockPaths();
+        FakeNativeClipboard(read: read).install();
+        var materialized = 0;
+        await pumpChat(
+          tester,
+          attachmentMaterializer: (attachment) async {
+            materialized++;
+            return attachment;
+          },
+        );
+        await pasteImageFromMenu(tester);
+
+        expect(materialized, 0);
+        expect(composerCards(tester), isEmpty);
+        expect(
+          find.text(
+            'No se pudo preparar uno de los adjuntos. Vuelve a seleccionarlo.',
+          ),
+          findsOneWidget,
+        );
+        await tester.pump(const Duration(seconds: 10));
+      });
+    }
   });
 
   testWidgets(
