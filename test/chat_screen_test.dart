@@ -86,6 +86,10 @@ import 'package:hermes_android/core/widgets/chat/chat_message_frame.dart'
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/core/screens/lock_screen.dart';
 import 'package:hermes_android/core/screens/session_list_screen.dart';
+import 'package:hermes_android/core/screens/memory_screen.dart';
+import 'package:hermes_android/core/screens/projects_center_screen.dart';
+import 'package:hermes_android/core/screens/settings_screen.dart';
+import 'package:hermes_android/core/widgets/chat/chat_notch.dart';
 import 'package:hermes_android/core/services/session_archive.dart';
 import 'package:hermes_android/core/models/home_widget_snapshot.dart';
 import 'package:hermes_android/core/screens/home_dashboard_screen.dart';
@@ -4635,7 +4639,7 @@ void main() {
       expect(error, findsNothing);
 
       Future<void> refresh() async {
-        await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+        await tester.tap(find.byKey(const ValueKey('chat-notch')));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 350));
         await tester.tap(
@@ -5413,13 +5417,26 @@ void main() {
         ],
       );
 
-      await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+      await tester.tap(find.byKey(const ValueKey('chat-notch')));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump(kChatNotchSheetOpen);
 
       final release = find.byKey(
         const ValueKey('chat-control-release-desktop'),
       );
+      // Release lives in the sheet's last group (Zona sensible).
+      await tester.scrollUntilVisible(
+        release,
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('chat-control-sheet')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.ensureVisible(release);
+      await tester.pump();
       expect(release, findsOneWidget);
       expect(
         tester
@@ -6817,7 +6834,8 @@ void main() {
       // 2. It must NEVER cover the composer — this is the one hard,
       //    non-negotiable product rule, asserted with a small safety
       //    margin so "touching" isn't considered acceptable either.
-      const bottomAnchorTolerance = 32.0;
+      // The notch tab sits between the pill and the composer.
+      const bottomAnchorTolerance = 32.0 + kChatNotchHeight;
       const clearanceMargin = 1.0;
       expect(
         tester.getRect(transcript).bottom -
@@ -7945,21 +7963,11 @@ void main() {
   );
 
   Future<void> triggerChatRefresh(WidgetTester tester) async {
-    // Bot Chat's AppBar nests the same control sheet one level deeper, behind
-    // its own overflow menu (`bot-chat-overflow-appbar` → `bot-chat-control-
-    // action`), instead of the general chat's direct `chat-control-trigger`
-    // icon button.
-    final botOverflow = find.byKey(const ValueKey('bot-chat-overflow-appbar'));
-    if (botOverflow.evaluate().isNotEmpty) {
-      await tester.tap(botOverflow);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 250));
-      await tester.tap(find.byKey(const ValueKey('bot-chat-control-action')));
-    } else {
-      await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
-    }
+    // Every chat surface (general and Bot Chat) opens the control sheet from
+    // the notch above the composer.
+    await tester.tap(find.byKey(const ValueKey('chat-notch')));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump(kChatNotchSheetOpen);
     final dialog = find.byKey(const ValueKey('chat-control-dialog'));
     expect(dialog, findsOneWidget);
     await tester.tap(
@@ -14860,7 +14868,7 @@ void main() {
             ),
             (
               'control del chat',
-              () => find.byKey(const ValueKey('chat-control-trigger')),
+              () => find.byKey(const ValueKey('chat-notch')),
               () => find.byKey(const ValueKey('chat-control-dialog')),
               null,
               true,
@@ -15325,7 +15333,7 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('app_lock_enabled', true);
 
-      await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+      await tester.tap(find.byKey(const ValueKey('chat-notch')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
       await tester.scrollUntilVisible(
@@ -15397,7 +15405,7 @@ void main() {
     });
 
     await http.runWithClient(() async {
-      await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+      await tester.tap(find.byKey(const ValueKey('chat-notch')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
       await tester.scrollUntilVisible(
@@ -19999,7 +20007,7 @@ void main() {
   ) async {
     await pumpChat(tester);
 
-    await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+    await tester.tap(find.byKey(const ValueKey('chat-notch')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 240));
 
@@ -20009,8 +20017,12 @@ void main() {
     expect(find.text('Preferencias'), findsNothing);
     expect(find.text('Densidad del chat'), findsNothing);
     expect(find.text('Agentes y subagentes'), findsNothing);
-    expect(find.text('Artefactos'), findsOneWidget);
-    expect(find.text('Archivos y enlaces'), findsOneWidget);
+    // Below the find row, Ir a and Sesión: present, maybe below the fold.
+    expect(find.text('Artefactos', skipOffstage: false), findsOneWidget);
+    expect(
+      find.text('Archivos y enlaces', skipOffstage: false),
+      findsOneWidget,
+    );
     final surfaceSize = tester.getSize(
       find.byKey(const ValueKey('chat-control-dialog')),
     );
@@ -20028,7 +20040,7 @@ void main() {
   ) async {
     await pumpChat(tester);
 
-    await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+    await tester.tap(find.byKey(const ValueKey('chat-notch')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 240));
     await tester.tap(find.text('Permisos / modo'));
@@ -20045,9 +20057,22 @@ void main() {
   ) async {
     await pumpChat(tester);
 
-    await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+    await tester.tap(find.byKey(const ValueKey('chat-notch')));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 240));
+    await tester.pump(kChatNotchSheetOpen);
+    // Artefactos now heads the Herramientas group, below Ir a and Sesión.
+    await tester.scrollUntilVisible(
+      find.text('Artefactos'),
+      200,
+      scrollable: find
+          .descendant(
+            of: find.byKey(const ValueKey('chat-control-sheet')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.ensureVisible(find.text('Artefactos'));
+    await tester.pump();
     await tester.tap(find.text('Artefactos'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 240));
@@ -22529,7 +22554,9 @@ void main() {
         ],
       );
 
-      final edit = find.byIcon(Icons.edit_outlined);
+      // The notch slot takes 40 dp more of this tiny transcript: the edit
+      // action starts just above the viewport and is scrolled into reach.
+      final edit = find.byIcon(Icons.edit_outlined, skipOffstage: false);
       await tester.ensureVisible(edit);
       await tester.pumpAndSettle();
       expect(edit.hitTestable(), findsOneWidget);
@@ -29921,6 +29948,10 @@ void main() {
       expect(editor, findsOneWidget);
       await tester.enterText(editor, 'delega esta otra tarea');
       await tester.pump();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('inline-message-editor-save')),
+      );
+      await tester.pump();
       await tester.tap(
         find.byKey(const ValueKey('inline-message-editor-save')),
       );
@@ -32229,21 +32260,21 @@ void main() {
     expect(avatarLoads, ['infra']);
     expect(find.byKey(const ValueKey('voice')), findsNothing);
     expect(find.byKey(const ValueKey('send')), findsOneWidget);
-    // Sin drawer ni "nueva sesión": el modelo y los controles van al overflow.
+    // Sin drawer, "nueva sesión" ni ⋮: buscar, el modelo y los ajustes de la
+    // conversación viven en la rayita sobre el compositor.
     expect(find.byKey(const ValueKey('chat-new-session')), findsNothing);
     expect(find.byKey(const ValueKey('chat-control-trigger')), findsNothing);
     expect(
       find.byKey(const ValueKey('bot-chat-overflow-appbar')),
-      findsOneWidget,
+      findsNothing,
     );
+    expect(find.byKey(const ValueKey('chat-notch')), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('bot-chat-overflow-appbar')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('bot-chat-model-action')), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('bot-chat-control-action')),
-      findsOneWidget,
-    );
+    await tester.tap(find.byKey(const ValueKey('chat-notch')));
+    await tester.pump();
+    await tester.pump(kChatNotchSheetOpen);
+    expect(find.byKey(const ValueKey('chat-control-model')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-control-find')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -32512,11 +32543,12 @@ void main() {
         greaterThan(kToolbarHeight),
       );
       expect(tester.widget<Text>(status).data, '@qa');
-      // The existing actions stay.
+      // No header actions: they live in the notch sheet.
       expect(
         find.byKey(const ValueKey('bot-chat-overflow-appbar')),
-        findsOneWidget,
+        findsNothing,
       );
+      expect(find.byKey(const ValueKey('chat-notch')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -34745,7 +34777,7 @@ void main() {
       tester,
     ) async {
       Future<void> openMenu() async {
-        await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+        await tester.tap(find.byKey(const ValueKey('chat-notch')));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 250));
       }
@@ -34759,8 +34791,21 @@ void main() {
         acquireDesktopRuntimeBeforeMount: true,
       );
       await openMenu();
-      expect(find.byKey(const ValueKey('chat-control-branch')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('chat-control-branch')));
+      final branch = find.byKey(const ValueKey('chat-control-branch'));
+      await tester.scrollUntilVisible(
+        branch,
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('chat-control-sheet')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.ensureVisible(branch);
+      await tester.pump();
+      expect(branch, findsOneWidget);
+      await tester.tap(branch);
       await tester.pumpAndSettle();
       expect(gateway.sideCalls.map((call) => call.method), [
         'session.branch_whole',
@@ -34778,12 +34823,15 @@ void main() {
         initialStoredSessionId: 'sess-test',
         acquireDesktopRuntimeBeforeMount: true,
       );
-      await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+      await tester.tap(find.byKey(const ValueKey('chat-notch')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
 
       expect(find.byKey(const ValueKey('chat-control-dialog')), findsOneWidget);
-      expect(find.byKey(const ValueKey('chat-control-branch')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('chat-control-branch'), skipOffstage: false),
+        findsNothing,
+      );
     });
   });
 
@@ -35371,10 +35419,10 @@ void main() {
       reason: 'la flecha $arrow se solapa con la pastilla $pill',
     );
     expect(arrow.bottom, lessThanOrEqualTo(pill.top));
-    // La pastilla no se mueve de su sitio de siempre: 20 px por encima del
-    // borde inferior del transcript, pegada al composer como en el mockup.
+    // La pastilla sube lo que mide la rayita, que queda sobre el composer:
+    // 20 px + 22 dp por encima del borde inferior del transcript.
     final body = tester.getRect(find.byKey(const ValueKey('chat-stable-body')));
-    expect(pill.bottom, closeTo(body.bottom - 20, 0.01));
+    expect(pill.bottom, closeTo(body.bottom - 20 - kChatNotchHeight, 0.01));
     // Regla de diseño: las pastillas flotantes nunca tapan el composer.
     final composer = tester.getRect(find.byType(TextField).first);
     expect(pill.bottom, lessThanOrEqualTo(composer.top));
@@ -35498,7 +35546,7 @@ void main() {
     tester,
   ) async {
     // Control: el arreglo no puede mover la flecha cuando no hay nada que
-    // esquivar. Sigue a 8 px del borde inferior del transcript.
+    // esquivar. Reposa 8 px por encima de la rayita.
     failOnMissedTaps();
     await pumpChat(tester, messages: scrollableChatHistory('flecha en reposo'));
 
@@ -35508,7 +35556,7 @@ void main() {
     final arrow = tester.getRect(scrollToBottomFinder());
     final body = tester.getRect(find.byKey(const ValueKey('chat-stable-body')));
     expect(arrow.height, 48);
-    expect(arrow.bottom, closeTo(body.bottom - 8, 0.01));
+    expect(arrow.bottom, closeTo(body.bottom - 8 - kChatNotchHeight, 0.01));
     expect(
       tester.getRect(find.byKey(const ValueKey('chat-activity-pill'))).height,
       0,
@@ -36391,6 +36439,344 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
 
       expect(composer(tester).text, '> Toolsalida\n\n');
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('chat notch', () {
+    final notch = find.byKey(const ValueKey('chat-notch'));
+    final notchTab = find.byKey(const ValueKey('chat-notch-tab'));
+    final sheet = find.byKey(const ValueKey('chat-control-dialog'));
+    Finder composerHost() => find.byKey(const ValueKey('chat-composer-host'));
+    Finder composerSurface() => find.byType(TextField).last;
+
+    void phone(WidgetTester tester, [Size size = const Size(390, 844)]) {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+    }
+
+    Future<void> openSheet(WidgetTester tester) async {
+      await tester.tap(notch);
+      await tester.pump();
+      await tester.pump(kChatNotchSheetOpen + const Duration(milliseconds: 80));
+      expect(sheet, findsOneWidget);
+    }
+
+    void expectNotchAboveComposer(WidgetTester tester) {
+      final target = tester.getRect(notch);
+      final tab = tester.getRect(notchTab);
+      final host = tester.getRect(composerHost());
+      expect(target.bottom, lessThanOrEqualTo(host.top + 0.5));
+      // On the composer's top edge, between rest and the top of a breath.
+      expect(
+        host.top - tab.bottom,
+        inInclusiveRange(
+          kChatNotchComposerGap - 0.5,
+          kChatNotchComposerGap + kChatNotchBreath + 0.5,
+        ),
+      );
+      expect(tab.center.dx, closeTo(host.center.dx, 1));
+      expect(target.height, greaterThanOrEqualTo(48));
+      expect(target.width, greaterThanOrEqualTo(48));
+    }
+
+    testWidgets('replaces the header ⋮ and search and sits on the composer', (
+      tester,
+    ) async {
+      phone(tester);
+      await pumpChat(tester);
+      expect(find.byKey(const ValueKey('chat-control-trigger')), findsNothing);
+      expect(find.byKey(const ValueKey('chat-find-trigger')), findsNothing);
+      for (final icon in [Icons.more_vert, Icons.search_rounded]) {
+        expect(
+          find.descendant(of: find.byType(AppBar), matching: find.byIcon(icon)),
+          findsNothing,
+        );
+      }
+      // The header keeps only + on the right.
+      expect(find.byKey(const ValueKey('chat-new-session')), findsOneWidget);
+      expect(notch, findsOneWidget);
+      expectNotchAboveComposer(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('never overlaps the status pill under the composer', (
+      tester,
+    ) async {
+      phone(tester, const Size(360, 800));
+      await pumpChat(tester);
+      final status = find.byKey(const ValueKey('chat-status-pill'));
+      expect(status, findsOneWidget);
+      final target = tester.getRect(notch);
+      expect(tester.getRect(status).overlaps(target), isFalse);
+      expect(tester.getRect(status).top, greaterThan(target.bottom));
+      expectNotchAboveComposer(tester);
+    });
+
+    testWidgets('the last reply rests above the notch', (tester) async {
+      phone(tester, const Size(360, 800));
+      await pumpChat(
+        tester,
+        messages: const [
+          {'role': 'user', 'content': 'pregunta'},
+          {'role': 'assistant', 'content': 'RESPUESTA_FINAL_VISIBLE'},
+        ],
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        tester.getRect(find.text('RESPUESTA_FINAL_VISIBLE')).bottom,
+        lessThanOrEqualTo(tester.getRect(notch).top),
+      );
+    });
+
+    testWidgets('keyboard open: still above the composer, out of the IME', (
+      tester,
+    ) async {
+      phone(tester);
+      await pumpChat(tester);
+      await tester.tap(composerSurface());
+      await tester.pump();
+      tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pump(const Duration(milliseconds: 400));
+      expectNotchAboveComposer(tester);
+      expect(tester.getRect(notch).bottom, lessThanOrEqualTo(844 - 320));
+    });
+
+    testWidgets('horizontal swipe follows the system gesture insets', (
+      tester,
+    ) async {
+      phone(tester);
+      await pumpChat(tester);
+      bool swipe() => tester
+          .widget<ChatNotch>(find.byType(ChatNotch))
+          .horizontalSwipeEnabled;
+      expect(swipe(), isTrue);
+      // A back-gesture edge wide enough to reach the centred target.
+      tester.view.systemGestureInsets = const FakeViewPadding(left: 170);
+      addTearDown(tester.view.resetSystemGestureInsets);
+      await tester.pump();
+      expect(swipe(), isFalse);
+      tester.view.systemGestureInsets = const FakeViewPadding(right: 170);
+      await tester.pump();
+      expect(swipe(), isFalse);
+      tester.view.systemGestureInsets = const FakeViewPadding(
+        left: 30,
+        right: 30,
+      );
+      await tester.pump();
+      expect(swipe(), isTrue);
+    });
+
+    testWidgets('never sits in the Android gesture bar zone', (tester) async {
+      phone(tester);
+      tester.view.padding = const FakeViewPadding(bottom: 48);
+      addTearDown(tester.view.resetPadding);
+      await pumpChat(tester);
+      expect(tester.getRect(notch).bottom, lessThan(844 - 48));
+      expectNotchAboveComposer(tester);
+    });
+
+    testWidgets('a tap opens the conversation settings with Ir a on top', (
+      tester,
+    ) async {
+      phone(tester);
+      await pumpChat(tester);
+      expect(tester.widget<ChatNotch>(find.byType(ChatNotch)).open, isFalse);
+      await openSheet(tester);
+      expect(find.byKey(const ValueKey('chat-notch-go-to')), findsOneWidget);
+      expect(find.byKey(const ValueKey('chat-control-find')), findsOneWidget);
+      // The general chat's model lives in the status pill, not here.
+      expect(find.byKey(const ValueKey('chat-control-model')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('chat-notch-go-searchChats')),
+        findsOneWidget,
+      );
+      expect(find.text('Ajustes de esta conversación'), findsWidgets);
+      expect(find.byKey(const ValueKey('chat-control-sheet')), findsOneWidget);
+      // Tinted while open.
+      expect(tester.widget<ChatNotch>(find.byType(ChatNotch)).open, isTrue);
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      await tester.pump(
+        kChatNotchSheetClose + const Duration(milliseconds: 120),
+      );
+      expect(sheet, findsNothing);
+      expect(tester.widget<ChatNotch>(find.byType(ChatNotch)).open, isFalse);
+      expect(find.byType(ChatScreen), findsOneWidget);
+    });
+
+    testWidgets('closing the sheet never reopens the keyboard', (tester) async {
+      phone(tester);
+      await pumpChat(tester);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.tap(composerSurface());
+      await tester.pump(const Duration(milliseconds: 300));
+      final focus = tester.widget<TextField>(composerSurface()).focusNode!;
+      expect(focus.hasFocus, isTrue);
+      await openSheet(tester);
+      tester.view.viewInsets = FakeViewPadding.zero;
+      await tester.pump(const Duration(milliseconds: 100));
+      tester.testTextInput.log.clear();
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      await tester.pump(
+        kChatNotchSheetClose + const Duration(milliseconds: 120),
+      );
+      expect(focus.hasFocus, isFalse);
+      expect(
+        tester.testTextInput.log.any((c) => c.method == 'TextInput.show'),
+        isFalse,
+      );
+    });
+
+    testWidgets('Buscar en este chat opens the in-chat find bar', (
+      tester,
+    ) async {
+      phone(tester);
+      await pumpChat(tester);
+      await openSheet(tester);
+      await tester.tap(find.byKey(const ValueKey('chat-control-find')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(sheet, findsNothing);
+      expect(find.byKey(const ValueKey('chat-find-field')), findsOneWidget);
+    });
+
+    testWidgets('Ir a › Buscar chats opens the list with search focused', (
+      tester,
+    ) async {
+      phone(tester);
+      await pumpChat(tester);
+      await openSheet(tester);
+      await tester.tap(find.byKey(const ValueKey('chat-notch-go-searchChats')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      final list = tester.widget<SessionListScreen>(
+        find.byType(SessionListScreen),
+      );
+      expect(list.autofocusSearch, isTrue);
+      expect(find.byType(ChatScreen, skipOffstage: false), findsNothing);
+      await tester.pump(const Duration(seconds: 2));
+    });
+
+    for (final (destination, expected) in <(String, Type)>[
+      ('chats', SessionListScreen),
+      ('settings', SettingsScreen),
+      ('projects', ProjectsCenterScreen),
+    ]) {
+      testWidgets('Ir a › $destination leaves the chat for that section', (
+        tester,
+      ) async {
+        phone(tester);
+        await pumpChat(tester);
+        await openSheet(tester);
+        await tester.tap(find.byKey(ValueKey('chat-notch-go-$destination')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 600));
+        expect(find.byType(expected), findsOneWidget);
+        expect(sheet, findsNothing);
+        // A top-level hop: the chat does not stay underneath.
+        expect(find.byType(ChatScreen, skipOffstage: false), findsNothing);
+        await tester.pump(const Duration(seconds: 2));
+      });
+    }
+
+    testWidgets('Ir a › Inicio goes back to the root', (tester) async {
+      phone(tester);
+      await pumpChat(tester);
+      await openSheet(tester);
+      await tester.tap(find.byKey(const ValueKey('chat-notch-go-home')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(sheet, findsNothing);
+      expect(find.byType(ChatScreen, skipOffstage: false), findsNothing);
+      final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
+      expect(nav.canPop(), isFalse);
+    });
+
+    testWidgets('Memory gets a home in the sheet', (tester) async {
+      phone(tester, const Size(390, 1400));
+      await pumpChat(tester);
+      await openSheet(tester);
+      final memory = find.byKey(const ValueKey('chat-control-memory'));
+      expect(find.byKey(const ValueKey('chat-control-skills')), findsOneWidget);
+      await tester.ensureVisible(memory);
+      await tester.pump();
+      await tester.tap(memory);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.byType(MemoryScreen), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+    });
+
+    testWidgets('amber dot only while another conversation needs you', (
+      tester,
+    ) async {
+      phone(tester);
+      await pumpChat(tester);
+      final dot = find.byKey(const ValueKey('chat-notch-attention'));
+      expect(dot, findsNothing);
+      final aggregate = tester
+          .state<HermesAppState>(find.byType(HermesApp))
+          .activeChats
+          .globalActivity;
+      void roster(String stored, String status) => aggregate.applyRoster(
+        connectionId: 'conn-test',
+        profile: 'default',
+        replayEpoch: 'current',
+        requestGeneration: aggregate.beginRosterRequest('conn-test', 'default'),
+        roster: DesktopActiveSessionList(
+          sessions: [
+            DesktopActiveSession(
+              runtimeSessionId: 'rt-$stored',
+              storedSessionId: stored,
+              status: status,
+            ),
+          ],
+        ),
+      );
+      roster('sess-test', 'waiting');
+      await tester.pump();
+      expect(dot, findsNothing, reason: 'this chat waiting is not elsewhere');
+      roster('stored-peer', 'waiting');
+      await tester.pump();
+      expect(dot, findsOneWidget);
+      roster('stored-peer', 'working');
+      await tester.pump();
+      expect(dot, findsNothing);
+    });
+
+    testWidgets('2x text at 360 dp: notch and sheet fit without overflow', (
+      tester,
+    ) async {
+      phone(tester, const Size(360, 800));
+      tester.platformDispatcher.textScaleFactorTestValue = 2;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await pumpChat(tester);
+      expectNotchAboveComposer(tester);
+      await openSheet(tester);
+      final rect = tester.getRect(sheet);
+      expect(rect.left, greaterThanOrEqualTo(0));
+      expect(rect.right, lessThanOrEqualTo(360));
+      expect(rect.top, greaterThanOrEqualTo(0));
+      expect(rect.bottom, lessThanOrEqualTo(800));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('tablet: centred notch, bounded sheet width', (tester) async {
+      phone(tester, const Size(1024, 1366));
+      await pumpChat(tester);
+      expectNotchAboveComposer(tester);
+      await openSheet(tester);
+      expect(tester.getSize(sheet).width, lessThanOrEqualTo(560));
+      expect(
+        tester.getRect(sheet).center.dx,
+        closeTo(tester.getRect(notch).center.dx, 1),
+      );
       expect(tester.takeException(), isNull);
     });
   });

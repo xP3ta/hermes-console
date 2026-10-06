@@ -210,7 +210,7 @@ void main() {
     await pumpChat(tester, history: _history());
     await tester.pump(const Duration(milliseconds: 200));
 
-    await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+    await tester.tap(find.byKey(const ValueKey('chat-notch')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     final entry = find.byKey(const ValueKey('chat-control-content'));
@@ -267,7 +267,7 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 200));
 
-    await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+    await tester.tap(find.byKey(const ValueKey('chat-notch')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     final entry = find.byKey(const ValueKey('chat-control-content'));

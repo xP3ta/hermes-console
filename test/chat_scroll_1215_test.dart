@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:hermes_android/core/widgets/chat/chat_notch.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -1175,7 +1176,7 @@ void main() {
     ];
 
     Future<void> openPrompts(WidgetTester tester) async {
-      await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+      await tester.tap(find.byKey(const ValueKey('chat-notch')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
       await tester.tap(find.byKey(const ValueKey('chat-control-prompts')));
@@ -1857,7 +1858,7 @@ void main() {
       );
 
       Future<void> openMenu() async {
-        await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+        await tester.tap(find.byKey(const ValueKey('chat-notch')));
         await settleHeader(tester);
         expect(find.byKey(const ValueKey('chat-control-dialog')), findsOne);
       }
@@ -1883,7 +1884,17 @@ void main() {
         ),
         findsOneWidget,
       );
+      final sheet = find.byKey(const ValueKey('chat-control-sheet'));
+      // The new top-level search and Ir a sections put this recovery action
+      // below the compact viewport. Scroll the actual sheet, not the chat.
+      await tester.drag(sheet, const Offset(0, -420));
+      await tester.pump();
+      await tester.ensureVisible(show);
       await tester.tap(show);
+      await tester.pump();
+      await tester.pump(
+        kChatNotchSheetClose + const Duration(milliseconds: 120),
+      );
       await settleHeader(tester);
       await settleHeader(tester);
       expect(find.byKey(const ValueKey('chat-control-dialog')), findsNothing);
