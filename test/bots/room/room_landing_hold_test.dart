@@ -234,7 +234,10 @@ void main() {
         seq.member(
           'm-review',
           'review',
-          'Grow paragraph one.\n\nGrow paragraph two.',
+          // Tall enough at the grown text scale to fill the transcript
+          // under the one-line room header.
+          'Grow paragraph one.\n\nGrow paragraph two.\n\n'
+              'Grow paragraph three.\n\nGrow paragraph four.',
           disc,
           thread: 'thread-away',
         ),
