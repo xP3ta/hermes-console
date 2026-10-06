@@ -623,7 +623,9 @@ void main() {
       expect(_topOf(tester, reading.key), reading.top);
       expect(pill, findsOneWidget);
       expect(
-        find.descendant(of: pill, matching: find.text('2 new')),
+        // QA 9489: the owner's own message (written from Desktop) is not
+        // news; only the member's reply counts.
+        find.descendant(of: pill, matching: find.text('1 new')),
         findsOneWidget,
       );
       // The pill floats: it is not a transcript item.

@@ -4,7 +4,6 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
@@ -14,6 +13,8 @@ import '../../../models/hosted_groups.dart';
 import '../../../services/attachment_uploader.dart';
 import '../../../services/tui_gateway_client.dart' show TuiGatewayRpcError;
 import '../../../theme/app_theme.dart';
+import '../../../utils/unread_rules.dart';
+import '../../../widgets/anchored_transcript_scroll.dart';
 import '../../../widgets/attachment_source_sheet.dart';
 import '../../../widgets/chat/console_composer.dart';
 import '../../../widgets/hermes_app_bar.dart';
@@ -57,6 +58,15 @@ typedef RoomDraft = ({
 
 /// A stored draft bound to a send: [sent] is that send's own text, the
 /// leading part of [text]; whatever follows it was typed later.
+/// One transcript item: stable identity, what it is for the unread rules,
+/// its log sequence (0 when it has none) and how to build it.
+typedef _RoomItem = ({
+  String key,
+  UnreadRowKind kind,
+  int seq,
+  Widget Function() build,
+});
+
 typedef _HeldDraft = ({
   String text,
   String sent,
@@ -192,16 +202,40 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   final FocusScopeNode _transcriptFocus = FocusScopeNode(
     debugLabel: 'room-transcript',
   );
-  final ScrollController _transcriptScroll = ScrollController();
+  late final AnchoredTranscriptScrollController _transcriptScroll =
+      AnchoredTranscriptScrollController(following: () => _reading == null);
   final GlobalKey _transcriptKey = GlobalKey(debugLabel: 'room-transcript');
   bool _openAnchored = false;
 
-  /// Reading anchor. While the user reads above the newest content, the
-  /// items present when they left the bottom stay in the scroll view's
-  /// center sliver and anything newer grows *below* it, so what they read
-  /// never moves; returning to the bottom merges everything again.
+  /// Reading anchor. The transcript is two slivers around a center: the
+  /// history up to a boundary row (center sliver, growing up) and every
+  /// item after it (growing down). While following, the boundary is the
+  /// newest history row and only volatile rows (own pending sends, cards,
+  /// "is replying") sit below it, so they come and go without moving the
+  /// history. While reading ([_reading]) the boundary stays where the
+  /// reader left the bottom (or where they landed on the divider): new
+  /// content grows below it and what they read never moves. Back at the
+  /// bottom everything merges again, pinned by the scroll controller.
   final GlobalKey _centerKey = GlobalKey(debugLabel: 'room-center');
-  Set<String>? _frozenKeys;
+
+  /// Last history row kept in the center while reading, and the newest log
+  /// sequence at that moment: the pill counts only news after it.
+  ({String boundary, int ceiling})? _reading;
+
+  /// Unread rules (unread_rules.dart): whether the room is on screen, the
+  /// newest sequence when it was hidden, a pending "came back after
+  /// leaving", and what was already there when the reader arrived.
+  late final UnreadPresence _presence = UnreadPresence(clock: () => _now);
+  bool _coverVisible = true;
+  int? _awaySeq;
+  int? _returnFrom;
+  bool _rebasePending = false;
+  int? _arrivedThroughSeq;
+  bool _landPending = false;
+  bool _programmaticScroll = false;
+
+  /// Context kept above the divider when landing on it.
+  static const double _landingContext = 56;
   Set<String> _dismissedTasks = const {};
   bool _localLoaded = false;
   bool _detailOpen = false;
@@ -303,6 +337,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       _coverAnimation = animation;
       animation?.addStatusListener(_onCoverChanged);
       _poller.setVisible(animation == null || animation.isDismissed);
+      _coverVisible = animation == null || animation.isDismissed;
+      _syncPresence();
     }
   }
 
@@ -311,6 +347,68 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     if (visible && !_poller.active) _restartStaleClock();
     _poller.setVisible(visible);
     _syncAgoTick();
+    _coverVisible = visible;
+    _syncPresence();
+  }
+
+  /// The room is present only on screen with the app in the foreground
+  /// (another route, the App Lock or the background hide it). Coming back
+  /// after a long enough absence arms the divider for what arrived
+  /// meanwhile; it is applied by the next read while present.
+  void _syncPresence() {
+    final visible = _foreground && _coverVisible;
+    final wasPresent = _presence.present;
+    if (!visible) {
+      if (wasPresent) _awaySeq = _log?.latestSeq;
+      _presence.hide();
+    } else if (!wasPresent) {
+      // What arrives while hidden is never "while you read": the next read
+      // moves the pill's baseline past it.
+      _rebasePending = true;
+      if (_presence.show()) _returnFrom = _awaySeq;
+    }
+    if (wasPresent != _presence.present && mounted) setState(() {});
+  }
+
+  /// Back after leaving: what other members wrote meanwhile gets the
+  /// divider (and the landing when the reader was following); it is never
+  /// counted by the pill.
+  void _applyReturn() {
+    if (!_presence.present || !mounted) return;
+    final rebase = _rebasePending;
+    _rebasePending = false;
+    final from = _returnFrom;
+    _returnFrom = null;
+    final reading = _reading;
+    if (from == null) {
+      if (rebase && reading != null) {
+        final latest = _log?.latestSeq ?? 0;
+        if (latest != reading.ceiling) {
+          setState(
+            () => _reading = (boundary: reading.boundary, ceiling: latest),
+          );
+        }
+      }
+      return;
+    }
+    final latest = _log?.latestSeq ?? 0;
+    final news = _events.any(
+      (e) =>
+          e.sequence > from &&
+          e.sequence <= latest &&
+          unreadCounts(roomEventUnreadKind(e)),
+    );
+    if (!news) return;
+    setState(() {
+      _lastSeenSeq = from;
+      _lastSeenLoaded = true;
+      _arrivedThroughSeq = latest;
+      if (reading == null) {
+        _landPending = true;
+      } else {
+        _reading = (boundary: reading.boundary, ceiling: latest);
+      }
+    });
   }
 
   /// Start of the idle status line's relative age ("… · 8 min ago"), as
@@ -374,6 +472,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     if (foreground) _restartStaleClock();
     _poller.setForeground(foreground);
     _syncAgoTick();
+    _syncPresence();
     if (!foreground) {
       _flushDraft();
       _markSeen();
@@ -388,6 +487,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       _lastSeenSeq = seen;
       _lastSeenLoaded = true;
       _notifications = level;
+      _arrivedThroughSeq ??= _log?.latestSeq;
+      _landPending = true;
     });
     Set<String> dismissed = const {};
     try {
@@ -453,7 +554,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         if (e.sequence > previousLatest) e,
     ];
     final reset = log.latestSeq < previousLatest;
-    if (reset) _frozenKeys = null;
+    if (reset) _reading = null;
     final driverChanged = !_sameDriver(_driver, result.driverStatus);
     _freshAt = _now;
     if (added.isNotEmpty ||
@@ -475,7 +576,12 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       // no frame on a quiet poll.
       setState(() {});
     }
+    if ((added.isNotEmpty || reset || driverChanged) && _reading == null) {
+      // Following: what just arrived pins the list to the bottom.
+      _transcriptScroll.requestFollow();
+    }
     if (added.isNotEmpty || reset) _retirePublishedOutbox();
+    _applyReturn();
     _settleHeldDraftFromLog();
     unawaited(_probePrompts());
     unawaited(_probeStall());
@@ -1628,6 +1734,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     final list = _transcriptKey.currentContext;
     if (list == null || !_transcriptScroll.hasClients) return;
     _openAnchored = true;
+    // Landed on the divider: that position is the one to keep.
+    if (_reading != null || _transcriptScroll.landingPending) return;
     final viewport = list.findRenderObject();
     if (viewport is! RenderBox || !viewport.hasSize) return;
     final top = viewport.localToGlobal(Offset.zero).dy;
@@ -1667,14 +1775,40 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     (list as Element).visitChildElements(visit);
     final delta = shift;
     if (delta == null || delta <= 0) return;
+    // The newest row (e.g. a member's typing row) stays on screen: when the
+    // shift would push it below the list, opening at the live bottom wins.
+    final newestKey = _lastItemKeys.isEmpty ? null : _lastItemKeys.last;
+    double? newestTop;
+    void findNewest(Element element) {
+      if (newestTop != null) return;
+      final key = element.widget.key;
+      if (key is ValueKey<String> && key.value == newestKey) {
+        final box = element.renderObject;
+        if (box is RenderBox && box.attached && box.hasSize) {
+          newestTop = box.localToGlobal(Offset.zero).dy;
+        }
+        return;
+      }
+      element.visitChildElements(findNewest);
+    }
+
+    if (newestKey != null) list.visitChildElements(findNewest);
+    final bottom = top + viewport.size.height;
+    final newest = newestTop;
+    if (newest != null && newest + delta >= bottom) return;
     final position = _transcriptScroll.position;
     // Reverse list: a larger offset moves the content down.
-    position.jumpTo(
-      (position.pixels + delta).clamp(
-        position.minScrollExtent,
-        position.maxScrollExtent,
-      ),
-    );
+    _programmaticScroll = true;
+    try {
+      position.jumpTo(
+        (position.pixels + delta).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        ),
+      );
+    } finally {
+      _programmaticScroll = false;
+    }
   }
 
   // ── Build ────────────────────────────────────────────────────────────
@@ -2238,32 +2372,41 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   }
 
   bool _onScroll(ScrollNotification n) {
-    if (n.depth != 0) return false;
-    if (n is UserScrollNotification &&
-        n.direction != ScrollDirection.idle &&
-        _frozenKeys == null) {
-      // The user took the scroll: what is on screen now stays put.
-      _frozenKeys = {..._lastItemKeys};
-    } else if (n is ScrollEndNotification && _frozenKeys != null && _atBottom) {
+    if (n.depth != 0 || _programmaticScroll) return false;
+    if (n is ScrollUpdateNotification && _reading == null && !_atBottom) {
+      // The reader left the bottom (drag or fling): keep the boundary at
+      // the newest history row. While following it already is, so nothing
+      // moves now; from here on new content grows below it.
+      _startReading();
+    } else if (n is ScrollEndNotification && _reading != null && _atBottom) {
       _unfreeze();
     }
     return false;
   }
 
+  /// Key of the newest history row in the last built transcript.
+  String? _lastHistoryKey;
+
+  void _startReading() {
+    final boundary = _lastHistoryKey;
+    if (boundary == null) return;
+    _reading = (boundary: boundary, ceiling: _log?.latestSeq ?? 0);
+  }
+
   void _unfreeze() {
-    if (_frozenKeys == null) return;
-    // At the very bottom edge: merging keeps the viewport pinned to the
-    // new bottom (range-maintaining physics), so nothing visibly moves.
-    setState(() => _frozenKeys = null);
+    if (_reading == null) return;
+    // At the bottom edge: the controller pins the merged list to its new
+    // bottom inside the same layout, so nothing visibly moves.
+    setState(() => _reading = null);
   }
 
   void _toBottom() {
     if (!_transcriptScroll.hasClients) {
-      _frozenKeys = null;
+      _reading = null;
       return;
     }
     final p = _transcriptScroll.position;
-    if (_frozenKeys == null) {
+    if (_reading == null) {
       if (p.pixels != p.minScrollExtent) p.jumpTo(p.minScrollExtent);
       return;
     }
@@ -2353,7 +2496,9 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     _log,
     _driver,
     _room,
-    _frozenKeys,
+    _reading,
+    _arrivedThroughSeq,
+    _landPending,
     _dismissedTasks,
     _lastSeenSeq,
     _lastSeenLoaded,
@@ -2428,20 +2573,25 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       events: _events,
       members: _room.members,
       lastSeenSeq: _lastSeenLoaded ? _lastSeenSeq : null,
+      arrivedThroughSeq: _arrivedThroughSeq,
     );
     final handles = _openableHandles();
     // Chronological items (oldest first), each with a stable identity.
-    final items = <({String key, bool message, Widget Function() build})>[
+    final items = <_RoomItem>[
       for (final entry in transcript)
         (
           key: entry.key,
-          message: entry is RoomMessageEntry,
+          kind: entry is RoomMessageEntry
+              ? roomEventUnreadKind(entry.event)
+              : UnreadRowKind.quiet,
+          seq: entry is RoomMessageEntry ? entry.event.sequence : 0,
           build: () => _entry(entry, s, handles),
         ),
       for (final message in _visibleOutbox())
         (
           key: 'room-pending-${message.attempt.clientEventId}',
-          message: true,
+          kind: UnreadRowKind.own,
+          seq: 0,
           build: () => RoomPendingMessageTile(
             key: ValueKey('room-pending-${message.attempt.clientEventId}'),
             id: message.attempt.clientEventId,
@@ -2454,7 +2604,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       for (final card in _inlineCards())
         (
           key: (card.key! as ValueKey<String>).value,
-          message: false,
+          kind: UnreadRowKind.quiet,
+          seq: 0,
           build: () => card,
         ),
       // Whoever is replying right now, where the answer will appear.
@@ -2462,7 +2613,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         if (row.state == RoomTurnState.working)
           (
             key: 'room-typing-${row.member.memberId}',
-            message: false,
+            kind: UnreadRowKind.quiet,
+            seq: 0,
             build: () => RoomTypingRow(
               key: ValueKey('room-typing-${row.member.memberId}'),
               member: row.member,
@@ -2476,36 +2628,42 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             ),
           ),
     ];
-    final grew =
-        _openAnchored &&
-        _lastItemKeys.isNotEmpty &&
-        items.isNotEmpty &&
-        items.last.key != _lastItemKeys.last;
     _lastItemKeys = [for (final i in items) i.key];
-    final frozen = _frozenKeys;
-    if (grew && frozen == null) {
-      // Not reading back: follow the newest content to the bottom.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || _frozenKeys != null || !_transcriptScroll.hasClients) {
-          return;
-        }
-        final p = _transcriptScroll.position;
-        if (p.pixels != p.minScrollExtent) p.jumpTo(p.minScrollExtent);
-      });
+    _lastHistoryKey = transcript.isEmpty ? null : transcript.last.key;
+    if (_landPending && _lastSeenLoaded) {
+      // Entry (or return after leaving) with news from while away: open
+      // with the divider at the top, the history above it in the center.
+      _landPending = false;
+      final at = transcript.indexWhere((e) => e is RoomNewSinceDivider);
+      if (at > 0 && _reading == null) {
+        _reading = (
+          boundary: transcript[at - 1].key,
+          ceiling: _arrivedThroughSeq ?? _log?.latestSeq ?? 0,
+        );
+        _transcriptScroll.requestLanding(context: _landingContext);
+      }
     }
-    final anchored = frozen == null
-        ? items
-        : [
-            for (final i in items)
-              if (frozen.contains(i.key)) i,
-          ];
-    final newer = frozen == null
-        ? const <({String key, bool message, Widget Function() build})>[]
-        : [
-            for (final i in items)
-              if (!frozen.contains(i.key)) i,
-          ];
-    final unread = newer.where((i) => i.message).length;
+    var reading = _reading;
+    var boundary = transcript.length - 1;
+    if (reading != null) {
+      boundary = items.indexWhere((i) => i.key == reading!.boundary);
+      if (boundary < 0) {
+        // The boundary row is gone (log reset): follow again.
+        reading = _reading = null;
+        boundary = transcript.length - 1;
+      }
+    }
+    final anchored = items.sublist(0, boundary + 1);
+    final newer = items.sublist(boundary + 1);
+    final unread = reading == null
+        ? 0
+        : unreadNewsAfter<_RoomItem>(
+            newer,
+            baseline: reading.ceiling,
+            positionOf: (i) => i.seq,
+            kindOf: (i) => i.kind,
+          );
+    _viewInputs = _transcriptInputs(Localizations.localeOf(context));
     final Widget view = items.isEmpty
         ? Center(
             child: Padding(
@@ -2620,7 +2778,11 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                           child: view.widget,
                         ),
                       ),
-                      if (view.unread > 0)
+                      if (unreadPillVisible(
+                        present: _presence.present,
+                        reading: _reading != null,
+                        count: view.unread,
+                      ))
                         Positioned(
                           bottom: 20,
                           left: 0,
