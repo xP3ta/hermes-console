@@ -1705,6 +1705,10 @@ class _ChatScreenState extends State<ChatScreen>
   // Chat sending state — derived from pipeline state.
   late final TextEditingController _textController;
   final _textFocusNode = FocusNode();
+
+  /// The composer had the keyboard when the app went to the background.
+  /// See [_releaseKeyboardWhileAway].
+  bool _keyboardBeforeLeaving = false;
   bool get _sending => _chat.sending;
   bool _compressionCommandInFlight = false;
   bool? _lastDesktopCompressionPresentation;
@@ -7922,6 +7926,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
+      _releaseKeyboardWhileAway();
       _unreadHide();
       _persistLastRead();
       // cs1215: a chat created during this visit has a durable id now.
@@ -7959,6 +7964,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
     // Al volver a primer plano, repinta la configuración conocida sin mutarla.
     if (state == AppLifecycleState.resumed) {
+      if (!wasInForeground) _restoreKeyboardAfterReturn();
       if (_chatRouteVisible) _unreadShow();
       _loadActiveModel();
       if (_chatBound) {
@@ -7966,6 +7972,34 @@ class _ChatScreenState extends State<ChatScreen>
         if (!wasInForeground) _relaunchViewerAttachOnResume();
       }
     }
+  }
+
+  /// QA 9491: leaving the app with the keyboard open and coming back showed
+  /// the composer floating over an empty band where the keyboard had been,
+  /// until the input was tapped. The composer kept focus and its input
+  /// connection while the app was away, so Android could hand back a stale
+  /// keyboard inset on return. Releasing the focus when the app leaves the
+  /// screen closes the connection; [_restoreKeyboardAfterReturn] asks for the
+  /// keyboard again, like messaging apps do.
+  void _releaseKeyboardWhileAway() {
+    if (!_textFocusNode.hasFocus) return;
+    _keyboardBeforeLeaving = true;
+    _textFocusNode.unfocus();
+  }
+
+  /// Gives the keyboard back to the composer on return, only when it had it
+  /// on leaving and this chat is still the screen on top: never behind the
+  /// App Lock screen, never after unlocking, never under another screen
+  /// opened meanwhile (a notification tap).
+  void _restoreKeyboardAfterReturn() {
+    if (!_keyboardBeforeLeaving) return;
+    _keyboardBeforeLeaving = false;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || !mounted || !_appInForeground) return;
+      if (_appLocked || _coveredByAppLock) return;
+      if (ModalRoute.of(context)?.isCurrent != true) return;
+      _textFocusNode.requestFocus();
+    });
   }
 
   Future<void>? _resumeViewerAttach;
