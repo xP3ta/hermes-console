@@ -1500,7 +1500,17 @@ class _ChatScreenState extends State<ChatScreen>
   String get _lastPrompt => _chat.lastPrompt;
 
   String? _error;
-  bool _loadingEarlierMessages = false;
+  // Earlier history loads by itself near the top of the transcript. The
+  // progress row listens to this notifier, so a load never rebuilds rows.
+  final ValueNotifier<bool> _loadingEarlierMessages = ValueNotifier(false);
+
+  // One automatic load per gesture: a pointer down arms it, a load disarms
+  // it, so a single fling (or a reader resting near the top) loads once.
+  bool _earlierAutoArmed = true;
+
+  /// How close to the oldest loaded row (in viewport heights) the reader
+  /// has to be before the next page is fetched.
+  static const double _earlierAutoLoadScreens = 1.5;
   int _messageRefreshEpoch = 0;
   ({int epoch, bool passiveOnly, bool published})? _messageRefreshInFlight;
   int? get _messageRefreshInFlightEpoch => _messageRefreshInFlight?.epoch;
@@ -2037,6 +2047,122 @@ class _ChatScreenState extends State<ChatScreen>
             },
           ),
           child: child,
+        );
+      },
+    );
+  }
+
+  /// Small row under the pinned prompt: a progress line while an earlier
+  /// page loads, or a retry pill after a failed one. Nothing otherwise.
+  Widget _buildEarlierHistoryRow(Strings str) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _loadingEarlierMessages,
+      builder: (context, loading, _) {
+        final colors = Theme.of(context).hermes;
+        final retry =
+            !loading &&
+            _chatBound &&
+            _chat.hasEarlierMessages &&
+            _chat.earlierMessagesLoadFailed;
+        if (!loading && !retry) return const SizedBox.shrink();
+        final decoration = BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
+        );
+        final label = TextStyle(fontSize: 12, color: colors.textSecondary);
+        if (loading) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Semantics(
+                liveRegion: true,
+                label: str.cs1215LoadingEarlier,
+                child: ExcludeSemantics(
+                  child: Container(
+                    key: const ValueKey('chat-earlier-loading'),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: decoration,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox.square(
+                          dimension: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: colors.accent,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            str.cs1215LoadingEarlier,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: label,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Semantics(
+              button: true,
+              label: str.chaLoadEarlierMessages,
+              child: GestureDetector(
+                key: const ValueKey('chat-earlier-retry'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  _earlierAutoArmed = false;
+                  unawaited(_loadEarlierMessages());
+                },
+                child: ExcludeSemantics(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    child: Center(
+                      widthFactor: 1,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: decoration,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.refresh_rounded,
+                              size: 14,
+                              color: colors.accent,
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                str.chaLoadEarlierMessages,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: label,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         );
       },
     );
@@ -7677,6 +7803,7 @@ class _ChatScreenState extends State<ChatScreen>
     _transcriptConcealed
       ..removeListener(_scheduleStickyPromptUpdate)
       ..dispose();
+    _loadingEarlierMessages.dispose();
     _stickyPrompt.dispose();
     _findStatus.dispose();
     _findActiveMessage.dispose();
@@ -7814,15 +7941,13 @@ class _ChatScreenState extends State<ChatScreen>
     }
     _scheduleMessageRefreshViewportReanchor();
     _scheduleStickyPromptUpdate();
+    _maybeAutoLoadEarlier();
     // Lista reverse:true → offset 0 es el FONDO (mensaje más nuevo) y
     // maxScrollExtent es lo más antiguo. "Estás abajo" = cerca de
     // minScrollExtent; medir contra maxScrollExtent detectaría lo contrario
     // (cerca de lo más viejo) → el botón "ir abajo" salía invertido en chats
     // largos y el auto-seguimiento del streaming no enganchaba.
     final atBottom = _isNearBottom;
-    // El historial anterior es una acción explícita. Llegar al borde solo hace
-    // visible el control flotante; nunca dispara red ni encadena páginas por un
-    // rebote de física/semántica de "scroll to top".
     // La flecha representa una distancia real al final, no el estado interno
     // del seguimiento. Un toque sin desplazamiento puede pausar el auto-follow
     // durante unos milisegundos, pero no debe enseñar una acción inútil si el
@@ -7838,33 +7963,66 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  bool get _appLocked =>
+      context
+          .findAncestorStateOfType<HermesAppState>()
+          ?.appLock
+          .locked
+          .value ??
+      false;
+
+  /// Loads the next earlier page when the reader is within
+  /// [_earlierAutoLoadScreens] viewports of the oldest loaded row. Only once
+  /// per gesture, never while App Lock is locked or a landing walk runs.
+  void _maybeAutoLoadEarlier() {
+    if (!_earlierAutoArmed ||
+        _disposed ||
+        !_chatBound ||
+        _loadingEarlierMessages.value ||
+        !_chat.hasEarlierMessages ||
+        _transcriptConcealed.value ||
+        !_scrollController.hasClients) {
+      return;
+    }
+    final position = _scrollController.position;
+    if (!position.hasContentDimensions || !position.hasViewportDimension) {
+      return;
+    }
+    final toTop = position.maxScrollExtent - position.pixels;
+    if (toTop > _earlierAutoLoadScreens * position.viewportDimension) return;
+    if (_appLocked) return;
+    _earlierAutoArmed = false;
+    unawaited(_loadEarlierMessages());
+  }
+
   Future<void> _loadEarlierMessages() async {
-    if (_loadingEarlierMessages || !_chat.hasEarlierMessages) return;
-    final position = _scrollController.hasClients
-        ? _scrollController.position
-        : null;
-    final previousPixels = position?.pixels;
-    final previousMax = position?.maxScrollExtent;
-    setState(() {
-      _loadingEarlierMessages = true;
-      _coreReadCoverageNoticeDismissed = false;
-    });
-    await _chat.loadEarlierMessages(continuePastInvisible: true);
-    if (_disposed || !mounted) return;
-    setState(() => _loadingEarlierMessages = false);
-    if (previousPixels == null || previousMax == null) return;
+    if (_loadingEarlierMessages.value || !_chat.hasEarlierMessages) return;
+    if (_appLocked) return;
+    _loadingEarlierMessages.value = true;
+    if (_coreReadCoverageNoticeDismissed) {
+      setState(() => _coreReadCoverageNoticeDismissed = false);
+    }
+    try {
+      await _chat.loadEarlierMessages(continuePastInvisible: true);
+    } finally {
+      if (!_disposed) _loadingEarlierMessages.value = false;
+    }
+    if (_disposed || !mounted || !_scrollController.hasClients) return;
+    // The rows are published but not laid out yet: this is where the
+    // reader is right now (a fling may have moved on since the request).
+    final anchorPixels = _scrollController.position.pixels;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_disposed || !mounted || !_scrollController.hasClients) return;
       final next = _scrollController.position;
-      final extentDelta = next.maxScrollExtent - previousMax;
-      if (extentDelta <= 0) return;
-      // The transcript is reverse:true: older rows extend the far (max) edge,
-      // while every existing row keeps its bottom-origin coordinate. Consume
-      // the measured extent delta by retaining the captured coordinate rather
-      // than following the new max edge.
-      next.jumpTo(
-        previousPixels.clamp(next.minScrollExtent, next.maxScrollExtent),
+      // The transcript is reverse:true: older rows extend the far (max) edge
+      // and every existing row keeps its bottom-origin coordinate, so the
+      // reader stays put as long as the offset does. Only restore it if the
+      // layout moved it; jumping to the same offset would stop a fling.
+      final target = anchorPixels.clamp(
+        next.minScrollExtent,
+        next.maxScrollExtent,
       );
+      if ((next.pixels - target).abs() > 0.5) next.jumpTo(target);
     });
   }
 
@@ -13443,25 +13601,14 @@ class _ChatScreenState extends State<ChatScreen>
                                   top: 0,
                                   left: 0,
                                   right: 0,
-                                  child: _buildPinnedPromptHeader(str),
-                                ),
-                                Positioned(
-                                  top: 8,
-                                  left: 0,
-                                  right: 0,
-                                  height: 48,
-                                  child: _ChatTopButton(
-                                    controller: _scrollController,
-                                    hasEarlierMessages:
-                                        _chat.hasEarlierMessages,
-                                    loading: _loadingEarlierMessages,
-                                    contentChanges: _liveAssistantFrame,
-                                    transcriptOverlayExtent: () =>
-                                        _activityPillExtent.value +
-                                        (_scrollToBottomVisibility.value
-                                            ? 48
-                                            : 0),
-                                    onLoadEarlier: _loadEarlierMessages,
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      _buildPinnedPromptHeader(str),
+                                      _buildEarlierHistoryRow(str),
+                                    ],
                                   ),
                                 ),
                                 // Bottom overlay of the transcript. The
@@ -16975,8 +17122,16 @@ class _ChatScreenState extends State<ChatScreen>
             _activityPillExtent.value +
             (_scrollToBottomVisibility.value ? 48 : 0);
         return ChatScrollInteractionGuard(
-          onPointerDown: _pauseStreamingFollow,
-          onPointerMove: _trackStreamingScrollInteraction,
+          onPointerDown: (event) {
+            _earlierAutoArmed = true;
+            _pauseStreamingFollow(event);
+          },
+          onPointerMove: (event) {
+            _trackStreamingScrollInteraction(event);
+            // A transcript shorter than the screen never scrolls: dragging
+            // it down still asks for the earlier history.
+            if (event.delta.dy > 0) _maybeAutoLoadEarlier();
+          },
           onPointerUp: _finishStreamingScrollInteraction,
           onPointerCancel: _cancelStreamingScrollInteraction,
           child: ListView.custom(
@@ -17026,7 +17181,6 @@ class _ChatScreenState extends State<ChatScreen>
           : Strings.of(context).chaMessagesError,
       onDismissError: () => setState(() => _refreshErrorNoticeDismissed = true),
       // Bajo el botón «cargar anteriores» (8 + 48 + 8) cuando está a la vista.
-      errorTopInset: _chat.hasEarlierMessages ? 64 : 8,
       // Always in the tree so hiding never rebuilds the list or loses its
       // scroll position; laid out while hidden so the landing walk can build
       // rows, but neither painted nor touchable.
@@ -22951,98 +23105,21 @@ class _ScrollToBottomButton extends StatelessWidget {
   );
 }
 
-class _ChatTopButton extends StatefulWidget {
-  const _ChatTopButton({
-    required this.controller,
-    required this.hasEarlierMessages,
-    required this.loading,
-    required this.contentChanges,
-    required this.transcriptOverlayExtent,
-    required this.onLoadEarlier,
-  });
-
-  final ScrollController controller;
-  final bool hasEarlierMessages;
-  final bool loading;
-  final Listenable contentChanges;
-  final ValueGetter<double> transcriptOverlayExtent;
-  final VoidCallback onLoadEarlier;
-
-  @override
-  State<_ChatTopButton> createState() => _ChatTopButtonState();
-}
-
-class _ChatTopButtonState extends State<_ChatTopButton> {
-  // La flecha de subir es solo para cargar historial real, no un atajo
-  // genérico de "ir arriba" dentro de lo ya cargado: su visibilidad refleja
-  // únicamente hasEarlierMessages (la señal real del backend de que hay más
-  // que pedir), nunca la posición del scroll dentro de lo ya visible — ni
-  // controller ni contentChanges intervienen en si se muestra o no.
-  bool get _visible => widget.hasEarlierMessages;
-
-  void _activate() {
-    if (!widget.hasEarlierMessages) return;
-    widget.onLoadEarlier();
-  }
-
-  @override
-  Widget build(BuildContext context) => Center(
-    // Its own width only: the parent decides where it sits (centred, or in
-    // the left gutter beside a pinned prompt).
-    widthFactor: 1,
-    child: AnimatedSwitcher(
-      duration: const Duration(milliseconds: 160),
-      reverseDuration: const Duration(milliseconds: 120),
-      transitionBuilder: (child, animation) => AnimatedBuilder(
-        animation: animation,
-        builder: (context, child) {
-          final exiting = animation.status == AnimationStatus.reverse;
-          return IgnorePointer(
-            ignoring: exiting,
-            child: ExcludeSemantics(
-              excluding: exiting,
-              child: FadeTransition(
-                opacity: animation,
-                alwaysIncludeSemantics: !exiting,
-                child: child,
-              ),
-            ),
-          );
-        },
-        child: child,
-      ),
-      child: _visible
-          ? _ChatScrollButton(
-              key: const ValueKey('chat-load-earlier'),
-              onTap: widget.loading ? null : _activate,
-              label: Strings.of(context).chaLoadEarlierMessages,
-              icon: Icons.keyboard_arrow_up_rounded,
-              iconSize: 20,
-              loading: widget.loading,
-            )
-          : const SizedBox.shrink(key: ValueKey('chat-top-button-hidden')),
-    ),
-  );
-}
-
 class _ChatScrollButton extends StatelessWidget {
   final VoidCallback? onTap;
   final String label;
   final IconData icon;
   final double iconSize;
-  final bool loading;
 
   /// Short text shown next to the circle (e.g. "3 new"); the button keeps its
   /// 48 dp height so the transcript padding never changes with it.
   final String? badge;
 
   const _ChatScrollButton({
-    super.key,
     required this.onTap,
     required this.label,
     required this.icon,
     this.iconSize = 18,
-    this.loading = false,
     this.badge,
   });
 
@@ -23088,15 +23165,7 @@ class _ChatScrollButton extends StatelessWidget {
                     ),
                   ],
                 ),
-                child: loading
-                    ? Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: colors.accent,
-                        ),
-                      )
-                    : badge == null
+                child: badge == null
                     ? Icon(icon, size: iconSize, color: colors.accent)
                     : ExcludeSemantics(
                         child: Row(

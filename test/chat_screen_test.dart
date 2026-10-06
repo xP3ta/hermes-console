@@ -5548,60 +5548,14 @@ void main() {
     await tester.pump(const Duration(minutes: 2));
   });
 
-  testWidgets('historial anterior ofrece control accesible distinto al final', (
-    tester,
-  ) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(390, 844);
-    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
-    addTearDown(() {
-      tester.view.resetDevicePixelRatio();
-      tester.view.resetPhysicalSize();
-      tester.platformDispatcher.clearTextScaleFactorTestValue();
-    });
-    var reads = 0;
-    final rows = <Map<String, dynamic>>[
-      for (var index = 1; index <= 240; index++)
-        {
-          'id': index,
-          'message_id': 'history-$index',
-          'role': index.isOdd ? 'user' : 'assistant',
-          'content': 'historial $index',
-        },
-    ];
-    final client = MockClient((request) async {
-      reads += 1;
-      final offset = int.parse(request.url.queryParameters['offset'] ?? '0');
-      final end = math.max(0, rows.length - offset);
-      final start = math.max(0, end - 120);
-      final page = rows.sublist(start, end);
-      return http.Response(
-        jsonEncode({
-          'object': 'list',
-          'session_id': 'sess-test',
-          'messages': page,
-          'pagination': {
-            'limit': 120,
-            'offset': offset,
-            'order': 'latest',
-            'returned': page.length,
-          },
-        }),
-        200,
-        headers: const {'content-type': 'application/json'},
-      );
-    });
-    final api = ApiClient(
-      baseUrl: 'https://example.test',
-      apiKey: 'test-key',
-      httpClient: client,
-    );
-    addTearDown(api.close);
-
+  // Owner decision: no up-arrow chevron. Earlier history loads by itself
+  // when the reader scrolls near the top.
+  testWidgets('cs1215 earlier history shows no chevron', (tester) async {
+    final pages = _EarlierHistoryPages();
     final chat = await pumpChat(
       tester,
-      api: api,
-      connection: _remoteConn('conn-load-earlier-control'),
+      api: pages.api(),
+      connection: _remoteConn('conn-cs-no-chevron'),
       messagesLoaded: false,
       attachDesktopRuntimeOnLoad: false,
       allowUnownedDesktopSnapshotForTesting: false,
@@ -5609,30 +5563,11 @@ void main() {
     await tester.pump();
 
     expect(chat.hasEarlierMessages, isTrue);
-    expect(reads, 1);
-    const earlierKey = ValueKey('chat-load-earlier');
-    const bottomKey = ValueKey('chat-scroll-to-bottom');
-    final earlier = find.byKey(earlierKey);
-    expect(earlier, findsOneWidget);
-    expect(find.byKey(bottomKey), findsOneWidget);
-    expect(earlierKey, isNot(bottomKey));
-    expect(tester.getSize(earlier).width, greaterThanOrEqualTo(48));
-    expect(tester.getSize(earlier).height, greaterThanOrEqualTo(48));
-    final earlierSemantics = find.bySemanticsLabel(
-      'Cargar mensajes anteriores',
-    );
-    expect(earlierSemantics, findsOneWidget);
-    expect(
-      tester.getSemantics(earlierSemantics),
-      matchesSemantics(
-        label: 'Cargar mensajes anteriores',
-        isButton: true,
-        hasEnabledState: true,
-        isEnabled: true,
-        hasTapAction: true,
-      ),
-    );
-    expect(find.byTooltip('Cargar mensajes anteriores'), findsOneWidget);
+    expect(pages.requests, hasLength(1));
+    expect(find.byKey(const ValueKey('chat-load-earlier')), findsNothing);
+    expect(find.byIcon(Icons.keyboard_arrow_up_rounded), findsNothing);
+    expect(find.bySemanticsLabel('Cargar mensajes anteriores'), findsNothing);
+    expect(find.byKey(const ValueKey('chat-earlier-loading')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -5971,7 +5906,8 @@ void main() {
     await tester.pump();
 
     const control = ValueKey('chat-load-earlier');
-    expect(find.byKey(control), findsOneWidget);
+    expect(chat.hasEarlierMessages, isTrue);
+    expect(find.byKey(control), findsNothing);
 
     paginate = false;
     expect(await chat.reconcileAfterResume(), isFalse);
@@ -5985,300 +5921,214 @@ void main() {
       '120',
     ]);
     expect(chat.hasEarlierMessages, isFalse);
-    // Sin más historial real que cargar, la flecha desaparece del todo: ya
-    // no queda un modo "ir arriba" genérico como atajo de scroll.
+    // There is no chevron in either state: earlier history loads by itself.
     expect(find.byKey(control), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('control anterior cabe con safe area teclado y texto 1.3', (
-    tester,
-  ) async {
-    tester.view
-      ..devicePixelRatio = 1
-      ..physicalSize = const Size(360, 800)
-      ..viewPadding = const FakeViewPadding(top: 24, bottom: 24)
-      ..viewInsets = const FakeViewPadding(bottom: 300);
-    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
-    addTearDown(tester.view.reset);
-    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-    final rows = <Map<String, dynamic>>[
-      for (var index = 1; index <= 240; index++)
-        {
-          'id': index,
-          'message_id': 'compact-history-$index',
-          'role': index.isOdd ? 'user' : 'assistant',
-          'content': 'compacto $index',
-        },
-    ];
-    final client = MockClient((request) async {
-      final offset = int.parse(request.url.queryParameters['offset'] ?? '0');
-      final end = math.max(0, rows.length - offset);
-      final start = math.max(0, end - 120);
-      final page = rows.sublist(start, end);
-      return http.Response(
-        jsonEncode({
-          'object': 'list',
-          'session_id': 'sess-test',
-          'messages': page,
-          'pagination': {
-            'limit': 120,
-            'offset': offset,
-            'order': 'latest',
-            'returned': page.length,
-          },
-        }),
-        200,
-        headers: const {'content-type': 'application/json'},
+  group('cs1215 earlier history loads by itself', () {
+    Finder list() => find.descendant(
+      of: find.byType(ChatRefreshStatusOverlay),
+      matching: find.byType(ListView),
+    );
+    ScrollController controller(WidgetTester tester) =>
+        tester.widget<ListView>(list()).controller!;
+    final loading = find.byKey(const ValueKey('chat-earlier-loading'));
+
+    Future<ActiveChat> open(
+      WidgetTester tester,
+      _EarlierHistoryPages pages,
+      String id,
+    ) async {
+      final chat = await pumpChat(
+        tester,
+        api: pages.api(),
+        connection: _remoteConn(id),
+        messagesLoaded: false,
+        attachDesktopRuntimeOnLoad: false,
+        allowUnownedDesktopSnapshotForTesting: false,
       );
-    });
-    final api = ApiClient(
-      baseUrl: 'https://example.test',
-      apiKey: 'test-key',
-      httpClient: client,
-    );
-    addTearDown(api.close);
-    await pumpChat(
-      tester,
-      api: api,
-      connection: _remoteConn('conn-load-earlier-compact'),
-      messagesLoaded: false,
-      attachDesktopRuntimeOnLoad: false,
-      allowUnownedDesktopSnapshotForTesting: false,
-    );
-    await tester.pump();
+      await tester.pump();
+      expect(pages.older, isEmpty, reason: 'precondition: one page');
+      return chat;
+    }
 
-    final control = find.byKey(const ValueKey('chat-load-earlier'));
-    expect(control, findsOneWidget);
-    final rect = tester.getRect(control);
-    expect(rect.left, greaterThanOrEqualTo(0));
-    expect(rect.right, lessThanOrEqualTo(360));
-    expect(rect.top, greaterThanOrEqualTo(24));
-    expect(rect.bottom, lessThanOrEqualTo(500));
-    expect(find.byType(TextField), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('historial anterior solo carga por gesto y conserva el ancla', (
-    tester,
-  ) async {
-    final pendingPages = <Completer<http.Response>>[];
-    final requests = <Uri>[];
-    final latest = <Map<String, dynamic>>[
-      for (var index = 121; index <= 240; index++)
-        {
-          'id': index,
-          'message_id': 'anchor-history-$index',
-          'role': index.isOdd ? 'user' : 'assistant',
-          'content': 'ANCLA_HISTORIAL_$index',
-        },
-    ];
-    final client = MockClient((request) {
-      requests.add(request.url);
-      if (requests.length == 1) {
-        return Future.value(
-          http.Response(
-            jsonEncode({
-              'object': 'list',
-              'session_id': 'sess-test',
-              'messages': latest,
-              'pagination': {
-                'limit': 120,
-                'offset': 0,
-                'order': 'latest',
-                'returned': 120,
-              },
-            }),
-            200,
-            headers: const {'content-type': 'application/json'},
-          ),
-        );
+    /// The topmost history row painted inside the transcript viewport.
+    Finder firstVisibleRow(WidgetTester tester) {
+      final viewport = tester.getRect(list());
+      Finder? best;
+      var bestTop = double.infinity;
+      for (var index = 240; index >= 1; index--) {
+        final f = find.text('ANCLA_HISTORIAL_$index');
+        if (f.evaluate().isEmpty) continue;
+        final top = tester.getTopLeft(f).dy;
+        if (top >= viewport.top + 40 && top < bestTop) {
+          bestTop = top;
+          best = f;
+        }
       }
-      final response = Completer<http.Response>();
-      pendingPages.add(response);
-      return response.future;
-    });
-    final api = ApiClient(
-      baseUrl: 'https://example.test',
-      apiKey: 'test-key',
-      httpClient: client,
-    );
-    addTearDown(api.close);
-    await pumpChat(
-      tester,
-      api: api,
-      connection: _remoteConn('conn-load-earlier-anchor'),
-      messagesLoaded: false,
-      attachDesktopRuntimeOnLoad: false,
-      allowUnownedDesktopSnapshotForTesting: false,
-    );
-    await tester.pump();
+      return best!;
+    }
 
-    final transcript = tester.widget<ListView>(
-      find.descendant(
-        of: find.byType(ChatRefreshStatusOverlay),
-        matching: find.byType(ListView),
-      ),
-    );
-    transcript.controller!.jumpTo(
-      transcript.controller!.position.maxScrollExtent,
-    );
-    await tester.pump();
-    expect(requests, hasLength(1));
-
-    final anchor = find.text('ANCLA_HISTORIAL_121');
-    expect(anchor, findsOneWidget);
-    final anchorTop = tester.getTopLeft(anchor);
-    final control = find.byKey(const ValueKey('chat-load-earlier'));
-    await tester.tap(control);
-    await tester.tap(control);
-    await tester.pump();
-
-    expect(requests, hasLength(2));
-    expect(pendingPages, hasLength(1));
-    expect(
-      find.descendant(
-        of: control,
-        matching: find.byType(CircularProgressIndicator),
-      ),
-      findsOneWidget,
-    );
-    final disabled = tester.getSemantics(
-      find.bySemanticsLabel('Cargar mensajes anteriores'),
-    );
-    expect(
-      disabled.getSemanticsData().actions & (1 << SemanticsAction.tap.index),
-      0,
-    );
-
-    final older = <Map<String, dynamic>>[
-      for (var index = 1; index <= 120; index++)
-        {
-          'id': index,
-          'message_id': 'anchor-history-$index',
-          'role': index.isOdd ? 'user' : 'assistant',
-          'content': 'ANCLA_HISTORIAL_$index',
-        },
-    ];
-    pendingPages.single.complete(
-      http.Response(
-        jsonEncode({
-          'object': 'list',
-          'session_id': 'sess-test',
-          'messages': older,
-          'pagination': {
-            'limit': 120,
-            'offset': 120,
-            'order': 'latest',
-            'returned': 120,
-          },
-        }),
-        200,
-        headers: const {'content-type': 'application/json'},
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    expect(anchor, findsOneWidget);
-    expect(tester.getTopLeft(anchor).dy, closeTo(anchorTop.dy, 0.01));
-    expect(find.byKey(const ValueKey('chat-load-earlier')), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('fallo de historial conserva contenido y permite retry seguro', (
-    tester,
-  ) async {
-    var reads = 0;
-    final latest = <Map<String, dynamic>>[
-      for (var index = 121; index <= 240; index++)
-        {
-          'id': index,
-          'message_id': 'retry-history-$index',
-          'role': index.isOdd ? 'user' : 'assistant',
-          'content': 'RETRY_HISTORIAL_$index',
-        },
-    ];
-    final client = MockClient((request) async {
-      reads += 1;
-      if (reads == 2) {
-        return http.Response('super-secret-stack', 503);
+    Future<void> frames(WidgetTester tester, int count) async {
+      for (var i = 0; i < count; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
       }
-      final page = reads == 1
-          ? latest
-          : <Map<String, dynamic>>[
-              const {
-                'id': 120,
-                'message_id': 'retry-history-120',
-                'role': 'assistant',
-                'content': 'RETRY_ANTERIOR_OK',
-              },
-            ];
-      final offset = reads == 1 ? 0 : 120;
-      return http.Response(
-        jsonEncode({
-          'object': 'list',
-          'session_id': 'sess-test',
-          'messages': page,
-          'pagination': {
-            'limit': 120,
-            'offset': offset,
-            'order': 'latest',
-            'returned': page.length,
-          },
-        }),
-        200,
-        headers: const {'content-type': 'application/json'},
+    }
+
+    testWidgets('far from the top nothing loads; near the top one page '
+        'loads with a progress row and the reader stays put', (tester) async {
+      final pages = _EarlierHistoryPages(holdOlder: true);
+      final chat = await open(tester, pages, 'conn-cs-auto-anchor');
+      final scroll = controller(tester);
+      final viewport = scroll.position.viewportDimension;
+
+      // Three screens below the top: beyond the 1.5 screen threshold.
+      scroll.jumpTo(scroll.position.maxScrollExtent - 3 * viewport);
+      await frames(tester, 3);
+      expect(pages.older, isEmpty, reason: 'too far from the top');
+      expect(loading, findsNothing);
+
+      // One screen below the top: inside the threshold.
+      scroll.jumpTo(scroll.position.maxScrollExtent - viewport);
+      await frames(tester, 3);
+      expect(pages.older, hasLength(1));
+      expect(loading, findsOneWidget);
+      expect(
+        find.descendant(
+          of: loading,
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsOneWidget,
       );
+
+      final anchor = firstVisibleRow(tester);
+      final anchorTop = tester.getTopLeft(anchor).dy;
+      pages.completeOlder();
+      await frames(tester, 4);
+
+      expect(chat.messages.length, greaterThan(120), reason: 'page applied');
+      expect(anchor, findsOneWidget);
+      expect(tester.getTopLeft(anchor).dy, closeTo(anchorTop, 2));
+      expect(loading, findsNothing);
+      expect(pages.older, hasLength(1));
+      expect(tester.takeException(), isNull);
     });
-    final api = ApiClient(
-      baseUrl: 'https://example.test',
-      apiKey: 'test-key',
-      httpClient: client,
-    );
-    addTearDown(api.close);
-    final chat = await pumpChat(
+
+    testWidgets('one fling loads one page; the next gesture may load again', (
       tester,
-      api: api,
-      connection: _remoteConn('conn-load-earlier-retry'),
-      messagesLoaded: false,
-      attachDesktopRuntimeOnLoad: false,
-      allowUnownedDesktopSnapshotForTesting: false,
-    );
-    await tester.pump();
+    ) async {
+      final pages = _EarlierHistoryPages(total: 480, holdOlder: true);
+      await open(tester, pages, 'conn-cs-auto-fling');
+      final scroll = controller(tester);
+      final viewport = scroll.position.viewportDimension;
+      scroll.jumpTo(scroll.position.maxScrollExtent - 2.2 * viewport);
+      await frames(tester, 3);
+      expect(pages.older, isEmpty);
 
-    final control = find.byKey(const ValueKey('chat-load-earlier'));
-    await tester.tap(control);
-    await tester.pump();
-    await tester.pump();
+      await tester.fling(list(), const Offset(0, 500), 4000);
+      for (var i = 0; i < 120 && pages.older.isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(pages.older, hasLength(1), reason: 'the fling reached the top');
+      // The page lands while the fling is still moving near the top.
+      pages.completeOlder();
+      await frames(tester, 150);
+      expect(
+        pages.requests,
+        hasLength(2),
+        reason: 'one fling must trigger one load',
+      );
 
-    expect(reads, 2);
-    expect(chat.earlierMessagesLoadFailed, isTrue);
-    expect(find.text('RETRY_HISTORIAL_240'), findsOneWidget);
-    expect(
-      find.text(
-        'No se pudieron cargar los mensajes anteriores. Inténtalo de nuevo.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.textContaining('super-secret-stack'), findsNothing);
-    expect(control, findsOneWidget);
+      // Resting near the top loads nothing more until a new gesture.
+      scroll.jumpTo(scroll.position.maxScrollExtent - 200);
+      await frames(tester, 10);
+      expect(pages.older, hasLength(1), reason: 'no gesture, no load');
+      await tester.drag(list(), const Offset(0, 120));
+      await frames(tester, 10);
+      expect(pages.older, hasLength(2), reason: 'a new gesture loads');
+      pages.completeOlder();
+      await frames(tester, 10);
+      expect(tester.takeException(), isNull);
+    });
 
-    await tester.tap(control);
-    await tester.pump();
-    await tester.pump();
+    testWidgets('nothing loads when the server has no earlier history', (
+      tester,
+    ) async {
+      final pages = _EarlierHistoryPages(total: 100);
+      final chat = await pumpChat(
+        tester,
+        api: pages.api(),
+        connection: _remoteConn('conn-cs-auto-none'),
+        messagesLoaded: false,
+        attachDesktopRuntimeOnLoad: false,
+        allowUnownedDesktopSnapshotForTesting: false,
+      );
+      await tester.pump();
+      expect(chat.hasEarlierMessages, isFalse);
+      final scroll = controller(tester);
+      scroll.jumpTo(scroll.position.maxScrollExtent);
+      await frames(tester, 3);
+      await tester.fling(list(), const Offset(0, 300), 3000);
+      await frames(tester, 90);
+      expect(pages.older, isEmpty);
+      expect(loading, findsNothing);
+      expect(tester.takeException(), isNull);
+    });
 
-    expect(reads, 3);
-    expect(chat.earlierMessagesLoadFailed, isFalse);
-    expect(
-      chat.messages.any((message) => message['content'] == 'RETRY_ANTERIOR_OK'),
-      isTrue,
-    );
-    // La segunda página fue la última (sin más historial real que pedir): la
-    // flecha desaparece del todo, sin quedar como atajo de scroll.
-    expect(chat.hasEarlierMessages, isFalse);
-    expect(find.byKey(const ValueKey('chat-load-earlier')), findsNothing);
-    expect(tester.takeException(), isNull);
+    testWidgets('nothing loads while App Lock is locked', (tester) async {
+      final pages = _EarlierHistoryPages();
+      await open(tester, pages, 'conn-cs-auto-locked');
+      final lock = tester
+          .state<HermesAppState>(find.byType(HermesApp))
+          .appLock
+          .locked;
+      lock.value = true;
+      addTearDown(() => lock.value = false);
+      final scroll = controller(tester);
+      scroll.jumpTo(scroll.position.maxScrollExtent - 100);
+      await frames(tester, 3);
+      expect(pages.older, isEmpty, reason: 'locked: no read');
+
+      lock.value = false;
+      scroll.jumpTo(scroll.position.maxScrollExtent - 50);
+      await frames(tester, 3);
+      expect(pages.older, hasLength(1), reason: 'unlocked: loads');
+      await frames(tester, 10);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a failed page keeps the content and offers a retry', (
+      tester,
+    ) async {
+      final pages = _EarlierHistoryPages(failNext: true);
+      final chat = await open(tester, pages, 'conn-cs-auto-retry');
+      final scroll = controller(tester);
+      scroll.jumpTo(scroll.position.maxScrollExtent - 100);
+      await frames(tester, 4);
+
+      expect(pages.older, hasLength(1));
+      expect(chat.earlierMessagesLoadFailed, isTrue);
+      expect(chat.messages, hasLength(120), reason: 'loaded rows are kept');
+      expect(find.textContaining('super-secret-stack'), findsNothing);
+      // No automatic retry loop while the reader stays there.
+      scroll.jumpTo(scroll.position.pixels - 20);
+      await frames(tester, 4);
+      expect(pages.older, hasLength(1));
+
+      final retry = find.byKey(const ValueKey('chat-earlier-retry'));
+      expect(retry, findsOneWidget);
+      await tester.tap(retry);
+      await frames(tester, 4);
+      expect(pages.older, hasLength(2));
+      expect(chat.earlierMessagesLoadFailed, isFalse);
+      expect(
+        chat.messages.any((m) => m['content'] == 'ANCLA_HISTORIAL_120'),
+        isTrue,
+      );
+      expect(retry, findsNothing);
+      expect(tester.takeException(), isNull);
+    });
   });
 
   testWidgets('observa cambios durables de Desktop sin adquirir el runtime', (
@@ -35509,6 +35359,85 @@ class _Dup9340HistoryGateway extends _UiRewindGateway
       rawMessages: durableReady ? durablePair : const [],
       pagination: null,
       paginationProvided: false,
+    );
+  }
+}
+
+/// REST transcript of [total] rows served newest first in pages of 120.
+/// Older pages can be held until [completeOlder], and the next older read
+/// can fail once.
+class _EarlierHistoryPages {
+  _EarlierHistoryPages({
+    this.total = 240,
+    this.holdOlder = false,
+    this.failNext = false,
+  });
+
+  final int total;
+  final bool holdOlder;
+  bool failNext;
+  final requests = <Uri>[];
+
+  /// Reads of earlier pages (offset past the newest page).
+  Iterable<Uri> get older => requests.where(
+    (uri) => int.parse(uri.queryParameters['offset'] ?? '0') > 0,
+  );
+  final _held = <({Completer<http.Response> response, int offset})>[];
+
+  ApiClient api() {
+    final client = ApiClient(
+      baseUrl: 'https://example.test',
+      apiKey: 'fixture',
+      httpClient: MockClient((request) {
+        requests.add(request.url);
+        final offset = int.parse(request.url.queryParameters['offset'] ?? '0');
+        if (offset > 0 && failNext) {
+          failNext = false;
+          return Future.value(http.Response('super-secret-stack', 503));
+        }
+        if (offset > 0 && holdOlder) {
+          final response = Completer<http.Response>();
+          _held.add((response: response, offset: offset));
+          return response.future;
+        }
+        return Future.value(_page(offset));
+      }),
+    );
+    addTearDown(client.close);
+    return client;
+  }
+
+  void completeOlder() {
+    final next = _held.removeAt(0);
+    next.response.complete(_page(next.offset));
+  }
+
+  http.Response _page(int offset) {
+    final end = math.max(0, total - offset);
+    final start = math.max(0, end - 120);
+    final page = <Map<String, dynamic>>[
+      for (var index = start + 1; index <= end; index++)
+        {
+          'id': index,
+          'message_id': 'anchor-history-$index',
+          'role': index.isOdd ? 'user' : 'assistant',
+          'content': 'ANCLA_HISTORIAL_$index',
+        },
+    ];
+    return http.Response(
+      jsonEncode({
+        'object': 'list',
+        'session_id': 'sess-test',
+        'messages': page,
+        'pagination': {
+          'limit': 120,
+          'offset': offset,
+          'order': 'latest',
+          'returned': page.length,
+        },
+      }),
+      200,
+      headers: const {'content-type': 'application/json'},
     );
   }
 }
