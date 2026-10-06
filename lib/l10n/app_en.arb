@@ -8565,7 +8565,7 @@
       }
     }
   },
-  "au1215CleanupWillDelete": "{count, plural, =0{Nothing will be deleted from the server.} one{1 item will be deleted from the server. Scheduled jobs are kept.} other{{count} items will be deleted from the server. Scheduled jobs are kept.}}",
+  "au1215CleanupWillDelete": "{count, plural, =0{Nothing will be deleted from the server.} one{1 item will be deleted from the server. Scheduled jobs and the outputs of their script runs are kept: the server cannot delete them.} other{{count} items will be deleted from the server. Scheduled jobs and the outputs of their script runs are kept: the server cannot delete them.}}",
   "@au1215CleanupWillDelete": {
     "placeholders": {
       "count": {
@@ -8580,5 +8580,6 @@
         "type": "int"
       }
     }
-  }
+  },
+  "au1215ScheduledRunsHint": "Each job's runs, newest first"
 }

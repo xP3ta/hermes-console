@@ -10266,7 +10266,7 @@
       }
     }
   },
-  "au1215CleanupWillDelete": "{count, plural, =0{No se borrará nada del servidor.} one{Se borrará 1 elemento del servidor. Las tareas programadas no se tocan.} other{Se borrarán {count} elementos del servidor. Las tareas programadas no se tocan.}}",
+  "au1215CleanupWillDelete": "{count, plural, =0{No se borrará nada del servidor.} one{Se borrará 1 elemento del servidor. Las tareas programadas y las salidas de sus ejecuciones de script se conservan: el servidor no permite borrarlas.} other{Se borrarán {count} elementos del servidor. Las tareas programadas y las salidas de sus ejecuciones de script se conservan: el servidor no permite borrarlas.}}",
   "@au1215CleanupWillDelete": {
     "placeholders": {
       "count": {
@@ -10281,5 +10281,6 @@
         "type": "int"
       }
     }
-  }
+  },
+  "au1215ScheduledRunsHint": "Ejecuciones de cada tarea, de la más reciente a la más antigua"
 }

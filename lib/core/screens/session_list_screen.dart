@@ -51,6 +51,7 @@ import '../widgets/session_deletion_dialogs.dart';
 import '../widgets/session_title_editor_route.dart';
 import '../widgets/session_row_stop_control.dart';
 import 'chat_screen.dart';
+import 'cron_screen.dart';
 import 'mission_control_screen.dart';
 import '../services/session_pull_requests.dart';
 import '../widgets/session_pull_request_row.dart';
@@ -970,6 +971,19 @@ class _SessionListScreenState extends State<SessionListScreen>
     excludeSources: _activeCategory.excludeSources,
     profile: _profileScope.name,
   );
+
+  void _openScheduledJobs() {
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => CronScreen(
+            connection: widget.connection,
+            connManager: widget.connManager,
+          ),
+        ),
+      ),
+    );
+  }
 
   void _selectCategory(SessionCategory value) {
     if (value == _activeCategory) return;
@@ -2827,6 +2841,11 @@ class _SessionListScreenState extends State<SessionListScreen>
       children: [
         _buildSearchField(),
         _buildFilterControl(),
+        // Script-only scheduled jobs never create a session: their runs live
+        // under each job (Desktop's sidebar cron section). The Automation tab
+        // leads there instead of looking empty while jobs keep running.
+        if (_activeCategory == SessionCategory.automation && !_showArchived)
+          ScheduledJobsEntry(onTap: _openScheduledJobs),
         if (_showArchived) _buildArchiveViewControl(),
         if (_searching && !_hiddenView)
           LinearProgressIndicator(
@@ -3093,6 +3112,36 @@ class _SessionListScreenState extends State<SessionListScreen>
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// Automation tab entry to the scheduled jobs, each listing its runs newest
+/// first (agent runs open their read-only transcript).
+@visibleForTesting
+class ScheduledJobsEntry extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const ScheduledJobsEntry({required this.onTap, super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+      child: ListTile(
+        key: const ValueKey('session-library-scheduled-jobs'),
+        dense: true,
+        leading: Icon(Icons.schedule_rounded, color: colors.accent),
+        title: Text(s.crnTitle),
+        subtitle: Text(
+          s.au1215ScheduledRunsHint,
+          style: TextStyle(color: colors.textSecondary),
+        ),
+        trailing: Icon(Icons.chevron_right, color: colors.textSecondary),
+        onTap: onTap,
       ),
     );
   }
