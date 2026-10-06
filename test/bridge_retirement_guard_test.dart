@@ -45,4 +45,13 @@ void main() {
     final source = _code('lib/core/screens/chat_screen.dart');
     expect(source, isNot(contains('BridgeClient.provision(')));
   });
+
+  test('generated images are not gated on the bridge version', () {
+    final chat = _code('lib/core/screens/chat_screen.dart');
+    expect(chat, isNot(contains('resolveGeneratedImageSupport')));
+    expect(chat, isNot(contains('bridgeSupportsImages')));
+    final service = _code('lib/core/services/generated_image_service.dart');
+    expect(service, isNot(contains('bridgeSupportsImages')));
+    expect(service, isNot(contains('minBridgeVersion')));
+  });
 }

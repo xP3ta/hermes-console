@@ -118,6 +118,7 @@ import '../services/notifications/notification_service.dart';
 import '../services/recent_interrupt_guard.dart';
 import '../services/drawer_gesture_exclusion.dart';
 import '../services/turn_outbox_store.dart';
+import '../services/generated_image_fetch.dart';
 import '../services/generated_image_service.dart';
 import '../services/generated_media_service.dart';
 import '../services/media_prefetcher.dart';
@@ -5336,76 +5337,113 @@ class _ChatScreenState extends State<ChatScreen>
   // su ruta en texto; la burbuja del asistente (`_AssistantMessage`) las
   // detecta y pide su descarga a estos helpers vía el ancestro _ChatScreenState.
 
-  /// ¿El bridge de esta instancia sirve imágenes generadas (>= 1.12.0)? Se
-  /// resuelve una sola vez por pantalla y se cachea. Sin bridge/versión vieja
-  /// → false (la burbuja muestra la pista de degradación).
-  bool? _bridgeImagesSupported;
-  DateTime? _bridgeImagesSupportAt;
-  Future<bool>? _bridgeImagesSupportFuture;
-  Future<bool> resolveGeneratedImageSupport() async {
-    final cached = _bridgeImagesSupported;
-    final checkedAt = _bridgeImagesSupportAt;
-    if (cached == true) return true;
-    if (cached == false &&
-        checkedAt != null &&
-        DateTime.now().difference(checkedAt) < const Duration(seconds: 15)) {
-      return false;
+  /// Loads a generated image the agent cited as
+  /// `~/.hermes/cache/images/<basename>` through the Dashboard (`/api/media`,
+  /// then `/api/fs/read-data-url`), as Desktop does; see
+  /// [GeneratedImageFetch]. Waits while App Lock is locked. A Dashboard the
+  /// app cannot log into falls back to the Mobile Bridge until it is retired.
+  Future<File> downloadGeneratedImage(String basename) async {
+    final download = _generatedImageDownloader(_effectiveSessionProfile);
+    await _untilAppUnlocked();
+    return download(basename);
+  }
+
+  Future<void> _untilAppUnlocked() async {
+    final locked = context
+        .findAncestorStateOfType<HermesAppState>()
+        ?.appLock
+        .locked;
+    if (locked == null || !locked.value) return;
+    final unlocked = Completer<void>();
+    void listener() {
+      if (!locked.value && !unlocked.isCompleted) unlocked.complete();
     }
-    final inFlight = _bridgeImagesSupportFuture;
-    if (inFlight != null) return inFlight;
-    final future = _resolveGeneratedImageSupportOnce();
-    _bridgeImagesSupportFuture = future;
+
+    locked.addListener(listener);
     try {
-      return await future;
+      await unlocked.future;
     } finally {
-      if (identical(_bridgeImagesSupportFuture, future)) {
-        _bridgeImagesSupportFuture = null;
+      locked.removeListener(listener);
+    }
+  }
+
+  /// The generated-image download bound to one connection and profile,
+  /// shared by the bubble and the arrival prefetch.
+  Future<File> Function(String basename) _generatedImageDownloader(
+    String profile,
+  ) {
+    final connection = widget.connection;
+    final testFetcher = widget.generatedMediaFetcher;
+    return (basename) => GeneratedImageService.ensureDownloaded(
+      connection.id,
+      basename,
+      fetch: (name) =>
+          _fetchGeneratedImage(connection, profile, testFetcher, name),
+    );
+  }
+
+  static Future<Uint8List> _fetchGeneratedImage(
+    SavedConnection connection,
+    String profile,
+    Future<void> Function(String path, File destination)? testFetcher,
+    String basename,
+  ) async {
+    if (testFetcher != null) {
+      final path = GeneratedImageFetch.serverPath(basename);
+      final dir = await Directory.systemTemp.createTemp('generated-image-');
+      try {
+        final file = File('${dir.path}/image');
+        await testFetcher(path, file);
+        return await file.readAsBytes();
+      } finally {
+        await dir.delete(recursive: true);
       }
     }
-  }
-
-  Future<bool> _resolveGeneratedImageSupportOnce() async {
-    bool ok;
+    final client = DashboardClient.lazy(connection);
     try {
-      final check = await BridgeUpdateService.check(widget.connection);
-      ok =
-          check.reachable &&
-          GeneratedImageService.bridgeSupportsImages(check.installed);
-    } catch (_) {
-      ok = false;
+      return await GeneratedImageFetch.fetch(
+        basename,
+        apiGet: client.apiGet,
+        profile: profile,
+      );
+    } catch (error) {
+      final dashboardAuth =
+          error is DashboardAuthException ||
+          (error is DashboardHttpException && error.statusCode == 401);
+      if (!dashboardAuth) rethrow;
+      final bytes = await _bridgeGeneratedImage(connection, basename);
+      if (bytes == null) rethrow;
+      return bytes;
+    } finally {
+      client.close();
     }
-    _bridgeImagesSupported = ok;
-    _bridgeImagesSupportAt = DateTime.now();
-    return ok;
   }
 
-  /// Descarga (o reutiliza de caché) el archivo local de una imagen generada
-  /// por [basename], vía `GET /bridge/image` con el token del bridge. Lanza si
-  /// no hay bridge o la descarga falla (la burbuja lo traduce a estado de error).
-  Future<File> downloadGeneratedImage(String basename) {
-    return GeneratedImageService.ensureDownloaded(
-      widget.connection.id,
-      basename,
-      fetch: (name) async {
-        final url = widget.connection.derivedBridgeUrl;
-        if (url.isEmpty) throw Exception('bridge no configurado');
-        final bytes = await BridgeTokenCache.instance.withToken(
-          connectionId: widget.connection.id,
-          bridgeUrl: url,
-          gatewayKey: widget.connection.apiKey,
-          run: (token) async {
-            final client = BridgeClient(baseUrl: url, token: token);
-            try {
-              return await client.fetchGeneratedImage(name);
-            } finally {
-              client.close();
-            }
-          },
-        );
-        if (bytes == null) throw Exception('bridge no disponible');
-        return bytes;
-      },
-    );
+  /// `/bridge/image` (basename only) for a Dashboard without credentials.
+  /// Null when there is no bridge or it cannot serve the image.
+  static Future<Uint8List?> _bridgeGeneratedImage(
+    SavedConnection connection,
+    String basename,
+  ) async {
+    final url = connection.derivedBridgeUrl;
+    if (url.isEmpty) return null;
+    try {
+      return await BridgeTokenCache.instance.withToken(
+        connectionId: connection.id,
+        bridgeUrl: url,
+        gatewayKey: connection.apiKey,
+        run: (token) async {
+          final client = BridgeClient(baseUrl: url, token: token);
+          try {
+            return await client.fetchGeneratedImage(basename);
+          } finally {
+            client.close();
+          }
+        },
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   String get userServerMediaScope =>
@@ -5559,8 +5597,11 @@ class _ChatScreenState extends State<ChatScreen>
     final profile = _effectiveSessionProfile;
     final scope = '${widget.connection.id}\u0000$profile';
     final download = _generatedMediaDownloader(profile);
+    final imageDownload = _generatedImageDownloader(profile);
     var queued = 0;
     for (var i = rows.length - 1; i >= oldest; i--) {
+      queued += _prefetchServerCacheImages(rows[i], scope, imageDownload);
+      if (queued >= _maxMediaPrefetchPerEvent) return;
       final content = rows[i]['content'];
       if (content is! String ||
           (!content.contains('MEDIA:') && !content.contains('::preview'))) {
@@ -5592,6 +5633,56 @@ class _ChatScreenState extends State<ChatScreen>
         if (queued >= _maxMediaPrefetchPerEvent) return;
       }
     }
+  }
+
+  /// Queues the generated images a row cites as
+  /// `~/.hermes/cache/images/<basename>` (structured results or plain text)
+  /// on the shared prefetcher, which waits while App Lock is locked.
+  int _prefetchServerCacheImages(
+    Map<String, dynamic> row,
+    String scope,
+    Future<File> Function(String basename) download,
+  ) {
+    final names = <String>{
+      for (final ref in _structuredGeneratedImages(row))
+        if (ref.kind == GeneratedImageSourceKind.serverCache &&
+            ref.basename != null)
+          ref.basename!,
+    };
+    final content = row['content'];
+    if (content is String && content.contains('/.hermes/cache/images/')) {
+      names.addAll(
+        GeneratedImageService.segments(
+          content,
+        ).whereType<ImageSegment>().map((segment) => segment.basename),
+      );
+    }
+    var queued = 0;
+    for (final name in names) {
+      if (!GeneratedImageFetch.basenameRe.hasMatch(name)) continue;
+      final lower = name.toLowerCase();
+      final reference = GeneratedMediaReference(
+        source: GeneratedImageFetch.serverPath(name),
+        kind: GeneratedMediaKind.image,
+        sourceKind: GeneratedMediaSourceKind.serverPath,
+        displayName: name,
+        mimeType: lower.endsWith('.png')
+            ? 'image/png'
+            : lower.endsWith('.webp')
+            ? 'image/webp'
+            : 'image/jpeg',
+      );
+      final key = GeneratedMediaService.readyKey(scope, reference);
+      if (!_prefetchedMediaKeys.add(key)) continue;
+      if (MediaPrefetcher.instance.prefetch(
+        key: key,
+        reference: reference,
+        load: () => download(name),
+      )) {
+        queued++;
+      }
+    }
+    return queued;
   }
 
   Future<(ModelActiveInfo, List<ModelProvider>)> _loadModelOptions() async {
@@ -22928,12 +23019,6 @@ class _GeneratedImageSlotState extends State<_GeneratedImageSlot> {
           if (basename == null) {
             throw const FormatException('imagen del servidor sin nombre');
           }
-          final supported = await state.resolveGeneratedImageSupport();
-          if (!mounted) return;
-          if (!supported) {
-            setState(() => _status = GeneratedImageStatus.unsupported);
-            return;
-          }
           file = await state.downloadGeneratedImage(basename);
         case GeneratedImageSourceKind.https:
           file = await GeneratedImageService.ensureHttpsDownloaded(
@@ -22946,12 +23031,12 @@ class _GeneratedImageSlotState extends State<_GeneratedImageSlot> {
         _file = file;
         _status = GeneratedImageStatus.ready;
       });
-    } on BridgeException catch (e) {
+    } on DashboardHttpException catch (e) {
       if (!mounted) return;
       // 404 = el archivo ya no está en el servidor (caché rotada): sin
-      // reintento útil. Otros fallos (red, token) → reintentable.
+      // reintento útil. Otros fallos (red, sesión) → reintentable.
       setState(
-        () => _status = e.status == 404
+        () => _status = e.statusCode == 404
             ? GeneratedImageStatus.gone
             : GeneratedImageStatus.error,
       );
