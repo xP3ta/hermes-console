@@ -234,17 +234,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Team picture'), findsOneWidget);
-      // A Desktop-only room is listed by the roster as a read-only Desktop
-      // projection row, never as a hosted (writable) room.
-      expect(find.text('Desktop only'), findsOneWidget);
-      expect(
-        find.byWidgetPredicate((widget) {
-          final key = widget.key;
-          return key is ValueKey<String> &&
-              key.value.startsWith('roster-room-desktop-');
-        }),
-        findsOneWidget,
-      );
+      // A Desktop-only room is not listed at all (owner decision 1.2.15:
+      // Console shows only the server's hosted rooms).
+      expect(find.text('Desktop only'), findsNothing);
       expect(find.text('MIRROR ONLY MESSAGE'), findsNothing);
       expect(find.byType(RoomMirrorAvatar), findsOneWidget);
       await tester.tap(find.text('Team picture'));

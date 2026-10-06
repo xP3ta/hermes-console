@@ -455,6 +455,5 @@ AgentProfile _copy(AgentProfile p, {String? name, AgentProfile? sessionsFrom}) {
     distributionSource: p.distributionSource,
     hasAlias: p.hasAlias,
     roomMirror: p.roomMirror,
-    groupsProjection: p.groupsProjection,
   );
 }

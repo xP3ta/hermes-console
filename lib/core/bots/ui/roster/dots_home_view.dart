@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../../../../l10n/app_localizations.dart';
-import '../../../design/content.dart' show HermesStatusText;
 import '../../../theme/app_theme.dart';
 import '../../../utils/responsive.dart';
 import '../../../widgets/hermes_premium_ui.dart';
@@ -739,8 +738,6 @@ class _TeamTile extends StatelessWidget {
 }
 
 /// Room as a team card: clustered member faces, name, one status line.
-/// Desktop projection rooms say so ("Desktop · read only") and stay
-/// read-only: their tap opens the existing read-only sheet.
 class _RoomCard extends StatelessWidget {
   final RoomRosterEntry entry;
   final MissionProfileAvatarCache? avatarCache;
@@ -903,15 +900,6 @@ class _RoomCard extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  if (entry.desktopOnly) ...[
-                    const SizedBox(height: 2),
-                    HermesStatusText(
-                      key: ValueKey('roster-room-desktop-$id'),
-                      label: s.rosterDesktopLabel,
-                      meta: s.statusReadOnly,
-                      maxLines: 1,
-                    ),
-                  ],
                   const SizedBox(height: 2),
                   Text(
                     line,

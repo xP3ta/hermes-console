@@ -8185,16 +8185,6 @@
     }
   },
   "roomSlashUnsupported": "Las salas no ejecutan comandos. Quita la / inicial…",
-  "roomDesktopReadOnly": "Sala de Desktop · solo lectura",
-  "roomDesktopReadOnlyBody": "Hermes Desktop dirige esta sala por su cuenta; aquí ves sus últimos mensajes.",
-  "roomDesktopOmitted": "{count, plural, =1{1 mensaje anterior no se muestra} other{{count} mensajes anteriores no se muestran}}",
-  "@roomDesktopOmitted": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
   "roomEmpty": "Aún no hay mensajes. Saluda y @menciona a un perfil.",
   "roomRefreshFailed": "No se pudo actualizar la sala.",
   "roomRefreshStale": "Reconectando… la sala puede no estar al día.",
@@ -8224,8 +8214,6 @@
       }
     }
   },
-  "rosterDesktopLabel": "Desktop",
-  "rosterDesktopReadOnly": "Esta sala se ejecuta en Hermes Desktop. Console la muestra en solo lectura hasta que Desktop la aloje en el servidor.",
   "rosterSearch": "Buscar",
   "rosterSearchHint": "Buscar perfiles y salas",
   "rosterNew": "Nuevo",

@@ -4,7 +4,6 @@ import '../../../models/mission_control.dart';
 import '../../../models/room_member_status.dart';
 import '../../../models/room_mirror.dart';
 import '../../../utils/markdown_clipboard.dart';
-import '../../data/desktop_projection_rooms.dart';
 import '../../state/bot_presence.dart';
 import '../../state/attention.dart';
 import '../../state/bot_chat_target.dart';
@@ -158,9 +157,8 @@ final class RoomRosterEntry extends RosterEntry {
   final DateTime? at;
   final int attentionCount;
 
-  /// Hosted room id; `null` for a Desktop-only projection room.
+  /// Hosted room id (`groups.*`).
   final String? hostedRoomId;
-  final ProjectionRoom? projection;
   final bool working;
 
   /// Desktop's mirrored room picture (`ui_meta` room mirror), when set.
@@ -176,12 +174,9 @@ final class RoomRosterEntry extends RosterEntry {
     this.at,
     this.attentionCount = 0,
     this.hostedRoomId,
-    this.projection,
     this.working = false,
     this.image,
   });
-
-  bool get desktopOnly => hostedRoomId == null;
 
   /// Opaque, stable widget identity: room ids never enter the widget tree
   /// (privacy convention of the hosted-room surfaces).
@@ -199,11 +194,11 @@ final class RoomRosterEntry extends RosterEntry {
   @override
   bool get needsYou => attentionCount > 0;
 
-  /// Hosted rooms from `groups.*` plus read-only Desktop projection rooms.
+  /// Hosted rooms from `groups.*`, the only rooms Console lists (owner
+  /// decision 1.2.15: Desktop's local projection rooms are not shown).
   static List<RoomRosterEntry> build({
     required HostedGroupsSnapshot hosted,
     required AttentionSummary attention,
-    DesktopProjectionRooms projection = DesktopProjectionRooms.empty,
     Map<String, AgentProfile> localProfiles = const {},
     RoomMirrorIdentity? Function(HostedGroupRoom room)? identityFor,
   }) {
@@ -263,28 +258,6 @@ final class RoomRosterEntry extends RosterEntry {
           at: last == null ? null : _eventTime(last.createdAt),
           attentionCount: attention.room(room.roomId)?.count ?? 0,
           working: driver?.working ?? false,
-        ),
-      );
-    }
-    for (final room in projection.rooms) {
-      final last = room.lastMessage;
-      entries.add(
-        RoomRosterEntry(
-          roomKey: 'desktop:${room.key}',
-          title: room.name,
-          projection: room,
-          members: [
-            for (final name in room.memberNames)
-              RoomRosterMember(name, localProfiles[name]),
-          ],
-          previewFromUser: last?.from.isUser ?? false,
-          previewAuthor: last == null || last.from.isUser
-              ? null
-              : _nonEmpty(localProfiles[last.from.name]?.botTitle) ??
-                    last.from.name,
-          preview: rosterPreviewText(last?.text ?? ''),
-          at: room.lastActivityAt,
-          attentionCount: room.needsYou ? 1 : 0,
         ),
       );
     }

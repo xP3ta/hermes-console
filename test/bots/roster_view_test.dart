@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hermes_android/core/bots/data/desktop_projection_rooms.dart';
 import 'package:hermes_android/core/bots/state/attention.dart';
 import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
 import 'package:hermes_android/core/bots/ui/roster/roster_model.dart';
@@ -122,8 +121,8 @@ void main() {
     });
   });
 
-  group('rooms from hosted groups and Desktop projection', () {
-    test('hosted preview, needs-you and projection Desktop rows', () {
+  group('rooms from hosted groups only', () {
+    test('hosted preview and needs-you; no Desktop projection rooms', () {
       final room = spec070Room();
       final hosted = HostedGroupsSnapshot(
         capabilities: spec070Capabilities(),
@@ -131,26 +130,19 @@ void main() {
         logs: [spec070LogPage('groups_log_page1')],
         driverStatuses: {room.roomId: spec070DriverStatus()},
       );
+      // The default profile's ui_meta still carries Desktop's local rooms.
       final profiles = spec070Profiles();
       final entries = RoomRosterEntry.build(
         hosted: hosted,
         attention: AttentionSummary.fromSnapshot(hosted),
-        projection: DesktopProjectionRooms.parse(
-          profiles.singleWhere((p) => p.name == 'default').groupsProjection,
-          hostedRoomIds: {room.roomId},
-        ),
         localProfiles: {for (final p in profiles) p.name: p},
       );
-      final hostedEntry = entries.singleWhere((e) => !e.desktopOnly);
+      final hostedEntry = entries.single;
       expect(hostedEntry.title, 'Console Devs');
+      expect(hostedEntry.hostedRoomId, room.roomId);
       expect(hostedEntry.needsYou, isTrue);
       expect(hostedEntry.working, isTrue);
       expect(hostedEntry.members.map((m) => m.handle), ['astra', 'radar']);
-      final desktop = entries.singleWhere((e) => e.desktopOnly);
-      expect(desktop.title, 'Hermes Console · Equipo');
-      expect(desktop.needsYou, isTrue);
-      expect(desktop.previewAuthor, 'astra');
-      expect(desktop.projection?.readOnly, isTrue);
     });
   });
 }

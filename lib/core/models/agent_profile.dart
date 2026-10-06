@@ -170,11 +170,6 @@ class AgentProfile {
   final bool hasAlias;
   final RoomMirror roomMirror;
 
-  /// Raw `ui_meta['hermes-bots-groups']` of the default profile (Desktop's
-  /// read-only room projection); `null` elsewhere. Parsed on demand by
-  /// `DesktopProjectionRooms.parse` so hosted rooms can be excluded.
-  final Object? groupsProjection;
-
   const AgentProfile({
     required this.name,
     this.path = '',
@@ -202,7 +197,6 @@ class AgentProfile {
     this.distributionSource,
     this.hasAlias = false,
     this.roomMirror = RoomMirror.empty,
-    this.groupsProjection,
   });
 
   bool get isDistribution =>
@@ -406,9 +400,6 @@ class AgentProfile {
       roomMirror: json['name'] == 'default' && json['ui_meta'] is Map
           ? RoomMirror.parse((json['ui_meta'] as Map)['hermes-bots-groups'])
           : RoomMirror.empty,
-      groupsProjection: json['name'] == 'default' && json['ui_meta'] is Map
-          ? (json['ui_meta'] as Map)['hermes-bots-groups']
-          : null,
     );
   }
 }

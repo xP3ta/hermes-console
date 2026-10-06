@@ -914,6 +914,69 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // Owner decision 1.2.15: Desktop's local (projection) rooms are gone from
+  // Console. Even when the default profile's ui_meta still carries them,
+  // only the server's hosted rooms are listed, searched or flagged.
+  testWidgets('Desktop projection rooms never show; hosted rooms still do', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final withDesktopRooms = AgentProfile.fromJson({
+      'name': 'default',
+      'is_default': true,
+      'ui_meta': {
+        'hermes-bots-groups': {
+          'version': 3,
+          'updatedAt': 1790000600000,
+          'rooms': {
+            'id:room-desktop-1': {
+              'name': 'Desktop crew',
+              'roomId': 'room-desktop-1',
+              'revision': 12,
+              'members': [
+                {'name': 'astra'},
+              ],
+              'log': [
+                {
+                  'id': 'm2',
+                  'from': {'kind': 'member', 'name': 'astra'},
+                  'text': 'All green. @user ready to merge?',
+                  'at': 1790000560000,
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+    await _pumpHostedScreen(
+      tester,
+      manager,
+      _workspaceSource(profiles: [withDesktopRooms]),
+    );
+
+    expect(_roomRow(), findsOneWidget, reason: 'the hosted room');
+    expect(find.text('Shared'), findsOneWidget);
+    expect(find.text('Desktop crew'), findsNothing);
+    expect(find.text('Desktop'), findsNothing);
+    expect(_roomNeedsYou(), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('roster-search')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('mission-bot-search')),
+      'crew',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Desktop crew'), findsNothing);
+    expect(find.text('Shared'), findsNothing, reason: 'no match, no rooms');
+    expect(tester.takeException(), isNull);
+  });
+
   // The old Work area (the "whole team sees it" line, the shared-rooms feed)
   // is gone: rooms are the Dots home's ROOMS cards.
   testWidgets('rooms are the Bots home ROOMS cards, never a Work section', (

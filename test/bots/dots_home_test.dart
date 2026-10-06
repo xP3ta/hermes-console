@@ -57,11 +57,10 @@ RoomRosterEntry _room(
   int attention = 0,
   bool working = false,
   int atSeconds = 0,
-  bool desktop = false,
   List<String> members = const ['astra', 'forja'],
 }) => RoomRosterEntry(
-  roomKey: desktop ? 'desktop:$id' : 'hosted:$id',
-  hostedRoomId: desktop ? null : id,
+  roomKey: 'hosted:$id',
+  hostedRoomId: id,
   title: 'Room $id',
   members: [for (final m in members) RoomRosterMember(m, null)],
   attentionCount: attention,
@@ -482,7 +481,7 @@ void main() {
               long,
               rooms: [
                 _room('a very long room name that wraps', attention: 1),
-                _room('b', desktop: true),
+                _room('b'),
               ],
             ),
             locale: locale,

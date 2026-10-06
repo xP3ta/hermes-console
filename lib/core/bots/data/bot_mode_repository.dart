@@ -11,7 +11,6 @@ import '../../services/tui_gateway_client.dart';
 import '../state/attention.dart';
 import '../state/bot_chat_target.dart';
 import '../state/bot_presence.dart';
-import 'desktop_projection_rooms.dart';
 import 'room_log_cursor.dart';
 
 /// Gateway surface Bot Mode reads. [TuiGatewayClient] implements it through
@@ -153,14 +152,12 @@ final class BotModeRow {
 final class BotModeSnapshot {
   final List<BotModeRow> bots;
   final List<BotModeRoom> rooms;
-  final DesktopProjectionRooms projectionRooms;
   final GroupsCapabilities? capabilities;
   final DateTime loadedAt;
 
   const BotModeSnapshot({
     required this.bots,
     required this.rooms,
-    required this.projectionRooms,
     required this.capabilities,
     required this.loadedAt,
   });
@@ -309,17 +306,9 @@ final class BotModeRepository {
           attention: attention.forProfile(profile.name, snapshot),
         ),
     ];
-    final hostedIds = {for (final r in hosted.rooms) r.room.roomId};
-    final defaults = profiles.where((p) => p.isDefault || p.name == 'default');
     return BotModeSnapshot(
       bots: List.unmodifiable(bots),
       rooms: hosted.rooms,
-      projectionRooms: defaults.isEmpty
-          ? DesktopProjectionRooms.empty
-          : DesktopProjectionRooms.parse(
-              defaults.first.groupsProjection,
-              hostedRoomIds: hostedIds,
-            ),
       capabilities: hosted.caps,
       loadedAt: now,
     );
