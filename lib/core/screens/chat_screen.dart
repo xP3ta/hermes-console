@@ -208,6 +208,11 @@ import '../widgets/chat_event_cards.dart';
 import '../widgets/chat/tool_output_cards.dart';
 import '../widgets/chat/turn_changes_sheet.dart';
 import '../widgets/chat_control_sheet.dart';
+import '../widgets/chat/chat_notch.dart';
+import '../widgets/owned_resource_host.dart';
+import 'projects_center_screen.dart';
+import 'session_list_screen.dart';
+import 'settings_screen.dart';
 import '../widgets/hermes_drawer.dart';
 import '../widgets/profile_scope.dart' show appActiveProfileScope;
 import '../widgets/hermes_bot_face.dart';
@@ -1049,6 +1054,10 @@ int? messageIndexForArtifactSource(
 enum _ModelSource { desktop, bridge, dashboard, gateway }
 
 enum _ChatControlAction {
+  find,
+  model,
+  previousChat,
+  nextChat,
   permissions,
   refresh,
   prompts,
@@ -1060,6 +1069,8 @@ enum _ChatControlAction {
   cron,
   recovery,
   extensions,
+  skills,
+  memory,
   releaseDesktop,
   delete,
 }
@@ -11798,17 +11809,34 @@ class _ChatScreenState extends State<ChatScreen>
         state != DesktopGatewayCapabilityState.invalid;
   }
 
-  Future<void> _showChatControlSheet() async {
+  /// The notch sheet is showing (tints the notch).
+  bool _notchSheetOpen = false;
+  final GlobalKey _notchKey = GlobalKey(debugLabel: 'chat-notch');
+
+  /// "Ajustes de esta conversación" + "Ir a", opened from the notch above the
+  /// composer. Every action of the former header ⋮ lives here, grouped.
+  Future<void> _showChatControlSheet({bool goTo = false}) async {
+    if (_notchSheetOpen) return;
     final strings = Strings.of(context);
-    final policy = context
-        .findAncestorStateOfType<HermesAppState>()
-        ?.approvalPolicy;
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    final policy = app?.approvalPolicy;
     final sessionReadOnly =
         widget.connection.readOnly ||
         policy?.effectiveMode(widget.session.id) == ApprovalMode.readOnly;
+    final memoryReadable =
+        app == null ||
+        !app.connManager.loadCapabilities(widget.connection.id).memoryRead.isNo;
 
-    final action = await showHermesFloatingSurface<_ChatControlAction>(
+    setState(() => _notchSheetOpen = true);
+    final notchBox = _notchKey.currentContext?.findRenderObject();
+    final origin =
+        notchBox is RenderBox && notchBox.attached && notchBox.hasSize
+        ? notchBox.localToGlobal(Offset.zero) & notchBox.size
+        : null;
+    ChatNotchDestination? destination;
+    final action = await showChatNotchSheet<_ChatControlAction>(
       context: context,
+      origin: origin,
       surfaceKey: const ValueKey('chat-control-dialog'),
       maxWidth: 480,
       builder: (dialogContext) {
@@ -11833,12 +11861,25 @@ class _ChatScreenState extends State<ChatScreen>
             cron: strings.crnOpenFromConversation,
             recovery: strings.chaControlRecovery,
             extensions: strings.drawerExtensions,
+            skills: strings.drawerSkills,
+            memory: strings.drawerMemory,
             delete: strings.sesDelete,
             readOnly: strings.statusReadOnly,
             releaseDesktop: strings.chaControlReleaseDesktop,
             releaseUnavailable: strings.chaRuntimeReleaseUnavailable,
+            findInChat: strings.chatNotchFindInChat,
+            model: strings.chaModelSheetTitle,
+            previousChat: strings.chatNotchPreviousChat,
+            nextChat: strings.chatNotchNextChat,
+            searchChats: strings.chatNotchSearchChats,
+            goTo: strings.chatNotchGoTo,
+            chats: strings.chatNotchChats,
+            home: strings.drawerHome,
+            projects: strings.drawerProjects,
+            settings: strings.drawerSettings,
           ),
           conversationTitle: localizedSessionTitle(strings, widget.session),
+          initialGoTo: goTo,
           readOnly: sessionReadOnly,
           showReleaseDesktop: _chat.showReleaseToDesktopControl,
           releaseDesktopEnabled: _chat.canReleaseToDesktop,
@@ -11872,13 +11913,44 @@ class _ChatScreenState extends State<ChatScreen>
               )
               ? null
               : () => select(_ChatControlAction.extensions),
+          onFindInChat: () => select(_ChatControlAction.find),
+          // Bot Chat has no status pill under the composer: its model lives
+          // here. The general chat keeps it in the status pill.
+          onModel: _isBotChatSurface
+              ? () => select(_ChatControlAction.model)
+              : null,
+          onPreviousChat: () => select(_ChatControlAction.previousChat),
+          onNextChat: () => select(_ChatControlAction.nextChat),
+          onSkills: () => select(_ChatControlAction.skills),
+          onMemory: memoryReadable
+              ? () => select(_ChatControlAction.memory)
+              : null,
+          onNavigate: (target) {
+            destination = target;
+            Navigator.of(dialogContext).pop();
+          },
           onReleaseDesktop: () => select(_ChatControlAction.releaseDesktop),
           onDelete: () => select(_ChatControlAction.delete),
         );
       },
     );
-    if (!mounted || action == null) return;
+    if (!mounted) return;
+    setState(() => _notchSheetOpen = false);
+    final target = destination;
+    if (target != null) {
+      _goToFromNotch(target);
+      return;
+    }
+    if (action == null) return;
     switch (action) {
+      case _ChatControlAction.find:
+        _openFind();
+      case _ChatControlAction.model:
+        _showModelSheet();
+      case _ChatControlAction.previousChat:
+        unawaited(_moveToRecentChat(-1));
+      case _ChatControlAction.nextChat:
+        unawaited(_moveToRecentChat(1));
       case _ChatControlAction.permissions:
         if (policy != null) _showModeSheet(policy);
       case _ChatControlAction.refresh:
@@ -11901,11 +11973,99 @@ class _ChatScreenState extends State<ChatScreen>
         unawaited(_openRecoveryCenter());
       case _ChatControlAction.extensions:
         unawaited(_openExtensionsCenter());
+      case _ChatControlAction.skills:
+        _openSkillsHub();
+      case _ChatControlAction.memory:
+        _pushScreen(MemoryScreen(connection: widget.connection));
       case _ChatControlAction.releaseDesktop:
         unawaited(_releaseRuntimeForDesktop());
       case _ChatControlAction.delete:
         unawaited(_deleteCurrentChat());
     }
+  }
+
+  /// Same hub `/skills` opens: Skills had lost its button in the chat.
+  void _openSkillsHub() {
+    final connManager = context
+        .findAncestorStateOfType<HermesAppState>()!
+        .connManager;
+    _pushScreen(
+      buildCapabilitiesHub(
+        connection: widget.connection,
+        connManager: connManager,
+        capabilities: connManager.loadCapabilities(widget.connection.id),
+      ),
+    );
+  }
+
+  /// Switches only within this connection/profile's recent-first session
+  /// list. The dock owns the gesture and has no toast: the new chat route is
+  /// the brief slide feedback after its light haptic.
+  Future<void> _moveToRecentChat(int direction) async {
+    if (direction == 0) return;
+    final client = ApiClient(
+      baseUrl: widget.connection.gatewayUrl,
+      apiKey: widget.connection.apiKey,
+    );
+    try {
+      final profile = Session.profileOwner(widget.session.profile);
+      final sessions = await client.getSessions(profile: profile);
+      if (!mounted || sessions.length < 2) return;
+      final index = sessions.indexWhere(
+        (session) => session.id == widget.session.id,
+      );
+      if (index < 0) return;
+      final target =
+          sessions[(index + direction).clamp(0, sessions.length - 1)];
+      if (target.id == widget.session.id) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              ChatScreen(connection: widget.connection, session: target),
+        ),
+      );
+    } catch (_) {
+      // A gesture dock stays quiet if the recent-list read is unavailable.
+    } finally {
+      client.close();
+    }
+  }
+
+  /// "Ir a": top-level hops, like the dock. The stack goes back to its root
+  /// first, so jumping never piles sections on top of the chat.
+  void _goToFromNotch(ChatNotchDestination destination) {
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    final navigator = Navigator.of(context);
+    navigator.popUntil((route) => route.isFirst);
+    if (destination == ChatNotchDestination.home || app == null) return;
+    final connection = widget.connection;
+    final connManager = app.connManager;
+    final Widget screen = switch (destination) {
+      ChatNotchDestination.chats => SessionListScreen(
+        connection: connection,
+        connManager: connManager,
+      ),
+      ChatNotchDestination.searchChats => SessionListScreen(
+        connection: connection,
+        connManager: connManager,
+        autofocusSearch: true,
+      ),
+      ChatNotchDestination.projects => OwnedResourceHost<TuiGatewayClient>(
+        create: () => TuiGatewayClient(connection),
+        release: (gateway) => gateway.close(),
+        builder: (_, gateway) => ProjectsCenterScreen(
+          connection: connection,
+          connectionManager: connManager,
+          gateway: gateway,
+        ),
+      ),
+      ChatNotchDestination.settings => SettingsScreen(
+        connection: connection,
+        connManager: connManager,
+      ),
+      ChatNotchDestination.home => const SizedBox.shrink(),
+    };
+    navigator.push(MaterialPageRoute<void>(builder: (_) => screen));
   }
 
   /// Epoch of the open prompt list: a read that answers after the sheet was
@@ -13732,59 +13892,10 @@ class _ChatScreenState extends State<ChatScreen>
                   ),
                   const SizedBox(width: 4),
                 ]
+              // Bot Chat: no header actions. Find and Model moved into the
+              // notch sheet with everything else.
               : botSurface
-              ? [
-                  PopupMenuButton<_BotChatHeaderAction>(
-                    key: const ValueKey('bot-chat-overflow-appbar'),
-                    tooltip: str.chaControlTitle,
-                    icon: const Icon(Icons.more_vert_rounded),
-                    onSelected: (action) {
-                      switch (action) {
-                        case _BotChatHeaderAction.find:
-                          _openFind();
-                        case _BotChatHeaderAction.controls:
-                          unawaited(_showChatControlSheet());
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      PopupMenuItem(
-                        key: const ValueKey('bot-chat-find-action'),
-                        value: _BotChatHeaderAction.find,
-                        child: Row(
-                          children: [
-                            const Icon(Icons.search_rounded, size: 20),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                str.cs1215FindAction,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      PopupMenuItem(
-                        key: const ValueKey('bot-chat-control-action'),
-                        value: _BotChatHeaderAction.controls,
-                        child: Row(
-                          children: [
-                            const Icon(Icons.settings_outlined, size: 20),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                str.chaControlTitle,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(width: 4),
-                ]
+              ? const <Widget>[]
               : [
                   // La presencia del Companion ya NO vive en el AppBar (ni el
                   // spinner de carga): el estado vivo lo expresa la mascota
@@ -13803,18 +13914,9 @@ class _ChatScreenState extends State<ChatScreen>
                         : colors.textSecondary,
                     onPressed: _newChat,
                   ),
-                  IconButton(
-                    key: const ValueKey('chat-find-trigger'),
-                    icon: const Icon(Icons.search_rounded),
-                    tooltip: str.cs1215FindAction,
-                    onPressed: _openFind,
-                  ),
-                  IconButton(
-                    key: const ValueKey('chat-control-trigger'),
-                    icon: const Icon(Icons.more_vert),
-                    tooltip: str.chaControlTitle,
-                    onPressed: _showChatControlSheet,
-                  ),
+                  // Find, conversation settings and quick navigation live in
+                  // the notch on the composer's top edge (no header ⋮ or
+                  // search icon).
                 ],
         ),
         body: showVoiceSurface
@@ -13952,10 +14054,22 @@ class _ChatScreenState extends State<ChatScreen>
                                 // Reply text keeps its clearance because the
                                 // measured stack extent pads the transcript by
                                 // the same amount.
+                                // The notch: a glass tab sitting on the
+                                // composer's top edge that opens the
+                                // conversation settings + "Ir a". Its touch
+                                // target extends up into the transcript.
                                 Positioned(
                                   left: 0,
                                   right: 0,
-                                  bottom: 8,
+                                  bottom: 0,
+                                  height: kChatNotchSlotHeight,
+                                  child: Center(child: _buildNotch(str)),
+                                ),
+                                Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  // Rides just above the drawn tab.
+                                  bottom: 8 + kChatNotchHeight,
                                   child: Column(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
@@ -16860,6 +16974,53 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// Extra transcript padding so the last reply rests above the drawn notch
+  /// tab (the floating overlay starts the same distance higher).
+  static const double _kNotchTranscriptReserve = kChatNotchHeight;
+
+  bool _notchHorizontalSwipeSafe(BuildContext context) {
+    final media = MediaQuery.of(context);
+    return chatNotchHorizontalSwipeSafe(media.size, media.systemGestureInsets);
+  }
+
+  Widget _buildNotch(Strings str) {
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    final aggregate = app?.activeChats.globalActivity;
+    Widget notch(bool attention) => ChatNotch(
+      key: _notchKey,
+      open: _notchSheetOpen,
+      attention: attention,
+      semanticLabel: str.chatNotchLabel,
+      attentionLabel: str.chatNotchNeedsYouElsewhere,
+      onOpen: () => unawaited(_showChatControlSheet()),
+      onOpenGoTo: () => unawaited(_showChatControlSheet(goTo: true)),
+      onFindInChat: _openFind,
+      onPreviousChat: () => unawaited(_moveToRecentChat(-1)),
+      onNextChat: () => unawaited(_moveToRecentChat(1)),
+      horizontalSwipeEnabled: _notchHorizontalSwipeSafe(context),
+      gestureLabels: ChatNotchGestureLabels(
+        goTo: str.chatNotchGoTo,
+        findInChat: str.chatNotchFindInChat,
+        previousChat: str.chatNotchPreviousChat,
+        nextChat: str.chatNotchNextChat,
+      ),
+    );
+    if (aggregate == null) return notch(false);
+    return ListenableBuilder(
+      listenable: aggregate,
+      builder: (context, _) => notch(
+        chatNotchNeedsYouElsewhere(
+          aggregate.activities,
+          connectionId: widget.connection.id,
+          currentSessionIds: {
+            widget.session.id,
+            ?(_chatBound ? _chat.storedSessionId : null),
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _buildBody() => KeyedSubtree(
     key: const ValueKey('chat-stable-body'),
     child: _buildBodyContent(),
@@ -17209,7 +17370,9 @@ class _ChatScreenState extends State<ChatScreen>
             // `bottom` reserva la altura medida de toda la pila flotante y de la
             // flecha cuando está visible. Así ninguna fila tapa el último mensaje,
             // aunque cambie de alto o convivan varias actividades.
-            padding: EdgeInsets.only(bottom: 12 + overlayExtent),
+            padding: EdgeInsets.only(
+              bottom: 12 + _kNotchTranscriptReserve + overlayExtent,
+            ),
             reverse: true,
             // Precarga ~1 pantalla extra fuera del viewport: al seguir el stream no
             // se materializan entradas frías en medio de un frame de scroll.
@@ -18585,8 +18748,6 @@ class _UserTurnGroup {
 
   _UserTurnGroup(this.primary);
 }
-
-enum _BotChatHeaderAction { find, controls }
 
 /// Cabecera del Bot Chat: avatar + nombre del bot + estado vivo, con el mismo
 /// protagonismo que la cabecera de una Room. El modelo y los controles viven

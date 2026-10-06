@@ -10039,5 +10039,13 @@
     }
   },
   "sp1215LimitLocal": "Modelo local: sin límite de uso ni coste.",
-  "sp1215LimitNoData": "Sin datos de límite para este proveedor."
+  "sp1215LimitNoData": "Sin datos de límite para este proveedor.",
+  "chatNotchLabel": "Ajustes de la conversación e Ir a",
+  "chatNotchGoTo": "Ir a",
+  "chatNotchChats": "Chats",
+  "chatNotchNeedsYouElsewhere": "Algo te necesita en otra conversación",
+  "chatNotchSearchChats": "Buscar chats",
+  "chatNotchFindInChat": "Buscar en este chat",
+  "chatNotchPreviousChat": "Chat anterior",
+  "chatNotchNextChat": "Chat siguiente"
 }

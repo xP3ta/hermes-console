@@ -188,7 +188,6 @@ const _dropdownButtonAllowed = <String, int>{
 
 const _popupMenuButtonAllowed = <String, int>{
   'lib/core/screens/admin_integrations_screen.dart': 1,
-  'lib/core/screens/chat_screen.dart': 1,
   'lib/core/screens/extensions_center_screen.dart': 2,
   'lib/core/screens/gateway_manager_screen.dart': 1,
   'lib/core/screens/mission_control_screen.dart': 1,

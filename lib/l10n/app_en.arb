@@ -8317,5 +8317,13 @@
   "sp1215LimitBannerNoReset": "Limit reached.",
   "sp1215LimitExtra": "Extra usage: {used} / {limit} {currency}",
   "sp1215LimitLocal": "Local model: no usage limit or cost.",
-  "sp1215LimitNoData": "No limit data for this provider."
+  "sp1215LimitNoData": "No limit data for this provider.",
+  "chatNotchLabel": "Conversation settings and Go to",
+  "chatNotchGoTo": "Go to",
+  "chatNotchChats": "Chats",
+  "chatNotchNeedsYouElsewhere": "Something needs you in another conversation",
+  "chatNotchSearchChats": "Search chats",
+  "chatNotchFindInChat": "Search this chat",
+  "chatNotchPreviousChat": "Previous chat",
+  "chatNotchNextChat": "Next chat"
 }
