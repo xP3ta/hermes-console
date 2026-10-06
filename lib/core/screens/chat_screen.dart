@@ -2195,10 +2195,40 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// Opens the prompt the pinned header shows. That prompt belongs to the
+  /// turn at the top edge, so it is always above: walk up from here. The
+  /// generic reveal starts at the bottom and has a frame budget, so in a
+  /// long chat (earlier pages loaded, tall replies) it never reached the
+  /// prompt and left the list wherever it ran out, up to the first message.
+  /// The prompt is looked up by its stable id on every frame, so a page
+  /// load or refresh that replaces the row objects cannot lose it; when it
+  /// cannot be built the reader stays where they were.
   Future<void> _revealStickyPrompt(Map<String, dynamic> prompt) async {
-    final target = chatRefreshFindAnchorMessage(prompt, _messages) ?? prompt;
+    if (_disposed || !mounted || !_scrollController.hasClients) return;
+    Map<String, dynamic> current() =>
+        chatRefreshFindAnchorMessage(prompt, _messages) ?? prompt;
     _freezeStreamingFollow();
-    await _revealTranscriptMessage(target);
+    _streamingViewportLock.releaseLanding();
+    final start = _scrollController.position.pixels;
+    final reached = await _materializeTranscriptAnchor(
+      current(),
+      resolve: current,
+      fromBottom: false,
+      // The list keeps a 1000 px cache on both sides: a step of one
+      // viewport plus that cache still builds every row it passes.
+      stepExtent: (position) => position.viewportDimension + 1000,
+    );
+    if (_disposed || !mounted || !_scrollController.hasClients) return;
+    final anchor = _messageAnchors[current()];
+    if (reached != true || anchor == null || !anchor.attached) {
+      if (reached == false) _scrollController.position.jumpTo(start);
+      return;
+    }
+    await scrollChatAnswerToStart(
+      anchor,
+      _scrollController.position,
+      duration: _reduceMotion ? Duration.zero : chatNavigationDuration,
+    );
   }
 
   /// Walk budget of the entry landing: long enough to build a first unread
@@ -12147,22 +12177,27 @@ class _ChatScreenState extends State<ChatScreen>
     bool Function()? stillWanted,
     int maxFrames = 80,
     double Function(ScrollPosition position)? stepExtent,
+    Map<String, dynamic> Function()? resolve,
+    bool fromBottom = true,
   }) async {
     bool live() =>
         mounted &&
         _scrollController.hasClients &&
         (stillWanted == null || stillWanted());
-    bool attached() => _messageAnchors[target]?.attached ?? false;
+    bool attached() =>
+        _messageAnchors[resolve?.call() ?? target]?.attached ?? false;
     if (!live()) return null;
     if (attached()) return true;
     // Read the position after every frame: entering the chat can still swap
     // the list's scrollable (loading state → transcript), which disposes the
     // position a caller captured before the walk.
     var position = _scrollController.position;
-    position.jumpTo(position.minScrollExtent);
-    await SchedulerBinding.instance.endOfFrame;
-    if (!live()) return null;
-    if (attached()) return true;
+    if (fromBottom) {
+      position.jumpTo(position.minScrollExtent);
+      await SchedulerBinding.instance.endOfFrame;
+      if (!live()) return null;
+      if (attached()) return true;
+    }
 
     for (var attempt = 0; attempt < maxFrames; attempt++) {
       if (!live()) return null;
