@@ -997,51 +997,6 @@ class BridgeClient {
     return _decode(res);
   }
 
-  /// GET /bridge/diag/local → diagnóstico de extremo a extremo del agente local
-  /// ejecutado EN el dispositivo: versión del bridge, modelo en config.yaml,
-  /// estado de ollama y sondas de carga cronometradas (64K vs 4K). Devuelve un
-  /// `summary` legible y los datos crudos. Requiere scope `read`.
-  Future<Map<String, dynamic>> localDiag() async {
-    final res = await _http
-        .get(Uri.parse('$baseUrl/bridge/diag/local'), headers: _headers)
-        .timeout(const Duration(minutes: 2));
-    return _decode(res);
-  }
-
-  /// GET /bridge/diag/llamacpp → benchmark on-device de llama.cpp con GPU
-  /// (Vulkan) vs CPU para decidir si migrar el motor local desde Ollama.
-  /// Puede tardar varios minutos (instala llama.cpp si falta + dos cargas del
-  /// modelo), por eso el timeout es generoso. Devuelve {ok, installed,
-  /// has_vulkan, gpu, cpu, summary, raw}.
-  Future<Map<String, dynamic>> llamacppBench() async {
-    final res = await _http
-        .get(Uri.parse('$baseUrl/bridge/diag/llamacpp'), headers: _headers)
-        .timeout(const Duration(minutes: 6));
-    return _decode(res);
-  }
-
-  /// GET /bridge/diag/gpu → sonda de ALCANCE de la GPU desde Termux: ¿enumera
-  /// OpenCL (clinfo) o Vulkan (vulkaninfo) algún dispositivo? Decide si CUALQUIER
-  /// motor por GPU es viable en este móvil. Instala clinfo/vulkan-tools → tarda.
-  /// Devuelve {ok, opencl, vulkan, libs, summary, raw}.
-  Future<Map<String, dynamic>> gpuProbe() async {
-    final res = await _http
-        .get(Uri.parse('$baseUrl/bridge/diag/gpu'), headers: _headers)
-        .timeout(const Duration(minutes: 6));
-    return _decode(res);
-  }
-
-  /// GET /bridge/model/get → modelo activo real de config.yaml (rápido, sin
-  /// sondear Ollama). La pantalla lo lee al abrir para restaurar el badge «en
-  /// uso», que antes solo vivía en memoria y se perdía al recrear la pantalla.
-  /// Devuelve {ok, provider, model, base_url}.
-  Future<Map<String, dynamic>> getActiveModel() async {
-    final res = await _http
-        .get(Uri.parse('$baseUrl/bridge/model/get'), headers: _headers)
-        .timeout(const Duration(seconds: 10));
-    return _decode(res);
-  }
-
   /// GET /bridge/model/options → catálogo COMPLETO de proveedores/modelos, con
   /// la MISMA forma que el Dashboard `/api/model/options` ({providers, model,
   /// provider}). Lo construye el bridge con la función oficial de Hermes, así la
@@ -1124,18 +1079,6 @@ class BridgeClient {
   static bool isValidSkillName(String name) {
     final s = name.trim();
     return s.isNotEmpty && s.length <= 200 && _skillNameRe.hasMatch(s);
-  }
-
-  /// POST /bridge/rollback {backup_id}.
-  Future<Map<String, dynamic>> rollback(String backupId) async {
-    final res = await _http
-        .post(
-          Uri.parse('$baseUrl/bridge/rollback'),
-          headers: _headers,
-          body: jsonEncode({'backup_id': backupId}),
-        )
-        .timeout(_standardTimeout);
-    return _decode(res);
   }
 
   Map<String, dynamic> _decode(

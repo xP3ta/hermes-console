@@ -105,6 +105,7 @@ export '../services/attachment_uploader.dart'
     show PendingAttachmentLimitViolation, pendingAttachmentLimitViolation;
 import '../services/command_risk.dart';
 import '../services/bridge_client.dart';
+import '../services/bridge_token_cache.dart';
 import '../services/bridge_update_service.dart';
 import '../services/chat_content_extractor.dart';
 import '../services/chat_draft_store.dart';
@@ -5214,7 +5215,6 @@ class _ChatScreenState extends State<ChatScreen>
   bool? _bridgeImagesSupported;
   DateTime? _bridgeImagesSupportAt;
   Future<bool>? _bridgeImagesSupportFuture;
-  Future<String>? _bridgeImageTokenFuture;
   Future<bool> resolveGeneratedImageSupport() async {
     final cached = _bridgeImagesSupported;
     final checkedAt = _bridgeImagesSupportAt;
@@ -5252,32 +5252,6 @@ class _ChatScreenState extends State<ChatScreen>
     return ok;
   }
 
-  Future<String> _bridgeImageToken() async {
-    final existing = _bridgeImageTokenFuture;
-    if (existing != null) return existing;
-    final future = () async {
-      final url = widget.connection.derivedBridgeUrl;
-      if (url.isEmpty) throw Exception('bridge no configurado');
-      final token = await BridgeClient.provision(
-        url,
-        widget.connection.apiKey.trim(),
-      );
-      if (token == null || token.isEmpty) {
-        throw Exception('bridge no disponible');
-      }
-      return token;
-    }();
-    _bridgeImageTokenFuture = future;
-    try {
-      return await future;
-    } catch (_) {
-      if (identical(_bridgeImageTokenFuture, future)) {
-        _bridgeImageTokenFuture = null;
-      }
-      rethrow;
-    }
-  }
-
   /// Descarga (o reutiliza de caché) el archivo local de una imagen generada
   /// por [basename], vía `GET /bridge/image` con el token del bridge. Lanza si
   /// no hay bridge o la descarga falla (la burbuja lo traduce a estado de error).
@@ -5288,13 +5262,21 @@ class _ChatScreenState extends State<ChatScreen>
       fetch: (name) async {
         final url = widget.connection.derivedBridgeUrl;
         if (url.isEmpty) throw Exception('bridge no configurado');
-        final token = await _bridgeImageToken();
-        final client = BridgeClient(baseUrl: url, token: token);
-        try {
-          return await client.fetchGeneratedImage(name);
-        } finally {
-          client.close();
-        }
+        final bytes = await BridgeTokenCache.instance.withToken(
+          connectionId: widget.connection.id,
+          bridgeUrl: url,
+          gatewayKey: widget.connection.apiKey,
+          run: (token) async {
+            final client = BridgeClient(baseUrl: url, token: token);
+            try {
+              return await client.fetchGeneratedImage(name);
+            } finally {
+              client.close();
+            }
+          },
+        );
+        if (bytes == null) throw Exception('bridge no disponible');
+        return bytes;
       },
     );
   }
@@ -5674,19 +5656,21 @@ class _ChatScreenState extends State<ChatScreen>
     if (fake != null) return fake().then((r) => r, onError: (Object _) => null);
     final url = widget.connection.derivedBridgeUrl;
     if (url.isEmpty) return null;
-    String? token;
     try {
-      token = await BridgeClient.provision(
-        url,
-        widget.connection.apiKey.trim(),
+      final data = await BridgeTokenCache.instance.withToken(
+        connectionId: widget.connection.id,
+        bridgeUrl: url,
+        gatewayKey: widget.connection.apiKey,
+        run: (token) async {
+          final client = BridgeClient(baseUrl: url, token: token);
+          try {
+            return await client.modelOptions();
+          } finally {
+            client.close();
+          }
+        },
       );
-    } catch (_) {
-      return null;
-    }
-    if (token == null || token.isEmpty) return null;
-    final client = BridgeClient(baseUrl: url, token: token);
-    try {
-      final data = await client.modelOptions();
+      if (data == null) return null;
       if (data['ok'] != true) return null;
       final raw = data['providers'];
       final maps = <Map<String, dynamic>>[];
@@ -5714,8 +5698,6 @@ class _ChatScreenState extends State<ChatScreen>
       return (info, providers);
     } catch (_) {
       return null;
-    } finally {
-      client.close();
     }
   }
 
