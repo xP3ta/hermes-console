@@ -8,6 +8,8 @@ import '../models/interactive_prompt.dart';
 import '../services/interactive_prompt_reducer.dart';
 import '../theme/app_theme.dart';
 import '../theme/component_profile.dart';
+import '../utils/plain_preview.dart';
+import 'compact_markdown.dart';
 import 'hermes_premium_ui.dart';
 
 /// Inline tactile surface for Hermes Desktop 0.19 blocking requests.
@@ -368,7 +370,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: _isBatchClarify
                           ? _batchBody(context, constraints)
-                          : _requestBody(context, request, colors),
+                          : _requestBody(context, request, colors, constraints),
                     ),
                     actions: _isBatchClarify
                         ? _batchActions(strings, compact: compactBatchActions)
@@ -389,6 +391,7 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
     BuildContext context,
     InteractivePromptRequest request,
     HermesThemeColors colors,
+    BoxConstraints constraints,
   ) {
     final strings = Strings.of(context);
     switch (request) {
@@ -397,27 +400,44 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
         :final choices,
         :final multiSelect,
       ):
+        // rt1215: a long question or many choices scroll inside a bounded
+        // box (as the batch body does); the answer field stays reachable.
         return [
-          _questionText(question, colors),
-          if (choices.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            for (final choice in choices) ...[
-              _choiceRow(
-                context,
-                label: choice,
-                selected: multiSelect && _singleSelected.contains(choice),
-                multiSelect: multiSelect,
-                trailingChevron: !multiSelect,
-                onTap: widget.busy
-                    ? null
-                    : multiSelect
-                    ? () => _toggleSingleChoice(choice)
-                    : () => _submit(choice),
+          ConstrainedBox(
+            key: const ValueKey('interactive-prompt-scroll'),
+            constraints: BoxConstraints(
+              maxHeight: _scrollCap(context, constraints),
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _questionText(question, colors),
+                  if (choices.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    for (final choice in choices) ...[
+                      _choiceRow(
+                        context,
+                        label: choice,
+                        selected:
+                            multiSelect && _singleSelected.contains(choice),
+                        multiSelect: multiSelect,
+                        trailingChevron: !multiSelect,
+                        onTap: widget.busy
+                            ? null
+                            : multiSelect
+                            ? () => _toggleSingleChoice(choice)
+                            : () => _submit(choice),
+                      ),
+                      const SizedBox(height: 6),
+                    ],
+                  ],
+                ],
               ),
-              const SizedBox(height: 6),
-            ],
-          ] else
-            const SizedBox(height: 10),
+            ),
+          ),
+          if (choices.isEmpty) const SizedBox(height: 10),
           _input(strings.interactiveAnswerHint, sensitive: false),
         ];
       case SudoPromptRequest():
@@ -451,15 +471,34 @@ class _InteractivePromptCardState extends State<InteractivePromptCard> {
     }
   }
 
-  Widget _questionText(String text, HermesThemeColors colors) => Text(
-    text,
-    style: TextStyle(
-      color: colors.textPrimary,
-      fontSize: 14.5,
-      height: 1.3,
-      fontWeight: FontWeight.w600,
-    ),
-  );
+  // rt1215: an agent question written in Markdown renders as Markdown.
+  Widget _questionText(String text, HermesThemeColors colors) =>
+      looksLikeMarkdown(text)
+      ? CompactMarkdown(
+          data: text,
+          tone: CompactMarkdownTone.body,
+          fontSize: 14.5,
+        )
+      : Text(
+          text,
+          style: TextStyle(
+            color: colors.textPrimary,
+            fontSize: 14.5,
+            height: 1.3,
+            fontWeight: FontWeight.w600,
+          ),
+        );
+
+  /// Height left for a scrolling question body once the header, the answer
+  /// field and the actions have their room (at most half the screen).
+  double _scrollCap(BuildContext context, BoxConstraints constraints) {
+    final reserved = MediaQuery.textScalerOf(context).scale(240.0);
+    final screen = MediaQuery.sizeOf(context).height;
+    final host = constraints.maxHeight.isFinite ? constraints.maxHeight : screen;
+    final room = (host < screen ? host : screen) - reserved;
+    final half = screen * 0.5;
+    return (room < half ? room : half).clamp(96.0, double.infinity);
+  }
 
   List<Widget> _batchBody(BuildContext context, BoxConstraints constraints) {
     final request = _request as ClarifyPromptRequest;

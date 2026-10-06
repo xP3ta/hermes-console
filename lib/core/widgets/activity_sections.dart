@@ -8,11 +8,13 @@ import '../models/agent_task_list.dart';
 import '../models/session_activity.dart';
 import '../models/subagent_activity.dart';
 import '../theme/app_theme.dart';
+import '../utils/plain_preview.dart';
 import '../design/tokens.dart';
 import '../screens/subagent_detail_screen.dart'
     show subagentElapsed, subagentHumanStatus, subagentTitle;
 import 'activity_dots.dart';
 import 'activity_pill.dart';
+import 'reasoning_panel.dart';
 
 /// Acciones por elemento del panel. Son los mismos controladores que tenían las
 /// hojas anteriores de segundo plano / subagentes; el panel no pierde ninguna.
@@ -287,7 +289,7 @@ class ActivityTaskRow extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                item.content,
+                plainPreview(item.content),
                 style: style.copyWith(
                   fontSize: dense ? 12.5 : 13,
                   height: 1.35,
@@ -542,7 +544,7 @@ class ActivityStepRow extends StatelessWidget {
                 ],
               ],
             ),
-            if (step.text != null)
+            if (step.text != null && step.kind != ActivityStepKind.reasoning)
               Padding(
                 padding: const EdgeInsets.only(left: 26, top: 2),
                 child: _FoldedText(text: step.text!),
@@ -576,7 +578,7 @@ class _FoldedTextState extends State<_FoldedText> {
         widget.text,
         maxLines: _open ? null : 3,
         overflow: _open ? TextOverflow.visible : TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 12, height: 1.3, color: colors.textDisabled),
+        style: TextStyle(fontSize: 12, height: 1.3, color: colors.textSecondary),
       ),
     );
   }
@@ -640,8 +642,16 @@ class ActivityNowSection extends StatelessWidget {
           keyName: 'activity-now-title',
         ),
         if (snapshot.turnActive) _nowRow(context, s, colors),
+        // rt1215: the thinking is its own labelled block under the step.
         if (snapshot.turnActive && liveReasoning != null)
-          _LiveReasoningTail(text: liveReasoning),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 2),
+            child: ReasoningPanel(
+              text: liveReasoning,
+              live: true,
+              bodyKey: const ValueKey('activity-now-reasoning'),
+            ),
+          ),
         if (nothingKnown)
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
@@ -913,98 +923,6 @@ class ActivitySubagentRow extends StatelessWidget {
   }
 }
 
-/// lr1215: the reasoning the model is writing now, as Desktop's live
-/// thinking disclosure: a short scrollable box that follows the newest
-/// tokens unless the reader scrolled up to read earlier ones.
-class _LiveReasoningTail extends StatefulWidget {
-  const _LiveReasoningTail({required this.text});
-
-  final String text;
-
-  @override
-  State<_LiveReasoningTail> createState() => _LiveReasoningTailState();
-}
-
-class _LiveReasoningTailState extends State<_LiveReasoningTail> {
-  static const double _maxHeight = 120;
-  final ScrollController _controller = ScrollController();
-  bool _followEnd = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _scheduleFollow();
-  }
-
-  @override
-  void didUpdateWidget(_LiveReasoningTail oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text) _scheduleFollow();
-  }
-
-  void _scheduleFollow() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_followEnd || !_controller.hasClients) return;
-      final position = _controller.position;
-      if (position.pixels != position.maxScrollExtent) {
-        position.jumpTo(position.maxScrollExtent);
-      }
-    });
-  }
-
-  bool _onScroll(ScrollNotification notification) {
-    if (notification is ScrollUpdateNotification &&
-        notification.dragDetails != null) {
-      final metrics = notification.metrics;
-      _followEnd = metrics.pixels >= metrics.maxScrollExtent - 4;
-    } else if (notification is ScrollEndNotification) {
-      final metrics = notification.metrics;
-      _followEnd = metrics.pixels >= metrics.maxScrollExtent - 4;
-    }
-    return false;
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    // The box grows with the reader's text size so it still shows a few
-    // lines at large scales.
-    final maxHeight = MediaQuery.textScalerOf(
-      context,
-    ).scale(_maxHeight).clamp(_maxHeight, _maxHeight * 2);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
-      child: ConstrainedBox(
-        key: const ValueKey('activity-now-reasoning'),
-        constraints: BoxConstraints(maxHeight: maxHeight),
-        child: NotificationListener<ScrollNotification>(
-          onNotification: _onScroll,
-          child: SingleChildScrollView(
-            controller: _controller,
-            child: SizedBox(
-              width: double.infinity,
-              child: Text(
-                widget.text,
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.35,
-                  color: colors.textSecondary,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// «Hecho»: pasos terminados, el más reciente primero. Con [maxRows] filas y un
 /// «+N anteriores» para no crecer sin límite en turnos larguísimos.
 class ActivityDoneSection extends StatelessWidget {
@@ -1049,13 +967,30 @@ class ActivityDoneSection extends StatelessWidget {
             keyName: 'activity-done-title',
           ),
         for (final step in shown) ...[
-          ActivityStepRow(
-            key: ValueKey('activity-done-${step.id}'),
-            step: step,
-            now: now,
-            dense: dense,
-            muted: muted,
-          ),
+          // rt1215: finished reasoning is a «Pensamiento · 12 s» block, never
+          // text inside a step row.
+          if (step.kind == ActivityStepKind.reasoning && step.text != null)
+            Padding(
+              key: ValueKey('activity-done-${step.id}'),
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: ReasoningPanel(
+                text: step.text!,
+                meta: step.duration == null
+                    ? null
+                    : formatStepDuration(
+                        step.duration!,
+                        languageCode: _lang(context),
+                      ),
+              ),
+            )
+          else
+            ActivityStepRow(
+              key: ValueKey('activity-done-${step.id}'),
+              step: step,
+              now: now,
+              dense: dense,
+              muted: muted,
+            ),
           ?trailingFor?.call(step),
           if (rowAttachments.containsKey(step.id))
             KeyedSubtree(
