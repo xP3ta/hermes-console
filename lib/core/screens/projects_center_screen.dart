@@ -13,6 +13,7 @@ import '../services/new_session_factory.dart';
 import '../theme/app_theme.dart';
 import '../utils/byte_bounded_lru_cache.dart';
 import '../utils/short_server_path.dart';
+import '../widgets/adaptive_list_detail.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart'
@@ -478,27 +479,59 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
     if (launcher != null) {
       launcher(context, request);
     } else {
-      _defaultChatLauncher(context, widget.connection, request);
+      // From the screen's own context: on a tablet the project may sit in
+      // the detail pane, but a chat still opens on the app navigator exactly
+      // as it does on a phone.
+      _defaultChatLauncher(
+        mounted ? this.context : context,
+        widget.connection,
+        request,
+      );
     }
   }
 
+  final GlobalKey<AdaptiveListDetailState> _panes =
+      GlobalKey<AdaptiveListDetailState>(debugLabel: 'projects-panes');
+
+  /// The project open in the tablet pane (single source of truth for the
+  /// selection; rotation keeps it because the pane's navigator moves).
+  String? _paneProjectId;
+
   Future<void> _openProject(ProjectNode project) async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => _ProjectDetailScreen(
-          project: project,
-          connection: widget.connection,
-          gateway: widget.gateway,
-          writes: _writes,
-          isActive: () => _snapshot?.activeId == project.id,
-          launch: _launch,
-          onChanged: _load,
-          onHide: (id) => _writeHidden({..._hidden, id}),
-          uploadPicker: widget.projectUploadPicker,
-        ),
+    final panes = _panes.currentState;
+    final inPane = panes != null && panes.active;
+    if (inPane && _paneProjectId == project.id && panes.hasDetail) return;
+    final route = MaterialPageRoute<void>(
+      settings: RouteSettings(name: 'project-pane:${project.id}'),
+      builder: (_) => _ProjectDetailScreen(
+        project: project,
+        connection: widget.connection,
+        gateway: widget.gateway,
+        writes: _writes,
+        isActive: () => _snapshot?.activeId == project.id,
+        launch: _launch,
+        onChanged: _load,
+        onHide: (id) => _writeHidden({..._hidden, id}),
+        uploadPicker: widget.projectUploadPicker,
       ),
     );
+    if (inPane) {
+      _paneProjectId = project.id;
+      await panes.show<void>(route);
+      if (_paneProjectId == project.id) _paneProjectId = null;
+    } else {
+      await Navigator.of(context).push<void>(route);
+    }
     if (mounted) setState(() {});
+  }
+
+  /// The window became phone-sized with a project open in the pane: continue
+  /// with the phone flow instead of dropping back to the list.
+  void _reopenPaneProjectFullScreen() {
+    final id = _paneProjectId;
+    _paneProjectId = null;
+    if (id == null || !mounted) return;
+    unawaited(_enter(id));
   }
 
   Future<void> _menu(ProjectNode project) async {
@@ -571,106 +604,114 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
       body: GeneralDockShell(
         connection: widget.connection,
         connManager: widget.connectionManager,
-        body: SafeArea(
-          child: _loading && snapshot == null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(28),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const CircularProgressIndicator(),
-                        const SizedBox(height: 18),
-                        Text(
-                          strings.projectsCenterLoading,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: colors.textSecondary,
-                            height: 1.4,
+        // Tablets: the open project lives beside the list (expanded) or in
+        // place of it (medium) instead of on a route of its own.
+        paneLayout: true,
+        body: AdaptiveListDetail(
+          key: _panes,
+          placeholder: const _ProjectPanePlaceholder(),
+          onCollapsedWithDetail: _reopenPaneProjectFullScreen,
+          list: SafeArea(
+            child: _loading && snapshot == null
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(28),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(),
+                          const SizedBox(height: 18),
+                          Text(
+                            strings.projectsCenterLoading,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: colors.textSecondary,
+                              height: 1.4,
+                            ),
                           ),
-                        ),
+                        ],
+                      ),
+                    ),
+                  )
+                : _failure != null && snapshot == null
+                ? _CenterFailure(
+                    message: projectFailureText(_failure!, strings),
+                    onRetry: _load,
+                  )
+                : RefreshIndicator(
+                    onRefresh: _refresh,
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
+                      children: [
+                        if (_loading && snapshot != null)
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 10),
+                            child: LinearProgressIndicator(minHeight: 2),
+                          ),
+                        _IntroLine(onMore: _showExplainer),
+                        if (!hasRealProjects)
+                          _EmptyProjects(
+                            onMore: _showExplainer,
+                            onCreate: canCreate ? _createProject : null,
+                          )
+                        else
+                          HermesSectionHeader(
+                            strings.projectsCenterWorkspacesSection,
+                          ),
+                        for (final project in visible)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _ProjectCard(
+                              project: project,
+                              active: snapshot?.activeId == project.id,
+                              hidden: _hidden.contains(project.id),
+                              onTap: () => _openProject(project),
+                              onMenu: () => _menu(project),
+                            ),
+                          ),
+                        if (hiddenCount > 0)
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              key: const ValueKey('pj1215-toggle-hidden'),
+                              onPressed: () =>
+                                  setState(() => _showHidden = !_showHidden),
+                              icon: Icon(
+                                _showHidden
+                                    ? Icons.visibility_off_outlined
+                                    : Icons.visibility_outlined,
+                                size: 18,
+                              ),
+                              label: Text(
+                                _showHidden
+                                    ? strings.pj1215HideHidden
+                                    : strings.pj1215ShowHidden(hiddenCount),
+                              ),
+                            ),
+                          ),
+                        if (canCreate)
+                          _CreateProjectTile(onTap: _createProject)
+                        else if (createBlock ==
+                            ProjectWriteBlock.unsupportedServer)
+                          _DesktopOnlyCreate(),
+                        if (_failure != null && snapshot != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              strings.projectsCenterStaleView(
+                                projectFailureText(_failure!, strings),
+                              ),
+                              style: TextStyle(
+                                color: colors.warning,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
-                )
-              : _failure != null && snapshot == null
-              ? _CenterFailure(
-                  message: projectFailureText(_failure!, strings),
-                  onRetry: _load,
-                )
-              : RefreshIndicator(
-                  onRefresh: _refresh,
-                  child: ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
-                    children: [
-                      if (_loading && snapshot != null)
-                        const Padding(
-                          padding: EdgeInsets.only(bottom: 10),
-                          child: LinearProgressIndicator(minHeight: 2),
-                        ),
-                      _IntroLine(onMore: _showExplainer),
-                      if (!hasRealProjects)
-                        _EmptyProjects(
-                          onMore: _showExplainer,
-                          onCreate: canCreate ? _createProject : null,
-                        )
-                      else
-                        HermesSectionHeader(
-                          strings.projectsCenterWorkspacesSection,
-                        ),
-                      for (final project in visible)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: _ProjectCard(
-                            project: project,
-                            active: snapshot?.activeId == project.id,
-                            hidden: _hidden.contains(project.id),
-                            onTap: () => _openProject(project),
-                            onMenu: () => _menu(project),
-                          ),
-                        ),
-                      if (hiddenCount > 0)
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: TextButton.icon(
-                            key: const ValueKey('pj1215-toggle-hidden'),
-                            onPressed: () =>
-                                setState(() => _showHidden = !_showHidden),
-                            icon: Icon(
-                              _showHidden
-                                  ? Icons.visibility_off_outlined
-                                  : Icons.visibility_outlined,
-                              size: 18,
-                            ),
-                            label: Text(
-                              _showHidden
-                                  ? strings.pj1215HideHidden
-                                  : strings.pj1215ShowHidden(hiddenCount),
-                            ),
-                          ),
-                        ),
-                      if (canCreate)
-                        _CreateProjectTile(onTap: _createProject)
-                      else if (createBlock ==
-                          ProjectWriteBlock.unsupportedServer)
-                        _DesktopOnlyCreate(),
-                      if (_failure != null && snapshot != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Text(
-                            strings.projectsCenterStaleView(
-                              projectFailureText(_failure!, strings),
-                            ),
-                            style: TextStyle(
-                              color: colors.warning,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
+          ),
         ),
       ),
     );
@@ -1836,6 +1877,41 @@ class _EmptyCenter extends StatelessWidget {
               style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Detail pane of an expanded window before any project is opened.
+class _ProjectPanePlaceholder extends StatelessWidget {
+  const _ProjectPanePlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return ColoredBox(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.folder_open_rounded,
+                size: 40,
+                color: colors.textSecondary,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                Strings.of(context).tabletPickProject,
+                key: const ValueKey('projects-pane-placeholder'),
+                textAlign: TextAlign.center,
+                style: TextStyle(color: colors.textSecondary),
+              ),
+            ],
+          ),
         ),
       ),
     );
