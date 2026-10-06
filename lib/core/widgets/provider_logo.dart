@@ -4,12 +4,19 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 import 'provider_logo_glyphs.dart';
+import 'provider_logo_glyphs_lobehub.dart';
 
 export 'provider_logo_glyphs.dart' show providerLogoGlyphSources;
+export 'provider_logo_glyphs_lobehub.dart'
+    show
+        lobeHubIconsCommit,
+        providerLogoLobeGlyphPaths,
+        providerLogoLobeGlyphSources;
 
 /// Identity of the company behind a model or provider: a display name, plus
 /// a monochrome glyph when a permissively licensed one exists (Simple Icons,
-/// CC0-1.0). Without a glyph the logo is a monogram of [label].
+/// CC0-1.0, or LobeHub Icons, MIT). Without a glyph the logo is a monogram
+/// of [label].
 @immutable
 class ProviderLogoSpec {
   const ProviderLogoSpec(this.id, this.label);
@@ -20,10 +27,12 @@ class ProviderLogoSpec {
   /// Provider name, used as the accessibility label.
   final String label;
 
-  /// SVG path data (24x24 viewBox) or null for a monogram.
-  String? get glyph => providerLogoGlyphPaths[id];
+  bool get hasGlyph =>
+      providerLogoGlyphPaths.containsKey(id) ||
+      providerLogoLobeGlyphPaths.containsKey(id);
 
-  bool get hasGlyph => glyph != null;
+  /// The glyph in a 24x24 box, or null for a monogram.
+  ui.Path? get glyphPath => hasGlyph ? _glyphPath(id) : null;
 
   String get monogram {
     final match = RegExp(r'[A-Za-z0-9]').firstMatch(label);
@@ -222,7 +231,7 @@ class ProviderLogo extends StatelessWidget {
     final colors = Theme.of(context).hermes;
     final tint = color ?? (selected ? colors.accent : colors.textSecondary);
     final s = spec;
-    final glyph = s.glyph;
+    final glyph = s.glyphPath;
     return Semantics(
       label: s.label,
       image: true,
@@ -231,10 +240,7 @@ class ProviderLogo extends StatelessWidget {
         dimension: size,
         child: glyph != null
             ? CustomPaint(
-                painter: ProviderGlyphPainter(
-                  path: _glyphPath(s.id, glyph),
-                  color: tint,
-                ),
+                painter: ProviderGlyphPainter(path: glyph, color: tint),
               )
             : Container(
                 key: const ValueKey('provider-logo-monogram'),
@@ -262,8 +268,17 @@ class ProviderLogo extends StatelessWidget {
 
 final Map<String, ui.Path> _glyphCache = {};
 
-ui.Path _glyphPath(String id, String data) =>
-    _glyphCache.putIfAbsent(id, () => parseSvgPathData(data));
+/// Simple Icons glyphs are one path. LobeHub glyphs may have several
+/// `<path>`s, unioned so each one paints. Their sources declare the even-odd
+/// rule, but every shipped glyph fills identically under non-zero, which a
+/// test checks for each glyph.
+ui.Path _glyphPath(String id) => _glyphCache.putIfAbsent(id, () {
+  final simple = providerLogoGlyphPaths[id];
+  if (simple != null) return parseSvgPathData(simple);
+  return providerLogoLobeGlyphPaths[id]!
+      .map(parseSvgPathData)
+      .reduce((a, b) => ui.Path.combine(ui.PathOperation.union, a, b));
+});
 
 /// Paints a 24x24 glyph path scaled to its box in a single [color].
 class ProviderGlyphPainter extends CustomPainter {

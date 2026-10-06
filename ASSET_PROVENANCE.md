@@ -115,10 +115,34 @@ connector glyphs), so nothing is taken from it.
 | Perplexity | `perplexity` | CC0-1.0 |
 | Vercel | `vercel` | CC0-1.0 |
 
-Providers without a permissively licensed mark in Simple Icons (OpenAI,
-DeepSeek, xAI, Nous Research, Moonshot AI, Z.ai, Microsoft, LM Studio,
-llama.cpp, and any unknown or custom endpoint) are shown as a project-drawn
-monogram: the first letter of the provider name in a rounded square.
+Marks missing from Simple Icons come from
+[LobeHub Icons](https://github.com/lobehub/lobe-icons), npm
+`@lobehub/icons-static-svg@1.95.1` (tag `@lobehub/icons-static-svg@1.95.1`,
+commit `49a2130df7bfa5eb1b088261bff20a37e2967789`), released under the MIT License, Copyright (c) 2023 LobeHub
+([licence at that commit](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/LICENSE);
+full notice in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), text in
+[`LICENSES/MIT.txt`](LICENSES/MIT.txt)). Only the monochrome `icons/<file>.svg`
+variants are used, never the `-color` ones: the `d` attribute of each `<path>`
+is copied unchanged into `lib/core/widgets/provider_logo_glyphs_lobehub.dart`
+and filled in the app's theme colour (a test checks each glyph fills the same
+as under the source's even-odd rule). For
+LM Studio the translucent underlay path is omitted so the mark stays
+single-tone.
+
+| Provider | LobeHub Icons file | License | Copyright |
+|---|---|---|---|
+| OpenAI | [`icons/openai.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/openai.svg) | MIT | Copyright (c) 2023 LobeHub |
+| DeepSeek | [`icons/deepseek.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/deepseek.svg) | MIT | Copyright (c) 2023 LobeHub |
+| xAI | [`icons/xai.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/xai.svg) | MIT | Copyright (c) 2023 LobeHub |
+| Nous Research | [`icons/nousresearch.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/nousresearch.svg) | MIT | Copyright (c) 2023 LobeHub |
+| Moonshot AI | [`icons/moonshot.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/moonshot.svg) | MIT | Copyright (c) 2023 LobeHub |
+| Z.ai | [`icons/zai.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/zai.svg) | MIT | Copyright (c) 2023 LobeHub |
+| Microsoft | [`icons/microsoft.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/microsoft.svg) | MIT | Copyright (c) 2023 LobeHub |
+| LM Studio | [`icons/lmstudio.svg`](https://github.com/lobehub/lobe-icons/blob/49a2130df7bfa5eb1b088261bff20a37e2967789/packages/static-svg/icons/lmstudio.svg) | MIT | Copyright (c) 2023 LobeHub |
+
+llama.cpp has no permissively licensed mark in either set, so it, like any
+unknown or custom endpoint, is shown as a project-drawn monogram: the first
+letter of the provider name in a rounded square.
 
 The names and marks remain trademarks of their respective owners. They are
 used only to identify which company makes or serves a model; their use implies

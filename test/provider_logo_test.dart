@@ -25,6 +25,46 @@ Future<void> _pumpLogo(
 Color _paintedColor(WidgetTester tester) =>
     providerLogoTint(tester, find.byType(ProviderLogo));
 
+/// Every brand id that must paint a real glyph, from either source.
+const _glyphBrands = [
+  // Simple Icons 16.1.0 (CC0-1.0).
+  'anthropic',
+  'gemini',
+  'google',
+  'meta',
+  'mistral',
+  'nvidia',
+  'ollama',
+  'huggingface',
+  'cloudflare',
+  'openrouter',
+  'perplexity',
+  'alibaba',
+  'minimax',
+  'githubcopilot',
+  'vercel',
+  // LobeHub Icons 1.95.1 (MIT).
+  'openai',
+  'deepseek',
+  'xai',
+  'nous',
+  'moonshot',
+  'zai',
+  'microsoft',
+  'lmstudio',
+];
+
+ProviderGlyphPainter _glyphPainter(WidgetTester tester) => tester
+    .widgetList<CustomPaint>(
+      find.descendant(
+        of: find.byType(ProviderLogo),
+        matching: find.byType(CustomPaint),
+      ),
+    )
+    .map((p) => p.painter)
+    .whereType<ProviderGlyphPainter>()
+    .single;
+
 void main() {
   group('resolveProviderLogo mapping', () {
     // (provider slug, provider name, model) -> brand id
@@ -120,41 +160,23 @@ void main() {
     test(
       'brands with a permissive glyph carry one; the rest use monograms',
       () {
-        for (final id in const [
-          'anthropic',
-          'gemini',
-          'google',
-          'meta',
-          'mistral',
-          'nvidia',
-          'ollama',
-          'huggingface',
-          'cloudflare',
-          'openrouter',
-          'perplexity',
-          'alibaba',
-          'minimax',
-          'githubcopilot',
-          'vercel',
-        ]) {
+        for (final id in _glyphBrands) {
           expect(providerLogoSpecFor(id)!.hasGlyph, isTrue, reason: id);
         }
-        for (final id in const [
-          'openai',
-          'deepseek',
-          'xai',
-          'nous',
-          'moonshot',
-          'zai',
-          'lmstudio',
-          'llamacpp',
-        ]) {
+        // No permissively licensed mark exists for llama.cpp.
+        for (final id in const ['llamacpp']) {
           final spec = providerLogoSpecFor(id)!;
           expect(spec.hasGlyph, isFalse, reason: id);
           expect(spec.monogram, spec.label.characters.first.toUpperCase());
         }
       },
     );
+
+    test('Microsoft models and Azure resolve to the Microsoft mark', () {
+      expect(resolveProviderLogo(model: 'phi-4').id, 'microsoft');
+      expect(resolveProviderLogo(provider: 'azure').id, 'microsoft');
+      expect(resolveProviderLogo(model: 'phi-4').hasGlyph, isTrue);
+    });
   });
 
   group('ProviderLogo rendering', () {
@@ -199,7 +221,8 @@ void main() {
     }
 
     for (final (what, logo) in [
-      ('glyph', const ProviderLogo(provider: 'anthropic', size: 48)),
+      for (final id in _glyphBrands)
+        ('$id glyph', ProviderLogo(provider: id, size: 48)),
       ('monogram', const ProviderLogo(providerName: 'Zeta box', size: 48)),
     ]) {
       testWidgets('every painted pixel of the $what is the theme tint', (
@@ -244,21 +267,22 @@ void main() {
           }
         }
         expect(inked, greaterThan(100), reason: 'the $what painted nothing');
+        if (what != 'monogram') {
+          expect(
+            tester
+                .widget<ProviderLogo>(find.byType(ProviderLogo))
+                .spec
+                .hasGlyph,
+            isTrue,
+            reason: '$what fell back to a monogram',
+          );
+        }
       });
     }
 
     testWidgets('glyph paints real path data with the tint', (tester) async {
       await _pumpLogo(tester, const ProviderLogo(provider: 'openrouter'));
-      final painter = tester
-          .widgetList<CustomPaint>(
-            find.descendant(
-              of: find.byType(ProviderLogo),
-              matching: find.byType(CustomPaint),
-            ),
-          )
-          .map((p) => p.painter)
-          .whereType<ProviderGlyphPainter>()
-          .single;
+      final painter = _glyphPainter(tester);
       final bounds = painter.path.getBounds();
       expect(bounds.width, greaterThan(10));
       expect(bounds.height, greaterThan(10));
@@ -266,12 +290,60 @@ void main() {
       expect(bounds.bottom, lessThanOrEqualTo(24.01));
     });
 
+    testWidgets('glyphs keep their holes (OpenAI centre)', (tester) async {
+      await _pumpLogo(tester, const ProviderLogo(provider: 'openai'));
+      final path = _glyphPainter(tester).path;
+      // The hexagon in the middle of the OpenAI knot is a hole; the knot
+      // band around it is ink.
+      expect(path.contains(const Offset(12, 12)), isFalse);
+      expect(path.contains(const Offset(12, 15.6)), isTrue);
+    });
+
+    test(
+      'LobeHub glyphs fill the same as under their even-odd source rule',
+      () {
+        // The app fills with non-zero; a glyph whose holes depend on the
+        // even-odd rule would paint wrong, so every point must agree.
+        for (final MapEntry(key: id, value: parts)
+            in providerLogoLobeGlyphPaths.entries) {
+          for (final d in parts) {
+            final nonZero = parseSvgPathData(d);
+            final evenOdd = parseSvgPathData(d)
+              ..fillType = ui.PathFillType.evenOdd;
+            for (var y = 0.05; y < 24; y += 0.1) {
+              for (var x = 0.05; x < 24; x += 0.1) {
+                final p = Offset(x, y);
+                if (nonZero.contains(p) != evenOdd.contains(p)) {
+                  fail('$id differs at $p between fill rules');
+                }
+              }
+            }
+          }
+        }
+      },
+    );
+
     test('arc flags packed with a fractional number parse as flags', () {
       // "00.5.5" is large-arc 0, sweep 0, then the point (.5, .5).
       final packed = parseSvgPathData('M0 0a1 1 0 00.5.5l1 1').getBounds();
       final spaced = parseSvgPathData('M0 0a1 1 0 0 0 .5 .5l1 1').getBounds();
       expect(packed, spaced);
       expect(packed.bottomRight, const Offset(1.5, 1.5));
+    });
+
+    testWidgets('multi-path glyphs paint every source path', (tester) async {
+      // Microsoft: four separate squares, one <path> each.
+      await _pumpLogo(tester, const ProviderLogo(provider: 'microsoft'));
+      final path = _glyphPainter(tester).path;
+      for (final p in const [
+        Offset(6, 6),
+        Offset(18, 6),
+        Offset(6, 18),
+        Offset(18, 18),
+      ]) {
+        expect(path.contains(p), isTrue, reason: '$p');
+      }
+      expect(path.contains(const Offset(12, 12)), isFalse);
     });
 
     testWidgets('semantics label is the provider name', (tester) async {
@@ -292,6 +364,21 @@ void main() {
       expect(source, isNot(contains('fill=')));
     });
 
+    test('glyph data files hold no colours or fills', () {
+      for (final f in const [
+        'lib/core/widgets/provider_logo_glyphs.dart',
+        'lib/core/widgets/provider_logo_glyphs_lobehub.dart',
+      ]) {
+        final source = File(f).readAsStringSync();
+        expect(
+          source,
+          isNot(matches(RegExp(r'Color\(|Colors\.|#[0-9a-fA-F]{6}'))),
+          reason: f,
+        );
+        expect(source, isNot(matches(RegExp(r'fill[-=]|opacity'))), reason: f);
+      }
+    });
+
     test('every glyph is credited in the third-party notice', () {
       final notice = File('ASSET_PROVENANCE.md');
       expect(notice.existsSync(), isTrue);
@@ -305,6 +392,42 @@ void main() {
           reason: '$id glyph source missing from ASSET_PROVENANCE.md',
         );
       }
+    });
+
+    test('every LobeHub glyph is credited with its MIT notice', () {
+      final provenance = File('ASSET_PROVENANCE.md').readAsStringSync();
+      final notices = File('THIRD_PARTY_NOTICES.md').readAsStringSync();
+      final reuse = File('REUSE.toml').readAsStringSync();
+      expect(providerLogoLobeGlyphSources, isNotEmpty);
+      // Every painted LobeHub glyph has a source entry, and vice versa.
+      expect(
+        providerLogoLobeGlyphSources.keys.toSet(),
+        providerLogoLobeGlyphPaths.keys.toSet(),
+      );
+      expect(provenance, contains('@lobehub/icons-static-svg@1.95.1'));
+      expect(provenance, contains(lobeHubIconsCommit));
+      expect(notices, contains('Copyright (c) 2023 LobeHub'));
+      expect(notices, contains('Permission is hereby granted, free of charge'));
+      expect(
+        reuse,
+        contains('path = "lib/core/widgets/provider_logo_glyphs_lobehub.dart"'),
+      );
+      for (final MapEntry(key: id, value: file)
+          in providerLogoLobeGlyphSources.entries) {
+        expect(
+          provenance,
+          contains('`icons/$file.svg`'),
+          reason: '$id glyph source missing from ASSET_PROVENANCE.md',
+        );
+        expect(providerLogoSpecFor(id)?.hasGlyph, isTrue, reason: id);
+      }
+      // Each glyph has exactly one source.
+      expect(
+        providerLogoLobeGlyphSources.keys.toSet().intersection(
+          providerLogoGlyphSources.keys.toSet(),
+        ),
+        isEmpty,
+      );
     });
   });
 }

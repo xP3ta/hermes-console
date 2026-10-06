@@ -100,3 +100,12 @@ path = "lib/core/widgets/provider_logo_glyphs.dart"
 precedence = "override"
 SPDX-FileCopyrightText = "Simple Icons contributors"
 SPDX-License-Identifier = "CC0-1.0"
+
+# Provider-logo path data copied from LobeHub Icons
+# (@lobehub/icons-static-svg@1.95.1, MIT); see ASSET_PROVENANCE.md and
+# THIRD_PARTY_NOTICES.md. Brand marks remain their owners'.
+[[annotations]]
+path = "lib/core/widgets/provider_logo_glyphs_lobehub.dart"
+precedence = "override"
+SPDX-FileCopyrightText = "Copyright (c) 2023 LobeHub"
+SPDX-License-Identifier = "MIT"
