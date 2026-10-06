@@ -49,6 +49,8 @@ import 'core/services/android_launch_action_inbox.dart';
 import 'core/services/android_share_inbox.dart';
 import 'core/services/app_lock.dart';
 import 'core/services/clipboard_image_source.dart';
+import 'core/services/generated_media_service.dart';
+import 'core/services/media_prefetcher.dart';
 import 'core/services/approval_policy.dart';
 import 'core/services/bridge_manager.dart';
 import 'core/services/chat_draft_store.dart';
@@ -316,6 +318,10 @@ Future<Widget> bootstrapHermesApp() async {
   final appLock = AppLockService(prefs);
   // Clipboard images are never probed or read while the app is locked.
   ClipboardImageSource.appLocked = appLock.locked;
+  // Media prefetch never fetches or decodes while the app is locked; the
+  // cache root is resolved now so reopened chats read media synchronously.
+  MediaPrefetcher.appLocked = appLock.locked;
+  unawaited(GeneratedMediaService.warmCacheRoot());
   final approvalPolicy = ApprovalPolicyService(prefs);
   final fontSize = FontSizeService(prefs);
   final bridgeManager = BridgeManager(SecureStorage(), connManager);

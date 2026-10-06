@@ -392,6 +392,13 @@ class GeneratedMediaService {
     }
   }
 
+  /// Drops slots held by loads a previous widget test abandoned.
+  @visibleForTesting
+  static void resetAutoLoadsForTesting() {
+    _activeAutoLoads = 0;
+    _autoLoadWaiters.clear();
+  }
+
   static void _releaseAutoLoadSlot() {
     _activeAutoLoads--;
     if (_autoLoadWaiters.isEmpty) return;

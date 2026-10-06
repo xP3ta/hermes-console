@@ -205,4 +205,10 @@ class MediaPrefetcher {
 
   @visibleForTesting
   void resetForTesting() => clear();
+
+  @visibleForTesting
+  Iterable<String> get trackedKeysForTesting => {
+    ..._inFlight.keys,
+    ..._ready.keys,
+  };
 }

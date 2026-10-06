@@ -116,6 +116,7 @@ import '../services/drawer_gesture_exclusion.dart';
 import '../services/turn_outbox_store.dart';
 import '../services/generated_image_service.dart';
 import '../services/generated_media_service.dart';
+import '../services/media_prefetcher.dart';
 import '../services/generated_artifact_registry.dart';
 import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
@@ -1335,6 +1336,11 @@ class ChatScreen extends StatefulWidget {
   final Future<void> Function(String path, File destination)?
   userServerMediaFetcher;
 
+  /// Replaces the Dashboard fetch of `MEDIA:` server paths in widget tests.
+  @visibleForTesting
+  final Future<void> Function(String path, File destination)?
+  generatedMediaFetcher;
+
   /// Replaces the HTTP fallbacks of the model picker (Mobile Bridge,
   /// Dashboard, gateway model list) in widget tests.
   @visibleForTesting
@@ -1362,6 +1368,7 @@ class ChatScreen extends StatefulWidget {
     this.sendAttemptObserver,
     this.draftStoreOverride,
     this.userServerMediaFetcher,
+    this.generatedMediaFetcher,
     this.modelPickerFallbacks,
     super.key,
   });
@@ -5304,9 +5311,45 @@ class _ChatScreenState extends State<ChatScreen>
     GeneratedMediaReference reference, {
     GeneratedMediaProgress? onProgress,
     bool Function()? isCancelled,
+  }) => _generatedMediaDownloader(_effectiveSessionProfile)(
+    reference,
+    onProgress: onProgress,
+    isCancelled: isCancelled,
+  );
+
+  /// The download bound to one connection and profile, so a background
+  /// prefetch keeps fetching into the scope its key was computed for even
+  /// after this screen closed or the profile changed.
+  Future<File> Function(
+    GeneratedMediaReference reference, {
+    GeneratedMediaProgress? onProgress,
+    bool Function()? isCancelled,
+  })
+  _generatedMediaDownloader(String profile) {
+    final connection = widget.connection;
+    final testFetcher = widget.generatedMediaFetcher;
+    final cacheScope = '${connection.id}\u0000$profile';
+    return (reference, {onProgress, isCancelled}) =>
+        _downloadGeneratedMediaInto(
+          connection,
+          profile,
+          cacheScope,
+          testFetcher,
+          reference,
+          onProgress: onProgress,
+          isCancelled: isCancelled,
+        );
+  }
+
+  static Future<File> _downloadGeneratedMediaInto(
+    SavedConnection connection,
+    String profile,
+    String cacheScope,
+    Future<void> Function(String path, File destination)? testFetcher,
+    GeneratedMediaReference reference, {
+    GeneratedMediaProgress? onProgress,
+    bool Function()? isCancelled,
   }) {
-    final profile = _effectiveSessionProfile;
-    final cacheScope = generatedMediaCacheScope;
     final maxBytes = switch (reference.kind) {
       GeneratedMediaKind.image => GeneratedMediaService.maxImageBytes,
       GeneratedMediaKind.video => GeneratedMediaService.maxVideoBytes,
@@ -5318,7 +5361,8 @@ class _ChatScreenState extends State<ChatScreen>
       reference,
       fetchServerPathToFileWithProgress:
           (path, destination, reportProgress, downloadCancelled) async {
-            final client = DashboardClient.lazy(widget.connection);
+            if (testFetcher != null) return testFetcher(path, destination);
+            final client = DashboardClient.lazy(connection);
             try {
               await client.apiDownloadToFile(
                 'files/download?path=${Uri.encodeQueryComponent(path)}',
@@ -5336,6 +5380,62 @@ class _ChatScreenState extends State<ChatScreen>
       onProgress: onProgress,
       isCancelled: isCancelled,
     );
+  }
+
+  /// `MEDIA:` keys already handed to the prefetcher by this screen.
+  final Set<String> _prefetchedMediaKeys = <String>{};
+
+  /// Most media one event may queue, newest first: a long transcript page
+  /// must not turn into dozens of background downloads.
+  static const int _maxMediaPrefetchPerEvent = 12;
+
+  /// Starts fetching the media of rows that just arrived (a finished reply)
+  /// or just loaded (a transcript page) before their rows are built, so the
+  /// rows paint from the private cache at their final size. Images and PDFs
+  /// always; videos only when they arrive live, never for a whole page.
+  void _prefetchArrivedMedia(ActiveChatEvent event) {
+    final page =
+        event == ActiveChatEvent.messagesHydrated ||
+        event == ActiveChatEvent.earlierMessagesLoaded;
+    if (!page && event != ActiveChatEvent.done) return;
+    final rows = _chat.messages;
+    final oldest = page ? 0 : math.max(0, rows.length - 4);
+    final profile = _effectiveSessionProfile;
+    final scope = '${widget.connection.id}\u0000$profile';
+    final download = _generatedMediaDownloader(profile);
+    var queued = 0;
+    for (var i = rows.length - 1; i >= oldest; i--) {
+      final content = rows[i]['content'];
+      if (content is! String ||
+          (!content.contains('MEDIA:') && !content.contains('::preview'))) {
+        continue;
+      }
+      for (final segment in GeneratedMediaService.parseSegments(
+        content,
+      ).whereType<GeneratedMediaFileSegment>()) {
+        final reference = segment.reference;
+        final eligible = switch (reference.kind) {
+          GeneratedMediaKind.image => true,
+          GeneratedMediaKind.video => !page,
+          GeneratedMediaKind.audio => false,
+          GeneratedMediaKind.file =>
+            !reference.htmlPreview &&
+                (reference.mimeType == 'application/pdf' ||
+                    reference.displayName.toLowerCase().endsWith('.pdf')),
+        };
+        if (!eligible) continue;
+        final key = GeneratedMediaService.readyKey(scope, reference);
+        if (!_prefetchedMediaKeys.add(key)) continue;
+        if (MediaPrefetcher.instance.prefetch(
+          key: key,
+          reference: reference,
+          load: () => download(reference),
+        )) {
+          queued++;
+        }
+        if (queued >= _maxMediaPrefetchPerEvent) return;
+      }
+    }
   }
 
   Future<(ModelActiveInfo, List<ModelProvider>)> _loadModelOptions() async {
@@ -6920,6 +7020,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _onChatEvent(ActiveChatEvent event) {
     if (_disposed || !mounted) return;
+    _prefetchArrivedMedia(event);
     _syncComposerCompletionScope();
     if (event == ActiveChatEvent.subagentActivity &&
         !_subagentLeadingEdgeUsed &&
