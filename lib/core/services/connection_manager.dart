@@ -106,8 +106,6 @@ class ConnectionManager {
 
   final SharedPreferences prefs;
   final SecureStorage _secure;
-  final BridgeClientFactory _bridgeClientFactory;
-  final BridgeProvisioner _bridgeProvisioner;
   final DashboardClientFactory _dashboardClientFactory;
   final ClearCancelledTurnsForConnection? _clearCancelledTurns;
   // In-memory cache populated by [_loadApiKeys]. Keeps getConnections() sync.
@@ -160,16 +158,9 @@ class ConnectionManager {
   ConnectionManager._(
     this.prefs,
     this._secure, {
-    BridgeClientFactory? bridgeClientFactory,
-    BridgeProvisioner? bridgeProvisioner,
     DashboardClientFactory? dashboardClientFactory,
     ClearCancelledTurnsForConnection? clearCancelledTurns,
-  }) : _bridgeClientFactory =
-           bridgeClientFactory ??
-           (({required baseUrl, required token}) =>
-               BridgeClient(baseUrl: baseUrl, token: token)),
-       _bridgeProvisioner = bridgeProvisioner ?? BridgeClient.provision,
-       _dashboardClientFactory = dashboardClientFactory ?? DashboardClient.lazy,
+  }) : _dashboardClientFactory = dashboardClientFactory ?? DashboardClient.lazy,
        _clearCancelledTurns = clearCancelledTurns;
 
   static String _activeProfileKey(String connId) => 'active_profile_$connId';
@@ -294,140 +285,23 @@ class ConnectionManager {
     activeProfile.value = normalized.isEmpty ? null : normalized;
   }
 
-  /// Detiene una tarea programada usando primero el Mobile Bridge (comando
-  /// oficial de Hermes) y conservando el Dashboard como fallback para
-  /// servidores antiguos. Nunca rota ni reconfigura credenciales.
+  /// Deletes the cron job linked to a session through the Dashboard
+  /// (`DELETE /api/cron/jobs/{id}?profile=`), the same route Desktop uses
+  /// (`apps/desktop/src/api/cron.ts`). The Mobile Bridge is no longer
+  /// consulted. Never rotates or reconfigures credentials.
   Future<void> deleteLinkedCronJob(
     SavedConnection connection,
     String jobId, {
     String? profile,
   }) async {
-    // Debe ocurrir antes de leer secretos, provisionar o construir clientes.
+    // Validate before building any client.
     final id = validateCronJobId(jobId);
     final scopedProfile = validateCronProfile(profile);
-    Future<void> deleteWithDashboard() async {
-      final dashboard = _dashboardClientFactory(connection);
-      try {
-        await dashboard.deleteCronJob(id, profile: scopedProfile);
-      } finally {
-        dashboard.close();
-      }
-    }
-
-    Object? bridgeError;
-    Object? dashboardFirstError;
-    BridgeClient? bridge;
-    var bridgeUrl = connection.derivedBridgeUrl;
-    String? bridgeToken;
+    final dashboard = _dashboardClientFactory(connection);
     try {
-      final storedBridgeUrl = await _secure.readBridge(connection.id, 'url');
-      if (storedBridgeUrl != null && storedBridgeUrl.trim().isNotEmpty) {
-        bridgeUrl = storedBridgeUrl.trim();
-      }
-      bridgeToken = await _secure.readBridge(connection.id, 'token');
-    } catch (error) {
-      bridgeError = error;
-    }
-
-    final hadStoredBridgeToken = bridgeToken?.isNotEmpty == true;
-    if (!hadStoredBridgeToken) {
-      // Sin una instalación Bridge ya autenticada, el Dashboard es la ruta
-      // normal y disponible en todas las instancias. Probarlo primero evita
-      // esperar el timeout de provisión contra hosts (p. ej. workers.dev) que
-      // nunca pueden publicar el puerto 9131.
-      try {
-        await deleteWithDashboard();
-        return;
-      } on ArgumentError {
-        rethrow;
-      } on CronDeleteRejectedException {
-        rethrow;
-      } catch (error) {
-        dashboardFirstError = error;
-      }
-
-      if (connection.apiKey.trim().isNotEmpty) {
-        try {
-          bridgeToken = await _bridgeProvisioner(
-            bridgeUrl,
-            connection.apiKey.trim(),
-          );
-          if (bridgeToken != null && bridgeToken.isNotEmpty) {
-            await _secure.writeBridge(connection.id, 'token', bridgeToken);
-          }
-        } on ArgumentError {
-          rethrow;
-        } catch (error) {
-          bridgeError = error;
-        }
-      }
-    }
-
-    try {
-      if (bridgeToken != null && bridgeToken.isNotEmpty) {
-        bridge = _bridgeClientFactory(baseUrl: bridgeUrl, token: bridgeToken);
-        final capabilities = await bridge.detect();
-        if (capabilities.cronDelete) {
-          await bridge.deleteCronJob(id, profile: scopedProfile);
-          return;
-        }
-      }
-    } on ArgumentError {
-      rethrow;
-    } on BridgeException catch (error) {
-      bridgeError = error;
-      // Un token GUARDADO puede haber cambiado tras reinstalar el servicio.
-      // Si acabamos de provisionarlo en esta misma llamada no lo repetimos.
-      if (hadStoredBridgeToken &&
-          error.kind == BridgeErrorKind.auth &&
-          connection.apiKey.trim().isNotEmpty) {
-        try {
-          bridge?.close();
-          bridge = null;
-          final freshToken = await _bridgeProvisioner(
-            bridgeUrl,
-            connection.apiKey.trim(),
-          );
-          if (freshToken != null && freshToken.isNotEmpty) {
-            await _secure.writeBridge(connection.id, 'token', freshToken);
-            bridge = _bridgeClientFactory(
-              baseUrl: bridgeUrl,
-              token: freshToken,
-            );
-            final capabilities = await bridge.detect();
-            if (capabilities.cronDelete) {
-              await bridge.deleteCronJob(id, profile: scopedProfile);
-              return;
-            }
-          }
-        } on ArgumentError {
-          rethrow;
-        } catch (retryError) {
-          bridgeError = retryError;
-        }
-      }
-    } catch (error) {
-      bridgeError = error;
+      await dashboard.deleteCronJob(id, profile: scopedProfile);
     } finally {
-      bridge?.close();
-    }
-
-    if (dashboardFirstError != null) {
-      if (bridgeError == null) throw dashboardFirstError;
-      throw Exception(
-        'Dashboard: $dashboardFirstError; Mobile Bridge: $bridgeError',
-      );
-    }
-
-    try {
-      await deleteWithDashboard();
-    } on CronDeleteRejectedException {
-      rethrow;
-    } catch (dashboardError) {
-      if (bridgeError == null) rethrow;
-      throw Exception(
-        'Mobile Bridge: $bridgeError; Dashboard: $dashboardError',
-      );
+      dashboard.close();
     }
   }
 
@@ -484,16 +358,12 @@ class ConnectionManager {
   /// still present in SharedPreferences into Android Keystore.
   static Future<ConnectionManager> create(
     SharedPreferences prefs, {
-    BridgeClientFactory? bridgeClientFactory,
-    BridgeProvisioner? bridgeProvisioner,
     DashboardClientFactory? dashboardClientFactory,
     ClearCancelledTurnsForConnection? clearCancelledTurns,
   }) async {
     final manager = ConnectionManager._(
       prefs,
       SecureStorage(),
-      bridgeClientFactory: bridgeClientFactory,
-      bridgeProvisioner: bridgeProvisioner,
       dashboardClientFactory: dashboardClientFactory,
       clearCancelledTurns: clearCancelledTurns,
     );

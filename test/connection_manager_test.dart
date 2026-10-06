@@ -10,7 +10,6 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hermes_android/core/models/core_read.dart';
-import 'package:hermes_android/core/services/bridge_client.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/session_repository.dart';
 import 'package:hermes_android/core/utils/byte_bounded_lru_cache.dart';
@@ -2156,8 +2155,6 @@ void main() {
 
     Future<ConnectionManager> createManager({
       Map<String, String> secureValues = const {},
-      required BridgeClientFactory bridgeClientFactory,
-      required BridgeProvisioner bridgeProvisioner,
       required DashboardClientFactory dashboardClientFactory,
     }) async {
       SharedPreferences.setMockInitialValues({});
@@ -2165,192 +2162,27 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       return ConnectionManager.create(
         prefs,
-        bridgeClientFactory: bridgeClientFactory,
-        bridgeProvisioner: bridgeProvisioner,
         dashboardClientFactory: dashboardClientFactory,
       );
     }
 
-    test('ID hostil no alcanza provisión, Bridge ni Dashboard', () async {
-      var bridgeClients = 0;
-      var provisions = 0;
-      var dashboards = 0;
-      final manager = await createManager(
-        bridgeClientFactory: ({required baseUrl, required token}) {
-          bridgeClients++;
-          return BridgeClient(baseUrl: baseUrl, token: token);
-        },
-        bridgeProvisioner: (baseUrl, gatewayKey) async {
-          provisions++;
-          return 'unexpected';
-        },
-        dashboardClientFactory: (connection) {
-          dashboards++;
-          return DashboardClient.lazy(connection);
-        },
-      );
-
-      await expectLater(
-        manager.deleteLinkedCronJob(connection, '../job'),
-        throwsArgumentError,
-      );
-
-      expect(bridgeClients, 0);
-      expect(provisions, 0);
-      expect(dashboards, 0);
-    });
-
-    test('sin token usa Dashboard sin intentar provisionar Bridge', () async {
-      var bridgeClients = 0;
-      var provisions = 0;
-      var dashboardCalls = 0;
-      final manager = await createManager(
-        bridgeClientFactory: ({required baseUrl, required token}) {
-          bridgeClients++;
-          return BridgeClient(baseUrl: baseUrl, token: token);
-        },
-        bridgeProvisioner: (baseUrl, gatewayKey) async {
-          provisions++;
-          return 'unexpected-token';
-        },
-        dashboardClientFactory: (connection) => DashboardClient(
-          host: 'hermes.local',
-          port: 9119,
-          manualToken: 'dashboard-token',
-          httpClientOverride: MockClient((request) async {
-            dashboardCalls++;
-            return http.Response('', 204);
-          }),
-        ),
-      );
-
-      await manager.deleteLinkedCronJob(connection, 'job-dashboard');
-
-      expect(dashboardCalls, 1);
-      expect(provisions, 0);
-      expect(bridgeClients, 0);
-    });
-
-    test(
-      'deleted=false del Dashboard no intenta provisionar ni fingir éxito',
-      () async {
-        var bridgeClients = 0;
-        var provisions = 0;
-        final manager = await createManager(
-          bridgeClientFactory: ({required baseUrl, required token}) {
-            bridgeClients++;
-            return BridgeClient(baseUrl: baseUrl, token: token);
-          },
-          bridgeProvisioner: (baseUrl, gatewayKey) async {
-            provisions++;
-            return 'unexpected-token';
-          },
-          dashboardClientFactory: (connection) => DashboardClient(
-            host: 'hermes.local',
-            port: 9119,
-            manualToken: 'dashboard-token',
-            httpClientOverride: MockClient(
-              (_) async => http.Response(jsonEncode({'deleted': false}), 200),
-            ),
-          ),
-        );
-
-        await expectLater(
-          manager.deleteLinkedCronJob(connection, 'demo-daily-summary'),
-          throwsA(isA<CronDeleteRejectedException>()),
-        );
-
-        expect(provisions, 0);
-        expect(bridgeClients, 0);
-      },
+    DashboardClient dashboardWith(MockClient http) => DashboardClient(
+      host: 'hermes.local',
+      port: 9119,
+      manualToken: 'dashboard-token',
+      httpClientOverride: http,
     );
 
     test(
-      'sin token provisiona una sola vez solo después de fallar Dashboard',
+      'a stored bridge token still deletes through the Dashboard with '
+      '?profile=',
       () async {
-        final order = <String>[];
-        final manager = await createManager(
-          bridgeClientFactory: ({required baseUrl, required token}) =>
-              BridgeClient(
-                baseUrl: baseUrl,
-                token: token,
-                httpClient: MockClient((request) async {
-                  if (request.url.path == '/bridge/health') {
-                    return http.Response(jsonEncode({'status': 'ok'}), 200);
-                  }
-                  if (request.url.path == '/bridge/capabilities') {
-                    return http.Response(
-                      jsonEncode({
-                        'operations': {'cron_delete': true},
-                      }),
-                      200,
-                    );
-                  }
-                  if (request.method == 'DELETE') {
-                    order.add('bridge_delete');
-                  }
-                  return http.Response(jsonEncode({'ok': true}), 200);
-                }),
-              ),
-          bridgeProvisioner: (baseUrl, gatewayKey) async {
-            order.add('provision');
-            return 'fresh-token';
-          },
-          dashboardClientFactory: (connection) => DashboardClient(
-            host: 'hermes.local',
-            port: 9119,
-            manualToken: 'dashboard-token',
-            httpClientOverride: MockClient((_) async {
-              order.add('dashboard');
-              throw const SocketException('dashboard offline');
-            }),
-          ),
-        );
-
-        await manager.deleteLinkedCronJob(connection, 'job-fallback');
-
-        expect(order, ['dashboard', 'provision', 'bridge_delete']);
-      },
-    );
-
-    test(
-      'cron_delete=false evita DELETE y reprovisión antes del fallback',
-      () async {
-        var bridgeDeletes = 0;
-        var provisions = 0;
-        final dashboardCalls = <Uri>[];
+        final dashboardCalls = <http.Request>[];
         final manager = await createManager(
           secureValues: {'bridge_token_cron-conn': 'stored-token'},
-          bridgeClientFactory: ({required baseUrl, required token}) =>
-              BridgeClient(
-                baseUrl: baseUrl,
-                token: token,
-                httpClient: MockClient((request) async {
-                  if (request.url.path == '/bridge/health') {
-                    return http.Response(jsonEncode({'status': 'ok'}), 200);
-                  }
-                  if (request.url.path == '/bridge/capabilities') {
-                    return http.Response(
-                      jsonEncode({
-                        'operations': {'cron_delete': false},
-                      }),
-                      200,
-                    );
-                  }
-                  if (request.method == 'DELETE') bridgeDeletes++;
-                  return http.Response(jsonEncode({'ok': true}), 200);
-                }),
-              ),
-          bridgeProvisioner: (baseUrl, gatewayKey) async {
-            provisions++;
-            return null;
-          },
-          dashboardClientFactory: (connection) => DashboardClient(
-            host: 'hermes.local',
-            port: 9119,
-            manualToken: 'dashboard-token',
-            httpClientOverride: MockClient((request) async {
-              dashboardCalls.add(request.url);
+          dashboardClientFactory: (connection) => dashboardWith(
+            MockClient((request) async {
+              dashboardCalls.add(request);
               return http.Response('', 204);
             }),
           ),
@@ -2362,60 +2194,76 @@ void main() {
           profile: 'work_bot',
         );
 
-        expect(bridgeDeletes, 0);
-        expect(provisions, 0);
-        expect(dashboardCalls, hasLength(1));
-        expect(dashboardCalls.single.queryParameters['profile'], 'work_bot');
+        final call = dashboardCalls.single;
+        expect(call.method, 'DELETE');
+        expect(call.url.path, '/api/cron/jobs/job-1');
+        expect(call.url.queryParameters, {'profile': 'work_bot'});
       },
     );
 
-    test(
-      'cron_delete=true propaga perfil al Bridge y no usa Dashboard',
-      () async {
-        final bridgeCalls = <http.Request>[];
-        var dashboards = 0;
-        final manager = await createManager(
-          secureValues: {'bridge_token_cron-conn': 'stored-token'},
-          bridgeClientFactory: ({required baseUrl, required token}) =>
-              BridgeClient(
-                baseUrl: baseUrl,
-                token: token,
-                httpClient: MockClient((request) async {
-                  bridgeCalls.add(request);
-                  if (request.url.path == '/bridge/health') {
-                    return http.Response(jsonEncode({'status': 'ok'}), 200);
-                  }
-                  if (request.url.path == '/bridge/capabilities') {
-                    return http.Response(
-                      jsonEncode({
-                        'operations': {'cron_delete': true},
-                      }),
-                      200,
-                    );
-                  }
-                  return http.Response(jsonEncode({'ok': true}), 200);
-                }),
-              ),
-          bridgeProvisioner: (baseUrl, gatewayKey) async => null,
-          dashboardClientFactory: (connection) {
-            dashboards++;
-            return DashboardClient.lazy(connection);
-          },
-        );
+    test('without a profile the Dashboard call has no profile query', () async {
+      final dashboardCalls = <http.Request>[];
+      final manager = await createManager(
+        dashboardClientFactory: (connection) => dashboardWith(
+          MockClient((request) async {
+            dashboardCalls.add(request);
+            return http.Response('', 204);
+          }),
+        ),
+      );
 
-        await manager.deleteLinkedCronJob(
-          connection,
-          'job-1',
-          profile: 'work_bot',
-        );
+      await manager.deleteLinkedCronJob(connection, 'job-dashboard');
 
-        final deletion = bridgeCalls.singleWhere(
-          (request) => request.method == 'DELETE',
-        );
-        expect(deletion.url.queryParameters, {'profile': 'work_bot'});
-        expect(dashboards, 0);
-      },
-    );
+      expect(dashboardCalls.single.url.path, '/api/cron/jobs/job-dashboard');
+      expect(dashboardCalls.single.url.queryParameters, isEmpty);
+    });
+
+    test('a Dashboard failure is reported as is', () async {
+      final manager = await createManager(
+        secureValues: {'bridge_token_cron-conn': 'stored-token'},
+        dashboardClientFactory: (connection) => dashboardWith(
+          MockClient(
+            (_) async => throw const SocketException('dashboard offline'),
+          ),
+        ),
+      );
+
+      await expectLater(
+        manager.deleteLinkedCronJob(connection, 'job-1'),
+        throwsA(isA<SocketException>()),
+      );
+    });
+
+    test('a hostile id never reaches the Dashboard', () async {
+      var dashboards = 0;
+      final manager = await createManager(
+        dashboardClientFactory: (connection) {
+          dashboards++;
+          return DashboardClient.lazy(connection);
+        },
+      );
+
+      await expectLater(
+        manager.deleteLinkedCronJob(connection, '../job'),
+        throwsArgumentError,
+      );
+      expect(dashboards, 0);
+    });
+
+    test('deleted=false from the Dashboard is not reported as success', () async {
+      final manager = await createManager(
+        dashboardClientFactory: (connection) => dashboardWith(
+          MockClient(
+            (_) async => http.Response(jsonEncode({'deleted': false}), 200),
+          ),
+        ),
+      );
+
+      await expectLater(
+        manager.deleteLinkedCronJob(connection, 'demo-daily-summary'),
+        throwsA(isA<CronDeleteRejectedException>()),
+      );
+    });
   });
 
   group('DashboardClient.applyUpdate', () {
