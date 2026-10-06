@@ -491,7 +491,7 @@ class _SetupProcessPreview extends StatelessWidget {
             style: TextStyle(
               fontSize: 11.5,
               height: 1.4,
-              color: colors.textDisabled,
+              color: colors.textTertiary,
             ),
           ),
         ],

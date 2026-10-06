@@ -1015,7 +1015,7 @@ class _TextArtifactViewState extends State<_TextArtifactView> {
     // Line-number gutter: fixed width from the digit count of the last line
     // (no extra pass over the text), muted and outside the selection, so
     // copying never picks the numbers up.
-    final gutterStyle = style.copyWith(color: colors.textDisabled);
+    final gutterStyle = style.copyWith(color: colors.textTertiary);
     final gutterWidth = _gutterWidth(context, gutterStyle, scaler);
     _builtWrap = wrap;
     _builtExtent = extent;

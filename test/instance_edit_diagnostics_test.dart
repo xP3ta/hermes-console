@@ -319,7 +319,7 @@ void main() {
     );
     expect(
       tester.widget<Text>(find.text('SKILLS (TOGGLE): NO')).style?.color,
-      colors.textDisabled,
+      colors.textTertiary,
     );
     expect(semanticsLabel('CHAT: SÍ'), findsOneWidget);
     expect(semanticsLabel('STREAMING: ?'), findsOneWidget);

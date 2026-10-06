@@ -362,7 +362,7 @@ class _SavedRulesState extends State<_SavedRules> {
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Text(
           Strings.of(context).permNoSaved,
-          style: TextStyle(fontSize: 12.5, color: colors.textDisabled),
+          style: TextStyle(fontSize: 12.5, color: colors.textTertiary),
         ),
       );
     }
@@ -450,7 +450,7 @@ class _ActivityList extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Text(
           Strings.of(context).permNoActivity,
-          style: TextStyle(fontSize: 12.5, color: colors.textDisabled),
+          style: TextStyle(fontSize: 12.5, color: colors.textTertiary),
         ),
       );
     }
@@ -488,7 +488,7 @@ class _ActivityList extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 relativeTime(e.ts),
-                style: TextStyle(fontSize: 10.5, color: colors.textDisabled),
+                style: TextStyle(fontSize: 10.5, color: colors.textTertiary),
               ),
             ],
           ),

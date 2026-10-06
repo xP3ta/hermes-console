@@ -615,7 +615,7 @@ class _NameEntryScreenState extends State<_NameEntryScreen> {
             const SizedBox(height: 8),
             Text(
               str.prfNameFormatHint,
-              style: TextStyle(fontSize: 12, color: colors.textDisabled),
+              style: TextStyle(fontSize: 12, color: colors.textTertiary),
             ),
             const SizedBox(height: 20),
             FilledButton(onPressed: _save, child: Text(str.prfSave)),

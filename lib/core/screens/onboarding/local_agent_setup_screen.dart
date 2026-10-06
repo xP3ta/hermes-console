@@ -413,7 +413,7 @@ class _LocalAgentSetupScreenState extends State<LocalAgentSetupScreen>
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 11.5,
-                        color: colors.textDisabled,
+                        color: colors.textTertiary,
                       ),
                     ),
                   ],
@@ -454,7 +454,7 @@ class _LocalAgentSetupScreenState extends State<LocalAgentSetupScreen>
                     str.lasAfterInstall,
                     style: TextStyle(
                       fontSize: 11.5,
-                      color: colors.textDisabled,
+                      color: colors.textTertiary,
                     ),
                   ),
                 ],

@@ -2756,7 +2756,7 @@ class _LocalAgentOfflineCard extends StatelessWidget {
                           s.homeLocalAgentOff,
                           style: TextStyle(
                             fontSize: 10.5,
-                            color: colors.textDisabled,
+                            color: colors.textTertiary,
                             letterSpacing: 0.3,
                           ),
                         ),

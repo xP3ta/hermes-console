@@ -130,7 +130,7 @@ class _BridgeConfigScreenState extends State<BridgeConfigScreen> {
           const SizedBox(height: 8),
           Text(
             Strings.of(context).bridgeTokenNote,
-            style: TextStyle(fontSize: 11, color: colors.textDisabled),
+            style: TextStyle(fontSize: 11, color: colors.textTertiary),
           ),
         ],
       ),

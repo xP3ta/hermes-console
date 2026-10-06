@@ -2197,7 +2197,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                   : s.roomAttachUnavailable,
               key: const ValueKey('room-attach-disabled-reason'),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11, color: colors.textDisabled),
+              style: TextStyle(fontSize: 11, color: colors.textTertiary),
             ),
           ),
       ],

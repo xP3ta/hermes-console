@@ -279,7 +279,7 @@ class _FileDiffBodyState extends State<FileDiffBody> {
     TextStyle styleOf(DiffLine line) => switch (line.kind) {
       DiffLineKind.add => base.copyWith(color: colors.success),
       DiffLineKind.remove => base.copyWith(color: colors.error),
-      DiffLineKind.hunk => base.copyWith(color: colors.textDisabled),
+      DiffLineKind.hunk => base.copyWith(color: colors.textTertiary),
       DiffLineKind.context => base,
     };
     Color? tintOf(DiffLine line) => switch (line.kind) {
@@ -415,7 +415,7 @@ Color? ansiPaletteColor(AnsiColorIndex? index, HermesThemeColors colors) {
   if (index == null) return null;
   final bright = index >= 8;
   return switch (index % 8) {
-    0 => bright ? colors.textDisabled : colors.textSecondary,
+    0 => bright ? colors.textTertiary : colors.textSecondary,
     1 => colors.error,
     2 => colors.success,
     3 => colors.warning,

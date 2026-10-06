@@ -621,7 +621,7 @@ class RoomPassesLine extends StatelessWidget {
     ),
     RoomTurnState.noReply => (
       label: s.roomStateNoReply,
-      fg: colors.textDisabled,
+      fg: colors.textTertiary,
       bg: colors.surfaceVariant,
     ),
   };

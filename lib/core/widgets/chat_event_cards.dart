@@ -667,7 +667,7 @@ class _ToolActivityGroupState extends State<ToolActivityGroup> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 11,
-                              color: colors.textDisabled,
+                              color: colors.textTertiary,
                             ),
                           ),
                   ),
@@ -676,7 +676,7 @@ class _ToolActivityGroupState extends State<ToolActivityGroup> {
                     s.cevStepCount(n),
                     style: TextStyle(
                       fontSize: 10.5,
-                      color: colors.textDisabled,
+                      color: colors.textTertiary,
                     ),
                   ),
                   if (hasApproval) ...[
@@ -1062,7 +1062,7 @@ class ChatApprovalCard extends StatelessWidget {
                 children: [
                   Text(
                     '${s.cevRemember}:',
-                    style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                    style: TextStyle(fontSize: 11, color: colors.textTertiary),
                   ),
                   if (allowed.contains('session'))
                     Tooltip(
@@ -1335,7 +1335,7 @@ class _ApprovalRequestCardState extends State<ApprovalRequestCard> {
               const SizedBox(height: 6),
               Text(
                 s.cevPatternKey(info.patternKey!),
-                style: TextStyle(fontSize: 10.5, color: colors.textDisabled),
+                style: TextStyle(fontSize: 10.5, color: colors.textTertiary),
               ),
             ],
             const SizedBox(height: 10),
@@ -1426,7 +1426,7 @@ class _ApprovalRequestCardState extends State<ApprovalRequestCard> {
       style: TextStyle(
         fontSize: 11,
         fontStyle: FontStyle.italic,
-        color: colors.textDisabled,
+        color: colors.textTertiary,
       ),
     );
   }
@@ -2535,7 +2535,7 @@ class _ThinkingTraceCardState extends State<ThinkingTraceCard> {
                 key: const ValueKey('thinking-trace-copy'),
                 onPressed: _copyTrace,
                 style: TextButton.styleFrom(
-                  foregroundColor: colors.textDisabled,
+                  foregroundColor: colors.textTertiary,
                   minimumSize: const Size(48, 48),
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   textStyle: const TextStyle(fontSize: 10.5),

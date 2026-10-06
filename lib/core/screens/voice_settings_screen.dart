@@ -3191,7 +3191,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
           decoration: InputDecoration(
             isDense: true,
             hintText: hint,
-            hintStyle: TextStyle(color: colors.textDisabled, fontSize: 13.5),
+            hintStyle: TextStyle(color: colors.textTertiary, fontSize: 13.5),
             filled: true,
             fillColor: colors.surfaceVariant.withValues(alpha: 0.3),
             contentPadding: const EdgeInsets.symmetric(
@@ -3351,7 +3351,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
                     : s.voiceDownloadingPct(
                         (_onnxProgress * 100).toStringAsFixed(0),
                       ),
-                style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                style: TextStyle(fontSize: 11, color: colors.textTertiary),
               ),
               if (_onnxPhase == TtsPrepPhase.downloading)
                 Align(
@@ -3641,7 +3641,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
                 _sherpaPhase == SherpaPrepPhase.extracting
                     ? Strings.of(context).voiceExtracting
                     : '${(_sherpaProgress * 100).toStringAsFixed(0)} %',
-                style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                style: TextStyle(fontSize: 11, color: colors.textTertiary),
               ),
               if (_sherpaPhase == SherpaPrepPhase.downloading)
                 Align(
@@ -3779,7 +3779,7 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
               const SizedBox(height: 4),
               Text(
                 '${(_progress * 100).toStringAsFixed(0)} %',
-                style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                style: TextStyle(fontSize: 11, color: colors.textTertiary),
               ),
             ] else if (!_whisperReady) ...[
               const SizedBox(height: 10),

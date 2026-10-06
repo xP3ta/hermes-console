@@ -1999,7 +1999,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
-                    color: colors.textDisabled,
+                    color: colors.textTertiary,
                     letterSpacing: 1.2,
                   ),
                 ),
@@ -2055,7 +2055,7 @@ class _ModelsScreenState extends State<ModelsScreen>
               Text(
                 info.model,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: colors.textDisabled,
+                  color: colors.textTertiary,
                   fontFamily: 'monospace',
                 ),
               ),
@@ -2076,7 +2076,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                 ctxLabel,
                 style: Theme.of(
                   context,
-                ).textTheme.bodySmall?.copyWith(color: colors.textDisabled),
+                ).textTheme.bodySmall?.copyWith(color: colors.textTertiary),
               ),
             // `/api/model/info` reads the profile default (config.yaml), not
             // a chat's own pick: say so, as the chat may run another model.
@@ -2257,7 +2257,7 @@ class _ModelsScreenState extends State<ModelsScreen>
         style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w600,
-          color: colors.textDisabled,
+          color: colors.textTertiary,
           letterSpacing: 1.5,
         ),
       ),
@@ -2401,7 +2401,7 @@ class _ModelsScreenState extends State<ModelsScreen>
               else if (displayModels.isNotEmpty)
                 Text(
                   s.mdlModelCount(displayModels.length),
-                  style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                  style: TextStyle(fontSize: 11, color: colors.textTertiary),
                 ),
               if (provider.isCurrent) ...[
                 const SizedBox(width: 8),
@@ -2521,7 +2521,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                 ),
                 subtitle: Text(
                   s.mdlReconnectHint,
-                  style: TextStyle(fontSize: 10.5, color: colors.textDisabled),
+                  style: TextStyle(fontSize: 10.5, color: colors.textTertiary),
                 ),
                 onTap: _setting ? null : () => _startOAuthLogin(provider),
               )
@@ -2631,7 +2631,7 @@ class _ModelsScreenState extends State<ModelsScreen>
       subtitle: provider.models.isNotEmpty
           ? Text(
               Strings.of(context).mdlLongPressToHide,
-              style: TextStyle(fontSize: 10.5, color: colors.textDisabled),
+              style: TextStyle(fontSize: 10.5, color: colors.textTertiary),
             )
           : null,
       onTap: () => _setHidden(provider.slug, !hidden),
@@ -3032,13 +3032,13 @@ class _ProviderOAuthLoginScreenState extends State<ProviderOAuthLoginScreen> {
               children: [
                 Text(
                   s.mdlOAuthCodeLabel,
-                  style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                  style: TextStyle(fontSize: 11, color: colors.textTertiary),
                 ),
                 const Spacer(),
                 if (expiryLabel.isNotEmpty)
                   Text(
                     expiryLabel,
-                    style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                    style: TextStyle(fontSize: 11, color: colors.textTertiary),
                   ),
               ],
             ),
@@ -3127,7 +3127,7 @@ class _ProviderOAuthLoginScreenState extends State<ProviderOAuthLoginScreen> {
           const SizedBox(height: 16),
           Text(
             s.mdlOAuthSecurityNote,
-            style: TextStyle(fontSize: 11, color: colors.textDisabled),
+            style: TextStyle(fontSize: 11, color: colors.textTertiary),
           ),
         ],
       ),
