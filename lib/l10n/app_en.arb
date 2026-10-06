@@ -8373,5 +8373,48 @@
         "type": "int"
       }
     }
+  },
+  "rp1215Replying": "is replying…",
+  "@rp1215Replying": {
+    "description": "Second line under the assistant's name while its turn runs and no answer text has arrived yet (rp1215)."
+  },
+  "rp1215Thinking": "is thinking…",
+  "@rp1215Thinking": {
+    "description": "Same line while only reasoning has arrived (rp1215)."
+  },
+  "rp1215NameReplying": "{name} is replying",
+  "@rp1215NameReplying": {
+    "description": "Status under the user's bubble whose answer is being written; also the screen-reader sentence of the replying row (rp1215).",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rp1215NameThinking": "{name} is thinking",
+  "@rp1215NameThinking": {
+    "description": "Screen-reader sentence of the replying row while only reasoning has arrived (rp1215).",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "rp1215BubbleSent": "Sent",
+  "@rp1215BubbleSent": {
+    "description": "Status under the user's bubble: sent, the turn has not started yet (rp1215)."
+  },
+  "rp1215BubbleQueued": "Queued",
+  "@rp1215BubbleQueued": {
+    "description": "Status under a user's bubble that waits behind the running turn (rp1215)."
+  },
+  "rp1215QuoteSemantics": "Answers your message: {preview}. Tap to show it.",
+  "@rp1215QuoteSemantics": {
+    "description": "Screen-reader label of the quote chip above a room reply (rp1215).",
+    "placeholders": {
+      "preview": {
+        "type": "String"
+      }
+    }
   }
 }

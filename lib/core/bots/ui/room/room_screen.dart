@@ -237,6 +237,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   bool _landPending = false;
   bool _programmaticScroll = false;
 
+  /// rp1215: owner message just shown from a quote chip, briefly washed.
+  String? _highlightedEventId;
+  Timer? _highlightTimer;
+
   /// Context kept above the divider when landing on it.
   static const double _landingContext = 56;
   Set<String> _dismissedTasks = const {};
@@ -882,6 +886,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     _composer.dispose();
     _focus.dispose();
     _transcriptFocus.dispose();
+    _highlightTimer?.cancel();
     _transcriptScroll.dispose();
     super.dispose();
   }
@@ -1845,6 +1850,69 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     }
   }
 
+  // ── Quote chip (rp1215) ──────────────────────────────────────────────
+
+  BuildContext? _mountedMessage(String eventId) {
+    final list = _transcriptKey.currentContext;
+    if (list == null) return null;
+    final wanted = ValueKey('room-message-$eventId');
+    BuildContext? found;
+    void visit(Element element) {
+      if (found != null) return;
+      if (element.widget.key == wanted) {
+        found = element;
+        return;
+      }
+      element.visitChildElements(visit);
+    }
+
+    (list as Element).visitChildElements(visit);
+    return found;
+  }
+
+  /// Shows the owner message a reply quotes and washes it briefly. The
+  /// quoted message is always older than the reply, so a lazy row not built
+  /// yet is reached by walking up from here (bounded); when it never shows
+  /// up (log page gone) the list goes back where it was.
+  Future<void> _openQuote(String eventId) async {
+    if (!_transcriptScroll.hasClients) return;
+    final position = _transcriptScroll.position;
+    final start = position.pixels;
+    var target = _mountedMessage(eventId);
+    for (var step = 0; target == null && step < 40; step++) {
+      if (position.pixels >= position.maxScrollExtent) break;
+      position.jumpTo(
+        math.min(
+          position.pixels + position.viewportDimension * 0.8,
+          position.maxScrollExtent,
+        ),
+      );
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      target = _mountedMessage(eventId);
+    }
+    if (target == null) {
+      if (position.pixels != start) position.jumpTo(start);
+      return;
+    }
+    if (!target.mounted) return;
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    await Scrollable.ensureVisible(
+      target,
+      alignment: 0.3,
+      duration: reduceMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+    );
+    if (!mounted) return;
+    _highlightTimer?.cancel();
+    setState(() => _highlightedEventId = eventId);
+    _highlightTimer = Timer(const Duration(milliseconds: 1600), () {
+      if (mounted) setState(() => _highlightedEventId = null);
+    });
+  }
+
   // ── Open anchor ──────────────────────────────────────────────────────
 
   /// The transcript opens at the newest content (reverse list), so whatever
@@ -2560,6 +2628,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             ? null
             : () => unawaited(_openThread(entry.thread!.threadId)),
         onMention: _openMention,
+        onOpenQuote: entry.quote == null
+            ? null
+            : () => unawaited(_openQuote(entry.quote!.eventId)),
+        highlighted: entry.event.eventId == _highlightedEventId,
       ),
     };
   }
@@ -2602,6 +2674,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     _stall,
     _resuming,
     _outboxVersion,
+    _highlightedEventId ?? '',
     locale,
     widget,
     DateUtils.dateOnly(_now),
