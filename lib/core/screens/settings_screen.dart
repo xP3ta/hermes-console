@@ -38,6 +38,7 @@ import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/hermes_update_card.dart';
+import '../widgets/mascot/float/mascot_settings_screen.dart';
 import '../widgets/read_only.dart';
 import 'about_screen.dart';
 import 'lock_screen.dart';
@@ -259,6 +260,7 @@ class SettingsScreen extends StatelessWidget {
             _UseDockTile(),
             _DockTile(),
             const GestureDockFlagTile(),
+            if (FeatureFlags.floatingMascot) _MascotTile(),
             _StartupDestinationTile(),
           ],
         ),
@@ -1120,6 +1122,21 @@ class _GestureDockFlagTileState extends State<GestureDockFlagTile> {
           onChanged: (value) =>
               unawaited(FeatureFlags.instance.setGestureDock(value)),
         ),
+      ),
+    );
+  }
+}
+
+class _MascotTile extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return HermesNavRow(
+      icon: Icons.pets_outlined,
+      title: Strings.of(context).mascotSettingsTitle,
+      subtitle: Strings.of(context).mascotSettingsSubtitle,
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const MascotSettingsScreen()),
       ),
     );
   }
