@@ -7,6 +7,7 @@ import '../../l10n/app_localizations.dart';
 import '../models/dock_config.dart';
 import '../services/dock_preferences_store.dart';
 import '../theme/app_theme.dart';
+import '../utils/responsive.dart';
 import 'chat_surface_coordinator.dart';
 import 'dock_style.dart';
 
@@ -89,6 +90,14 @@ double dockFootprint(BuildContext context) {
 
 const double _dockBarHeight = 48;
 
+/// Gap between the screen edge and the navigation rail (tablets).
+const double dockRailMargin = 12;
+
+/// Width from the leading edge the rail form of the [Dock] covers on
+/// medium and expanded windows: safe inset, margin, the rail and a gap.
+double dockRailFootprint(BuildContext context) =>
+    MediaQuery.paddingOf(context).left + dockRailMargin + DockBar.railWidth + 8;
+
 /// EL dock flotante de la app. Uno solo, para todos los perfiles y todas las
 /// pantallas.
 ///
@@ -146,6 +155,11 @@ class Dock extends StatefulWidget {
   /// ciclo de vida con el resto de la superficie que aloja el dock.
   final ChatSurfaceCoordinator? coordinator;
 
+  /// True when the host lays its body out beside a side rail on tablets
+  /// (`GeneralDockShell`). Hosts that only reserve bottom space keep the
+  /// bottom bar at every width.
+  final bool adaptive;
+
   const Dock({
     required this.profileId,
     required this.actions,
@@ -154,6 +168,7 @@ class Dock extends StatefulWidget {
     this.bottomInset,
     this.createOrbits = const [],
     this.coordinator,
+    this.adaptive = false,
     super.key,
   });
 
@@ -398,8 +413,12 @@ class _DockState extends State<Dock>
           widget.actions[slot]?.selected == true,
     );
 
+    // Medium/expanded windows: the same destinations as a side rail
+    // (Material 3 navigation rail) instead of a bar along the bottom.
+    final rail = widget.adaptive && Responsive.usesRail(context);
     final bar = DockBar(
-      key: ValueKey('$_prefix-floating-dock'),
+      key: ValueKey(rail ? '$_prefix-dock-rail' : '$_prefix-floating-dock'),
+      axis: rail ? Axis.vertical : Axis.horizontal,
       style: profile.style,
       selectedIndex: selectedSlot == -1 ? null : selectedSlot,
       children: [
@@ -442,6 +461,19 @@ class _DockState extends State<Dock>
           // nueva posición, y medirlo en ese instante revienta con "Cannot
           // get renderObject of inactive element". Desde fuera se mide el
           // árbol del frame anterior, que es justo lo que hace falta.
+          if (rail) {
+            final safe = MediaQuery.paddingOf(context);
+            return _resolvePlusCenter(
+              Offset(
+                safe.left + dockRailMargin + DockBar.railWidth / 2,
+                safe.top +
+                    dockRailMargin +
+                    4 +
+                    DockBar.railSlotHeight * (createIndex.clamp(0, 99) + 0.5),
+              ),
+              useTileY: true,
+            );
+          }
           return _resolvePlusCenter(
             Offset(
               createIndex == -1
@@ -456,14 +488,30 @@ class _DockState extends State<Dock>
           key: _stackKey,
           fit: StackFit.expand,
           children: [
-            if (_actionsMounted) ..._orbitLayers(plusCenter()),
-            Positioned(
-              left: dockSideMargin,
-              right: dockSideMargin,
-              bottom: dockBottom,
-              // Press and indicator animations repaint only the bar.
-              child: RepaintBoundary(child: bar),
-            ),
+            if (_actionsMounted) ..._orbitLayers(plusCenter(), rail: rail),
+            if (rail)
+              Positioned(
+                left: MediaQuery.paddingOf(context).left + dockRailMargin,
+                top: MediaQuery.paddingOf(context).top + dockRailMargin,
+                bottom: MediaQuery.paddingOf(context).bottom + dockRailMargin,
+                width: DockBar.railWidth,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  // A short landscape window can hold fewer slots than the
+                  // profile shows: the rail scrolls instead of overflowing.
+                  child: SingleChildScrollView(
+                    child: RepaintBoundary(child: bar),
+                  ),
+                ),
+              )
+            else
+              Positioned(
+                left: dockSideMargin,
+                right: dockSideMargin,
+                bottom: dockBottom,
+                // Press and indicator animations repaint only the bar.
+                child: RepaintBoundary(child: bar),
+              ),
           ],
         );
       },
@@ -497,6 +545,8 @@ class _DockState extends State<Dock>
     // Scaffold-local override and sees the real keyboard height regardless
     // of where in the tree the dock is mounted (confirmed live: the
     // `MediaQuery`-based check never fired on Inicio).
+    // A side rail never meets the keyboard: it stays put.
+    if (rail) return dock;
     final keyboardOpen = View.of(context).viewInsets.bottom > 0;
     return IgnorePointer(
       ignoring: keyboardOpen,
@@ -515,7 +565,7 @@ class _DockState extends State<Dock>
 
   /// Scrim + órbitas. Solo se montan mientras la bandeja está abierta o
   /// cerrándose; un dock sin órbitas nunca llega aquí.
-  List<Widget> _orbitLayers(Offset plusCenter) => [
+  List<Widget> _orbitLayers(Offset plusCenter, {bool rail = false}) => [
     Positioned.fill(
       child: GestureDetector(
         key: ValueKey('$_prefix-create-outside'),
@@ -537,6 +587,23 @@ class _DockState extends State<Dock>
                   final progress = Curves.easeOutCubic.transform(
                     _staggered(_controller.value, index * 38 / 220),
                   );
+                  if (rail) {
+                    // Rail: the orbits leave the "+" sideways and stack
+                    // downwards, into the content area beside the rail.
+                    return Positioned(
+                      left: plusCenter.dx + 44 * progress,
+                      top: plusCenter.dy - 28 + 64 * index * progress,
+                      child: _CreateOrb(
+                        controlKey: orbits[index].controlKey,
+                        label: orbits[index].label,
+                        icon: orbits[index].icon,
+                        enabled: orbits[index].onTap != null,
+                        focusNode: index == 0 ? _firstOrbitFocus : null,
+                        progress: progress,
+                        onTap: () => _run(orbits[index].onTap),
+                      ),
+                    );
+                  }
                   return _positionedOrb(
                     plusCenter: plusCenter,
                     // La órbita de arriba del todo es la primera de la
@@ -616,7 +683,7 @@ class _DockState extends State<Dock>
   /// mientras el tile todavía no se ha pintado ninguna vez, lo que en la
   /// práctica nunca ocurre cuando esto se usa: las órbitas solo aparecen
   /// tras un toque, y para tocar el "+" ya tuvo que pintarse antes.
-  Offset _resolvePlusCenter(Offset fallback) {
+  Offset _resolvePlusCenter(Offset fallback, {bool useTileY = false}) {
     final tileBox =
         _createTileKey.currentContext?.findRenderObject() as RenderBox?;
     final stackBox = _stackKey.currentContext?.findRenderObject() as RenderBox?;
@@ -627,7 +694,10 @@ class _DockState extends State<Dock>
       return fallback;
     }
     final topLeft = tileBox.localToGlobal(Offset.zero, ancestor: stackBox);
-    return Offset(topLeft.dx + tileBox.size.width / 2, fallback.dy);
+    return Offset(
+      topLeft.dx + tileBox.size.width / 2,
+      useTileY ? topLeft.dy + tileBox.size.height / 2 : fallback.dy,
+    );
   }
 
   Widget _positionedOrb({

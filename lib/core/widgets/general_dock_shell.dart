@@ -8,6 +8,7 @@ import '../screens/mission_control_screen.dart';
 import '../screens/settings_screen.dart';
 import '../services/connection_manager.dart';
 import '../services/dock_preferences_store.dart';
+import '../utils/responsive.dart';
 import 'dock.dart';
 import 'dock_shortcuts.dart';
 import 'dock_style.dart' show dockShowsBack;
@@ -56,6 +57,11 @@ class GeneralDockShell extends StatefulWidget {
   /// sección activa (`selected: true`) sin acción propia en vez de navegar.
   final DockItemId? currentDestination;
 
+  /// True when the screen lays out its own list-detail panes in an expanded
+  /// window: the shell then gives it the full width beside the rail instead
+  /// of centring it at [Responsive.maxContentWidth].
+  final bool paneLayout;
+
   const GeneralDockShell({
     required this.body,
     required this.connection,
@@ -65,6 +71,7 @@ class GeneralDockShell extends StatefulWidget {
     this.includeSettingsAction = true,
     this.includeSessionsAction = true,
     this.currentDestination,
+    this.paneLayout = false,
     super.key,
   });
 
@@ -171,23 +178,13 @@ class _GeneralDockShellState extends State<GeneralDockShell> {
           return widget.body;
         }
         final current = _currentDestination;
-        final media = MediaQuery.of(context);
         return Stack(
           fit: StackFit.expand,
           children: [
-            // The dock floats over the bottom of the screen. The body ends
-            // above it, so scrolled to the end the last row is readable
-            // instead of hidden under the bar. The system inset is part of
-            // the footprint, so it is not reported twice.
-            MediaQuery(
-              data: media.copyWith(padding: media.padding.copyWith(bottom: 0)),
-              child: Padding(
-                padding: EdgeInsets.only(bottom: dockFootprint(context)),
-                child: widget.body,
-              ),
-            ),
+            _AdaptiveDockBody(paneLayout: widget.paneLayout, body: widget.body),
             Dock(
               profileId: DockProfileId.general,
+              adaptive: true,
               showBackContext: _isSubscreen,
               onBack: () => Navigator.of(context).maybePop(),
               // Qué sabe hacer el perfil "General" desde una pantalla
@@ -256,6 +253,56 @@ class _GeneralDockShellState extends State<GeneralDockShell> {
           ],
         );
       },
+    );
+  }
+}
+
+/// Places the body beside the dock in whichever form the window size class
+/// gives it. Size-only dependencies (`Responsive`, `MediaQuery.*Of`): a
+/// keyboard animation never rebuilds this (see #141).
+class _AdaptiveDockBody extends StatelessWidget {
+  final bool paneLayout;
+  final Widget body;
+
+  const _AdaptiveDockBody({required this.paneLayout, required this.body});
+
+  @override
+  Widget build(BuildContext context) {
+    final sizeClass = Responsive.sizeClassOf(context);
+    if (sizeClass == WindowSizeClass.compact) {
+      // The dock floats over the bottom of the screen. The body ends above
+      // it, so scrolled to the end the last row is readable instead of
+      // hidden under the bar. The system inset is part of the footprint, so
+      // it is not reported twice.
+      return MediaQuery.removePadding(
+        context: context,
+        removeBottom: true,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: dockFootprint(context)),
+          child: body,
+        ),
+      );
+    }
+    // Rail on the leading edge: the body starts after it. Single-pane
+    // screens are centred at a readable width; a pane screen in an
+    // expanded window lays out its own panes across the rest.
+    final constrained = !(paneLayout && sizeClass == WindowSizeClass.expanded);
+    return MediaQuery.removePadding(
+      context: context,
+      removeLeft: true,
+      child: Padding(
+        padding: EdgeInsets.only(left: dockRailFootprint(context)),
+        child: constrained
+            ? Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: Responsive.maxContentWidth,
+                  ),
+                  child: body,
+                ),
+              )
+            : body,
+      ),
     );
   }
 }
