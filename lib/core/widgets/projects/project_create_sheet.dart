@@ -393,7 +393,7 @@ class _ProjectCreateSheetState extends State<_ProjectCreateSheet> {
           if (_folders.isEmpty)
             Text(
               strings.pc1215NoFolders,
-              style: TextStyle(color: colors.textDisabled, fontSize: 12.5),
+              style: TextStyle(color: colors.textTertiary, fontSize: 12.5),
             )
           else
             for (final (index, folder) in _folders.indexed)

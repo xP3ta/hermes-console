@@ -380,7 +380,7 @@ class _DockItemList extends StatelessWidget {
                               fontWeight: FontWeight.w500,
                               color: item.visible
                                   ? colors.textPrimary
-                                  : colors.textDisabled,
+                                  : colors.textTertiary,
                             ),
                           ),
                           if (_subtitleFor(strings, item.id) != null)

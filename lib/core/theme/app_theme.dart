@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'component_profile.dart';
@@ -42,12 +44,15 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
     this.secondary = const Color(0xFFE8821C),
     this.uppercaseTitles = false,
     Color? accentText,
+    Color? textTertiary,
     // El parámetro público se llama `accentText` (el token que consumirán
     // las pantallas); `this._accentText` rompería ese nombre de cara al
     // llamador, así que se asigna a mano en el initializer.
   })
     // ignore: prefer_initializing_formals
-    : _accentText = accentText;
+    : _accentText = accentText,
+       // ignore: prefer_initializing_formals
+       _textTertiary = textTertiary;
 
   final Color background;
   final Color surface;
@@ -85,6 +90,39 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
   /// que sí lo cumple. Auditoría 2026-07-02, hallazgo C5c.
   Color get accentText => _accentText ?? accent;
 
+  /// Explicit tertiary ink (set by the presets); `null` derives it.
+  final Color? _textTertiary;
+
+  static final Expando<Color> _derivedTertiary = Expando<Color>('textTertiary');
+
+  /// rt1215: ink for read-only tertiary text (timestamps, metadata,
+  /// captions, counters, hints). [textDisabled] stays reserved for controls
+  /// that cannot be used right now, which WCAG exempts; tertiary text is
+  /// read, so it is [textDisabled] lifted towards black or white (same hue,
+  /// smallest step) until it reaches AA 4.5:1 on the background, the surface
+  /// and the surface variant. Every palette gets it, presets and custom
+  /// profiles alike.
+  Color get textTertiary =>
+      _textTertiary ??
+      (_derivedTertiary[this] ??= readableTertiary(
+        textDisabled,
+        background: background,
+        surface: surface,
+        surfaceVariant: surfaceVariant,
+      ));
+
+  /// Smallest lift of [disabled] that reads at AA on all three surfaces.
+  static Color readableTertiary(
+    Color disabled, {
+    required Color background,
+    required Color surface,
+    required Color surfaceVariant,
+  }) => ThemeContrast.adjustForContrast(disabled, [
+    background,
+    surface,
+    surfaceVariant,
+  ], minimum: 4.5);
+
   @override
   HermesThemeColors copyWith({
     Color? background,
@@ -103,7 +141,15 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
     Color? secondary,
     bool? uppercaseTitles,
     Color? accentText,
+    Color? textTertiary,
   }) {
+    // A new page or disabled ink invalidates an explicit tertiary: let the
+    // copy derive its own.
+    final keepTertiary =
+        background == null &&
+        surface == null &&
+        surfaceVariant == null &&
+        textDisabled == null;
     return HermesThemeColors(
       background: background ?? this.background,
       surface: surface ?? this.surface,
@@ -121,6 +167,7 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
       secondary: secondary ?? this.secondary,
       uppercaseTitles: uppercaseTitles ?? this.uppercaseTitles,
       accentText: accentText ?? _accentText,
+      textTertiary: textTertiary ?? (keepTertiary ? _textTertiary : null),
     );
   }
 
@@ -144,6 +191,7 @@ class HermesThemeColors extends ThemeExtension<HermesThemeColors> {
       secondary: Color.lerp(secondary, other.secondary, t)!,
       uppercaseTitles: t < 0.5 ? uppercaseTitles : other.uppercaseTitles,
       accentText: Color.lerp(accentText, other.accentText, t)!,
+      textTertiary: Color.lerp(textTertiary, other.textTertiary, t)!,
     );
   }
 }
@@ -1542,24 +1590,36 @@ class AppTheme {
     ),
   ]);
 
-  /// rt1215: secondary text (`onSurfaceVariant`) and links are body copy;
-  /// nudge them, only when needed, to WCAG AA 4.5:1 on the background, the
-  /// surface and the surface variant. Identity colours (background, surfaces,
-  /// primary text, accent) stay as designed.
+  /// rt1215: secondary text (`onSurfaceVariant`), tertiary text and links
+  /// are read; nudge them, only when needed, to WCAG AA 4.5:1 on the
+  /// background, the surface and the surface variant. Tertiary is the
+  /// disabled ink lifted to AA; secondary then keeps a visible step above it
+  /// ([_hierarchyStep]), never past the theme's own primary text. Identity
+  /// colours (background, surfaces, primary text, accent) stay as designed.
   static HermesThemePreset _withReadableInk(HermesThemePreset p) {
     final c = p.colors;
     final surfaces = [c.background, c.surface, c.surfaceVariant];
+    double worst(Color ink) =>
+        surfaces.map((bg) => ThemeContrast.ratio(ink, bg)).reduce(math.min);
+    final tertiary = HermesThemeColors.readableTertiary(
+      c.textDisabled,
+      background: c.background,
+      surface: c.surface,
+      surfaceVariant: c.surfaceVariant,
+    );
     final secondary = ThemeContrast.adjustForContrast(
       c.textSecondary,
       surfaces,
-      minimum: 4.5,
+      minimum: math.max(
+        4.5,
+        math.min(worst(tertiary) * _hierarchyStep, worst(c.textPrimary)),
+      ),
     );
     final link = ThemeContrast.adjustForContrast(
       c.accentText,
       surfaces,
       minimum: 4.5,
     );
-    if (secondary == c.textSecondary && link == c.accentText) return p;
     return HermesThemePreset(
       id: p.id,
       name: p.name,
@@ -1568,6 +1628,7 @@ class AppTheme {
       colors: c.copyWith(
         textSecondary: secondary,
         accentText: link == c.accentText ? null : link,
+        textTertiary: tertiary,
       ),
       fontFamily: p.fontFamily,
       radius: p.radius,
@@ -1579,6 +1640,9 @@ class AppTheme {
       desktopFamily: p.desktopFamily,
     );
   }
+
+  /// Secondary text reads at least this much stronger than tertiary.
+  static const double _hierarchyStep = 1.1;
 
   static const String defaultThemeId = 'amber';
 

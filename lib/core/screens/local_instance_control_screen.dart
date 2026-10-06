@@ -533,7 +533,7 @@ class _LocalInstanceControlScreenState extends State<LocalInstanceControlScreen>
             padding: const EdgeInsets.only(left: 8, right: 8, top: 6),
             child: Text(
               str.licResumeRepairHint,
-              style: TextStyle(fontSize: 11, color: colors.textDisabled),
+              style: TextStyle(fontSize: 11, color: colors.textTertiary),
             ),
           ),
         ],
@@ -567,7 +567,7 @@ class _LocalInstanceControlScreenState extends State<LocalInstanceControlScreen>
           padding: const EdgeInsets.only(left: 8, right: 8, bottom: 4),
           child: Text(
             str.licRepairHint,
-            style: TextStyle(fontSize: 11, color: colors.textDisabled),
+            style: TextStyle(fontSize: 11, color: colors.textTertiary),
           ),
         ),
         // Desinstalar: faltaba un acceso desde el control local (solo existía en

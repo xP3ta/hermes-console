@@ -662,7 +662,7 @@ class _SoulScreenState extends State<SoulScreen>
                             key: const ValueKey('local'),
                             style: TextStyle(
                               fontSize: 11,
-                              color: colors.textDisabled,
+                              color: colors.textTertiary,
                             ),
                           ),
                   ),
@@ -743,7 +743,7 @@ class _SoulScreenState extends State<SoulScreen>
                         hintText: Strings.of(context).soulEditorHint,
                         hintStyle: TextStyle(
                           fontSize: 13,
-                          color: colors.textDisabled,
+                          color: colors.textTertiary,
                           height: 1.5,
                         ),
                         filled: true,
@@ -876,7 +876,7 @@ class _ApiBannerState extends State<_ApiBanner> {
           Expanded(
             child: Text(
               Strings.of(context).soulLocalDocNote,
-              style: TextStyle(fontSize: 11, color: widget.colors.textDisabled),
+              style: TextStyle(fontSize: 11, color: widget.colors.textTertiary),
             ),
           ),
           IconButton(
@@ -929,7 +929,7 @@ class _TemplateSheet extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               Strings.of(context).soulPickTemplateReplaces,
-              style: TextStyle(fontSize: 12, color: colors.textDisabled),
+              style: TextStyle(fontSize: 12, color: colors.textTertiary),
             ),
           ],
           const SizedBox(height: 12),

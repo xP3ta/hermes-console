@@ -227,7 +227,7 @@ SOFTWARE.
           padding: const EdgeInsets.fromLTRB(6, 16, 6, 0),
           child: Text(
             s.aboutUnofficial,
-            style: HermesType.support.copyWith(color: colors.textDisabled),
+            style: HermesType.support.copyWith(color: colors.textTertiary),
           ),
         ),
       ],

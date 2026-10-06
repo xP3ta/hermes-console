@@ -16509,7 +16509,7 @@ class _ChatScreenState extends State<ChatScreen>
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 10,
-                          color: colors.textDisabled,
+                          color: colors.textTertiary,
                         ),
                       ),
                     ),
@@ -20129,7 +20129,7 @@ class _AssistantMessageWithMark extends StatelessWidget {
             padding: const EdgeInsets.only(left: 14, bottom: 4),
             child: Text(
               markLabel,
-              style: TextStyle(fontSize: 10, color: colors.textDisabled),
+              style: TextStyle(fontSize: 10, color: colors.textTertiary),
             ),
           ),
       ],
@@ -23043,7 +23043,7 @@ class _QueuedRow extends StatelessWidget {
                     key: ValueKey('chat-queue-sending-${entry.id}'),
                     style: TextStyle(
                       fontSize: 10.5,
-                      color: colors.textDisabled,
+                      color: colors.textTertiary,
                     ),
                   )
                 else if (entry.deliveryUnknown)
@@ -23111,7 +23111,7 @@ class _QueuedRow extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 10.5,
-                              color: colors.textDisabled,
+                              color: colors.textTertiary,
                             ),
                           ),
                         )

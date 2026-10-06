@@ -863,7 +863,7 @@ class _DrawerRecentSessionsState extends State<_DrawerRecentSessions> {
                           strings,
                         ),
                         style: TextStyle(
-                          color: colors.textDisabled,
+                          color: colors.textTertiary,
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                           fontFeatures: const [FontFeature.tabularFigures()],
@@ -1236,7 +1236,7 @@ class _DrawerSectionLabel extends StatelessWidget {
         child: Text(
           label.toUpperCase(),
           style: TextStyle(
-            color: colors.textDisabled,
+            color: colors.textTertiary,
             fontSize: 11.5,
             fontWeight: FontWeight.w600,
             letterSpacing: 0.5,

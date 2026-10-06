@@ -95,7 +95,7 @@ Color runStatusColor(String status, HermesThemeColors colors) =>
       'waiting_for_approval' => colors.warning,
       'completed' => colors.success,
       'failed' => colors.error,
-      'cancelled' || 'expired' => colors.textDisabled,
+      'cancelled' || 'expired' => colors.textTertiary,
       _ => colors.textSecondary,
     };
 
@@ -423,7 +423,7 @@ class _RunsTabState extends State<RunsTab> with AutomaticKeepAliveClientMixin {
                         s.runsEmptySub,
                         style: TextStyle(
                           fontSize: 11,
-                          color: colors.textDisabled,
+                          color: colors.textTertiary,
                         ),
                       ),
                     ],
@@ -1371,7 +1371,7 @@ class _RunDetailScreenState extends State<RunDetailScreen> {
               'tokens: ${_usage!['total_tokens'] ?? '—'} '
               '(in ${_usage!['input_tokens'] ?? '—'} / '
               'out ${_usage!['output_tokens'] ?? '—'})',
-              style: TextStyle(fontSize: 10.5, color: colors.textDisabled),
+              style: TextStyle(fontSize: 10.5, color: colors.textTertiary),
             ),
           ],
 
@@ -1422,7 +1422,7 @@ class _EventLine extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 10.5,
-                      color: colors.textDisabled,
+                      color: colors.textTertiary,
                     ),
                   ),
               ],

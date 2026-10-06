@@ -66,7 +66,7 @@ void main() {
             c.textSecondary,
           ],
         );
-        expect(ansiPaletteColor(8, c), c.textDisabled);
+        expect(ansiPaletteColor(8, c), c.textTertiary);
         expect(ansiPaletteColor(12, c), c.accent);
         expect(ansiPaletteColor(15, c), c.textPrimary);
         expect(ansiPaletteColor(null, c), isNull);

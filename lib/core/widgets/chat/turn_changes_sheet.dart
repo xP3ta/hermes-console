@@ -679,7 +679,7 @@ class _DiffRow extends StatelessWidget {
               key: ValueKey('turn-changes-gutter-$fileIndex-$rowIndex'),
               textAlign: TextAlign.right,
               maxLines: 1,
-              style: metrics.style.copyWith(color: colors.textDisabled),
+              style: metrics.style.copyWith(color: colors.textTertiary),
             ),
           ),
           const SizedBox(width: _gutterGap),

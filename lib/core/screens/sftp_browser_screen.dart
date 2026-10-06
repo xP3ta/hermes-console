@@ -349,7 +349,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
       return Center(
         child: Text(
           Strings.of(context).sftpEmpty,
-          style: TextStyle(fontSize: 13, color: colors.textDisabled),
+          style: TextStyle(fontSize: 13, color: colors.textTertiary),
         ),
       );
     }
@@ -373,7 +373,7 @@ class _SftpBrowserScreenState extends State<SftpBrowserScreen> {
               ? null
               : Text(
                   _fmtSize(e.attr.size),
-                  style: TextStyle(fontSize: 11.5, color: colors.textDisabled),
+                  style: TextStyle(fontSize: 11.5, color: colors.textTertiary),
                 ),
           onTap: isDir ? () => _enter(e) : null,
           trailing: isDir

@@ -363,7 +363,7 @@ class _SshCredentialsScreenState extends State<SshCredentialsScreen> {
           hintText: _hadConfig
               ? '•••• clave guardada — pega una nueva para reemplazar'
               : '-----BEGIN OPENSSH PRIVATE KEY-----',
-          hintStyle: TextStyle(fontSize: 11.5, color: colors.textDisabled),
+          hintStyle: TextStyle(fontSize: 11.5, color: colors.textTertiary),
           filled: true,
           fillColor: colors.surfaceVariant.withValues(alpha: 0.4),
           border: OutlineInputBorder(

@@ -219,7 +219,7 @@ class _LockScreenState extends State<LockScreen> {
                         hintStyle: TextStyle(
                           fontSize: 14,
                           letterSpacing: 2,
-                          color: colors.textDisabled,
+                          color: colors.textTertiary,
                         ),
                         errorText: _error,
                       ),

@@ -624,7 +624,7 @@ class _TaskCenterScreenState extends State<TaskCenterScreen> {
             const SizedBox(height: 4),
             Text(
               s.runsEmptySub,
-              style: TextStyle(fontSize: 11, color: colors.textDisabled),
+              style: TextStyle(fontSize: 11, color: colors.textTertiary),
             ),
           ],
         ),

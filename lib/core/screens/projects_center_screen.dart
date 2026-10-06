@@ -1038,7 +1038,7 @@ class _DesktopOnlyCreate extends StatelessWidget {
         ),
         title: Text(
           strings.pj1215CreateProject,
-          style: TextStyle(color: colors.textDisabled, fontSize: 14),
+          style: TextStyle(color: colors.textTertiary, fontSize: 14),
         ),
         subtitle: Text(
           strings.pj1215CreateProjectDesktopOnly,

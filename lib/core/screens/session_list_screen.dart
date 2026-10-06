@@ -2174,7 +2174,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                       s.sesClearViewNote,
                       style: TextStyle(
                         fontSize: 11,
-                        color: Theme.of(context).hermes.textDisabled,
+                        color: Theme.of(context).hermes.textTertiary,
                       ),
                     ),
               onTap: () async {
@@ -2706,7 +2706,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                 height: 32,
                 child: Text(
                   s.se1215SortBy,
-                  style: TextStyle(fontSize: 11, color: colors.textDisabled),
+                  style: TextStyle(fontSize: 11, color: colors.textTertiary),
                 ),
               ),
               for (final sort in SessionListSort.values)
@@ -3194,7 +3194,7 @@ class _SessionSectionLabel extends StatelessWidget {
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
-                color: colors.textDisabled,
+                color: colors.textTertiary,
               ),
             ),
           ],
@@ -3603,7 +3603,7 @@ class _ConnectionIssueState extends StatelessWidget {
               Strings.of(context).slGatewayHelp,
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall?.copyWith(
-                color: colors.textDisabled,
+                color: colors.textTertiary,
               ),
             ),
             const SizedBox(height: 22),
@@ -3882,7 +3882,7 @@ class _SessionTile extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w500,
-                    color: colors.textDisabled,
+                    color: colors.textTertiary,
                   ),
                 ),
             ],

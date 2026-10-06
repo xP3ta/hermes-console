@@ -195,9 +195,9 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
   Color _levelColor(String? level, HermesThemeColors colors) => switch (level) {
     'ERROR' || 'CRITICAL' => colors.error,
     'WARNING' => colors.warning,
-    'DEBUG' => colors.textDisabled,
+    'DEBUG' => colors.textTertiary,
     'INFO' => colors.textSecondary,
-    _ => colors.textDisabled,
+    _ => colors.textTertiary,
   };
 
   @override
@@ -319,7 +319,7 @@ class _LogsTabState extends State<_LogsTab> with AutomaticKeepAliveClientMixin {
             style: const TextStyle(fontSize: 12.5),
             decoration: InputDecoration(
               hintText: Strings.of(context).actSearchHint,
-              hintStyle: TextStyle(fontSize: 12, color: colors.textDisabled),
+              hintStyle: TextStyle(fontSize: 12, color: colors.textTertiary),
               prefixIcon: Icon(
                 Icons.search,
                 size: 16,
@@ -496,7 +496,7 @@ class _LogLine extends StatelessWidget {
                           entry.time!,
                           style: TextStyle(
                             fontSize: 10,
-                            color: colors.textDisabled,
+                            color: colors.textTertiary,
                           ),
                         ),
                       if (entry.component != null) ...[
