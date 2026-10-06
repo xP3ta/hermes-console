@@ -8,10 +8,10 @@ import '../models/agent_task_list.dart';
 import '../models/session_activity.dart';
 import '../models/subagent_activity.dart';
 import '../theme/app_theme.dart';
-import '../design/content.dart' show HermesStatusText;
 import '../design/tokens.dart';
 import '../screens/subagent_detail_screen.dart'
     show subagentElapsed, subagentHumanStatus, subagentTitle;
+import 'activity_dots.dart';
 import 'activity_pill.dart';
 
 /// Acciones por elemento del panel. Son los mismos controladores que tenían las
@@ -29,6 +29,14 @@ class ActivityPanelActions {
     this.goalDetails,
     this.openSubagent,
     this.dismissSubagents,
+    this.canStopTurn = false,
+    this.stopTurn,
+    this.canStopSubagent,
+    this.stopSubagent,
+    this.canStopAll = false,
+    this.stopAll,
+    this.addContext,
+    this.changeCourse,
   });
 
   static const ActivityPanelActions none = ActivityPanelActions();
@@ -51,6 +59,30 @@ class ActivityPanelActions {
   /// subagente; `null` = el primero.
   final void Function(SubagentActivity? activity)? openSubagent;
   final VoidCallback? dismissSubagents;
+
+  /// dc1215: the chat's existing turn interrupt, for the Stop on the
+  /// current step row.
+  final bool canStopTurn;
+  final Future<void> Function()? stopTurn;
+
+  /// dc1215: whether the chat can stop this subagent today (its existing
+  /// `subagent.interrupt` authority) and the existing stop flow.
+  final bool Function(SubagentActivity activity)? canStopSubagent;
+  final Future<void> Function(SubagentActivity activity)? stopSubagent;
+
+  /// dc1215: «Parar todo», the same stop as the composer's Stop.
+  final bool canStopAll;
+  final Future<void> Function()? stopAll;
+
+  /// dc1215: «Añadir contexto» / «Cambiar rumbo»; `null` when the chat
+  /// cannot take a message now.
+  final VoidCallback? addContext;
+  final VoidCallback? changeCourse;
+
+  bool canStop(SubagentActivity activity) =>
+      stopSubagent != null &&
+      !activity.isTerminal &&
+      (canStopSubagent?.call(activity) ?? false);
 }
 
 String _lang(BuildContext context) =>
@@ -550,107 +582,333 @@ class _FoldedTextState extends State<_FoldedText> {
   }
 }
 
-/// «Ahora»: el paso vivo (o el titular del pipeline) con su cronómetro.
+/// dc1215 «En curso»: the live step of the turn (or the pipeline headline)
+/// with its timer and the live reasoning under it, then the delegated
+/// subagents still running and the background processes. Every row has the
+/// same Dots shape; Stop appears only where the chat can stop that item.
 class ActivityNowSection extends StatelessWidget {
   const ActivityNowSection({
     required this.snapshot,
     required this.now,
+    this.actions = ActivityPanelActions.none,
     this.sectionKey,
     super.key,
   });
 
   final ActivitySnapshot snapshot;
   final DateTime now;
+  final ActivityPanelActions actions;
   final Key? sectionKey;
+
+  /// Whether the section has anything to show.
+  static bool hasContent(ActivitySnapshot snapshot) =>
+      snapshot.turnActive ||
+      snapshot.processes.isNotEmpty ||
+      _liveSubagents(snapshot).isNotEmpty ||
+      (snapshot.subagents.isEmpty && snapshot.hasSubagents);
+
+  static List<SubagentActivity> _liveSubagents(ActivitySnapshot snapshot) =>
+      snapshot.subagents.where((a) => !a.isTerminal).toList(growable: false);
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
-    final current = snapshot.current;
-    final Widget row;
-    if (snapshot.noActivityHint) {
-      row = _NowLine(
-        text: s.chaTurnStillWorking,
-        since: snapshot.turnStartedAt,
-        now: now,
-      );
-    } else if (snapshot.waitingForUser) {
-      row = _NowLine(
-        text: s.liveWaitingForUser,
-        since: snapshot.turnStartedAt,
-        now: now,
-      );
-    } else if (current != null) {
-      row = current.kind == ActivityStepKind.reasoning
-          ? _NowLine(
-              text: s.chatActivityThinking,
-              since: current.startedAt ?? snapshot.turnStartedAt,
-              now: now,
-            )
-          : ActivityStepRow(step: current, now: now);
-    } else {
-      row = _NowLine(
-        text: snapshot.headline ?? s.chaPipelineThinking,
-        since: snapshot.turnStartedAt,
-        now: now,
-      );
-    }
+    final subagents = _liveSubagents(snapshot);
+    final genericSubagents =
+        snapshot.subagents.isEmpty && snapshot.hasSubagents;
     // ps1215: with no step running, nothing finished in this turn and no
     // task list, the panel would only repeat the pill's headline. Say
     // honestly that the detail arrives with the next event.
     final liveReasoning = snapshot.liveReasoning;
+    final current = snapshot.current;
     final nothingKnown =
+        snapshot.turnActive &&
         current == null &&
         liveReasoning == null &&
         !snapshot.noActivityHint &&
         !snapshot.waitingForUser &&
         snapshot.done.isEmpty &&
         !snapshot.showTasks;
-    // lr1215: the model is thinking and no reasoning arrived. The server may
-    // simply not share it (`display.show_reasoning`); say so without
-    // claiming it, since the setting is not known here.
-    final thinking =
-        (snapshot.headline ?? s.chaPipelineThinking) == s.chaPipelineThinking;
     return Column(
       key: sectionKey,
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         ActivitySectionHeader(
-          title: s.liveSectionNow,
+          title: s.dc1215SectionInProgress,
           keyName: 'activity-now-title',
         ),
-        DecoratedBox(
-          decoration: BoxDecoration(
-            color: colors.accent.withValues(alpha: 0.07),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            child: row,
-          ),
-        ),
-        if (liveReasoning != null) _LiveReasoningTail(text: liveReasoning),
+        if (snapshot.turnActive) _nowRow(context, s, colors),
+        if (snapshot.turnActive && liveReasoning != null)
+          _LiveReasoningTail(text: liveReasoning),
         if (nothingKnown)
           Padding(
-            padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
+            padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
             child: Text(
               s.ps1215NoDetailsYet,
               key: const ValueKey('activity-now-no-details'),
               style: TextStyle(fontSize: 12, color: colors.textSecondary),
             ),
           ),
-        if (nothingKnown && thinking)
+        if (snapshot.subagentsStale &&
+            (subagents.isNotEmpty || genericSubagents))
           Padding(
-            padding: const EdgeInsets.fromLTRB(8, 2, 8, 2),
+            key: const ValueKey('activity-subagents-stale'),
+            padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
             child: Text(
-              s.lr1215ReasoningHiddenHint,
-              key: const ValueKey('activity-now-reasoning-hint'),
-              style: TextStyle(fontSize: 12, color: colors.textSecondary),
+              s.chaBackgroundActivityStale,
+              style: TextStyle(fontSize: 12, color: colors.warning),
             ),
           ),
+        for (final activity in subagents)
+          ActivitySubagentRow(activity: activity, actions: actions, now: now),
+        if (genericSubagents)
+          ActivityDotsRow(
+            key: const ValueKey('activity-subagents-generic'),
+            tile: const ActivityRowTile(icon: Icons.call_split_rounded),
+            title: snapshot.subagentCount == 0
+                ? s.chaBackgroundWorkTitle
+                : s.liveSubagentsWorking(snapshot.subagentCount),
+          ),
+        if (snapshot.processes.isNotEmpty)
+          Column(
+            key: const ValueKey('activity-background-section'),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (snapshot.processesStale)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
+                  child: Text(
+                    s.chaBackgroundActivityStale,
+                    style: TextStyle(fontSize: 12, color: colors.warning),
+                  ),
+                ),
+              for (final process in snapshot.processes) _processRow(s, process),
+            ],
+          ),
       ],
+    );
+  }
+
+  Widget _nowRow(BuildContext context, Strings s, HermesThemeColors colors) {
+    final current = snapshot.current;
+    final String title;
+    String? subtitle;
+    IconData icon = Icons.psychology_outlined;
+    Color? iconColor = colors.accentText;
+    DateTime? since = snapshot.turnStartedAt;
+    if (snapshot.noActivityHint) {
+      title = s.chaTurnStillWorking;
+      icon = Icons.hourglass_empty_rounded;
+    } else if (snapshot.waitingForUser) {
+      title = s.liveWaitingForUser;
+      icon = Icons.front_hand_outlined;
+      iconColor = colors.warning;
+    } else if (current != null && current.kind != ActivityStepKind.reasoning) {
+      title = activityStepTitle(current);
+      final skill = activityStepIsSkill(current);
+      subtitle = skill ? s.dc1215SkillRunning : s.dc1215StepRunning;
+      icon = skill ? Icons.auto_awesome_outlined : Icons.build_outlined;
+      since = current.startedAt;
+    } else if (current != null) {
+      title = s.chatActivityThinking;
+      since = current.startedAt ?? snapshot.turnStartedAt;
+    } else {
+      title = snapshot.headline ?? s.chaPipelineThinking;
+    }
+    final start = since;
+    final elapsed = start == null
+        ? null
+        : (now.difference(start).isNegative
+              ? Duration.zero
+              : now.difference(start));
+    final stopTurn = actions.stopTurn;
+    final canStop =
+        actions.canStopTurn && stopTurn != null && !snapshot.waitingForUser;
+    return ActivityDotsRow(
+      key: const ValueKey('activity-now-row'),
+      highlighted: true,
+      tile: ActivityRowTile(icon: icon, color: iconColor),
+      title: title,
+      subtitle: subtitle,
+      trailing: elapsed == null
+          ? null
+          : Text(
+              formatTurnElapsed(elapsed),
+              key: const ValueKey('activity-now-elapsed'),
+              style: TextStyle(
+                fontSize: 12,
+                color: colors.textSecondary,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+      stop: canStop
+          ? ActivityStopButton(
+              key: const ValueKey('activity-now-stop'),
+              semanticLabel: s.dc1215StopItem(title),
+              onPressed: stopTurn,
+            )
+          : null,
+    );
+  }
+
+  Widget _processRow(Strings s, SessionActivityProcess process) {
+    final title = process.command.isEmpty
+        ? s.chaBackgroundProcessRunning
+        : process.command;
+    final started = process.startedAt;
+    final elapsed = started == null
+        ? null
+        : (now.toUtc().difference(started.toUtc()).isNegative
+              ? Duration.zero
+              : now.toUtc().difference(started.toUtc()));
+    final watching = process.watchPatterns;
+    final notify = process.notifyOnComplete;
+    final footerLabel = [
+      if (watching.isNotEmpty)
+        '${s.chaBackgroundWatchPatterns}: ${watching.join(', ')}',
+      if (notify) s.chaBackgroundProcessWillNotify,
+    ];
+    final stop = actions.stopProcess;
+    return Builder(
+      builder: (context) {
+        final colors = Theme.of(context).hermes;
+        return ActivityDotsRow(
+          key: ValueKey('activity-process-${process.id}'),
+          tile: const ActivityRowTile(icon: Icons.terminal_rounded),
+          title: title,
+          subtitle: process.watchHit
+              ? s.chaBackgroundWatchHit
+              : s.dc1215ProcessRunning,
+          footerLabel: footerLabel.isEmpty ? null : footerLabel.join(', '),
+          footer: footerLabel.isEmpty
+              ? null
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (watching.isNotEmpty)
+                      Wrap(
+                        spacing: 6,
+                        children: [
+                          Text(
+                            '${s.chaBackgroundWatchPatterns}:',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colors.textSecondary,
+                            ),
+                          ),
+                          for (final pattern in watching)
+                            Text(
+                              pattern,
+                              key: ValueKey('process-watch-$pattern'),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                        ],
+                      ),
+                    if (notify)
+                      Text(
+                        s.chaBackgroundProcessWillNotify,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                  ],
+                ),
+          trailing: elapsed == null
+              ? null
+              : Text(
+                  formatTurnElapsed(elapsed),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colors.textSecondary,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+          stop: actions.canStopProcesses && stop != null
+              ? ActivityStopButton(
+                  key: ValueKey('background-process-stop-${process.id}'),
+                  semanticLabel: s.dc1215StopItem(title),
+                  onPressed: () => stop(process.id),
+                )
+              : null,
+        );
+      },
+    );
+  }
+}
+
+/// A delegated subagent as a Dots row: its goal, its human status and,
+/// while it runs and the chat may stop it, a round Stop. Tapping the row
+/// opens its existing detail/control page.
+class ActivitySubagentRow extends StatelessWidget {
+  const ActivitySubagentRow({
+    required this.activity,
+    required this.actions,
+    required this.now,
+    super.key,
+  });
+
+  final SubagentActivity activity;
+  final ActivityPanelActions actions;
+  final DateTime now;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    final s = Strings.of(context);
+    final status = subagentHumanStatus(s, activity);
+    final elapsed = subagentElapsed(activity, now);
+    final title = subagentTitle(s, activity, maxChars: 80);
+    final meta = <String>[
+      status.label,
+      if (activity.progress case final progress?)
+        s.subagentActivityProgress(
+          progress.displayTaskIndex,
+          progress.taskCount,
+        ),
+    ];
+    final open = actions.openSubagent;
+    final ended = activity.isTerminal;
+    final stop = actions.stopSubagent;
+    return ActivityDotsRow(
+      key: ValueKey('activity-subagent-${activity.key.stableId}'),
+      muted: ended,
+      tile: ActivityRowTile(
+        icon: ended
+            ? (status.tone == HermesStatusTone.error
+                  ? Icons.close_rounded
+                  : Icons.check_rounded)
+            : Icons.call_split_rounded,
+        color: ended ? status.tone.colorIn(colors) : colors.accentText,
+      ),
+      title: title,
+      subtitle: meta.join(' · '),
+      trailing: elapsed == null
+          ? null
+          : Text(
+              formatTurnElapsed(elapsed),
+              style: TextStyle(
+                fontSize: 12,
+                color: colors.textSecondary,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+      onTap: open == null ? null : () => open(activity),
+      semanticsHint: open == null ? null : s.liveSubagentControl,
+      stop: actions.canStop(activity) && stop != null
+          ? ActivityStopButton(
+              key: ValueKey('activity-subagent-stop-${activity.key.stableId}'),
+              semanticLabel: s.dc1215StopItem(title),
+              onPressed: () => stop(activity),
+            )
+          : null,
     );
   }
 }
@@ -742,77 +1000,6 @@ class _LiveReasoningTailState extends State<_LiveReasoningTail> {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _NowLine extends StatelessWidget {
-  const _NowLine({required this.text, required this.since, required this.now});
-
-  final String text;
-  final DateTime? since;
-  final DateTime now;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    final start = since;
-    final elapsed = start == null
-        ? null
-        : (now.difference(start).isNegative
-              ? Duration.zero
-              : now.difference(start));
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 20,
-            child: Center(
-              child: reduceMotion
-                  ? Icon(
-                      Icons.more_horiz_rounded,
-                      size: 15,
-                      color: colors.accent,
-                    )
-                  : SizedBox(
-                      width: 13,
-                      height: 13,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.8,
-                        color: colors.accent,
-                      ),
-                    ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              text,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-                color: colors.textPrimary,
-              ),
-            ),
-          ),
-          if (elapsed != null) ...[
-            const SizedBox(width: 8),
-            Text(
-              formatTurnElapsed(elapsed),
-              key: const ValueKey('activity-now-elapsed'),
-              style: TextStyle(
-                fontSize: 11.5,
-                color: colors.textSecondary,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-          ],
-        ],
       ),
     );
   }
@@ -978,136 +1165,6 @@ String _durationLabel(Duration value) {
   }
   if (value.inMinutes > 0) return '${value.inMinutes} min';
   return '${value.inSeconds} s';
-}
-
-class ActivityBackgroundSection extends StatelessWidget {
-  const ActivityBackgroundSection({
-    required this.snapshot,
-    required this.actions,
-    required this.now,
-    super.key,
-  });
-
-  final ActivitySnapshot snapshot;
-  final ActivityPanelActions actions;
-  final DateTime now;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final s = Strings.of(context);
-    final started = snapshot.backgroundStartedAt;
-    return Column(
-      key: const ValueKey('activity-background-section'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        ActivitySectionHeader(
-          title: s.liveSectionBackground,
-          keyName: 'activity-background-title',
-        ),
-        if (snapshot.processesStale)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Text(
-              s.chaBackgroundActivityStale,
-              style: TextStyle(fontSize: 12, color: colors.warning),
-            ),
-          ),
-        for (final process in snapshot.processes)
-          _ItemCard(
-            keyName: 'activity-process-${process.id}',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.terminal_rounded,
-                      size: 15,
-                      color: colors.textSecondary,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        process.command.isEmpty
-                            ? s.chaBackgroundProcessRunning
-                            : process.command,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: colors.textPrimary,
-                        ),
-                      ),
-                    ),
-                    if (process.startedAt != null) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        formatTurnElapsed(
-                          now
-                                  .toUtc()
-                                  .difference(process.startedAt!.toUtc())
-                                  .isNegative
-                              ? Duration.zero
-                              : now.toUtc().difference(
-                                  process.startedAt!.toUtc(),
-                                ),
-                        ),
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: colors.textSecondary,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                if (process.watchPatterns.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    s.chaBackgroundWatchPatterns,
-                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                  ),
-                  for (final pattern in process.watchPatterns)
-                    Text(
-                      pattern,
-                      key: ValueKey('process-watch-$pattern'),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                ],
-                if (process.watchHit)
-                  Text(
-                    s.chaBackgroundWatchHit,
-                    style: TextStyle(fontSize: 12, color: colors.success),
-                  ),
-                if (process.notifyOnComplete)
-                  Text(
-                    s.chaBackgroundProcessWillNotify,
-                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                  ),
-                if (actions.canStopProcesses && actions.stopProcess != null)
-                  Align(
-                    alignment: AlignmentDirectional.centerEnd,
-                    child: ActivityActionButton(
-                      key: ValueKey('background-process-stop-${process.id}'),
-                      label: s.chaBackgroundActionStop,
-                      destructive: true,
-                      onPressed: () => actions.stopProcess!(process.id),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        if (started == null && snapshot.processes.isEmpty)
-          const SizedBox.shrink(),
-      ],
-    );
-  }
 }
 
 class ActivityLoopsSection extends StatelessWidget {
@@ -1332,32 +1389,50 @@ class ActivityGoalSection extends StatelessWidget {
   }
 }
 
-class ActivitySubagentsSection extends StatelessWidget {
-  const ActivitySubagentsSection({
+/// dc1215 «Antes»: what already happened in this turn (finished steps, the
+/// most recent first, in past tense with their duration) and the delegated
+/// subagents that ended, which can be cleared once nothing runs.
+class ActivityBeforeSection extends StatelessWidget {
+  const ActivityBeforeSection({
     required this.snapshot,
     required this.actions,
     required this.now,
+    this.maxRows = 30,
     super.key,
   });
 
   final ActivitySnapshot snapshot;
   final ActivityPanelActions actions;
   final DateTime now;
+  final int maxRows;
+
+  static List<ActivityStep> _steps(ActivitySnapshot snapshot) =>
+      snapshot.turnActive ? snapshot.done : const [];
+
+  static List<SubagentActivity> _ended(ActivitySnapshot snapshot) =>
+      snapshot.subagents.where((a) => a.isTerminal).toList(growable: false);
+
+  static bool hasContent(ActivitySnapshot snapshot) =>
+      _steps(snapshot).isNotEmpty || _ended(snapshot).isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
     final s = Strings.of(context);
-    final activities = snapshot.subagents;
-    final allEnded = activities.isNotEmpty && snapshot.subagentLive == 0;
+    final colors = Theme.of(context).hermes;
+    final lang = _lang(context);
+    final steps = _steps(snapshot);
+    final shown = steps.take(maxRows).toList(growable: false);
+    final hidden = steps.length - shown.length;
+    final ended = _ended(snapshot);
+    final allEnded = ended.isNotEmpty && snapshot.subagentLive == 0;
     return Column(
-      key: const ValueKey('activity-subagents-section'),
+      key: const ValueKey('activity-before-section'),
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         ActivitySectionHeader(
-          title: s.liveSectionSubagents,
-          keyName: 'activity-subagents-title',
+          title: s.dc1215SectionBefore,
+          keyName: 'activity-done-title',
           trailing: allEnded && actions.dismissSubagents != null
               ? TextButton(
                   key: const ValueKey('activity-subagents-dismiss'),
@@ -1372,106 +1447,51 @@ class ActivitySubagentsSection extends StatelessWidget {
                 )
               : null,
         ),
-        if (snapshot.subagentsStale)
+        for (final step in shown) _stepRow(s, colors, lang, step),
+        if (hidden > 0)
           Padding(
-            key: const ValueKey('activity-subagents-stale'),
-            padding: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
             child: Text(
-              s.chaBackgroundActivityStale,
-              style: TextStyle(fontSize: 12, color: colors.warning),
+              s.liveOlderSteps(hidden),
+              style: TextStyle(fontSize: 12, color: colors.textSecondary),
             ),
           ),
-        if (activities.isEmpty)
-          _ItemCard(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 6, top: 2),
-              child: Text(
-                snapshot.subagentCount == 0
-                    ? s.chaBackgroundWorkTitle
-                    : s.liveSubagentsWorking(snapshot.subagentCount),
-                style: TextStyle(fontSize: 13, color: colors.textPrimary),
-              ),
-            ),
-          ),
-        for (var i = 0; i < activities.length; i++)
-          _subagentRow(context, colors, s, activities[i], i + 1),
+        for (final activity in ended)
+          ActivitySubagentRow(activity: activity, actions: actions, now: now),
       ],
     );
   }
 
-  Widget _subagentRow(
-    BuildContext context,
-    HermesThemeColors colors,
+  Widget _stepRow(
     Strings s,
-    SubagentActivity activity,
-    int index,
+    HermesThemeColors colors,
+    String lang,
+    ActivityStep step,
   ) {
-    final status = subagentHumanStatus(s, activity);
-    final elapsed = subagentElapsed(activity, now);
-    final title = subagentTitle(s, activity, maxChars: 80);
-    final meta = <String>[
-      if (elapsed != null) formatTurnElapsed(elapsed),
-      if (activity.progress case final progress?)
-        s.subagentActivityProgress(
-          progress.displayTaskIndex,
-          progress.taskCount,
-        ),
-    ];
-    final open = actions.openSubagent;
-    return Semantics(
-      container: true,
-      button: open != null,
-      label:
-          '$title, ${status.label}${meta.isEmpty ? '' : ', ${meta.join(', ')}'}',
-      hint: open == null ? null : s.liveSubagentControl,
-      excludeSemantics: true,
-      child: Material(
-        type: MaterialType.transparency,
-        child: InkWell(
-          key: ValueKey('activity-subagent-${activity.key.stableId}'),
-          borderRadius: BorderRadius.circular(HermesRadius.control),
-          onTap: open == null ? null : () => open(activity),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 52),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(2, 6, 0, 6),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: HermesType.body.copyWith(
-                            color: colors.textPrimary,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        HermesStatusText(
-                          label: status.label,
-                          tone: status.tone,
-                          meta: meta.isEmpty ? null : meta.join(' · '),
-                          maxLines: 1,
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (open != null)
-                    Icon(
-                      Icons.chevron_right_rounded,
-                      size: 20,
-                      color: colors.textDisabled,
-                    ),
-                ],
+    final failed = step.status == ActivityStepStatus.failed;
+    final duration = step.duration;
+    return ActivityDotsRow(
+      key: ValueKey('activity-done-${step.id}'),
+      muted: true,
+      titleColor: failed ? colors.error : null,
+      tile: ActivityRowTile(
+        icon: failed ? Icons.close_rounded : Icons.check_rounded,
+        color: failed ? colors.error : colors.success,
+      ),
+      title: step.kind == ActivityStepKind.reasoning
+          ? s.chatActivityReasoning
+          : activityStepTitle(step),
+      subtitle: failed ? s.dc1215StepFailed : s.dc1215StepDone,
+      trailing: duration == null
+          ? null
+          : Text(
+              formatStepDuration(duration, languageCode: lang),
+              style: TextStyle(
+                fontSize: 12,
+                color: colors.textSecondary,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
-          ),
-        ),
-      ),
     );
   }
 }

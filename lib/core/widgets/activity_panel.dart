@@ -12,10 +12,12 @@ import '../models/activity_snapshot.dart';
 import '../theme/app_theme.dart';
 import 'activity_pill.dart';
 import 'activity_sections.dart';
+import 'activity_dots.dart';
 import 'activity_side_panel.dart';
 
 export 'activity_sections.dart'
     show ActivityPanelActions, ActivityScheduleAction;
+export 'activity_dots.dart' show ActivityDotsActionsBar;
 
 /// Lo que el panel abierto necesita para repintarse en vivo.
 final class ActivityPanelState {
@@ -27,8 +29,8 @@ final class ActivityPanelState {
 
 /// Cuerpo del panel: las secciones que tengan contenido, en orden fijo.
 ///
-/// 1 Tareas · 2 Ahora · 3 Hecho · 4 Segundo plano / Subagentes / Bucles /
-/// Objetivo. Lo que no tiene contenido se omite.
+/// dc1215 (Dots): 1 Tareas · 2 En curso (paso, subagentes, procesos) ·
+/// 3 Antes · 4 Bucles / Objetivo. Lo que no tiene contenido se omite.
 class ActivityPanelBody extends StatelessWidget {
   const ActivityPanelBody({
     required this.snapshot,
@@ -48,22 +50,15 @@ class ActivityPanelBody extends StatelessWidget {
     final tasks = snapshot.showTasks ? snapshot.tasks : null;
     final children = <Widget>[
       if (tasks != null) ActivityTasksSection(tasks: tasks),
-      if (snapshot.turnActive)
-        ActivityNowSection(snapshot: snapshot, now: now, sectionKey: nowKey),
-      if (snapshot.turnActive && snapshot.done.isNotEmpty)
-        ActivityDoneSection(steps: snapshot.done, now: now),
-      if (snapshot.processes.isNotEmpty)
-        ActivityBackgroundSection(
+      if (ActivityNowSection.hasContent(snapshot))
+        ActivityNowSection(
           snapshot: snapshot,
-          actions: actions,
           now: now,
-        ),
-      if (snapshot.hasSubagents)
-        ActivitySubagentsSection(
-          snapshot: snapshot,
           actions: actions,
-          now: now,
+          sectionKey: nowKey,
         ),
+      if (ActivityBeforeSection.hasContent(snapshot))
+        ActivityBeforeSection(snapshot: snapshot, actions: actions, now: now),
       if (snapshot.schedules.isNotEmpty)
         ActivityLoopsSection(snapshot: snapshot, actions: actions),
       if (snapshot.goal != null)
@@ -75,6 +70,32 @@ class ActivityPanelBody extends StatelessWidget {
       children: children,
     );
   }
+}
+
+/// dc1215: the bottom actions of the activity view for [snapshot], each
+/// one only when the chat supports it today. [beforeComposerAction] runs
+/// first for the composer actions (the modal closes itself so the
+/// composer it focuses is not under it).
+ActivityDotsActionsBar? activityActionsBarFor(
+  ActivitySnapshot snapshot,
+  ActivityPanelActions actions, {
+  VoidCallback? beforeComposerAction,
+}) {
+  VoidCallback? composer(VoidCallback? action) => action == null
+      ? null
+      : () {
+          beforeComposerAction?.call();
+          action();
+        };
+  final stopAll = actions.stopAll;
+  final bar = ActivityDotsActionsBar(
+    onAddContext: composer(actions.addContext),
+    onChangeCourse: snapshot.turnActive && !snapshot.waitingForUser
+        ? composer(actions.changeCourse)
+        : null,
+    onStopAll: actions.canStopAll && stopAll != null ? stopAll : null,
+  );
+  return bar.isEmpty ? null : bar;
 }
 
 /// La superficie del panel: crece desde el rect de la pastilla (ancho, radio y
@@ -188,12 +209,38 @@ class _ActivityPanelSurfaceState extends State<ActivityPanelSurface> {
     _dragDown = 0;
   }
 
+  /// dc1215: the composer actions close the card first, so focusing the
+  /// composer is never covered (and is the user's explicit request).
+  Widget? _actionsBar(
+    ActivitySnapshot snapshot,
+    ActivityPanelActions actions,
+    double t,
+  ) {
+    final bar = activityActionsBarFor(
+      snapshot,
+      actions,
+      beforeComposerAction: _close,
+    );
+    if (bar == null) return null;
+    return ClipRect(
+      child: SizeTransition(
+        sizeFactor: _curve,
+        alignment: Alignment.bottomCenter,
+        child: Opacity(opacity: Curves.easeIn.transform(t), child: bar),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     final colors = Theme.of(context).hermes;
-    final media = MediaQuery.of(context);
+    final screen = MediaQuery.sizeOf(context);
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
     final lang = Localizations.localeOf(context).languageCode;
+    // dc1215: with large text a pinned actions bar would leave little room
+    // for the rows; it then scrolls at the end of the card instead.
+    final pinActions = MediaQuery.textScalerOf(context).scale(14) / 14 <= 1.3;
     return ActivityTicker(
       active: true,
       clock: widget.clock,
@@ -216,11 +263,11 @@ class _ActivityPanelSurfaceState extends State<ActivityPanelSurface> {
             });
             return const SizedBox.shrink();
           }
-          final available = media.size.height - media.viewInsets.bottom;
+          final available = screen.height - keyboard;
           final maxHeight = math.max(160.0, available * heightFactor);
           final targetWidth = math.max(
             widget.pillSize.width,
-            math.min(media.size.width - 24, maxWidth),
+            math.min(screen.width - 24, maxWidth),
           );
           return Stack(
             children: [
@@ -294,11 +341,30 @@ class _ActivityPanelSurfaceState extends State<ActivityPanelSurface> {
                                                         16,
                                                         8,
                                                       ),
-                                                  child: ActivityPanelBody(
-                                                    snapshot: snapshot,
-                                                    actions: actions,
-                                                    now: now,
-                                                    nowKey: _nowKey,
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .stretch,
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      ActivityCardTitleRow(
+                                                        onClose: _close,
+                                                      ),
+                                                      ActivityPanelBody(
+                                                        snapshot: snapshot,
+                                                        actions: actions,
+                                                        now: now,
+                                                        nowKey: _nowKey,
+                                                      ),
+                                                      if (!pinActions)
+                                                        ?activityActionsBarFor(
+                                                          snapshot,
+                                                          actions,
+                                                          beforeComposerAction:
+                                                              _close,
+                                                        ),
+                                                    ],
                                                   ),
                                                 ),
                                               ),
@@ -306,6 +372,8 @@ class _ActivityPanelSurfaceState extends State<ActivityPanelSurface> {
                                       ),
                                     ),
                                   ),
+                                  if (pinActions)
+                                    ?_actionsBar(snapshot, actions, t),
                                   GestureDetector(
                                     behavior: HitTestBehavior.translucent,
                                     onVerticalDragUpdate: (d) {
@@ -571,6 +639,47 @@ class _ActivityPillHostState extends State<ActivityPillHost> {
           ),
         );
       },
+    );
+  }
+}
+
+/// dc1215: «Actividad» with the round close button, at the top of the card.
+class ActivityCardTitleRow extends StatelessWidget {
+  const ActivityCardTitleRow({required this.onClose, this.closeKey, super.key});
+
+  final VoidCallback onClose;
+  final Key? closeKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = Strings.of(context);
+    final colors = Theme.of(context).hermes;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 2),
+      child: Row(
+        children: [
+          Expanded(
+            child: Semantics(
+              header: true,
+              child: Text(
+                strings.dc1215ActivityTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.w700,
+                  color: colors.textPrimary,
+                ),
+              ),
+            ),
+          ),
+          ActivityRoundCloseButton(
+            key: closeKey ?? const ValueKey('activity-panel-close'),
+            tooltip: strings.liveHideActivity,
+            onPressed: onClose,
+          ),
+        ],
+      ),
     );
   }
 }
