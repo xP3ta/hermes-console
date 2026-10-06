@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/ui/room/room_dictation.dart';
@@ -19,6 +20,7 @@ import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/services/artifact_export_service.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/attachment_card.dart';
+import 'package:hermes_android/core/widgets/chat/chat_message_frame.dart';
 import 'package:hermes_android/core/widgets/chat/chat_message_selection_area.dart';
 import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/core/widgets/markdown_table.dart';
@@ -1732,5 +1734,127 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+  });
+
+  group('room member header', () {
+    // The header's clock is 'monospace'; without a real mono font the test
+    // default paints every glyph 1 em wide and the clock eats the row.
+    setUpAll(() async {
+      final loader = FontLoader('monospace')
+        ..addFont(rootBundle.load('assets/fonts/JetBrainsMono.ttf'));
+      await loader.load();
+    });
+
+    Future<void> scaleText(WidgetTester tester, double factor) async {
+      tester.platformDispatcher.textScaleFactorTestValue = factor;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    }
+
+    testWidgets('the name uses the free width before the actions '
+        '(360 dp, text ×1.3)', (tester) async {
+      await scaleText(tester, 1.3);
+      final seq = EventSeq();
+      final u = seq.user('¿Subimos el vídeo hoy?');
+      final reply = seq.member(
+        'm-review',
+        'review',
+        'Sí, si cortamos el final.',
+        u['event_id'] as String,
+      );
+      await _pump(tester, events: [u, reply]);
+      expect(
+        tester.view.physicalSize.width / tester.view.devicePixelRatio,
+        360,
+        reason: 'precondition: phone width',
+      );
+      final header = find.byKey(
+        ValueKey('room-run-header-${reply['event_id']}'),
+      );
+      final name = find.descendant(
+        of: header,
+        matching: find.text('console-review'),
+      );
+      expect(name, findsOneWidget);
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.descendant(of: name, matching: find.byType(RichText)),
+      );
+      expect(
+        paragraph.textScaler.scale(10) / 10,
+        closeTo(1.3, 0.01),
+        reason: 'precondition: the name is painted at 1.3×',
+      );
+      expect(
+        paragraph.didExceedMaxLines,
+        isFalse,
+        reason: 'there is free room in the row: no ellipsis',
+      );
+      expect(
+        paragraph.size.width,
+        greaterThanOrEqualTo(
+          paragraph.getMaxIntrinsicWidth(double.infinity) - 0.5,
+        ),
+      );
+      // The actions keep their place at the right edge of the row.
+      final copy = find.descendant(
+        of: header,
+        matching: find.byType(ChatCopyMessageButton),
+      );
+      expect(
+        tester.getRect(copy).left,
+        greaterThanOrEqualTo(tester.getRect(name).right),
+      );
+      expect(
+        tester.getRect(header).right -
+            tester
+                .getRect(
+                  find.byKey(ValueKey('room-reply-${reply['event_id']}')),
+                )
+                .right,
+        lessThan(1),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a name longer than the row still ellipsizes cleanly', (
+      tester,
+    ) async {
+      await scaleText(tester, 1.3);
+      final longName = 'console-${'muy-largo-' * 6}review';
+      final seq = EventSeq();
+      final u = seq.user('Hola');
+      final reply = seq.member(
+        'm-review',
+        'review',
+        'Hola.',
+        u['event_id'] as String,
+      );
+      await _pump(
+        tester,
+        events: [u, reply],
+        room: buildRoom(
+          members: [memberJson('m-review', 'review', displayName: longName)],
+        ),
+      );
+      final header = find.byKey(
+        ValueKey('room-run-header-${reply['event_id']}'),
+      );
+      final name = find.descendant(of: header, matching: find.text(longName));
+      expect(name, findsOneWidget);
+      expect(
+        tester
+            .renderObject<RenderParagraph>(
+              find.descendant(of: name, matching: find.byType(RichText)),
+            )
+            .didExceedMaxLines,
+        isTrue,
+      );
+      expect(
+        tester
+            .getRect(find.byKey(ValueKey('room-reply-${reply['event_id']}')))
+            .right,
+        lessThanOrEqualTo(tester.getRect(header).right + 0.5),
+      );
+      expect(tester.takeException(), isNull, reason: 'no overflow');
+    });
   });
 }

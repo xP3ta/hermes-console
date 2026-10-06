@@ -584,37 +584,46 @@ class RoomMessageTile extends StatelessWidget {
             ? Row(
                 key: ValueKey('room-run-header-${event.eventId}'),
                 children: [
-                  RoomMemberFace(
-                    key: ValueKey('room-face-${event.eventId}'),
-                    member: member,
-                    fallbackName: name,
-                    profile: profile,
-                    avatarCache: avatarCache,
-                    size: faceSize,
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w700,
-                        color: identity,
-                      ),
+                  // Face, name and time take everything left of the actions;
+                  // the name is the only flexible child there, so it uses
+                  // all of that width and ellipsizes only when it truly
+                  // runs out (a Spacer next to it used to take half).
+                  Expanded(
+                    child: Row(
+                      children: [
+                        RoomMemberFace(
+                          key: ValueKey('room-face-${event.eventId}'),
+                          member: member,
+                          fallbackName: name,
+                          profile: profile,
+                          avatarCache: avatarCache,
+                          size: faceSize,
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700,
+                              color: identity,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          time,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontFamily: 'monospace',
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    time,
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontFamily: 'monospace',
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                  const Spacer(),
                   _actions(context),
                 ],
               )
