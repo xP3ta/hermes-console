@@ -127,7 +127,7 @@ class ChatStatusPill extends StatelessWidget {
                   child: Text(
                     modelLabel!,
                     // Keyed by the name: a model swap paints a new label.
-                    key: ValueKey(modelLabel),
+                    key: ValueKey<String>(modelLabel!),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
