@@ -438,7 +438,7 @@ void main() {
     );
     bool landed() =>
         divider.evaluate().isNotEmpty &&
-        (tester.getTopLeft(divider).dy - tester.getRect(list.first).top)
+        (tester.getTopLeft(divider).dy - (tester.getRect(list.first).top + 48))
                 .abs() <=
             1;
     // Wait for the landing itself (bounded), not for a fixed number of
@@ -449,7 +449,8 @@ void main() {
 
     expect(divider, findsOneWidget, reason: 'the chat opens on the divider');
     final viewport = tester.getRect(list.first);
-    expect(tester.getTopLeft(divider).dy, closeTo(viewport.top, 1));
+    // QA 9491: ~1 row (48 dp) of context above the divider.
+    expect(tester.getTopLeft(divider).dy, closeTo(viewport.top + 48, 1));
     // QA 9489: the first news is the reply, not the owner's question.
     expect(find.textContaining('long answer 41.'), findsOneWidget);
     // One landing, then stillness.
