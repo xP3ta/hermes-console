@@ -12,10 +12,13 @@ import 'package:flutter/widgets.dart';
 ///   list: when the content extent changes, the position is corrected to
 ///   the new bottom inside the same layout. Reading back is not following:
 ///   the screen says so as soon as the reader leaves the bottom.
-/// * **Land** once at the center boundary: [requestLanding] puts the
-///   boundary [context] pixels below the top of the viewport in the first
-///   layout after the request (or at the bottom if what is below it is
-///   shorter than the screen).
+/// * **Land** at the center boundary: [requestLanding] puts the boundary
+///   [context] pixels below the top of the viewport (or at the bottom while
+///   what is below it is shorter than the screen) and HOLDS it there in
+///   every later layout, so rows that finish their layout late (previews,
+///   rich text, the list's own extent estimates) never shift the divider.
+///   The hold ends at the first scroll that is not this correction: a
+///   finger on the list, a fling, an animation or a jump.
 class AnchoredTranscriptScrollController extends ScrollController {
   AnchoredTranscriptScrollController({this.following = _alwaysFollow});
 
@@ -26,11 +29,15 @@ class AnchoredTranscriptScrollController extends ScrollController {
 
   double? _landingContext;
 
-  /// Lands at the center boundary on the next layout.
+  /// Lands at the center boundary on the next layout and holds it there
+  /// until the reader scrolls.
   void requestLanding({double context = 56}) => _landingContext = context;
 
-  /// Whether a landing is still waiting for its layout.
+  /// Whether a landing is still held (requested and not scrolled away).
   bool get landingPending => _landingContext != null;
+
+  /// Ends the landing hold (the reader or another scroll took over).
+  void releaseLanding() => _landingContext = null;
 
   bool _followPending = false;
 
@@ -44,12 +51,6 @@ class AnchoredTranscriptScrollController extends ScrollController {
   bool _takeFollow() {
     final value = _followPending;
     _followPending = false;
-    return value;
-  }
-
-  double? _takeLanding() {
-    final value = _landingContext;
-    _landingContext = null;
     return value;
   }
 
@@ -80,6 +81,29 @@ class _AnchoredTranscriptPosition extends ScrollPositionWithSingleContext {
 
   bool get _fingerDown => activity is DragScrollActivity;
 
+  // Any scroll other than the hold's own correction ends the landing: a
+  // touch (hold, drag), a fling, an animation. Idle is what a layout or a
+  // jump settles into, so it never releases by itself.
+  @override
+  void beginActivity(ScrollActivity? newActivity) {
+    if (newActivity != null && newActivity is! IdleScrollActivity) {
+      owner.releaseLanding();
+    }
+    super.beginActivity(newActivity);
+  }
+
+  @override
+  void jumpTo(double value) {
+    owner.releaseLanding();
+    super.jumpTo(value);
+  }
+
+  @override
+  void pointerScroll(double delta) {
+    owner.releaseLanding();
+    super.pointerScroll(delta);
+  }
+
   @override
   bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
     final hadDimensions = hasContentDimensions && hasPixels;
@@ -90,7 +114,7 @@ class _AnchoredTranscriptPosition extends ScrollPositionWithSingleContext {
       maxScrollExtent,
     );
     if (!hasViewportDimension) return settled;
-    final landing = owner._takeLanding();
+    final landing = owner._landingContext;
     if (landing != null) {
       final target = (-(viewportDimension - landing)).clamp(
         minScrollExtent,

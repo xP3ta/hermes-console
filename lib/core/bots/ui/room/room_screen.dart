@@ -556,7 +556,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         if (e.sequence > previousLatest) e,
     ];
     final reset = log.latestSeq < previousLatest;
-    if (reset) _reading = null;
+    if (reset) {
+      _reading = null;
+      _transcriptScroll.releaseLanding();
+    }
     final driverChanged = !_sameDriver(_driver, result.driverStatus);
     _freshAt = _now;
     if (added.isNotEmpty ||
@@ -2683,9 +2686,12 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     ];
     _lastItemKeys = [for (final i in items) i.key];
     _lastHistoryKey = transcript.isEmpty ? null : transcript.last.key;
-    if (_landPending && _lastSeenLoaded) {
+    if (_landPending && _lastSeenLoaded && _log != null) {
       // Entry (or return after leaving) with news from while away: open
       // with the divider at the top, the history above it in the center.
+      // Decided only once the log is here: consumed on an empty transcript
+      // (read marker loaded before the first read) the room opened at the
+      // bottom with the divider out of sight.
       _landPending = false;
       final at = transcript.indexWhere((e) => e is RoomNewSinceDivider);
       if (at > 0 && _reading == null) {
@@ -2703,6 +2709,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       if (boundary < 0) {
         // The boundary row is gone (log reset): follow again.
         reading = _reading = null;
+        _transcriptScroll.releaseLanding();
         boundary = transcript.length - 1;
       }
     }

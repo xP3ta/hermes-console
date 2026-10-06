@@ -221,6 +221,7 @@ void main() {
     Map<String, Object> initialPrefs = const {},
     int Function()? wallClockMs,
     bool earlierAvailable = false,
+    Future<void> Function(ActiveChat chat)? beforeOpen,
   }) async {
     tester.platformDispatcher.localesTestValue = [const Locale('es')];
     addTearDown(tester.platformDispatcher.clearLocalesTestValue);
@@ -271,6 +272,7 @@ void main() {
     );
     await tester.pump();
     await tester.pump(const Duration(seconds: 4));
+    if (beforeOpen != null) await beforeOpen(chat);
 
     final navigatorContext = tester.element(find.byType(Navigator).first);
     Navigator.of(navigatorContext).push(
@@ -662,8 +664,10 @@ void main() {
       final dividerTop = tester.getTopLeft(divider()).dy;
       expect(
         dividerTop,
-        closeTo(viewport.top, 1),
-        reason: 'the divider lands at the top of the transcript',
+        closeTo(viewport.top + 48, 1),
+        reason:
+            'the divider lands at the top of the transcript, under '
+            '~1 row (48 dp) of context',
       );
       // QA 9489: the first news is the reply (the owner's own question
       // sits above the divider), and landing shows no count: the pill is
@@ -747,7 +751,7 @@ void main() {
               divider().evaluate().isNotEmpty &&
               transcriptPainted() &&
               (tester.getTopLeft(divider()).dy -
-                          tester.getRect(transcript()).top)
+                          (tester.getRect(transcript()).top + 48))
                       .abs() <=
                   1,
         );
@@ -757,7 +761,7 @@ void main() {
           reason: 'the chat opens on the divider, far above the bottom',
         );
         final viewport = tester.getRect(transcript());
-        expect(tester.getTopLeft(divider()).dy, closeTo(viewport.top, 1));
+        expect(tester.getTopLeft(divider()).dy, closeTo(viewport.top + 48, 1));
         expect(find.textContaining('Respuesta histórica 5.'), findsOneWidget);
         expect(
           find.descendant(
@@ -793,7 +797,8 @@ void main() {
         () =>
             divider().evaluate().isNotEmpty &&
             transcriptPainted() &&
-            (tester.getTopLeft(divider()).dy - tester.getRect(transcript()).top)
+            (tester.getTopLeft(divider()).dy -
+                        (tester.getRect(transcript()).top + 48))
                     .abs() <=
                 1,
       );
@@ -801,7 +806,7 @@ void main() {
       expect(divider(), findsOneWidget);
       expect(
         tester.getTopLeft(divider()).dy,
-        closeTo(tester.getRect(transcript()).top, 1),
+        closeTo(tester.getRect(transcript()).top + 48, 1),
       );
       // Precondition: the lazy list really had to walk up through several
       // offsets to build the first unread row.
@@ -868,6 +873,112 @@ void main() {
         frames.where((f) => !f.painted).length,
         lessThanOrEqualTo(24),
         reason: 'concealed frames: $frames',
+      );
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    /// Divider top relative to the transcript top.
+    double dividerFromTop(WidgetTester tester) =>
+        tester.getTopLeft(divider()).dy - tester.getRect(transcript()).top;
+
+    testWidgets('QA 9491: rows reflowing after the landing keep the divider '
+        'at the top', (tester) async {
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: _history(),
+        initialPrefs: const {lastReadKey: 'message:h-a-24'},
+      );
+      await settle(tester);
+      expect(dividerFromTop(tester), closeTo(48, 2));
+      // Rows above AND below the divider change height after the first
+      // frame (previews, markdown): bigger, then smaller than at landing.
+      for (final scale in [1.6, 0.8]) {
+        tester.platformDispatcher.textScaleFactorTestValue = scale;
+        await settle(tester);
+        expect(
+          dividerFromTop(tester),
+          closeTo(48, 2),
+          reason: 'text scale $scale moved the divider',
+        );
+        expect(
+          find.textContaining('Respuesta histórica 25.'),
+          findsOneWidget,
+          reason: 'the first new reply stays right below the divider',
+        );
+      }
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('QA 9491: a reply streaming at the bottom never overrides '
+        'the landing', (tester) async {
+      final gateway = _StreamingGateway();
+      final chat = await pumpChat(
+        tester,
+        gateway,
+        history: _history(),
+        initialPrefs: const {lastReadKey: 'message:h-a-24'},
+        // The reply is already being written when the chat opens.
+        beforeOpen: (chat) async {
+          await chat.send(
+            fullText: 'Sigue escribiendo',
+            model: 'hermes-agent',
+            history: chat.buildHistory(),
+          );
+          gateway.emit('message.start');
+          gateway.emit('message.delta', {'text': 'Empieza la respuesta. '});
+          await tester.pump(const Duration(milliseconds: 33));
+        },
+      );
+      await settle(tester);
+      expect(chat.isStreaming, isTrue, reason: 'precondition: a live reply');
+      expect(divider(), findsOneWidget);
+      expect(dividerFromTop(tester), closeTo(48, 2));
+      for (var delta = 0; delta < 12; delta++) {
+        gateway.emit('message.delta', {
+          'text': '${List.filled(12, 'Texto en vivo $delta.').join(' ')}\n\n',
+        });
+        await tester.pump(const Duration(milliseconds: 33));
+        expect(
+          dividerFromTop(tester),
+          closeTo(48, 2),
+          reason: 'delta $delta moved the divider',
+        );
+      }
+      gateway.emit('message.complete', {'text': chat.assistantContent});
+      for (var frame = 0; frame < 60 && chat.isStreaming; frame++) {
+        await tester.pump(const Duration(milliseconds: 33));
+      }
+      await settle(tester);
+      expect(dividerFromTop(tester), closeTo(48, 2));
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('QA 9491: the landing lets go once the reader scrolls', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: _history(),
+        initialPrefs: const {lastReadKey: 'message:h-a-24'},
+      );
+      await settle(tester);
+      expect(dividerFromTop(tester), closeTo(48, 2));
+      await scrollUp(tester, 200);
+      final moved = dividerFromTop(tester);
+      expect(moved, greaterThan(48 + 150), reason: 'the drag moved the list');
+      await settle(tester);
+      expect(
+        dividerFromTop(tester),
+        closeTo(moved, 1),
+        reason: 'no snap back to the landing after a scroll',
       );
       expect(tester.takeException(), isNull);
       await tearDownChat(tester, gateway);
