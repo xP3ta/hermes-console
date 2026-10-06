@@ -189,7 +189,7 @@ class AttachmentPreview extends StatelessWidget {
   Future<void> _saveCopy(File file) async {
     try {
       await FilePicker.platform.saveFile(
-        dialogTitle: 'Hermes Console',
+        dialogTitle: 'Console',
         fileName: name,
         bytes: await file.readAsBytes(),
       );

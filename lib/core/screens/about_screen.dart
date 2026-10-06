@@ -81,9 +81,7 @@ SOFTWARE.
     if (!_appLicensesRegistered) {
       LicenseRegistry.addLicense(() async* {
         final projectLicense = await rootBundle.loadString('LICENSE');
-        yield LicenseEntryWithLineBreaks(const [
-          'Hermes Console',
-        ], projectLicense);
+        yield LicenseEntryWithLineBreaks(const ['Console'], projectLicense);
         yield const LicenseEntryWithLineBreaks([
           'hermes-android (upstream)',
         ], _upstreamMitNotice);
@@ -143,7 +141,7 @@ SOFTWARE.
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Hermes Console',
+                      'Console',
                       style: HermesType.display.copyWith(
                         color: colors.textPrimary,
                       ),
@@ -175,7 +173,7 @@ SOFTWARE.
               subtitle: s.aboutThirdParty,
               onTap: () => showLicensePage(
                 context: context,
-                applicationName: 'Hermes Console',
+                applicationName: 'Console',
                 applicationVersion: 'v$_version',
               ),
             ),

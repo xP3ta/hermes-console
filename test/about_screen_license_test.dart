@@ -14,7 +14,7 @@ void main() {
     LicenseRegistry.reset();
     addTearDown(LicenseRegistry.reset);
     PackageInfo.setMockInitialValues(
-      appName: 'Hermes Console',
+      appName: 'Console',
       packageName: 'dev.xpetalab.hermes',
       version: '1.2.7-qa',
       buildNumber: '914',
@@ -33,7 +33,7 @@ void main() {
 
     final entries = await LicenseRegistry.licenses.toList();
     final project = entries.singleWhere(
-      (entry) => entry.packages.contains('Hermes Console'),
+      (entry) => entry.packages.contains('Console'),
     );
     final projectNotice = project.paragraphs
         .map((paragraph) => paragraph.text)

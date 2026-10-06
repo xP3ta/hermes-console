@@ -145,7 +145,7 @@ class _AnimatedHermesLogoState extends State<AnimatedHermesLogo>
     final lightSurface = theme.brightness == Brightness.light;
 
     return Semantics(
-      label: 'Hermes',
+      label: 'Console',
       image: true,
       child: SizedBox(
         width: widget.size,

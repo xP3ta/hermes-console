@@ -3641,7 +3641,7 @@ class _AboutCardState extends State<_AboutCard> {
       child: _HistoryCleanupActionRow(
         actionKey: const ValueKey('about-hermes-console'),
         icon: Icons.info_outline,
-        title: 'Hermes Console',
+        title: 'Console',
         subtitle: Strings.of(
           context,
         ).setClientVersion(_version.isNotEmpty ? _version : '…'),

@@ -1775,7 +1775,7 @@ class _HermesTaskHandler extends TaskHandler {
         foregroundTaskOptions: BackgroundListener._taskOptions(
           autoRunOnBoot: true,
         ),
-        notificationTitle: 'Hermes Console',
+        notificationTitle: 'Console',
         notificationText: t.bgActive,
         notificationIcon: BackgroundListener._serviceNotificationIcon,
         notificationButtons: [NotificationButton(id: 'stop', text: t.bgStop)],
@@ -1954,7 +1954,7 @@ class _HermesTaskHandler extends TaskHandler {
         if (prefs.getBool(BackgroundListener.prefKey) != true) return;
         final t = NotifL10n.of(prefs);
         FlutterForegroundTask.updateService(
-          notificationTitle: 'Hermes Console',
+          notificationTitle: 'Console',
           notificationText: keep.isEmpty
               ? t.bgActive
               : t.bgWatching(keep.length),
@@ -3702,7 +3702,7 @@ class BackgroundListener {
     final result = await FlutterForegroundTask.startService(
       serviceId: 256,
       serviceTypes: _serviceTypesFor(mode),
-      notificationTitle: 'Hermes Console',
+      notificationTitle: 'Console',
       notificationText: t.bgActive,
       notificationIcon: _serviceNotificationIcon,
       // A-303 (spec 028): acción de parada directa en la notificación — la
@@ -3854,7 +3854,7 @@ class BackgroundListener {
     final result = await FlutterForegroundTask.startService(
       serviceId: 256,
       serviceTypes: await _voiceServiceTypes(prefs),
-      notificationTitle: 'Hermes Console',
+      notificationTitle: 'Console',
       notificationText: t.voiceActive,
       notificationIcon: _voiceNotificationIcon(paused: false),
       notificationButtons: [
@@ -3921,7 +3921,7 @@ class BackgroundListener {
     final result = await FlutterForegroundTask.startService(
       serviceId: 256,
       serviceTypes: await _readAloudServiceTypes(prefs),
-      notificationTitle: 'Hermes Console',
+      notificationTitle: 'Console',
       notificationText: paused ? t.readAloudPaused : t.readAloudPlaying,
       notificationIcon: _serviceNotificationIcon,
       notificationButtons: [
@@ -3963,7 +3963,7 @@ class BackgroundListener {
     final prefs = await SharedPreferences.getInstance();
     final t = NotifL10n.of(prefs);
     await FlutterForegroundTask.updateService(
-      notificationTitle: 'Hermes Console',
+      notificationTitle: 'Console',
       notificationText: paused ? t.readAloudPaused : t.readAloudPlaying,
       notificationIcon: _serviceNotificationIcon,
       notificationButtons: [
@@ -3996,7 +3996,7 @@ class BackgroundListener {
     final t = NotifL10n.of(prefs);
     final projection = _voiceProjection(t, state);
     await FlutterForegroundTask.updateService(
-      notificationTitle: 'Hermes Console',
+      notificationTitle: 'Console',
       notificationText: projection.text,
       notificationIcon: _voiceNotificationIcon(paused: projection.paused),
       notificationButtons: [

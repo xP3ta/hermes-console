@@ -184,7 +184,7 @@ enum _Illu { brand, control, profiles, secure }
 
 /// Título localizado de una página de onboarding (brand = nombre propio).
 String _obTitle(Strings s, _Illu k) => switch (k) {
-  _Illu.brand => 'Hermes Console',
+  _Illu.brand => 'Console',
   _Illu.control => s.obTitleControl,
   _Illu.profiles => s.obTitleProfiles,
   _Illu.secure => s.obTitleSecure,

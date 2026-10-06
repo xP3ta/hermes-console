@@ -356,7 +356,7 @@ void main() {
       // El glow de fondo usa repeat(): NO usar pumpAndSettle (no se asienta).
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(find.text('Hermes Console'), findsOneWidget);
+      expect(find.text('Console'), findsOneWidget);
       expect(find.text('Saltar'), findsOneWidget);
       // Botón de avance (aún no es la última página).
       expect(find.text('Siguiente'), findsOneWidget);
@@ -396,7 +396,7 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(find.text('Hermes Console'), findsOneWidget);
+      expect(find.text('Console'), findsOneWidget);
       expect(find.text('Siguiente'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });

@@ -24218,7 +24218,7 @@ class ActiveChat {
       // que no reflejaría este turno. Actualizamos la notificación persistente
       // a mano para que en 2º plano se vea que el agente local está procesando.
       await BackgroundListener.updateText(
-        title: sessionTitle.isNotEmpty ? sessionTitle : 'Hermes Console',
+        title: sessionTitle.isNotEmpty ? sessionTitle : 'Console',
         text: 'El agente local está procesando tu mensaje…',
       );
 
