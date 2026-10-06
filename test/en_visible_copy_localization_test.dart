@@ -95,9 +95,6 @@ void main() {
       'mdlDashboardOfflineSuffix': 'no Dashboard connection',
       'mdlBridgeUnavailable': 'Bridge unavailable',
       'mdlApplyModelError': 'Could not apply the model',
-      'mdlExternalProvider': 'External provider',
-      'mdlExternalProviderSubtitle':
-          'Remote Ollama · LM Studio · OpenAI-compatible',
     };
     const es = {
       'mdlNoActiveModelTitle': 'Sin modelo configurado',
@@ -108,9 +105,6 @@ void main() {
       'mdlDashboardOfflineSuffix': 'sin conexión al Dashboard',
       'mdlBridgeUnavailable': 'Bridge no disponible',
       'mdlApplyModelError': 'No se pudo aplicar el modelo',
-      'mdlExternalProvider': 'Proveedor externo',
-      'mdlExternalProviderSubtitle':
-          'Ollama remoto · LM Studio · OpenAI-compatible',
     };
     _expectLocalized(en, es);
 

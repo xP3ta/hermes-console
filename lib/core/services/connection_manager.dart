@@ -3813,9 +3813,13 @@ class DashboardClient {
   Future<List<ModelProvider>> getModelOptions({
     String? profile,
     bool explicitOnly = false,
+    bool refresh = false,
   }) async {
     final params = <String>[
       if (explicitOnly) 'explicit_only=1',
+      // Busts the server's per-provider model cache, like Desktop's
+      // "Refresh Models" (`/api/model/options?refresh=1`).
+      if (refresh) 'refresh=1',
       if (profile != null && profile.isNotEmpty && profile != 'default')
         'profile=${Uri.encodeQueryComponent(profile)}',
     ];

@@ -21,6 +21,7 @@ import '../widgets/read_only.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/bridge_update_banner.dart';
 import '../widgets/hermes_premium_ui.dart';
+import '../widgets/provider_logo.dart';
 import '../models/desktop_model_catalog.dart';
 import '../models/free_tier_status.dart';
 import '../models/model_identity.dart';
@@ -29,6 +30,7 @@ import '../services/local_models_client.dart';
 import '../services/free_tier_status.dart';
 import '../services/shared_gateway_pool.dart';
 import '../services/tui_gateway_client.dart';
+import 'custom_endpoints_section.dart';
 import 'external_provider_screen.dart';
 import 'local_models_screen.dart';
 import 'moa_recipe_screen.dart';
@@ -49,6 +51,11 @@ class ModelsScreen extends StatefulWidget {
   @visibleForTesting
   final HermesDesktopFreeTierGateway? freeTierGatewayForTesting;
 
+  /// HTTP client for the phone-side model probe of custom endpoints, which
+  /// only runs for an instance on this phone ([InstanceKind.localhost]).
+  @visibleForTesting
+  final http.Client? probeClientForTesting;
+
   /// Active profile source; defaults to the app's for [connection].
   final ActiveProfileScope? profileScope;
 
@@ -58,6 +65,7 @@ class ModelsScreen extends StatefulWidget {
     this.bridgeManagerForTesting,
     this.gatewayCatalogForTesting,
     this.freeTierGatewayForTesting,
+    this.probeClientForTesting,
     this.profileScope,
     super.key,
   });
@@ -109,6 +117,9 @@ class _ModelsScreenState extends State<ModelsScreen>
   // Modelos descubiertos en vivo para proveedores custom (key = provider.slug).
   final Map<String, List<String>> _liveModels = {};
   final Set<String> _liveLoading = {};
+
+  /// Bumped to make the custom endpoints section reload its list.
+  int _endpointsReload = 0;
 
   /// Proveedores ocultados por el usuario (solo afecta a la vista de la app; NO
   /// toca el servidor). Es la vía para quitar de la lista lo que no se puede
@@ -900,7 +911,7 @@ class _ModelsScreenState extends State<ModelsScreen>
     // context_length + reenvío de base_url) a los slugs literales
     // custom/ollama, no a nombres arbitrarios — así que aplicarlos por bridge
     // deja base_url/context_length sin tocar. El Dashboard sí los transporta
-    // (mismo patrón que external_provider_screen/ollama_models_screen), así
+    // (mismo patrón que external_provider_screen), así
     // que para estos se prueba el Dashboard primero y solo si no responde se
     // cae al bridge (comportamiento previo).
     if (providerBaseUrl.isNotEmpty && scope == 'main') {
@@ -1155,10 +1166,10 @@ class _ModelsScreenState extends State<ModelsScreen>
       context: context,
       title: s.mdlDisconnectProviderTitle(provider.name),
       message: (provider.keyEnv.isNotEmpty && !isOAuth)
-                  ? s.mdlDisconnectApiKeyBody(provider.keyEnv) +
-                        (isActive ? s.mdlDisconnectActiveWarningModel : '')
-                  : s.mdlDisconnectOAuthBody(provider.name) +
-                        (isActive ? s.mdlDisconnectActiveWarning : ''),
+          ? s.mdlDisconnectApiKeyBody(provider.keyEnv) +
+                (isActive ? s.mdlDisconnectActiveWarningModel : '')
+          : s.mdlDisconnectOAuthBody(provider.name) +
+                (isActive ? s.mdlDisconnectActiveWarning : ''),
       actions: [
         HermesDialogAction(
           label: s.commonCancel,
@@ -1642,7 +1653,10 @@ class _ModelsScreenState extends State<ModelsScreen>
 
     return RefreshIndicator(
       color: colors.accentHover,
-      onRefresh: _load,
+      onRefresh: () {
+        setState(() => _endpointsReload++);
+        return _load();
+      },
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
@@ -1697,7 +1711,16 @@ class _ModelsScreenState extends State<ModelsScreen>
           if (unauthProviders.isNotEmpty)
             _buildUnauthSection(colors, unauthProviders),
           _buildLocalModelsTile(colors),
-          _buildExternalProviderTile(colors),
+          CustomEndpointsSection(
+            connection: widget.connection,
+            dashboard: _client,
+            profile: _profile,
+            reloadToken: _endpointsReload,
+            onChanged: () {
+              if (mounted) _load();
+            },
+            probeClientForTesting: widget.probeClientForTesting,
+          ),
         ],
       ),
     );
@@ -1781,82 +1804,6 @@ class _ModelsScreenState extends State<ModelsScreen>
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  /// Tile que abre la pantalla de configuración de proveedor externo:
-  /// Ollama remoto, LM Studio, OpenAI-compatible, custom.
-  Widget _buildExternalProviderTile(HermesThemeColors colors) {
-    return _ModelTonalGroup(
-      margin: const EdgeInsets.only(top: 8, bottom: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-        side: BorderSide(color: colors.accent.withValues(alpha: 0.4), width: 1),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: () => Navigator.of(context)
-            .push<bool>(
-              MaterialPageRoute(
-                fullscreenDialog: true,
-                builder: (_) => ExternalProviderScreen(
-                  connection: widget.connection,
-                  profile: _profile,
-                ),
-              ),
-            )
-            .then((changed) {
-              if (changed == true && mounted) _load();
-            }),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          child: Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: colors.accent.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: colors.accent.withValues(alpha: 0.4),
-                  ),
-                ),
-                child: Icon(
-                  Icons.add_link_rounded,
-                  size: 20,
-                  color: colors.accent,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      Strings.of(context).mdlExternalProvider,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: colors.accentHover,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      Strings.of(context).mdlExternalProviderSubtitle,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Icon(Icons.chevron_right, size: 18, color: colors.textDisabled),
-            ],
-          ),
         ),
       ),
     );
@@ -2030,13 +1977,28 @@ class _ModelsScreenState extends State<ModelsScreen>
               ],
             ),
             const SizedBox(height: 10),
-            Text(
-              friendly,
-              key: const ValueKey('lm1215-active-model'),
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: colors.accentHover,
-              ),
+            Row(
+              children: [
+                ProviderLogo(
+                  key: const ValueKey('provider-logo-active-model'),
+                  provider: info.provider,
+                  providerName: row?.name,
+                  model: info.model,
+                  size: 20,
+                  selected: true,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    friendly,
+                    key: const ValueKey('lm1215-active-model'),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: colors.accentHover,
+                    ),
+                  ),
+                ),
+              ],
             ),
             if (friendly != info.model) ...[
               const SizedBox(height: 2),
@@ -2244,42 +2206,13 @@ class _ModelsScreenState extends State<ModelsScreen>
     if (!mounted) return;
     setState(() => _liveLoading.add(slug));
     try {
-      List<String> models = [];
-      // Intenta OpenAI-compatible primero, luego /api/tags (Ollama nativo).
-      final r1 = await http
-          .get(Uri.parse('$base/v1/models'))
-          .timeout(const Duration(seconds: 6));
-      if (r1.statusCode == 200) {
-        final data = jsonDecode(r1.body);
-        if (data is Map) {
-          final list = data['data'];
-          if (list is List) {
-            models = list
-                .whereType<Map>()
-                .map((m) => (m['id'] ?? '').toString().trim())
-                .where((id) => id.isNotEmpty)
-                .toList();
-          }
-        }
-      }
-      if (models.isEmpty) {
-        final r2 = await http
-            .get(Uri.parse('$base/api/tags'))
-            .timeout(const Duration(seconds: 6));
-        if (r2.statusCode == 200) {
-          final data = jsonDecode(r2.body);
-          if (data is Map) {
-            final list = data['models'];
-            if (list is List) {
-              models = list
-                  .whereType<Map>()
-                  .map((m) => (m['name'] ?? '').toString().trim())
-                  .where((id) => id.isNotEmpty)
-                  .toList();
-            }
-          }
-        }
-      }
+      // Only an instance on this phone may be probed from the phone. For a
+      // remote Hermes, what the phone reaches says nothing about what the
+      // server reaches, so Hermes refreshes the list itself (Desktop's
+      // "Refresh Models": /api/model/options?refresh=1).
+      final models = widget.connection.kind == InstanceKind.localhost
+          ? await _probeCustomModelsFromPhone(base)
+          : await _refreshCustomModelsOnServer(slug);
       if (mounted && models.isNotEmpty) {
         setState(() => _liveModels[slug] = models);
       }
@@ -2288,6 +2221,60 @@ class _ModelsScreenState extends State<ModelsScreen>
     } finally {
       if (mounted) setState(() => _liveLoading.remove(slug));
     }
+  }
+
+  Future<List<String>> _refreshCustomModelsOnServer(String slug) async {
+    final providers = await _client.getModelOptions(
+      profile: _profile,
+      refresh: true,
+    );
+    for (final provider in providers) {
+      if (provider.slug == slug) return provider.models;
+    }
+    return const [];
+  }
+
+  Future<http.Response> _probeGet(Uri url) {
+    final client = widget.probeClientForTesting;
+    return (client != null ? client.get(url) : http.get(url)).timeout(
+      const Duration(seconds: 6),
+    );
+  }
+
+  /// OpenAI-compatible `/v1/models` first, then Ollama's `/api/tags`.
+  Future<List<String>> _probeCustomModelsFromPhone(String base) async {
+    var models = <String>[];
+    final r1 = await _probeGet(Uri.parse('$base/v1/models'));
+    if (r1.statusCode == 200) {
+      final data = jsonDecode(r1.body);
+      if (data is Map) {
+        final list = data['data'];
+        if (list is List) {
+          models = list
+              .whereType<Map>()
+              .map((m) => (m['id'] ?? '').toString().trim())
+              .where((id) => id.isNotEmpty)
+              .toList();
+        }
+      }
+    }
+    if (models.isEmpty) {
+      final r2 = await _probeGet(Uri.parse('$base/api/tags'));
+      if (r2.statusCode == 200) {
+        final data = jsonDecode(r2.body);
+        if (data is Map) {
+          final list = data['models'];
+          if (list is List) {
+            models = list
+                .whereType<Map>()
+                .map((m) => (m['name'] ?? '').toString().trim())
+                .where((id) => id.isNotEmpty)
+                .toList();
+          }
+        }
+      }
+    }
+    return models;
   }
 
   Widget _buildProviderTile(HermesThemeColors colors, ModelProvider provider) {
@@ -2319,6 +2306,12 @@ class _ModelsScreenState extends State<ModelsScreen>
               : null,
           title: Row(
             children: [
+              ProviderLogo(
+                key: ValueKey('provider-logo-provider-${provider.slug}'),
+                provider: provider.slug,
+                providerName: provider.name,
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   provider.name,
@@ -2392,9 +2385,19 @@ class _ModelsScreenState extends State<ModelsScreen>
                   horizontal: 20,
                   vertical: 8,
                 ),
-                icon: hiddenModel
-                    ? Icons.visibility_off_outlined
-                    : Icons.memory_outlined,
+                icon: hiddenModel ? Icons.visibility_off_outlined : null,
+                leading: hiddenModel
+                    ? null
+                    : ProviderLogo(
+                        key: ValueKey(
+                          'provider-logo-model-${provider.slug}-$modelId',
+                        ),
+                        provider: provider.slug,
+                        providerName: provider.name,
+                        model: modelId,
+                        size: 20,
+                        selected: isActive,
+                      ),
                 title: modelId,
                 selected: isActive,
                 semanticHint: hiddenModel
@@ -2509,6 +2512,10 @@ class _ModelsScreenState extends State<ModelsScreen>
                               fullscreenDialog: true,
                               builder: (_) => ExternalProviderScreen(
                                 connection: widget.connection,
+                                profile: _profile,
+                                dashboard: _client,
+                                probeClientForTesting:
+                                    widget.probeClientForTesting,
                                 prefillUrl: provider.baseUrl.isNotEmpty
                                     ? provider.baseUrl
                                     : _inferUrl(provider.name),
@@ -2518,7 +2525,10 @@ class _ModelsScreenState extends State<ModelsScreen>
                             ),
                           )
                           .then((changed) {
-                            if (changed == true && mounted) _load();
+                            if (changed == true && mounted) {
+                              setState(() => _endpointsReload++);
+                              _load();
+                            }
                           }),
               ),
             ],

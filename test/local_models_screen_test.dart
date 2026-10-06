@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/local_models_screen.dart';
 import 'package:hermes_android/core/services/local_models_client.dart';
+import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/fake_local_models_server.dart';
+import 'support/provider_logo_probe.dart';
 
 /// lm1215: Server local models screen. Every write must hit the exact
 /// Desktop route (`apps/desktop/src/api/local-models.ts`) with its body.
@@ -47,6 +49,23 @@ void main() {
     expect(find.text('Qwen3 14B'), findsOneWidget);
     expect(find.text('No cabe en el servidor'), findsOneWidget);
     expect(server.writes(), isEmpty);
+  });
+
+  testWidgets('installed models show their maker logo, tinted', (tester) async {
+    final server = FakeLocalModelsServer();
+    await pumpLocalModels(tester, server);
+
+    final active = find.byKey(
+      const ValueKey('provider-logo-local-Qwen3-8B-Q4_K_M'),
+    );
+    final colors = Theme.of(tester.element(active)).hermes;
+    expect(providerLogoId(tester, active), 'alibaba');
+    expect(providerLogoTint(tester, active), colors.accent);
+    final other = find.byKey(
+      const ValueKey('provider-logo-local-gemma-3-4b-it-UD-Q8_K_XL'),
+    );
+    expect(providerLogoId(tester, other), 'google');
+    expect(providerLogoTint(tester, other), colors.textSecondary);
   });
 
   testWidgets('404 on status shows the honest unavailable copy, no writes', (
