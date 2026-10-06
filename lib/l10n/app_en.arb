@@ -8509,5 +8509,9 @@
   "rpl1215ReplySummarize": "Summarize it",
   "rpl1215SmartSuggest": "Suggest replies with AI",
   "rpl1215SettingTitle": "Quick replies",
-  "rpl1215SettingSubtitle": "Reply ideas after each turn. ✨ only asks the model when you tap it."
+  "rpl1215SettingSubtitle": "Reply ideas after each turn. ✨ only asks the model when you tap it.",
+  "tabletPickConversation": "Pick a conversation to open it here",
+  "@tabletPickConversation": {
+    "description": "Placeholder in the tablet detail pane of the conversation list before one is opened."
+  }
 }

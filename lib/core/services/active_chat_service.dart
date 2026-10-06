@@ -30594,6 +30594,11 @@ class ActiveChatService {
 
   final Map<String, ActiveChat> _chats = {};
 
+  /// How many chats the registry holds (tablet panes must not add a second
+  /// one for a session that is already open).
+  @visibleForTesting
+  int get chatCountForTesting => _chats.length;
+
   /// ss1215: bumped whenever any attached chat's [ActiveChat.liveStatus]
   /// changes, in the same event that changed it. Conversaciones and Inicio
   /// listen to it so their rows never wait for the next roster poll.
