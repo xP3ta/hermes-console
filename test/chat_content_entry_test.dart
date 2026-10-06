@@ -86,6 +86,20 @@ List<Map<String, dynamic>> _history() => [
   },
 ];
 
+/// The sheet builds rows lazily and Search / Ir a sit above the tools, so
+/// drag the sheet list until [target] is built and inside it.
+Future<void> _scrollSheetTo(WidgetTester tester, Finder target) async {
+  final list = find.byKey(const ValueKey('chat-control-sheet'));
+  for (var i = 0; i < 20; i++) {
+    if (target.evaluate().isNotEmpty &&
+        tester.getRect(list).contains(tester.getCenter(target))) {
+      return;
+    }
+    await tester.drag(list, const Offset(0, -80));
+    await tester.pump();
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final secureStore = <String, String>{};
@@ -214,7 +228,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     final entry = find.byKey(const ValueKey('chat-control-content'));
-    await tester.ensureVisible(entry);
+    await _scrollSheetTo(tester, entry);
     expect(
       find.descendant(of: entry, matching: find.text('Archivos y enlaces')),
       findsOneWidget,
@@ -271,7 +285,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     final entry = find.byKey(const ValueKey('chat-control-content'));
-    await tester.ensureVisible(entry);
+    await _scrollSheetTo(tester, entry);
     await tester.tap(entry);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));

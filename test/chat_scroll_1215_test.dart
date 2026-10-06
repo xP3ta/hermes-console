@@ -1179,7 +1179,19 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('chat-notch')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
-      await tester.tap(find.byKey(const ValueKey('chat-control-prompts')));
+      // Search and Ir a sit above Session, so Prompts may start below the
+      // fold of the lazily built sheet list: drag the sheet until it shows.
+      final row = find.byKey(const ValueKey('chat-control-prompts'));
+      final list = find.byKey(const ValueKey('chat-control-sheet'));
+      for (var i = 0; i < 20; i++) {
+        if (row.evaluate().isNotEmpty &&
+            tester.getRect(list).contains(tester.getCenter(row))) {
+          break;
+        }
+        await tester.drag(list, const Offset(0, -80));
+        await tester.pump();
+      }
+      await tester.tap(row);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 250));
     }

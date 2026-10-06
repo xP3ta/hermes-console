@@ -2373,6 +2373,22 @@ Session _session() => Session(
 
 /// ApiClient que nunca toca la red real (404 a todo). Solo es la red de
 /// seguridad: los mensajes se inyectan directamente en el chat.
+/// Taps a row of the notch sheet. Search, Ir a and (Bot Chat) Model sit
+/// above the Session rows, and the list builds lazily, so drag the sheet
+/// until the row is built and inside it first.
+Future<void> _tapSheetRow(WidgetTester tester, Finder row) async {
+  final list = find.byKey(const ValueKey('chat-control-sheet'));
+  for (var i = 0; i < 20; i++) {
+    if (row.evaluate().isNotEmpty &&
+        tester.getRect(list).contains(tester.getCenter(row))) {
+      break;
+    }
+    await tester.drag(list, const Offset(0, -80));
+    await tester.pump();
+  }
+  await tester.tap(row);
+}
+
 ApiClient _safeApi() => ApiClient(
   baseUrl: 'http://127.0.0.1:8642',
   apiKey: 'k',
@@ -4642,7 +4658,8 @@ void main() {
         await tester.tap(find.byKey(const ValueKey('chat-notch')));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 350));
-        await tester.tap(
+        await _tapSheetRow(
+          tester,
           find.descendant(
             of: find.byKey(const ValueKey('chat-control-sheet')),
             matching: find.byIcon(Icons.refresh_rounded),
@@ -7970,7 +7987,8 @@ void main() {
     await tester.pump(kChatNotchSheetOpen);
     final dialog = find.byKey(const ValueKey('chat-control-dialog'));
     expect(dialog, findsOneWidget);
-    await tester.tap(
+    await _tapSheetRow(
+      tester,
       find.descendant(of: dialog, matching: find.byIcon(Icons.refresh_rounded)),
     );
     await tester.pump();
