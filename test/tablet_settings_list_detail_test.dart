@@ -274,6 +274,16 @@ void main() {
     await _resize(tester, const Size(1280, 800));
     expect(_selected(tester, SettingsSection.security), isTrue);
     expect(tester.takeException(), isNull);
+
+    // A second round trip still shows the list, and Back leaves Settings
+    // (no page is left counted as open in the rebuilt pane).
+    await _resize(tester, const Size(800, 1280));
+    expect(find.byKey(_categories), findsNothing);
+    expect(find.byKey(_detail), findsNothing, reason: 'no page open');
+    await _resize(tester, const Size(1280, 800));
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsScreen), findsNothing);
   });
 
   testWidgets('rotation 1024x768 -> 768x1024 keeps an open page', (
