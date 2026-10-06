@@ -10150,5 +10150,96 @@
       }
     }
   },
-  "rt1215Thinking": "Pensamiento"
+  "rt1215Thinking": "Pensamiento",
+  "sp1215ModelZone": "Modelo: {model}. Cambiar modelo y sesión",
+  "@sp1215ModelZone": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "sp1215LimitNear": "Límite de suscripción cerca",
+  "sp1215LimitReached": "Límite de suscripción agotado",
+  "sp1215PermissionsZone": "Permisos: {mode}",
+  "@sp1215PermissionsZone": {
+    "placeholders": {
+      "mode": {
+        "type": "String"
+      }
+    }
+  },
+  "sp1215PermissionsZoneGlobal": "Permisos: {mode}, configuración global",
+  "@sp1215PermissionsZoneGlobal": {
+    "placeholders": {
+      "mode": {
+        "type": "String"
+      }
+    }
+  },
+  "sp1215Compact": "Compactar",
+  "sp1215CompactBusy": "Compactando…",
+  "sp1215AppliesNextTurn": "Se aplica desde el próximo turno.",
+  "sp1215ModeAppliesNow": "Se aplica desde ahora, solo a esta sesión.",
+  "sp1215ReasoningHint": "Esfuerzo del modelo",
+  "sp1215ReasoningLow": "Bajo",
+  "sp1215ReasoningMedium": "Medio",
+  "sp1215ReasoningHigh": "Alto",
+  "sp1215ReasoningMore": "Más niveles",
+  "sp1215FastHint": "Respuestas más veloces",
+  "sp1215CapReasoning": "Razona",
+  "sp1215CapFast": "Rápido",
+  "sp1215CapFree": "Sin coste",
+  "sp1215CapBasic": "Básico",
+  "sp1215LimitTitle": "Límite de tu suscripción",
+  "sp1215LimitUsed": "{percent}% usado",
+  "@sp1215LimitUsed": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "sp1215LimitUsedUp": "Agotado",
+  "sp1215LimitResetsIn": "se restablece en {duration}",
+  "@sp1215LimitResetsIn": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "sp1215LimitResetsAt": "se restablece el {date}",
+  "@sp1215LimitResetsAt": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "sp1215LimitBanner": "Límite alcanzado. {reset}",
+  "@sp1215LimitBanner": {
+    "placeholders": {
+      "reset": {
+        "type": "String"
+      }
+    }
+  },
+  "sp1215LimitBannerNoReset": "Límite alcanzado.",
+  "sp1215LimitExtra": "Uso extra: {used} / {limit} {currency}",
+  "@sp1215LimitExtra": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "limit": {
+        "type": "String"
+      },
+      "currency": {
+        "type": "String"
+      }
+    }
+  },
+  "sp1215LimitLocal": "Modelo local: sin límite de uso ni coste.",
+  "sp1215LimitNoData": "Sin datos de límite para este proveedor."
 }

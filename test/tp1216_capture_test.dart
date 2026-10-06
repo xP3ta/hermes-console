@@ -16,7 +16,9 @@ import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/compaction_dock.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/core/widgets/message_avatar_header.dart';
+import 'package:hermes_android/core/widgets/chat_status_pill.dart';
 import 'package:hermes_android/core/widgets/session_context_usage.dart';
+import 'package:hermes_android/core/widgets/status_pill_sheet.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
 import 'support/design_shots.dart' show loadDesignFonts;
@@ -118,17 +120,33 @@ Widget _contextPill({CompactionProgress? compaction}) {
       percent: 21,
     ),
   );
+  DateTime clock() => _t0.add(const Duration(seconds: 23));
   return Padding(
     padding: const EdgeInsets.only(top: 8),
     child: Center(
-      child: SessionContextPopoverButton(
-        metrics: metrics,
-        loadBreakdown: () async => null,
-        onMetricsSnapshot: (_) {},
-        modeLabel: 'YOLO',
-        compressionCount: 1,
-        compaction: compaction,
-        clock: () => _t0.add(const Duration(seconds: 23)),
+      child: Builder(
+        builder: (context) => ChatStatusPill(
+          metrics: metrics,
+          onOpenContext: () => showStatusPillSheet<void>(
+            context: context,
+            surfaceKey: const ValueKey('context-sheet'),
+            title: Strings.of(context).chaContextUsageTitle,
+            builder: (_) => SessionContextSheetBody(
+              metrics: metrics,
+              loadBreakdown: () async => null,
+              onMetricsSnapshot: (_) {},
+              compaction: ValueNotifier(compaction),
+              clock: clock,
+              onCompact: () {},
+            ),
+          ),
+          permissionsLabel: 'YOLO',
+          permissionsFlag: 'YOLO',
+          onOpenPermissions: () {},
+          compressionCount: 1,
+          compaction: compaction,
+          clock: clock,
+        ),
       ),
     ),
   );
