@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -40,19 +41,24 @@ bool debugLivingBotFacesStill = false;
 @visibleForTesting
 int get livingBotFaceActiveTickers => _LivingBotFaceState._active;
 
-/// A living bot face: continuous idle breath with seeded blinks and
-/// glances, thinking look-around, working scan (eyes read a line) with a
-/// soft pulsing ring, attention nudge every few seconds, speaking while a
-/// reply streams, and an entrance on first appearance.
+/// Test hook: number of idle blink timers currently pending.
+@visibleForTesting
+int get livingBotFacePendingBlinks => _LivingBotFaceState._pendingBlinks;
+
+/// A living bot face: thinking look-around, working scan (eyes read a
+/// line) with a soft pulsing ring, attention nudge every few seconds,
+/// speaking while a reply streams, and an entrance on first appearance.
 ///
-/// Exactly ONE [AnimationController] per visible face drives the Blobatar
-/// motion, the ring, the nudge and raster-avatar breathing
-/// ([HermesBotFace.clock] / [BotAvatarMotion.clock]). Faces are alive for
-/// as long as they are on screen; the clock stops when the face is
-/// disposed (scrolled off a lazy list), sits in a background route
-/// ([TickerMode]) or reduced motion is on ([MediaQuery.disableAnimationsOf]).
-/// The face then paints a static frame that still carries the state (the
-/// ring stays, no motion).
+/// Idle faces hold a still, alive pose and only blink now and then (a
+/// one-shot timer plus a short blink animation): an idle chat or roster
+/// must stop producing frames. Continuous motion runs only while the bot is
+/// busy, through ONE capped (~30 fps) frame clock per face that drives the
+/// Blobatar motion, the ring, the nudge and raster-avatar breathing
+/// ([HermesBotFace.clock] / [BotAvatarMotion.clock]). Everything stops when
+/// the face is disposed (scrolled off a lazy list), sits in a background
+/// route ([TickerMode]) or reduced motion is on
+/// ([MediaQuery.disableAnimationsOf]); the face then paints a static frame
+/// that still carries the state (the ring stays, no motion).
 class LivingBotFace extends StatefulWidget {
   final String profileName;
   final AgentProfile? profile;
@@ -82,6 +88,16 @@ class LivingBotFace extends StatefulWidget {
 
   /// Amplitude used for a face of [size] dp: small faces need more relative
   /// motion to read at all, big ones get their personality from detail.
+  /// Frame interval of continuous (busy) motion: ~30 fps, well under the
+  /// display rate, so a working face costs a fraction of a vsync ticker.
+  static const motionFrameInterval = Duration(milliseconds: 33);
+
+  /// One idle blink; the only motion of an idle face.
+  static const blinkDuration = Duration(milliseconds: 220);
+
+  /// Shortest pause between idle blinks.
+  static const minBlinkPause = Duration(milliseconds: 4200);
+
   static double expressivenessFor(double size) => size >= 56 ? 1.3 : 1.2;
 
   /// Eyes move more than the body: a glance or a scan is what makes a
@@ -93,18 +109,36 @@ class LivingBotFace extends StatefulWidget {
 }
 
 class _LivingBotFaceState extends State<LivingBotFace>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   static int _active = 0;
+  static int _pendingBlinks = 0;
   static const _entranceMs = 420;
 
   late final AnimationController _clock = AnimationController(
     vsync: this,
     duration: HermesBotFace.clockDuration,
   );
+  late final AnimationController _blink = AnimationController(
+    vsync: this,
+    duration: LivingBotFace.blinkDuration,
+  );
+
+  /// Drives continuous motion at [LivingBotFace.motionFrameInterval] while
+  /// the bot is busy; null when idle.
+  Timer? _frames;
+  Timer? _nextBlink;
+  int _blinks = 0;
   bool _counted = false;
+  bool _disposed = false;
+
+  /// Motion is allowed (visible route, no reduced motion, not a test still).
   bool _motion = false;
   bool _entered = false;
   double? _entranceStartMs;
+
+  /// Continuous motion only while the bot is doing something; an idle face
+  /// holds still and blinks now and then (no running clock).
+  bool get _continuous => _motion && widget.signal != BotFaceSignal.idle;
 
   @override
   void didChangeDependencies() {
@@ -125,17 +159,36 @@ class _LivingBotFaceState extends State<LivingBotFace>
         TickerMode.valuesOf(context).enabled;
     if (_motion && !_entered) {
       _entered = true;
-      if (widget.entrance) _entranceStartMs = _nowMs;
+      if (widget.entrance) {
+        _entranceStartMs = _nowMs;
+        // One-shot: the clock advances exactly the entrance span and stops.
+        _clock.animateTo(
+          _clock.value +
+              _entranceMs / HermesBotFace.clockDuration.inMilliseconds,
+          duration: const Duration(milliseconds: _entranceMs),
+        );
+      }
     }
-    _run(_motion);
+    _runContinuous(_continuous);
+    _runBlinks(_motion && !_continuous);
   }
 
   double get _nowMs =>
       _clock.value * HermesBotFace.clockDuration.inMilliseconds;
 
-  void _run(bool on) {
+  void _runContinuous(bool on) {
     if (on) {
-      if (!_clock.isAnimating) _clock.repeat();
+      if (_frames == null) {
+        const step = LivingBotFace.motionFrameInterval;
+        final delta =
+            step.inMicroseconds / HermesBotFace.clockDuration.inMicroseconds;
+        // A capped frame clock instead of a vsync ticker: a busy face moves
+        // at ~30 fps, not at the display's 120 Hz.
+        _frames = Timer.periodic(step, (_) {
+          if (_disposed) return;
+          _clock.value = (_clock.value + delta) % 1.0;
+        });
+      }
       if (!_counted) {
         _counted = true;
         _active++;
@@ -143,7 +196,8 @@ class _LivingBotFaceState extends State<LivingBotFace>
     } else {
       // Stopping keeps the current value: the face freezes on its last pose
       // and resumes from it, never snapping back to a neutral frame.
-      _clock.stop();
+      _frames?.cancel();
+      _frames = null;
       if (_counted) {
         _counted = false;
         _active--;
@@ -151,10 +205,63 @@ class _LivingBotFaceState extends State<LivingBotFace>
     }
   }
 
+  void _runBlinks(bool on) {
+    if (on) {
+      if (_nextBlink == null && !_blink.isAnimating) _scheduleBlink();
+    } else {
+      _cancelBlinkTimer();
+      if (_blink.isAnimating || _blink.value != 0) {
+        _blink.stop();
+        _blink.value = 0;
+      }
+    }
+  }
+
+  /// Seeded, varying pause between idle blinks (4.2-8 s) so a roster never
+  /// blinks in lockstep.
+  Duration get _blinkPause => Duration(
+    milliseconds:
+        LivingBotFace.minBlinkPause.inMilliseconds +
+        (_phaseMs * 7 + _blinks * 1931) % 3800,
+  );
+
+  void _cancelBlinkTimer() {
+    final timer = _nextBlink;
+    if (timer == null) return;
+    timer.cancel();
+    _nextBlink = null;
+    _pendingBlinks--;
+  }
+
+  void _scheduleBlink() {
+    _pendingBlinks++;
+    _nextBlink = Timer(_blinkPause, () {
+      _nextBlink = null;
+      _pendingBlinks--;
+      if (_disposed || !_motion || _continuous) return;
+      final lifecycle = WidgetsBinding.instance.lifecycleState;
+      if (lifecycle != null && lifecycle != AppLifecycleState.resumed) {
+        // Backgrounded app: no frames; just try again later.
+        _scheduleBlink();
+        return;
+      }
+      _blinks++;
+      _blink.forward(from: 0).whenCompleteOrCancel(() {
+        if (_disposed) return;
+        if (_blink.value != 0) _blink.value = 0;
+        if (_motion && !_continuous && _nextBlink == null) _scheduleBlink();
+      });
+    });
+  }
+
   @override
   void dispose() {
+    _disposed = true;
+    _frames?.cancel();
+    _cancelBlinkTimer();
     if (_counted) _active--;
     _clock.dispose();
+    _blink.dispose();
     super.dispose();
   }
 
@@ -176,7 +283,8 @@ class _LivingBotFaceState extends State<LivingBotFace>
       avatarCache: widget.avatarCache,
       size: size,
       clock: _clock,
-      motion: _motion,
+      motion: _continuous,
+      blink: _motion ? _blink : null,
       signal: signal,
       gain: gain,
     );
@@ -200,7 +308,7 @@ class _LivingBotFaceState extends State<LivingBotFace>
         // face that needs the user asks for it without shaking constantly.
         var dy = 0.0;
         var turn = 0.0;
-        if (_motion && signal == BotFaceSignal.attention) {
+        if (_continuous && signal == BotFaceSignal.attention) {
           final t = ((ms + _phaseMs) % 3200) / 3200;
           if (t < .28) {
             final k = t / .28;
@@ -208,7 +316,7 @@ class _LivingBotFaceState extends State<LivingBotFace>
             turn = math.sin(k * math.pi * 4) * .09 * (1 - k);
           }
         }
-        final pulse = _motion && signal.hasRing
+        final pulse = _continuous && signal.hasRing
             ? (math.sin((ms + _phaseMs) / 1300 * 2 * math.pi) + 1) / 2
             : .5;
         return Opacity(
@@ -284,6 +392,7 @@ class _Face extends StatelessWidget {
   final double size;
   final Animation<double> clock;
   final bool motion;
+  final Animation<double>? blink;
   final BotFaceSignal signal;
   final double gain;
 
@@ -294,6 +403,7 @@ class _Face extends StatelessWidget {
     required this.size,
     required this.clock,
     required this.motion,
+    required this.blink,
     required this.signal,
     required this.gain,
   });
@@ -339,6 +449,7 @@ class _Face extends StatelessWidget {
       size: size,
       animate: motion,
       clock: clock,
+      blink: blink,
       motionState: signal.motionState,
       motionGain: gain,
       eyeGain: LivingBotFace.eyeGainFor(gain),

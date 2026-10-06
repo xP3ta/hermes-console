@@ -75,6 +75,7 @@ import 'package:hermes_android/core/services/session_config_reducer.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/models/prepared_turn.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
+import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
 import 'package:hermes_android/core/widgets/hermes_bot_face.dart';
 import 'package:hermes_android/core/widgets/chat/chat_message_frame.dart'
     show ChatMessageHeader;
@@ -31682,6 +31683,63 @@ void main() {
       findsNothing,
     );
     expect(avatarLoads, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('idle Bot Chat stops producing frames (no endless face ticker)', (
+    tester,
+  ) async {
+    // Physical QA: an idle bot chat repainted at 120 fps forever because
+    // the header face ran a repeating clock while nothing was happening.
+    debugLivingBotFacesStill = false;
+    addTearDown(() => debugLivingBotFacesStill = true);
+    await pumpChat(
+      tester,
+      connection: _remoteConn('conn-bot-idle-frames'),
+      session: const Session(
+        id: 'mob-bot-argos',
+        lineageRootId: 'stored-bot-idle-frames',
+        title: 'Bot Chat',
+        model: 'hermes-agent',
+        source: 'bot-mode-canonical',
+        messageCount: 2,
+        isActive: false,
+        preview: '',
+        startedAt: 1,
+        profile: 'argos',
+      ),
+      messages: const [
+        {'role': 'user', 'content': 'Hola'},
+        {'role': 'assistant', 'content': 'Hola, soy Argos.'},
+      ],
+      missionBotProfile: const AgentProfile(
+        name: 'argos',
+        botModeUiMeta: {'title': 'Argos', 'shape': 'blobatar'},
+      ),
+    );
+    final header = find.byKey(const ValueKey('bot-chat-avatar-argos'));
+    expect(header, findsOneWidget);
+    expect(
+      find.descendant(of: header, matching: find.byType(HermesBotFace)),
+      findsOneWidget,
+    );
+    // Let the route and one-shot entrance animations finish.
+    for (var i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    // Idle: over 20 s the screen may wake up only for brief blinks.
+    var busy = 0;
+    const steps = 200;
+    for (var i = 0; i < steps; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+      if (tester.binding.transientCallbackCount > 0) busy++;
+    }
+    expect(
+      busy,
+      lessThan(steps ~/ 10),
+      reason: 'idle bot chat kept ticking in $busy of $steps samples',
+    );
+    expect(livingBotFaceActiveTickers, 0);
     expect(tester.takeException(), isNull);
   });
 

@@ -88,7 +88,7 @@ void main() {
       expect(livingBotFaceActiveTickers, 0);
     });
 
-    testWidgets('entrance scales in, then idle keeps breathing continuously', (
+    testWidgets('entrance scales in, then idle holds still and only blinks', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -106,20 +106,76 @@ void main() {
       expect(opacity().opacity, lessThan(1));
       await tester.pump(const Duration(milliseconds: 500));
       expect(opacity().opacity, 1);
-      // Idle is alive while on screen: the clock keeps running (no bursts
-      // with dead rests in between) and the face keeps its motion gain.
       final face = tester.widget<HermesBotFace>(find.byType(HermesBotFace));
-      expect(face.motionGain, greaterThan(1));
+      expect(face.animate, isFalse, reason: 'no continuous idle motion');
       final clock = face.clock!;
-      for (var i = 0; i < 4; i++) {
-        final before = clock.value;
-        await tester.pump(const Duration(seconds: 3));
-        expect(clock.value, greaterThan(before));
-        expect(livingBotFaceActiveTickers, 1);
-        expect(tester.binding.hasScheduledFrame, isTrue);
+      final blink = face.blink!;
+      final rest = clock.value;
+      // Idle must stop producing frames: over 20 s the face wakes up only
+      // for short one-shot blinks.
+      var busy = 0;
+      var blinkFrames = 0;
+      const steps = 200;
+      for (var i = 0; i < steps; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        if (tester.binding.transientCallbackCount > 0) busy++;
+        if (blink.value > 0) blinkFrames++;
       }
+      expect(clock.value, rest, reason: 'the motion clock never runs idle');
+      expect(livingBotFaceActiveTickers, 0);
+      expect(livingBotFacePendingBlinks, lessThanOrEqualTo(1));
+      expect(busy, lessThan(steps ~/ 10), reason: 'busy in $busy samples');
+      expect(blinkFrames, greaterThan(0), reason: 'idle still blinks');
       await tester.pumpWidget(const SizedBox());
       expect(livingBotFaceActiveTickers, 0);
+    });
+
+    testWidgets('busy motion is capped and stops when the work ends', (
+      tester,
+    ) async {
+      final signal = ValueNotifier(BotFaceSignal.working);
+      addTearDown(signal.dispose);
+      await tester.pumpWidget(
+        _app(
+          ValueListenableBuilder<BotFaceSignal>(
+            valueListenable: signal,
+            builder: (context, value, _) => LivingBotFace(
+              profileName: 'forja',
+              signal: value,
+              entrance: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 16));
+      final face = tester.widget<HermesBotFace>(find.byType(HermesBotFace));
+      expect(face.animate, isTrue);
+      expect(livingBotFaceActiveTickers, 1);
+      final clock = face.clock!;
+      var ticks = 0;
+      void count() => ticks++;
+      clock.addListener(count);
+      addTearDown(() => clock.removeListener(count));
+      // One second sampled at the Pixel's 120 Hz vsync.
+      for (var i = 0; i < 120; i++) {
+        await tester.pump(const Duration(microseconds: 8333));
+      }
+      expect(ticks, inInclusiveRange(25, 32), reason: '~30 fps, not 120');
+      signal.value = BotFaceSignal.idle;
+      await tester.pump();
+      expect(livingBotFaceActiveTickers, 0);
+      final frozen = clock.value;
+      ticks = 0;
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(ticks, 0);
+      expect(clock.value, frozen);
+      expect(
+        tester.widget<HermesBotFace>(find.byType(HermesBotFace)).animate,
+        isFalse,
+      );
+      await tester.pumpWidget(const SizedBox());
     });
 
     testWidgets('pinned-size faces are more expressive than row faces', (
@@ -194,7 +250,9 @@ void main() {
       expect(livingBotFaceActiveTickers, 0);
     });
 
-    testWidgets('idle faces tick only while on screen', (tester) async {
+    testWidgets('a roster of idle faces settles (no running clock)', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         _app(
           ListView.builder(
@@ -212,12 +270,65 @@ void main() {
           ),
         ),
       );
-      await tester.pump(const Duration(milliseconds: 100));
-      final built = find.byType(LivingBotFace).evaluate().length;
-      expect(built, lessThan(20));
-      expect(livingBotFaceActiveTickers, built);
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.byType(LivingBotFace), findsWidgets);
+      expect(livingBotFaceActiveTickers, 0);
+      // Blinks are one-shot and staggered: most of the time nothing ticks.
+      var busy = 0;
+      const steps = 100;
+      for (var i = 0; i < steps; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        if (tester.binding.transientCallbackCount > 0) busy++;
+      }
+      expect(busy, lessThan(steps ~/ 2), reason: 'busy in $busy samples');
       await tester.pumpWidget(const SizedBox());
       expect(livingBotFaceActiveTickers, 0);
+    });
+
+    testWidgets('idle faces in a covered route never blink or tick', (
+      tester,
+    ) async {
+      final visible = ValueNotifier(false);
+      addTearDown(visible.dispose);
+      await tester.pumpWidget(
+        _app(
+          ValueListenableBuilder<bool>(
+            valueListenable: visible,
+            builder: (context, on, _) => TickerMode(
+              enabled: on,
+              child: const LivingBotFace(
+                profileName: 'argos',
+                signal: BotFaceSignal.idle,
+                entrance: false,
+              ),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 200; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(tester.binding.transientCallbackCount, 0);
+        expect(tester.binding.hasScheduledFrame, isFalse);
+        expect(livingBotFacePendingBlinks, 0, reason: 'no wake-ups covered');
+      }
+      expect(
+        tester.widget<HermesBotFace>(find.byType(HermesBotFace)).blink,
+        isNull,
+      );
+      // Uncovered again: the face comes back to life with its blinks.
+      visible.value = true;
+      await tester.pump();
+      final blink = tester
+          .widget<HermesBotFace>(find.byType(HermesBotFace))
+          .blink!;
+      var blinked = false;
+      for (var i = 0; i < 100 && !blinked; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        blinked = blink.value > 0;
+      }
+      expect(blinked, isTrue);
+      await tester.pumpWidget(const SizedBox());
+      expect(livingBotFacePendingBlinks, 0);
     });
 
     testWidgets('reduced motion stops every ticker but keeps the state', (
@@ -233,6 +344,26 @@ void main() {
         find.byKey(const ValueKey('living-face-ring-working')),
         findsWidgets,
       );
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('reduced motion keeps an idle face fully static', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _app(
+          const LivingBotFace(profileName: 'argos', signal: BotFaceSignal.idle),
+          reduceMotion: true,
+        ),
+      );
+      for (var i = 0; i < 100; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(tester.binding.hasScheduledFrame, isFalse);
+      }
+      final face = tester.widget<HermesBotFace>(find.byType(HermesBotFace));
+      expect(face.animate, isFalse);
+      expect(face.blink, isNull);
+      expect(livingBotFacePendingBlinks, 0);
       await tester.pumpWidget(const SizedBox());
     });
 
