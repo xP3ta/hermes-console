@@ -176,8 +176,13 @@ void main() {
 
     collect(span, null);
     expect(inlineStyles, hasLength(1));
-    expect(inlineStyles.single.fontFamily, 'monospace');
-    expect(inlineStyles.single.backgroundColor, Colors.transparent);
+    expect(inlineStyles.single.fontFamily, 'JetBrainsMono');
+    // Píldora sutil (fondo de texto en la propia línea), nunca un chip
+    // contenedor que rompa el flujo: ver formerChipContainers arriba.
+    expect(
+      inlineStyles.single.backgroundColor,
+      colors.surfaceVariant.withValues(alpha: 0.85),
+    );
     expect(
       inlineStyles.single.color,
       colors.textPrimary.withValues(alpha: 0.92),

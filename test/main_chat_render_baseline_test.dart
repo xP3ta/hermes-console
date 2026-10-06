@@ -337,7 +337,7 @@ void main() {
     expect(prose.fontSize, 15);
     expect(prose.height, 1.5);
     final inlineCode = _leafStyle(paragraph, 'hermes-gateway')!;
-    expect(inlineCode.fontFamily, 'monospace');
+    expect(inlineCode.fontFamily, 'JetBrainsMono');
     expect(inlineCode.fontSize, 13);
     final link = _leafStyle(paragraph, 'guía oficial')!;
     expect(link.color, colors.secondary);

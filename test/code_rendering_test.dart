@@ -21,7 +21,8 @@ void main() {
     ),
   );
 
-  // Verdadero si algún Text con el texto buscado se pinta en 'monospace'.
+  // Verdadero si algún Text con el texto buscado se pinta en monoespaciada:
+  // la del sistema o JetBrains Mono, la empaquetada del código del chat.
   // Soporta Text plano (estilo en el widget) y Text.rich del resaltado de
   // sintaxis (estilo en el TextSpan raíz).
   bool hasMonoText(WidgetTester tester, Pattern contains) {
@@ -32,7 +33,7 @@ void main() {
       final family =
           t.style?.fontFamily ??
           (span is TextSpan ? span.style?.fontFamily : null);
-      if (family == 'monospace') return true;
+      if (family == 'monospace' || family == 'JetBrainsMono') return true;
     }
     return false;
   }
@@ -137,13 +138,8 @@ void main() {
         host(const AssistantMarkdownView(data: 'Para listar:\ndir')),
       );
       expect(hasMonoText(tester, 'dir'), isTrue);
-      expect(find.text('copiar'), findsOneWidget);
-      final copyTarget = find
-          .ancestor(
-            of: find.text('copiar'),
-            matching: find.byType(GestureDetector),
-          )
-          .first;
+      final copyTarget = find.byTooltip('Copiar código');
+      expect(copyTarget, findsOneWidget);
       expect(tester.getSize(copyTarget).height, greaterThanOrEqualTo(48));
     });
 
@@ -169,7 +165,7 @@ void main() {
         ),
       );
       // Sin cabecera de code block (no hay botón copiar) y la prosa es visible.
-      expect(find.text('copiar'), findsNothing);
+      expect(find.byTooltip('Copiar código'), findsNothing);
       expect(find.textContaining('Todo ha ido bien'), findsOneWidget);
     });
 
@@ -184,7 +180,7 @@ void main() {
         ),
       );
       // Tiene `;`/`=`/`&&` → se mantiene como código (cabecera + copiar).
-      expect(find.text('copiar'), findsOneWidget);
+      expect(find.byTooltip('Copiar código'), findsOneWidget);
     });
   });
 
