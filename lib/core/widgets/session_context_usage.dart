@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../design/modal.dart' show releaseTextFocusIfKeyboardHidden;
 import '../models/compaction_progress.dart';
 import '../models/desktop_context_breakdown.dart';
 import '../models/desktop_session_snapshot.dart';
@@ -35,6 +36,9 @@ Future<void> showSessionContextPopover({
 }) {
   final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
   final navigator = Navigator.of(context);
+  // QA 9490: closing this popover must not reopen a keyboard the user had
+  // already dismissed (the chat route restores focus to the composer on pop).
+  releaseTextFocusIfKeyboardHidden(context);
   return showGeneralDialog<void>(
     context: context,
     useRootNavigator: false,
