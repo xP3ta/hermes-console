@@ -1849,7 +1849,9 @@ class _ChatScreenState extends State<ChatScreen>
   _ModelSource _modelSource = _ModelSource.dashboard;
 
   // Scroll management
-  final _scrollController = ScrollController();
+  late final _scrollController = _ChatTranscriptScrollController(
+    _streamingViewportLock,
+  );
   Timer? _keyboardScrollTimer;
   // La flecha "ir al final" se aísla en un notifier: mostrarla/ocultarla no
   // reconstruye la pantalla (crítico cuando se pausa el seguimiento con el
@@ -2193,16 +2195,50 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// Opens the prompt the pinned header shows. That prompt belongs to the
+  /// turn at the top edge, so it is always above: walk up from here. The
+  /// generic reveal starts at the bottom and has a frame budget, so in a
+  /// long chat (earlier pages loaded, tall replies) it never reached the
+  /// prompt and left the list wherever it ran out, up to the first message.
+  /// The prompt is looked up by its stable id on every frame, so a page
+  /// load or refresh that replaces the row objects cannot lose it; when it
+  /// cannot be built the reader stays where they were.
   Future<void> _revealStickyPrompt(Map<String, dynamic> prompt) async {
-    final target = chatRefreshFindAnchorMessage(prompt, _messages) ?? prompt;
+    if (_disposed || !mounted || !_scrollController.hasClients) return;
+    Map<String, dynamic> current() =>
+        chatRefreshFindAnchorMessage(prompt, _messages) ?? prompt;
     _freezeStreamingFollow();
-    await _revealTranscriptMessage(target);
+    _streamingViewportLock.releaseLanding();
+    final start = _scrollController.position.pixels;
+    final reached = await _materializeTranscriptAnchor(
+      current(),
+      resolve: current,
+      fromBottom: false,
+      // The list keeps a 1000 px cache on both sides: a step of one
+      // viewport plus that cache still builds every row it passes.
+      stepExtent: (position) => position.viewportDimension + 1000,
+    );
+    if (_disposed || !mounted || !_scrollController.hasClients) return;
+    final anchor = _messageAnchors[current()];
+    if (reached != true || anchor == null || !anchor.attached) {
+      if (reached == false) _scrollController.position.jumpTo(start);
+      return;
+    }
+    await scrollChatAnswerToStart(
+      anchor,
+      _scrollController.position,
+      duration: _reduceMotion ? Duration.zero : chatNavigationDuration,
+    );
   }
 
   /// Walk budget of the entry landing: long enough to build a first unread
   /// row several screens up, short enough (~330 ms) that a blank transcript
   /// never reads as a broken screen.
   static const int _entryLandingWalkFrames = 20;
+
+  /// Context kept above the "new since you left" divider when landing on
+  /// it: about one row of what was already read.
+  static const double _newSinceLandingContext = 48;
 
   // "New since you left": device-local read marker per conversation (Hermes
   // keeps none for sessions), mirroring the Room's `lastSeenSeq`.
@@ -2341,7 +2377,31 @@ class _ChatScreenState extends State<ChatScreen>
     // starts at zero here and counts only what arrives from now on
     // (unread_rules.dart). Showing the arrow sets that baseline.
     _showScrollToBottom = true;
-    position.jumpTo(target + buttonExtent);
+    position.jumpTo(
+      math.min(
+        target + buttonExtent + _newSinceLandingContext,
+        position.maxScrollExtent + buttonExtent,
+      ),
+    );
+    // Anchor to the divider row, not to that pixel offset: rows that finish
+    // their layout later (previews, markdown, a live reply below) would
+    // otherwise slide the divider down or off the top.
+    if (!_disposed && _scrollController.hasClients) {
+      _streamingViewportLock.holdLanding(
+        _newSinceAnchor,
+        visualOffset: _newSinceLandingContext,
+      );
+    }
+  }
+
+  /// The laid-out row carrying the "new since you left" divider.
+  RenderBox? _newSinceAnchor() {
+    for (final entry in _messageAnchors.entries) {
+      if (_isNewSinceFirstUnread(entry.key) && entry.value.attached) {
+        return entry.value;
+      }
+    }
+    return null;
   }
 
   bool _isNewSinceFirstUnread(Map<String, dynamic> message) {
@@ -12117,22 +12177,27 @@ class _ChatScreenState extends State<ChatScreen>
     bool Function()? stillWanted,
     int maxFrames = 80,
     double Function(ScrollPosition position)? stepExtent,
+    Map<String, dynamic> Function()? resolve,
+    bool fromBottom = true,
   }) async {
     bool live() =>
         mounted &&
         _scrollController.hasClients &&
         (stillWanted == null || stillWanted());
-    bool attached() => _messageAnchors[target]?.attached ?? false;
+    bool attached() =>
+        _messageAnchors[resolve?.call() ?? target]?.attached ?? false;
     if (!live()) return null;
     if (attached()) return true;
     // Read the position after every frame: entering the chat can still swap
     // the list's scrollable (loading state → transcript), which disposes the
     // position a caller captured before the walk.
     var position = _scrollController.position;
-    position.jumpTo(position.minScrollExtent);
-    await SchedulerBinding.instance.endOfFrame;
-    if (!live()) return null;
-    if (attached()) return true;
+    if (fromBottom) {
+      position.jumpTo(position.minScrollExtent);
+      await SchedulerBinding.instance.endOfFrame;
+      if (!live()) return null;
+      if (attached()) return true;
+    }
 
     for (var attempt = 0; attempt < maxFrames; attempt++) {
       if (!live()) return null;
@@ -17187,6 +17252,7 @@ class _ChatScreenState extends State<ChatScreen>
             (_scrollToBottomVisibility.value ? 48 : 0);
         return ChatScrollInteractionGuard(
           onPointerDown: (event) {
+            _streamingViewportLock.releaseLanding();
             _earlierAutoArmed = true;
             _pauseStreamingFollow(event);
           },
@@ -23435,6 +23501,86 @@ class _ChatStreamingViewportPhysics extends ScrollPhysics {
   }
 }
 
+/// Transcript controller whose position applies the "new since you left"
+/// landing hold of [lock] in every viewport layout. The physics hook runs
+/// only when the scroll extents change, and a lazy reversed list often
+/// keeps its extent estimate while visible rows reflow, so the divider
+/// would drift with no hook ever running.
+class _ChatTranscriptScrollController extends ScrollController {
+  _ChatTranscriptScrollController(this.lock);
+
+  final _ChatStreamingViewportLock lock;
+
+  @override
+  ScrollPosition createScrollPosition(
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) => _ChatTranscriptScrollPosition(
+    lock: lock,
+    physics: physics,
+    context: context,
+    oldPosition: oldPosition,
+    debugLabel: debugLabel,
+  );
+}
+
+class _ChatTranscriptScrollPosition extends ScrollPositionWithSingleContext {
+  _ChatTranscriptScrollPosition({
+    required this.lock,
+    required super.physics,
+    required super.context,
+    super.oldPosition,
+    super.debugLabel,
+  });
+
+  final _ChatStreamingViewportLock lock;
+
+  // Any scroll other than the hold's own in-layout correction ends the
+  // landing: a touch (hold, drag), a fling, an animation, a jump. Idle is
+  // what a layout settles into, so it never releases by itself. (Pixels
+  // alone are no signal: the lazy list corrects its own offsets in layout.)
+  @override
+  void beginActivity(ScrollActivity? newActivity) {
+    if (newActivity != null && newActivity is! IdleScrollActivity) {
+      lock.releaseLanding();
+    }
+    super.beginActivity(newActivity);
+  }
+
+  @override
+  void jumpTo(double value) {
+    lock.releaseLanding();
+    super.jumpTo(value);
+  }
+
+  @override
+  void pointerScroll(double delta) {
+    lock.releaseLanding();
+    super.pointerScroll(delta);
+  }
+
+  @override
+  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
+    final settled = super.applyContentDimensions(
+      minScrollExtent,
+      maxScrollExtent,
+    );
+    if (!settled || !hasViewportDimension || outOfRange) return settled;
+    // The divider row keeps its place at the top while rows above or below
+    // it finish their layout (previews, rich text, a live reply), until
+    // anything else scrolls the list.
+    final correction = lock.landingCorrection();
+    if (correction == null || correction.abs() <= 0.5) return settled;
+    final target = (pixels + correction)
+        .clamp(this.minScrollExtent, this.maxScrollExtent)
+        .toDouble();
+    if ((target - pixels).abs() <= 0.01) return settled;
+    correctPixels(target);
+    return false;
+  }
+}
+
 class _ChatStreamingViewportLock {
   double _pendingExtentDelta = 0;
   double _pendingOverlayExtentDelta = 0;
@@ -23443,6 +23589,38 @@ class _ChatStreamingViewportLock {
   double? _anchorVisualOffset;
   RenderBox? Function()? _anchorVisualLookup;
   bool enabled = false;
+
+  // Landing hold: the row to keep and where it must stay (from the
+  // viewport top).
+  RenderBox? Function()? _landingLookup;
+  double? _landingVisualOffset;
+
+  /// Keeps the row found by [lookup] [visualOffset] px below the viewport
+  /// top in every layout until the list is scrolled by anything else.
+  void holdLanding(
+    RenderBox? Function() lookup, {
+    required double visualOffset,
+  }) {
+    _landingLookup = lookup;
+    _landingVisualOffset = visualOffset;
+  }
+
+  void releaseLanding() {
+    _landingLookup = null;
+    _landingVisualOffset = null;
+  }
+
+  /// Correction that puts the held row back in place, or null when no
+  /// landing is held or the row is not laid out.
+  double? landingCorrection() {
+    final lookup = _landingLookup;
+    final wanted = _landingVisualOffset;
+    if (lookup == null || wanted == null) return null;
+    final now = _visualOffsetInViewport(lookup());
+    if (now == null) return null;
+    final correction = wanted - now;
+    return correction.isFinite ? correction : null;
+  }
 
   void enable() => enabled = true;
 
