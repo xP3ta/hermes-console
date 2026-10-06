@@ -12,6 +12,7 @@ import '../widgets/hermes_premium_ui.dart'
     show HermesSegment, HermesSegmentedControl;
 import 'capabilities_repository.dart';
 import 'capability_ui.dart';
+import '../widgets/console_loader.dart';
 
 enum _LogSource { server, agent }
 
@@ -124,7 +125,10 @@ class _McpLogsScreenState extends State<McpLogsScreen> {
           const Padding(
             padding: EdgeInsets.only(top: 48),
             child: Center(
-              child: CircularProgressIndicator(key: ValueKey('cph-logs-busy')),
+              child: ConsoleLoader.medium(
+                key: ValueKey('cph-logs-busy'),
+                showLabel: true,
+              ),
             ),
           )
         else if (_error != null)

@@ -35,6 +35,7 @@ import '../widgets/activity_pill.dart' show formatTurnElapsed;
 import '../widgets/chat/chat_markdown_body.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
+import '../widgets/console_loader.dart';
 import '../widgets/subagent_activity_card.dart'
     show
         SubagentTailView,
@@ -1405,7 +1406,7 @@ class _SubagentTranscriptPageState extends State<SubagentTranscriptPage> {
           children.add(
             const Padding(
               padding: EdgeInsets.all(40),
-              child: Center(child: CircularProgressIndicator()),
+              child: Center(child: ConsoleLoader.medium(showLabel: true)),
             ),
           );
         } else if (snap.hasError) {

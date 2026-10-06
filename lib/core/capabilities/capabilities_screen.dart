@@ -23,6 +23,7 @@ import 'capability_models.dart';
 import 'capability_ui.dart';
 import 'connector_detail_screen.dart';
 import 'mcp_runtime_status.dart';
+import '../widgets/console_loader.dart';
 
 enum CapabilitiesSegment { catalog, installed, connectors }
 
@@ -963,7 +964,7 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         Padding(
           padding: EdgeInsets.only(top: 64),
           child: Center(
-            child: CircularProgressIndicator(key: ValueKey('cph-loading')),
+            child: ConsoleLoader.large(key: ValueKey('cph-loading')),
           ),
         ),
       ];

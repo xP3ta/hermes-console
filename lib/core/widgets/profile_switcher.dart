@@ -10,6 +10,7 @@ import '../services/connection_manager.dart';
 import '../theme/app_theme.dart';
 import 'hermes_premium_ui.dart';
 import 'profile_scope.dart';
+import 'console_loader.dart';
 
 /// Reads the profile list into the shared roster when no live read has
 /// landed yet. One Dashboard read, ordered by the roster clock so it can
@@ -257,7 +258,7 @@ class _ProfileSwitcherSheetState extends State<_ProfileSwitcherSheet> {
         if (profiles.isEmpty && _reading)
           const Padding(
             padding: EdgeInsets.all(16),
-            child: Center(child: CircularProgressIndicator()),
+            child: Center(child: ConsoleLoader.medium()),
           ),
         if (profiles.isEmpty && _failed)
           HermesListRow(

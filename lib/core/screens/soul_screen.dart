@@ -36,6 +36,7 @@ import 'bridge_editor_mixin.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/profile_scope.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
@@ -705,7 +706,7 @@ class _SoulScreenState extends State<SoulScreen>
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: ConsoleLoader.large())
           : Column(
               children: [
                 Padding(

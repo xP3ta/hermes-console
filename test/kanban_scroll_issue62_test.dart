@@ -13,6 +13,7 @@ import 'package:hermes_android/core/theme/scroll_behavior.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'support/pump_until_loaded.dart';
 
 /// Issue #62: "Can't scroll in bot rooms or in kanban — it feels pinned in
 /// place". The attached recording shows the Kanban task detail: dragging
@@ -145,7 +146,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     return events;
   }
 
@@ -161,7 +162,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 16));
     }
     await finger.up();
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
   }
 
   /// A live Kanban event: the screen debounces and silently reloads.
@@ -172,7 +173,7 @@ void main() {
     events.add(const KanbanEvent(id: 9, taskId: 'running-3', kind: 'updated'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
   }
 
   ScrollPosition positionOf(WidgetTester tester, Finder scrollView) => tester
@@ -230,7 +231,7 @@ void main() {
 
     await drag(tester, const Offset(206, 300), const Offset(0, 30));
     await tester.pump(const Duration(seconds: 1));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     expect(boardReads, 2, reason: 'pull-to-refresh must reload the board');
     expect(positionOf(tester, listView()).pixels, 0);
 
@@ -244,7 +245,7 @@ void main() {
     var boardReads = 0;
     final events = await pumpScreen(tester, onBoardRead: () => boardReads++);
     await tester.tap(find.byKey(const ValueKey('kanban-view-board')));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
 
     final columns = find.byKey(const ValueKey('kanban-board-columns'));
     Finder firstColumn() =>
@@ -284,7 +285,7 @@ void main() {
     var boardReads = 0;
     final events = await pumpScreen(tester, onBoardRead: () => boardReads++);
     await tester.tap(find.text('Task blocked 0'));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
 
     final page = find.byKey(const ValueKey('kanban-task-detail-rich'));
     expect(page, findsOneWidget);
@@ -292,9 +293,9 @@ void main() {
     // Read the whole objective, as in the recording.
     final toggle = find.byKey(const ValueKey('hermes-text-block-toggle'));
     await tester.ensureVisible(toggle);
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(toggle);
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
 
     final position = positionOf(tester, page);
     final start = position.pixels;
@@ -315,12 +316,12 @@ void main() {
     // Open the comments and drag starting on a selectable comment body.
     final commentsRow = find.byKey(const ValueKey('kanban-detail-comments'));
     await tester.ensureVisible(commentsRow);
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(commentsRow);
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     final comment = find.byType(SelectableText).first;
     await tester.ensureVisible(comment);
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     final beforeComment = position.pixels;
     expect(position.maxScrollExtent - beforeComment, greaterThan(400));
     await drag(tester, tester.getCenter(comment), const Offset(0, -30));
@@ -352,13 +353,13 @@ void main() {
       scrollBehavior: const _EveryScrollableDraggable(),
     );
     await tester.tap(find.text('Task blocked 0'));
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     final page = find.byKey(const ValueKey('kanban-task-detail-rich'));
     final toggle = find.byKey(const ValueKey('hermes-text-block-toggle'));
     await tester.ensureVisible(toggle);
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     await tester.tap(toggle);
-    await tester.pumpAndSettle();
+    await pumpUntilLoaded(tester);
     for (final section in const [
       'kanban-detail-events',
       'kanban-detail-diagnostics',
@@ -366,9 +367,9 @@ void main() {
     ]) {
       final row = find.byKey(ValueKey(section));
       await tester.ensureVisible(row);
-      await tester.pumpAndSettle();
+      await pumpUntilLoaded(tester);
       await tester.tap(row);
-      await tester.pumpAndSettle();
+      await pumpUntilLoaded(tester);
     }
 
     Finder selectable(String contains) => find.byWidgetPredicate(
@@ -382,7 +383,7 @@ void main() {
     ]) {
       expect(target, findsOneWidget);
       await tester.ensureVisible(target);
-      await tester.pumpAndSettle();
+      await pumpUntilLoaded(tester);
       final before = position.pixels;
       expect(before, greaterThan(300), reason: 'room to scroll back');
       // Scroll back up (finger moves down), as the user tried to.

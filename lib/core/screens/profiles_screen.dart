@@ -33,6 +33,7 @@ import '../widgets/hermes_ui.dart';
 import '../widgets/mission_profile_avatar.dart';
 import 'profile_editor_screen.dart';
 import 'profile_flows.dart';
+import '../widgets/console_loader.dart';
 
 /// Validación del nombre de perfil (debe coincidir con el servidor).
 final _profileNameRe = RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$');
@@ -324,7 +325,7 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
       body: _wrapWithDock(
         // The shared (or cached) roster stays visible while it revalidates.
         _loading && _profiles.isEmpty
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(child: ConsoleLoader.large())
             : _error != null
             ? _ErrorState(message: _error!, onRetry: _load)
             : RefreshIndicator(

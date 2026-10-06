@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/provider_logo.dart';
 import '../widgets/read_only.dart';
+import '../widgets/console_loader.dart';
 
 /// Server local models: the Hermes-managed llama.cpp runtime that Desktop
 /// shows in local mode (Settings → Providers → Local). Every action calls
@@ -441,7 +442,7 @@ class _LocalModelsScreenState extends State<LocalModelsScreen> {
       children.add(
         const Padding(
           padding: EdgeInsets.only(top: 48),
-          child: Center(child: CircularProgressIndicator()),
+          child: Center(child: ConsoleLoader.large()),
         ),
       );
     } else if (_unavailable) {

@@ -23,6 +23,7 @@ import '../widgets/projects/project_actions.dart';
 import '../widgets/projects/project_create_sheet.dart';
 import '../widgets/projects/project_files_browser.dart';
 import 'chat_screen.dart';
+import '../widgets/console_loader.dart';
 
 /// What a project surface asks to open: an existing conversation, or a new
 /// chat anchored to a server folder (null workspace = no folder, the Home
@@ -616,15 +617,8 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const CircularProgressIndicator(),
-                          const SizedBox(height: 18),
-                          Text(
-                            strings.projectsCenterLoading,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: colors.textSecondary,
-                              height: 1.4,
-                            ),
+                          ConsoleLoader.large(
+                            label: strings.projectsCenterLoading,
                           ),
                         ],
                       ),
@@ -1561,7 +1555,7 @@ class _ProjectDetailScreenState extends State<_ProjectDetailScreen> {
                 if (loading)
                   const Padding(
                     padding: EdgeInsets.only(top: 24),
-                    child: Center(child: CircularProgressIndicator()),
+                    child: Center(child: ConsoleLoader.medium(showLabel: true)),
                   )
                 else if (lanes.isEmpty)
                   Padding(

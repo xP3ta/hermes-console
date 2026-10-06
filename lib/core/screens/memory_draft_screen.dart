@@ -26,6 +26,7 @@ import '../widgets/read_only.dart';
 import 'bridge_config_screen.dart';
 import 'lock_screen.dart';
 import '../widgets/hermes_app_bar.dart';
+import '../widgets/console_loader.dart';
 
 /// Editor LOCAL de un archivo de memoria.
 ///
@@ -558,7 +559,7 @@ class _MemoryDraftScreenState extends State<MemoryDraftScreen> {
         ],
       ),
       body: !_loaded
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: ConsoleLoader.large())
           : Column(
               children: [
                 Padding(

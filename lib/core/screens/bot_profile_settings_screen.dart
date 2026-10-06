@@ -4,6 +4,7 @@ import '../../l10n/app_localizations.dart';
 import '../services/bot_profile_client.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
@@ -217,7 +218,7 @@ class _BotProfileSettingsScreenState extends State<BotProfileSettingsScreen> {
             ? Center(
                 child: _failed
                     ? Text(s.botConfigUnavailable)
-                    : const CircularProgressIndicator(),
+                    : const ConsoleLoader.large(),
               )
             : ListView(
                 padding: const EdgeInsets.all(24),

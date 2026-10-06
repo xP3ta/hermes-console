@@ -16,6 +16,7 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/ssh_host_key_dialog.dart';
 import 'sftp_browser_screen.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesFormDialog;
 
@@ -155,13 +156,13 @@ class _SshTerminalScreenState extends State<SshTerminalScreen> {
   Widget _body(HermesThemeColors colors) {
     final session = _session;
     if (_preparing || session == null) {
-      return _loader(colors, Strings.of(context).sshConnecting);
+      return _loader(Strings.of(context).sshConnecting);
     }
     return ValueListenableBuilder<SshSessionPhase>(
       valueListenable: session.phase,
       builder: (context, phase, _) {
         if (phase == SshSessionPhase.connecting) {
-          return _loader(colors, Strings.of(context).sshConnecting);
+          return _loader(Strings.of(context).sshConnecting);
         }
         if (phase == SshSessionPhase.error) {
           return Center(
@@ -225,16 +226,7 @@ class _SshTerminalScreenState extends State<SshTerminalScreen> {
     );
   }
 
-  Widget _loader(HermesThemeColors colors, String msg) => Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const CircularProgressIndicator(strokeWidth: 2),
-        const SizedBox(height: 16),
-        Text(msg, style: TextStyle(fontSize: 13, color: colors.textSecondary)),
-      ],
-    ),
-  );
+  Widget _loader(String msg) => Center(child: ConsoleLoader.large(label: msg));
 
   Widget _reconnectBar(HermesThemeColors colors) => Container(
     width: double.infinity,

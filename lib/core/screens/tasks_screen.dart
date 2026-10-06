@@ -48,6 +48,7 @@ import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/kanban_task_detail_surface.dart';
 import 'lock_screen.dart';
+import '../widgets/console_loader.dart';
 
 /// Las dos formas de mirar el mismo board: bandeja agrupada (una columna,
 /// prioriza atención) o tablero por columnas (para arrastrar entre estados).
@@ -1325,7 +1326,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
 
   Widget _buildBody(HermesThemeColors colors) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: ConsoleLoader.large());
     }
     if (_error != null) {
       return _ErrorState(colors: colors, message: _error!, onRetry: _load);
@@ -2244,7 +2245,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
                   return const SizedBox(
                     key: ValueKey('kanban-task-detail-loading'),
                     height: 220,
-                    child: Center(child: CircularProgressIndicator()),
+                    child: Center(child: ConsoleLoader.medium(showLabel: true)),
                   );
                 }
                 if (snapshot.hasError || snapshot.data == null) {
@@ -2558,7 +2559,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
               if (snapshot.connectionState != ConnectionState.done) {
                 return Scaffold(
                   appBar: HermesAppBar(title: Text(copy.workerLog)),
-                  body: const Center(child: CircularProgressIndicator()),
+                  body: const Center(child: ConsoleLoader.large()),
                 );
               }
               if (snapshot.hasError || snapshot.data == null) {
@@ -2597,7 +2598,7 @@ class _TasksScreenState extends State<TasksScreen> with WidgetsBindingObserver {
           if (snapshot.connectionState != ConnectionState.done) {
             return const SizedBox(
               height: 180,
-              child: Center(child: CircularProgressIndicator()),
+              child: Center(child: ConsoleLoader.medium(showLabel: true)),
             );
           }
           if (snapshot.hasError || snapshot.data == null) {

@@ -11,6 +11,7 @@ import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_premium_ui.dart';
 import '../widgets/hermes_ui.dart';
 import 'lock_screen.dart';
+import '../widgets/console_loader.dart';
 
 /// Mobile projection of Hermes Desktop's native rollback timeline.
 ///
@@ -145,7 +146,7 @@ class _RecoveryCenterScreenState extends State<RecoveryCenterScreen> {
                 body: strings.recoveryCenterNoActiveBody,
               )
             : _loading && timeline == null
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(child: ConsoleLoader.large())
             : _failure != null && timeline == null
             ? _RecoveryFailure(
                 message: _recoveryFailureText(_failure!, strings),
@@ -426,7 +427,7 @@ class _RecoveryCheckpointSheetState extends State<_RecoveryCheckpointSheet> {
         const Divider(height: 1),
         Expanded(
           child: _loading && diff == null
-              ? const Center(child: CircularProgressIndicator())
+              ? const Center(child: ConsoleLoader.large())
               : _failure != null && diff == null
               ? _RecoveryFailure(
                   message: _recoveryDetailFailureText(_failure!, strings),

@@ -9,6 +9,7 @@ import '../../widgets/hermes_app_bar.dart';
 import '../../widgets/hermes_notice.dart';
 import '../../widgets/hermes_premium_ui.dart';
 import '../../widgets/hermes_ui.dart';
+import '../../widgets/console_loader.dart';
 
 /// Galería remota de Petdex (Petdex remoto, contrato `petdex-v1.json`).
 ///
@@ -280,7 +281,7 @@ class _PetdexGalleryScreenState extends State<PetdexGalleryScreen> {
               future: _future,
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
+                  return const Center(child: ConsoleLoader.large());
                 }
                 if (snap.hasError || !snap.hasData) {
                   return _ErrorState(colors: colors, onRetry: _reload);
@@ -513,7 +514,7 @@ class _PetdexDetailSheet extends StatelessWidget {
                   if (progress == null) return child;
                   return const SizedBox(
                     height: 120,
-                    child: Center(child: CircularProgressIndicator()),
+                    child: Center(child: ConsoleLoader.medium()),
                   );
                 },
                 errorBuilder: (context, error, stack) => SizedBox(

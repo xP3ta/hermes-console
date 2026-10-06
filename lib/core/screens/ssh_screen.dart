@@ -12,6 +12,7 @@ import '../widgets/hermes_notice.dart';
 import 'sftp_browser_screen.dart';
 import 'ssh_credentials_screen.dart';
 import 'ssh_terminal_screen.dart';
+import '../widgets/console_loader.dart';
 import '../design/hermes_design.dart'
     show HermesDialogAction, HermesDialogActionStyle, showHermesDialog;
 
@@ -107,7 +108,7 @@ class _SshScreenState extends State<SshScreen> {
       backgroundColor: colors.background,
       appBar: HermesAppBar(title: const Text('SSH')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+          ? const Center(child: ConsoleLoader.large())
           : _config == null
               ? _empty(colors)
               : _configured(colors, _config!),

@@ -13,6 +13,7 @@ import '../widgets/hermes_app_bar.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_ui.dart';
 import '../widgets/read_only.dart';
+import '../widgets/console_loader.dart';
 
 /// Editor de la receta del Mixture of Agents (spec 029).
 ///
@@ -245,7 +246,7 @@ class _MoaRecipeScreenState extends State<MoaRecipeScreen> {
     return Scaffold(
       appBar: HermesAppBar(title: Text(s.moaTitle)),
       body: switch (_mode) {
-        _Mode.loading => const Center(child: CircularProgressIndicator()),
+        _Mode.loading => const Center(child: ConsoleLoader.large()),
         _Mode.error => _errorState(s, colors),
         _Mode.editable || _Mode.readOnly => _recipe(s, colors),
       },

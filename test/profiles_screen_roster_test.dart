@@ -6,6 +6,7 @@ import 'package:hermes_android/core/services/bot_roster_cache.dart';
 import 'package:hermes_android/core/services/bot_roster_store.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/core/widgets/console_loader.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:http/http.dart' as http;
@@ -152,6 +153,7 @@ void main() {
     expect(server.reads, hasLength(1));
     expect(find.text('cached'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(ConsoleLoader), findsNothing);
     server.reads.single.complete(roster(['default', 'live']));
     await tester.pumpAndSettle();
     expect(find.text('live'), findsOneWidget);

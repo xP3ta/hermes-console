@@ -17,6 +17,7 @@ import 'capabilities_repository.dart';
 import 'capability_detail_screen.dart';
 import 'capability_models.dart';
 import 'catalog_deep_link.dart';
+import '../widgets/console_loader.dart';
 
 /// Tells the user a catalog link was refused, once the app can show it. The
 /// notice controller is resolved first and the inbox's flag is consumed only
@@ -206,7 +207,7 @@ class _CatalogDeepLinkScreenState extends State<CatalogDeepLinkScreen> {
     body: Center(
       child: Semantics(
         label: Strings.of(context).cphTitle,
-        child: const CircularProgressIndicator(),
+        child: const ConsoleLoader.large(),
       ),
     ),
   );
