@@ -2064,7 +2064,8 @@ void main() {
       client.close();
     });
 
-    test('unprofiled deletion targets only default route', () async {
+    test('unprofiled deletion targets only default route; 404 is not '
+        'success', () async {
       final calls = <Uri>[];
       final client = DashboardClient(
         host: 'hermes.local',
@@ -2076,7 +2077,10 @@ void main() {
         }),
       );
 
-      await client.deleteCronJob('job-gone');
+      await expectLater(
+        client.deleteCronJob('job-gone'),
+        throwsA(isA<CronJobNotFoundException>()),
+      );
 
       expect(calls, hasLength(1));
       expect(calls.single.path, '/api/cron/jobs/job-gone');
@@ -2248,6 +2252,32 @@ void main() {
         throwsArgumentError,
       );
       expect(dashboards, 0);
+    });
+
+    test('404 from the Dashboard names the profile and is not success', () async {
+      final manager = await createManager(
+        dashboardClientFactory: (connection) => dashboardWith(
+          MockClient(
+            (_) async =>
+                http.Response(jsonEncode({'detail': 'Job not found'}), 404),
+          ),
+        ),
+      );
+
+      await expectLater(
+        manager.deleteLinkedCronJob(
+          connection,
+          'a1b2c3d4e5f6',
+          profile: 'radar-bot',
+        ),
+        throwsA(
+          isA<CronJobNotFoundException>().having(
+            (e) => e.profile,
+            'profile',
+            'radar-bot',
+          ),
+        ),
+      );
     });
 
     test('deleted=false from the Dashboard is not reported as success', () async {

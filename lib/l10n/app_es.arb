@@ -3343,6 +3343,15 @@
       }
     }
   },
+  "crnJobNotFoundInProfile": "No se encontró la tarea en el perfil {profile}.",
+  "@crnJobNotFoundInProfile": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "crnJobOwnerUnknown": "No se sabe en qué perfil está esta tarea. Actualiza la lista y vuelve a intentarlo.",
   "crnDeleteRejected": "El servidor conservó esta tarea programada protegida. No se borró nada.",
   "crnCleanupTooltip": "Limpiar resultados de Cron",
   "crnCleanupTitle": "Limpiar resultados de Cron",

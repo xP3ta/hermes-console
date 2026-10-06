@@ -55,7 +55,9 @@ void main() {
     expect(sessions, contains('await _confirmAndDeleteSession(session);'));
 
     expect(cron, contains('Future<bool> _delete(CronJob job)'));
-    expect(cron, contains('_client.deleteCronJob(job.id, profile: _profile)'));
+    // One target: the job, in the profile that owns it.
+    expect(cron, contains('CronRepository.ownerProfileOf(job)'));
+    expect(cron, contains('_client.deleteCronJob(job.id, profile: owner)'));
     expect(cron, contains("value: 'delete'"));
   });
 }

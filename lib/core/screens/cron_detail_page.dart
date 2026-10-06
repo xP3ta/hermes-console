@@ -10,12 +10,14 @@ import '../design/hermes_design.dart';
 import '../models/cron_job.dart';
 import '../models/session.dart';
 import '../utils/session_title.dart';
+import '../services/connection_manager.dart' show CronJobNotFoundException;
 import '../services/cron_repository.dart';
 import '../services/notifications/notification_mute_store.dart';
 import '../services/notifications/notification_service.dart';
 import '../models/agent_profile.dart';
 import '../services/tui_gateway_client.dart';
 import '../theme/app_theme.dart';
+import '../utils/api_error.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/mission_profile_avatar.dart';
 
@@ -322,11 +324,13 @@ class _CronJobDetailPageState extends State<CronJobDetailPage>
 
   void _failure(Object error) {
     if (!mounted) return;
+    final s = Strings.of(context);
     HermesNotice.show(
       context,
-      message: Strings.of(context).crnFailed(error.toString()),
+      message: s.crnFailed(localizedApiError(s, error)),
       kind: HermesNoticeKind.error,
     );
+    if (error is CronJobNotFoundException) unawaited(_refresh());
   }
 
   Future<void> _run(Future<void> Function() action) async {

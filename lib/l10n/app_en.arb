@@ -2518,6 +2518,15 @@
       }
     }
   },
+  "crnJobNotFoundInProfile": "The task was not found in profile {profile}.",
+  "@crnJobNotFoundInProfile": {
+    "placeholders": {
+      "profile": {
+        "type": "String"
+      }
+    }
+  },
+  "crnJobOwnerUnknown": "It is not known which profile owns this task. Refresh the list and try again.",
   "crnDeleteRejected": "The server kept this protected scheduled task. Nothing was deleted.",
   "crnCleanupTooltip": "Clean up Cron results",
   "crnCleanupTitle": "Clean up Cron results",

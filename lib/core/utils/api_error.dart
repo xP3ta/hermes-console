@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../models/cron_job.dart';
 import '../services/bridge_client.dart';
 import '../services/connection_manager.dart';
 
@@ -38,6 +39,12 @@ DashboardDependencyFailure classifyDashboardDependencyFailure(
 String localizedApiError(Strings strings, Object error) {
   if (error is CronDeleteRejectedException) {
     return strings.crnDeleteRejected;
+  }
+  if (error is CronJobNotFoundException) {
+    return strings.crnJobNotFoundInProfile(error.profile);
+  }
+  if (error is CronJobOwnerUnknownException) {
+    return strings.crnJobOwnerUnknown;
   }
   if (error is BridgeException) {
     final specific = switch (error.code) {

@@ -61,11 +61,59 @@ class CronRepository {
         ? ''
         : '?profile=${Uri.encodeQueryComponent(selectedProfile)}';
     final data = await client.apiGetList('cron/jobs$suffix');
+    // Record where each job was read from. The server's per-job `profile`
+    // wins; without it a named read came from that profile and an unscoped
+    // read from the server's default store. An aggregated read (`all`)
+    // without it records nothing, so actions fall back to the bot owner or
+    // refuse.
+    final listed = switch (selectedProfile) {
+      'all' => null,
+      '' => 'default',
+      final named => named,
+    };
     return data
         .whereType<Map>()
-        .map((value) => CronJob.fromJson(value.cast<String, dynamic>()))
+        .map(
+          (value) => CronJob.fromJson(
+            value.cast<String, dynamic>(),
+          ).withSourceProfile(listed),
+        )
         .where((job) => job.id.isNotEmpty)
         .toList(growable: false);
+  }
+
+  /// `?profile=` (or `&profile=`) for an action on [job]: the profile that
+  /// owns it, never this repository's screen profile. The default profile
+  /// sends no query, the same as every other default-profile call.
+  static String _ownerQuery(CronJob job, {bool hasQuery = false}) {
+    final owner = ownerProfileOf(job);
+    if (owner == 'default') return '';
+    return '${hasQuery ? '&' : '?'}profile=${Uri.encodeQueryComponent(owner)}';
+  }
+
+  /// Profile that owns [job]; throws [CronJobOwnerUnknownException] when it
+  /// cannot be told, so nothing is sent to a guessed profile.
+  static String ownerProfileOf(CronJob job) {
+    final owner = job.targetProfile;
+    if (owner == null) throw CronJobOwnerUnknownException(job.id);
+    return owner;
+  }
+
+  /// Runs an action on [job] in its owner profile. A 404 there means the
+  /// job is not in that profile: typed, never a success.
+  static Future<CronJob> _onOwner(
+    CronJob job,
+    Future<Map<String, dynamic>> Function(String query) send, {
+    bool hasQuery = false,
+  }) async {
+    final query = _ownerQuery(job, hasQuery: hasQuery);
+    final owner = ownerProfileOf(job);
+    try {
+      return CronJob.fromJson(await send(query)).withSourceProfile(owner);
+    } on DashboardHttpException catch (error) {
+      if (error.statusCode == 404) throw CronJobNotFoundException(owner);
+      rethrow;
+    }
   }
 
   static bool _isUnsupportedAllProfiles(int statusCode) =>
@@ -75,10 +123,22 @@ class CronRepository {
       statusCode == 422 ||
       statusCode == 501;
 
-  Future<CronJob?> getJob(String id) async {
+  /// [profile] is the job's owner when known (see [CronJob.targetProfile]);
+  /// otherwise this repository's profile is used.
+  Future<CronJob?> getJob(String id, {String? profile}) async {
+    final owner = profile?.trim() ?? '';
+    final query = owner.isEmpty
+        ? _query()
+        : owner == 'default'
+        ? ''
+        : '?profile=${Uri.encodeQueryComponent(owner)}';
     try {
       final job = CronJob.fromJson(
-        await client.apiGet('cron/jobs/${Uri.encodeComponent(id)}${_query()}'),
+        await client.apiGet('cron/jobs/${Uri.encodeComponent(id)}$query'),
+      ).withSourceProfile(
+        owner.isNotEmpty
+            ? owner
+            : (this.profile.isEmpty ? 'default' : this.profile),
       );
       return job.id.isEmpty ? null : job;
     } on DashboardHttpException catch (error) {
@@ -212,7 +272,10 @@ class CronRepository {
         if (model.isNotEmpty && provider.isNotEmpty) 'provider': provider,
       },
     );
-    return CronJob.fromJson(data);
+    // Created in this repository's profile.
+    return CronJob.fromJson(
+      data,
+    ).withSourceProfile(profile.isEmpty ? 'default' : profile);
   }
 
   Future<CronJob> update(
@@ -224,27 +287,32 @@ class CronRepository {
     required String model,
     required String provider,
   }) async {
+    final owner = ownerProfileOf(job);
     final updates = <String, dynamic>{
-      'name': botRoutines ? botRoutineName(profile, name, prompt) : name,
+      'name': botRoutines ? botRoutineName(owner, name, prompt) : name,
       'schedule': schedule,
       'deliver': deliver,
       if (!job.isScriptOnly || prompt.isNotEmpty) 'prompt': prompt,
       if (!job.isScriptOnly) 'model': model.isEmpty ? null : model,
       if (!job.isScriptOnly) 'provider': provider.isEmpty ? null : provider,
     };
-    final data = await client.apiPut(
-      'cron/jobs/${Uri.encodeComponent(job.id)}${_query()}',
-      body: {'updates': updates},
+    return _onOwner(
+      job,
+      (query) => client.apiPut(
+        'cron/jobs/${Uri.encodeComponent(job.id)}$query',
+        body: {'updates': updates},
+      ),
     );
-    return CronJob.fromJson(data);
   }
 
-  Future<CronJob> pauseOrResume(CronJob job) async {
+  Future<CronJob> pauseOrResume(CronJob job) {
     final action = job.isPaused ? 'resume' : 'pause';
-    final data = await client.apiPost(
-      'cron/jobs/${Uri.encodeComponent(job.id)}/$action${_query()}',
+    return _onOwner(
+      job,
+      (query) => client.apiPost(
+        'cron/jobs/${Uri.encodeComponent(job.id)}/$action$query',
+      ),
     );
-    return CronJob.fromJson(data);
   }
 
   /// Runs job [id] now (notification "Retry"); same endpoint as [trigger].
@@ -254,12 +322,12 @@ class CronRepository {
     );
   }
 
-  Future<CronJob> trigger(CronJob job) async {
-    final data = await client.apiPost(
-      'cron/jobs/${Uri.encodeComponent(job.id)}/trigger${_query()}',
-    );
-    return CronJob.fromJson(data);
-  }
+  Future<CronJob> trigger(CronJob job) => _onOwner(
+    job,
+    (query) => client.apiPost(
+      'cron/jobs/${Uri.encodeComponent(job.id)}/trigger$query',
+    ),
+  );
 
   Future<CronJob> instantiateBlueprint(
     AutomationBlueprint blueprint,
@@ -270,7 +338,7 @@ class CronRepository {
       'cron/blueprints/instantiate?profile=${Uri.encodeQueryComponent(targetProfile)}',
       body: {'blueprint': blueprint.key, 'values': values},
     );
-    return CronJob.fromJson(data);
+    return CronJob.fromJson(data).withSourceProfile(targetProfile);
   }
 }
 

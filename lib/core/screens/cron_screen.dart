@@ -352,6 +352,8 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     }
   }
 
+  String get _profileOrDefault => _profile.isEmpty ? 'default' : _profile;
+
   bool get _mutationsDisabled =>
       widget.connection.readOnly || _profileScope == CronProfileScope.all;
 
@@ -444,6 +446,14 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// A 404 in the owner profile means the list is stale: refresh it so the
+  /// row stays only if the server still lists it.
+  void _refreshIfMissing(Object error) {
+    if (error is CronJobNotFoundException && mounted) {
+      unawaited(_loadJobs(showLoader: false));
+    }
+  }
+
   Future<void> _trigger(CronJob job) async {
     if (_mutationsDisabled) return _showMutationsDisabledNotice();
     try {
@@ -461,6 +471,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
 
   void _showFailure(Object error) {
     if (!mounted) return;
+    _refreshIfMissing(error);
     final s = Strings.of(context);
     HermesNotice.of(context).showSnackBar(
       SnackBar(
@@ -499,6 +510,9 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
     if (confirmed != true || !mounted) return false;
 
     try {
+      // The profile that holds the job, never the screen's: the default
+      // profile's list also shows other profiles' (bot) jobs.
+      final owner = CronRepository.ownerProfileOf(job);
       final manager = context
           .findAncestorStateOfType<HermesAppState>()
           ?.connManager;
@@ -506,10 +520,10 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
         await manager.deleteLinkedCronJob(
           widget.connection,
           job.id,
-          profile: _profile,
+          profile: owner,
         );
       } else {
-        await _client.deleteCronJob(job.id, profile: _profile);
+        await _client.deleteCronJob(job.id, profile: owner);
       }
       if (!mounted) return true;
       setState(() => _jobs = _jobs.where((row) => row.id != job.id).toList());
@@ -530,6 +544,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       }
     } catch (error) {
       if (!mounted) return false;
+      _refreshIfMissing(error);
       final strings = Strings.of(context);
       HermesNotice.of(context).showSnackBar(
         SnackBar(
@@ -635,6 +650,7 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
       return updated;
     } catch (error) {
       if (!mounted) return null;
+      _refreshIfMissing(error);
       final strings = Strings.of(context);
       final message = job == null
           ? strings.crnAddFailed(localizedApiError(strings, error))
@@ -659,9 +675,15 @@ class _CronScreenState extends State<CronScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _showJobDetail(CronJob job) async {
-    final detailRepository =
-        _profileScope == CronProfileScope.all && job.profile.isNotEmpty
-        ? CronRepository(_client, profile: job.profile)
+    // Reads (job, runs) go to the profile that holds the job; actions take
+    // it from the job itself.
+    final owner = job.targetProfile;
+    final detailRepository = owner != null && owner != _profileOrDefault
+        ? CronRepository(
+            _client,
+            profile: owner == 'default' ? '' : owner,
+            botRoutines: widget.botRoutines,
+          )
         : _repository;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
