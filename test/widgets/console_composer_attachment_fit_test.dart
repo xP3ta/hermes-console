@@ -224,10 +224,9 @@ void main() {
       final clippedThumb = thumb.intersect(viewport);
       expect(
         thumb.height,
-        lessThanOrEqualTo(88),
-        reason: 'the composer thumb is compact, not the 120 dp chat card',
+        inInclusiveRange(56, 64),
+        reason: 'the composer tile is compact, not the 120 dp chat card',
       );
-      expect(thumb.height, greaterThanOrEqualTo(64));
       expect(
         clippedThumb.height,
         closeTo(thumb.height, 0.5),

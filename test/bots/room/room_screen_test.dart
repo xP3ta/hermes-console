@@ -10,6 +10,7 @@ import 'package:hermes_android/core/bots/data/desktop_projection_rooms.dart';
 import 'package:hermes_android/core/bots/ui/room/desktop_projection_room_screen.dart';
 import 'package:hermes_android/core/bots/ui/room/room_dictation.dart';
 import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
+import 'package:hermes_android/core/bots/ui/room/room_header.dart';
 import 'package:hermes_android/core/bots/ui/room/room_models.dart';
 import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
@@ -515,7 +516,7 @@ void main() {
         ),
       );
       final summary = tester.widget<Text>(
-        find.byKey(const ValueKey('room-strip-summary')),
+        find.byKey(const ValueKey('room-header-status')),
       );
       // Someone needing you wins the one line.
       expect(summary.data, 'console-lead needs you');
@@ -524,7 +525,7 @@ void main() {
         findsNothing,
       );
 
-      await tester.tap(find.byKey(const ValueKey('room-status-strip')));
+      await tester.tap(find.byKey(const ValueKey('room-header')));
       // A working face animates forever: pump frames instead of settling.
       await tester.pump(const Duration(milliseconds: 300));
       expect(
@@ -938,7 +939,7 @@ void main() {
       u['event_id'] as String,
     );
     await _pump(tester, events: [u, reply], uploader: _Uploader());
-    final strip = tester.widget(find.byType(RoomStatusStrip));
+    final strip = tester.widget(find.byType(RoomHeaderBar));
     final field = find.descendant(
       of: find.byType(ConsoleComposer),
       matching: find.byType(TextField),
@@ -950,7 +951,7 @@ void main() {
       await tester.pump();
     }
     expect(
-      identical(tester.widget(find.byType(RoomStatusStrip)), strip),
+      identical(tester.widget(find.byType(RoomHeaderBar)), strip),
       isTrue,
       reason: 'the screen above the composer was not rebuilt',
     );
@@ -970,10 +971,7 @@ void main() {
       tester.widget<ConsoleComposer>(find.byType(ConsoleComposer)).sendEnabled,
       isFalse,
     );
-    expect(
-      identical(tester.widget(find.byType(RoomStatusStrip)), strip),
-      isTrue,
-    );
+    expect(identical(tester.widget(find.byType(RoomHeaderBar)), strip), isTrue);
   });
 
   testWidgets('dictation state reaches the composer without a screen build', (
@@ -982,15 +980,12 @@ void main() {
     final dictation = _FakeDictation();
     addTearDown(dictation.dispose);
     await _pump(tester, events: const [], dictation: dictation);
-    final strip = tester.widget(find.byType(RoomStatusStrip));
+    final strip = tester.widget(find.byType(RoomHeaderBar));
     expect(find.byKey(const ValueKey('dictation-stop')), findsNothing);
     dictation.recording = true;
     await tester.pump();
     expect(find.byKey(const ValueKey('dictation-stop')), findsOneWidget);
-    expect(
-      identical(tester.widget(find.byType(RoomStatusStrip)), strip),
-      isTrue,
-    );
+    expect(identical(tester.widget(find.byType(RoomHeaderBar)), strip), isTrue);
     dictation.recording = false;
     await tester.pump();
     expect(find.byKey(const ValueKey('dictation-stop')), findsNothing);

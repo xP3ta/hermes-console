@@ -205,6 +205,13 @@ final class EventSeq {
     id: 'ddeferred:${task ?? member}:g1',
   );
 
+  /// The server reports [member] as unavailable (`member.unavailable`).
+  Map<String, dynamic> unavailable(String member) => _event(
+    'member.unavailable',
+    {'kind': 'gateway', 'id': gatewayId},
+    {'member_id': member, 'reason': 'member_unavailable'},
+  );
+
   /// Gateway round verdict (`room.activity`, status settled|bounded).
   Map<String, dynamic> activity(
     String discussion, {

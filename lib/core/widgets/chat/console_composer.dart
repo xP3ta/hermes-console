@@ -357,6 +357,14 @@ class ConsoleComposer extends StatelessWidget {
                         if (attachments.isNotEmpty)
                           ConsoleAttachmentPreviewStrip(
                             key: const ValueKey('composer-attachment-preview'),
+                            // The tray starts where the text starts: after
+                            // the leading control's 48 dp target plus the
+                            // field's own start padding.
+                            textStart:
+                                (recording || onAttach != null
+                                    ? _leadingExtent
+                                    : 0) +
+                                _fieldStartPadding,
                             attachments: attachments,
                             onRemove: onRemoveAttachment,
                             onRetry: onRetryAttachment,
@@ -470,6 +478,12 @@ class ConsoleComposer extends StatelessWidget {
     );
   }
 
+  /// Width of the leading control (attach `+`, or cancel while dictating).
+  static const double _leadingExtent = 48;
+
+  /// Start padding of the text inside the field.
+  static const double _fieldStartPadding = 4;
+
   static Widget _defaultContextMenu(
     BuildContext context,
     EditableTextState editableTextState,
@@ -501,7 +515,7 @@ class ConsoleComposer extends StatelessWidget {
         focusedBorder: InputBorder.none,
         disabledBorder: InputBorder.none,
         contentPadding: EdgeInsets.fromLTRB(
-          4,
+          _fieldStartPadding,
           compactIme ? 10 : 12,
           4,
           recording ? kConsoleDictationWaveHeight + 8 : (compactIme ? 10 : 12),
@@ -615,11 +629,16 @@ class ConsoleAttachmentPreviewStrip extends StatelessWidget {
   final ValueChanged<String>? onRetry;
   final ValueChanged<String>? onOpenPastedText;
 
+  /// Offset from the input's start edge where the text begins; the first
+  /// tile starts there so tray and text share one column.
+  final double textStart;
+
   const ConsoleAttachmentPreviewStrip({
     required this.attachments,
     required this.onRemove,
     required this.onRetry,
     this.onOpenPastedText,
+    this.textStart = 12,
     super.key,
   });
 
@@ -630,15 +649,20 @@ class ConsoleAttachmentPreviewStrip extends StatelessWidget {
     // middle of the input. Take the full width and pin the row to the start
     // edge (RTL-aware) so attachments stack from the leading side.
     //
-    // The scroll view clips to its own box and sits flush with the rounded
-    // (radius 28) input surface. Its padding keeps the thumbs off the
-    // surface's corner arc and leaves room for the remove/retry targets that
-    // overhang each card by 12 dp, so neither is cut at the edges.
+    // The scroll view spans the whole input so tiles scroll under the
+    // leading control, while the first tile starts at [textStart], in line
+    // with the text. The top and end padding leave room for the 48 dp
+    // remove/retry targets that overhang each tile, so none is cut.
     return Align(
       alignment: AlignmentDirectional.centerStart,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsetsDirectional.fromSTEB(12, 12, 12, 4),
+        padding: EdgeInsetsDirectional.fromSTEB(
+          textStart,
+          AttachmentCard.compactTargetTop,
+          AttachmentCard.compactTargetSide,
+          2,
+        ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

@@ -4,6 +4,8 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
+import 'package:flutter/scheduler.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
@@ -25,6 +27,7 @@ import '../../../widgets/mission_profile_avatar.dart';
 import '../../data/room_log_cursor.dart';
 import 'room_dictation.dart';
 import 'room_gateway.dart';
+import 'room_header.dart';
 import 'room_mentions.dart';
 import 'room_models.dart';
 import 'room_prefs.dart';
@@ -240,6 +243,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   Set<String> _dismissedTasks = const {};
   bool _localLoaded = false;
   bool _detailOpen = false;
+
+  /// Header shows only the name while the reader is up in the history.
+  bool _headerCollapsed = false;
+  bool _userScrolling = false;
   final List<AttachmentDraft> _attachments = [];
   Future<void> _pasteTail = Future<void>.value();
   final Set<String> _answering = {};
@@ -1899,16 +1906,30 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
             )
           : s.roomStatusWorking;
     }
+    // Idle: who is in the room and how the last round ended, in ONE grey
+    // line ("4 bots · round finished 5 min ago").
+    final presence = _presenceLine(s);
     final events = _events;
-    if (events.isEmpty) return '';
+    if (events.isEmpty) return presence;
     final since = _agoSince = roomEventTime(events.last);
     final ago = roomAgo(s, _now.difference(since));
-    // Idle room with a finished round: ONE line, "Round 1 finished · 17 h
-    // ago", instead of a round panel stacked over a last-activity bar.
     if (round != null && !_roundNeedsPanel(round)) {
-      return s.roomStatusRoundFinished(round.round, ago);
+      return '$presence · ${s.rhdrRoundFinished(ago)}';
     }
-    return s.roomStatusLastActivity(ago);
+    return '$presence · ${s.rhdrLastActivity(ago)}';
+  }
+
+  /// "4 bots", or "3 of 4 bots" while the server reports someone
+  /// unavailable.
+  String _presenceLine(Strings s) {
+    final total = _room.members.length;
+    final unavailable = roomUnavailableMembers(_events);
+    final available = _room.members
+        .where((m) => !unavailable.contains(m.memberId))
+        .length;
+    return available == total
+        ? s.rhdrBots(total)
+        : s.rhdrBotsAvailable(available, total);
   }
 
   /// The full round panel is shown only while the round is working or
@@ -1917,74 +1938,14 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   static bool _roundNeedsPanel(RoomRoundModel round) =>
       round.active || round.needsYou > 0 || round.failed > 0;
 
-  PreferredSizeWidget _header(Strings s) {
-    final colors = Theme.of(context).hermes;
-    final unavailable = roomUnavailableMembers(_events);
-    final available = _room.members
-        .where((m) => !unavailable.contains(m.memberId))
-        .length;
-    return HermesAppBar(
-      scrolledUnderElevation: 0,
-      titleSpacing: 0,
-      title: Semantics(
-        button: true,
-        label: s.roomMenuMembers,
-        child: InkWell(
-          key: const ValueKey('room-header'),
-          onTap: () => unawaited(_openMembers()),
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              children: [
-                widget.roomAvatar ??
-                    RoomHeaderFaces(
-                      members: _room.members,
-                      profileFor: widget.profileFor,
-                      avatarCache: widget.avatarCache,
-                    ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        widget.displayName ?? _room.name,
-                        key: const ValueKey('room-title'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      Text(
-                        s.roomViewAvailability(available, _room.members.length),
-                        key: const ValueKey('room-availability'),
-                        maxLines: 1,
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-      actions: [
-        IconButton(
-          key: const ValueKey('room-overflow'),
-          tooltip: s.roomMoreActions,
-          icon: const Icon(Icons.more_horiz_rounded),
-          onPressed: () => unawaited(_openMenu()),
-        ),
-      ],
-    );
+  /// The header opens what the old status strip opened: the round detail
+  /// while there is a round, else the members sheet.
+  void _openHeaderDetail(RoomRoundModel? round) {
+    if (round != null) {
+      setState(() => _detailOpen = !_detailOpen);
+      return;
+    }
+    unawaited(_openMembers());
   }
 
   Widget? _palette(Strings s) {
@@ -2424,8 +2385,39 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     return p.pixels <= p.minScrollExtent + 0.5;
   }
 
+  /// Collapse the header once the reader drags this far into the history.
+  static const double _collapseAfter = 56;
+
+  void _trackHeaderCollapse(ScrollNotification n) {
+    if (n is UserScrollNotification) {
+      _userScrolling = n.direction != ScrollDirection.idle;
+    }
+    final away = n.metrics.pixels - n.metrics.minScrollExtent;
+    bool? collapsed;
+    if (away <= 8) {
+      collapsed = false;
+    } else if (_userScrolling &&
+        n is ScrollUpdateNotification &&
+        away > _collapseAfter) {
+      collapsed = true;
+    }
+    if (collapsed == null || collapsed == _headerCollapsed) return;
+    void apply() {
+      if (mounted) setState(() => _headerCollapsed = collapsed!);
+    }
+
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => apply());
+    } else {
+      apply();
+    }
+  }
+
   bool _onScroll(ScrollNotification n) {
-    if (n.depth != 0 || _programmaticScroll) return false;
+    if (n.depth != 0) return false;
+    _trackHeaderCollapse(n);
+    if (_programmaticScroll) return false;
     if (n is ScrollUpdateNotification && _reading == null && !_atBottom) {
       // The reader left the bottom (drag or fling): keep the boundary at
       // the newest history row. While following it already is, so nothing
@@ -2787,41 +2779,33 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       now: _now,
     );
     _armAgoTick();
-    final next = roomStripNext(s, round: round, nameOf: nameOf);
     final detailOpen = _detailOpen && round != null;
     return Scaffold(
       key: const ValueKey('room-screen'),
-      appBar: _header(s),
+      appBar: RoomHeaderBar(
+        title: widget.displayName ?? _room.name,
+        status: summary,
+        members: _room.members,
+        states: {
+          for (final r in round?.rows ?? const <RoomRoundRow>[])
+            r.member.memberId: r.state,
+        },
+        profileFor: widget.profileFor,
+        avatarCache: widget.avatarCache,
+        roomAvatar: widget.roomAvatar,
+        collapsed: _headerCollapsed,
+        onOpenDetail: () => _openHeaderDetail(round),
+        onMore: () => unawaited(_openMenu()),
+      ),
       body: SafeArea(
         top: false,
-        // The real height left (after app bar, safe area and IME) decides
-        // what fits: in landscape with the keyboard open the status strip
-        // steps aside so the composer never overflows.
+        // The real height left (after app bar, safe area and IME) bounds the
+        // composer so it never overflows in landscape with the keyboard.
         child: LayoutBuilder(
           builder: (context, constraints) {
             final available = constraints.maxHeight;
-            final roomy = available > 300;
             return Column(
               children: [
-                // Fixed height in every state: a round starting, needing
-                // you or ending never moves the transcript.
-                if (roomy)
-                  RoomStatusStrip(
-                    members: _room.members,
-                    states: {
-                      for (final r in round?.rows ?? const <RoomRoundRow>[])
-                        r.member.memberId: r.state,
-                    },
-                    summary: summary,
-                    next: next,
-                    profileFor: widget.profileFor,
-                    avatarCache: widget.avatarCache,
-                    onTap: round != null
-                        ? () => setState(() => _detailOpen = !_detailOpen)
-                        : (_events.isEmpty
-                              ? null
-                              : () => unawaited(_openActivity())),
-                  ),
                 Expanded(
                   child: Stack(
                     children: [
@@ -2892,6 +2876,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                                   onOpenActivity: () {
                                     setState(() => _detailOpen = false);
                                     unawaited(_openActivity());
+                                  },
+                                  onOpenMembers: () {
+                                    setState(() => _detailOpen = false);
+                                    unawaited(_openMembers());
                                   },
                                 ),
                               ),
