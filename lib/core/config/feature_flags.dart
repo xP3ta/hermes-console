@@ -19,6 +19,17 @@ class FeatureFlags {
   /// the experimental row in Settings turns it on.
   ValueListenable<bool> get gestureDock => _gestureDock;
 
+  /// The floating mascot outside chats (above the dock on Inicio and the
+  /// dock screens). Off by default: only builds made with
+  /// `--dart-define=HC_FLOATING_MASCOT=true` (QA) mount it.
+  static bool get floatingMascot => _floatingMascot;
+  static bool _floatingMascot = const bool.fromEnvironment(
+    'HC_FLOATING_MASCOT',
+  );
+
+  @visibleForTesting
+  static set floatingMascot(bool value) => _floatingMascot = value;
+
   bool _loaded = false;
 
   /// Reads the persisted flags once per process. Safe to call repeatedly.
