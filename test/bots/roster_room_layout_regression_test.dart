@@ -11,7 +11,6 @@ import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
 import 'package:hermes_android/core/bots/ui/room/room_header.dart';
 import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
-import 'package:hermes_android/core/bots/ui/room_avatar_tile.dart';
 import 'package:hermes_android/core/bots/ui/roster/dots_home_view.dart';
 import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
 import 'package:hermes_android/core/bots/ui/roster/roster_model.dart';
