@@ -8,11 +8,13 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hermes_android/core/bots/ui/room_avatar_tile.dart';
+import 'package:hermes_android/core/bots/ui/roster/dots_home_view.dart';
+import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
 import 'package:hermes_android/core/bots/ui/roster/roster_model.dart';
-import 'package:hermes_android/core/bots/ui/roster/roster_rows.dart';
 import 'package:hermes_android/core/design/content.dart';
 import 'package:hermes_android/core/models/activity_snapshot.dart';
+import 'package:hermes_android/core/models/agent_profile.dart';
+import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/theme/theme_contrast.dart';
 import 'package:hermes_android/core/widgets/activity_sections.dart';
@@ -232,14 +234,37 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final fails = <String>[];
-    final now = DateTime(2026, 10, 6, 12);
-    final room = RoomRosterEntry(
-      roomKey: 'desktop:r1',
-      title: 'Design Review',
-      members: const [RoomRosterMember('builder', null)],
-      preview: 'ok',
-      at: now.subtract(const Duration(hours: 2)),
+    // The Bots home (Dots style) replaced the roster rows: its tertiary
+    // metadata is the section counter ("Team 3", "Rooms 2").
+    MissionAgent agent(String name, {bool main = false}) => MissionAgent(
+      profile: AgentProfile(name: name, isDefault: main),
+      status: MissionAgentStatus.idle,
+      statusEvidence: '',
+      usage: const MissionUsage(),
     );
+    final bots = [
+      BotRosterEntry(
+        agent: agent('default', main: true),
+        signal: BotFaceSignal.idle,
+        preview: 'ok',
+      ),
+      for (final name in ['astra', 'forja', 'radar'])
+        BotRosterEntry(
+          agent: agent(name),
+          signal: BotFaceSignal.idle,
+          preview: 'ok',
+        ),
+    ];
+    final rooms = [
+      for (final id in ['r1', 'r2'])
+        RoomRosterEntry(
+          roomKey: 'hosted:$id',
+          hostedRoomId: id,
+          title: 'Design Review $id',
+          members: const [RoomRosterMember('builder', null)],
+          preview: 'ok',
+        ),
+    ];
     for (final preset in AppTheme.presets) {
       final theme = AppTheme.fromId(preset.id);
       final c = theme.hermes;
@@ -251,18 +276,30 @@ void main() {
           supportedLocales: Strings.supportedLocales,
           theme: theme,
           home: Scaffold(
-            body: SingleChildScrollView(
-              child: Column(
-                children: [
-                  RosterRoomRow(
-                    entry: room,
+            body: Column(
+              children: [
+                Expanded(
+                  child: DotsHomeView(
+                    bots: bots,
+                    rooms: rooms,
                     avatarCache: null,
-                    onTap: () {},
-                    now: now,
+                    searchOpen: ValueNotifier(false),
+                    onOpenBot: (_) {},
+                    onBotActions: (_) {},
+                    onOpenRoom: (_) {},
                   ),
-                  const ChatMarkdownBody(data: '```diff\n$_diff\n```'),
-                ],
-              ),
+                ),
+                SizedBox(
+                  height: 160,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: [
+                        const ChatMarkdownBody(data: '```diff\n$_diff\n```'),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -276,7 +313,7 @@ void main() {
       );
       final inAvatar = find
           .descendant(
-            of: find.byType(RoomAvatarTile),
+            of: find.byType(LivingBotFace),
             matching: find.byType(RichText),
           )
           .evaluate()
@@ -316,6 +353,6 @@ void main() {
 
 const String _diff = '@@ -1,2 +1,2 @@\n keep\n-old\n+new';
 
-/// Tertiary runs of the fixture: the room timestamp, the "·" separator of a
-/// Desktop room and the diff hunk header.
-const Set<String> _tertiary = {'10:00', '·', '@@ -1,2 +1,2 @@'};
+/// Tertiary runs of the fixture: the Bots home section counters (three team
+/// bots, two rooms) and the diff hunk header.
+const Set<String> _tertiary = {'3', '2', '@@ -1,2 +1,2 @@'};
