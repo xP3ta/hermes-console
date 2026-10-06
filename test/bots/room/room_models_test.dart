@@ -357,6 +357,21 @@ void main() {
       expect(entriesOf([reply]).single.quote, isNull);
     });
 
+    test('never falls back to another owner message of the log', () {
+      final seq = EventSeq();
+      final u = seq.user('hola');
+      final reply = seq.member(
+        'm-builder',
+        'builder',
+        'Buenas.',
+        'user:gone',
+        thread: 't-gone',
+      );
+      final entries = entriesOf([u, reply]);
+      expect(entries, hasLength(2), reason: 'precondition: both rows');
+      expect(entries.map((e) => e.quote), [null, null]);
+    });
+
     test('an attachment-only message quotes its file names', () {
       final seq = EventSeq();
       final u = seq.user(
