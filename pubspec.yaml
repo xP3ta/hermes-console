@@ -141,6 +141,12 @@ flutter:
     # Petdex remoto cuando toque. El repositorio descubre pets del AssetManifest,
     # así que basta con no empaquetarlas.
     - assets/companions/
+    # Header mascot atlases (CC0-1.0, derived from the companion sheets by
+    # tool/mascot/build_atlas.py). Listed one by one so LICENSES.md stays
+    # out of the bundle. Licences: assets/mascot/LICENSES.md.
+    - assets/mascot/pixel.webp
+    - assets/mascot/nimbus.webp
+    - assets/mascot/violet.webp
   # Fuentes empaquetadas localmente bajo SIL OFL 1.1 para el selector de fuente
   # en Ajustes → apariencia. Son archivos locales: nunca se descargan en
   # runtime (no usamos google_fonts; ver docs/PRIVACY_POLICY.md).

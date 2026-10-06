@@ -8298,5 +8298,80 @@
   "memEntryFailed": "Couldn't reach the server. Nothing was saved.",
   "memEntrySaved": "Entry saved",
   "memEntryDeleted": "Entry deleted",
-  "memDraftLegacyNote": "Local draft from an earlier version. It is not on the server: copy what you need into an entry, then discard it."
+  "memDraftLegacyNote": "Local draft from an earlier version. It is not on the server: copy what you need into an entry, then discard it.",
+  "mascotStateIdle": "{name} is idle",
+  "@mascotStateIdle": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateThinking": "{name} is thinking",
+  "@mascotStateThinking": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateTool": "{name} is using a tool",
+  "@mascotStateTool": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateNeedsYou": "{name} needs you",
+  "@mascotStateNeedsYou": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateDone": "{name} is done",
+  "@mascotStateDone": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateOffline": "{name} is offline",
+  "@mascotStateOffline": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateError": "{name} hit an error",
+  "@mascotStateError": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotClusterMore": "{names} and {count} more",
+  "@mascotClusterMore": {
+    "description": "Screen-reader label of a room's mascot cluster when more bots than the visible faces are present.",
+    "placeholders": {
+      "names": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

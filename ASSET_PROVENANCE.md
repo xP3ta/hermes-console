@@ -71,6 +71,16 @@ manifest repeats the license declaration. The complete CC0 legal code is in
 | Violet | `assets/companions/violet/spritesheet.webp` | Created for Hermes Console by the Hermes Console team | CC0-1.0 | `163b19c92d285e9b5c54b1d22ae9902a68af532bfd4912df0336e387b7ab918b` |
 | Violet | `assets/companions/violet/pet.json` | Project-authored manifest | CC0-1.0 | `8ce3c39e29b9690b0c1a3587d38446efafbdd03fadc81b5f9a395836530d9983` |
 
+The header mascot atlases are derived from these sheets (cells cropped and
+turned into white bodies for tinting) and keep their CC0-1.0 licence; see
+[`assets/mascot/LICENSES.md`](assets/mascot/LICENSES.md).
+
+| Mascot | File | Provenance | License | SHA-256 |
+|---|---|---|---|---|
+| Nimbus (header mascot) | `assets/mascot/nimbus.webp` | Derived from the Nimbus companion sheet by `tool/mascot/build_atlas.py` | CC0-1.0 | `e5bf12f45bfc9ad1d852587a5939f50ba5b10304748b7dcf397546a137b9260b` |
+| Pixel (header mascot) | `assets/mascot/pixel.webp` | Derived from the Pixel companion sheet by `tool/mascot/build_atlas.py` | CC0-1.0 | `7c7c8d45f9e9f6543de596cd61a97d849f3435a8302a22b52f1f5f29ae31be49` |
+| Violet (header mascot) | `assets/mascot/violet.webp` | Derived from the Violet companion sheet by `tool/mascot/build_atlas.py` | CC0-1.0 | `438b2a866bd6aaf7d5363c2ddd9d2b9982d3055c15620f377741bbc305045e7c` |
+
 To verify the canonical files from the repository root:
 
 ```bash
