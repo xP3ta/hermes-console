@@ -27,6 +27,8 @@ import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/main.dart';
 
+import 'support/chat_header_menu.dart';
+
 SavedConnection _connection() => SavedConnection(
   id: 'conn-chat-content',
   label: 'Chat content',
@@ -210,7 +212,7 @@ void main() {
     await pumpChat(tester, history: _history());
     await tester.pump(const Duration(milliseconds: 200));
 
-    await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+    await openChatControlsFromHeader(tester);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     final entry = find.byKey(const ValueKey('chat-control-content'));
@@ -267,7 +269,7 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 200));
 
-    await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+    await openChatControlsFromHeader(tester);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     final entry = find.byKey(const ValueKey('chat-control-content'));

@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -23,6 +24,7 @@ import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/main.dart';
+import 'support/chat_header_menu.dart';
 
 SavedConnection _connection() => SavedConnection(
   id: 'conn-chat-find',
@@ -202,8 +204,10 @@ void main() {
   }
 
   Future<void> openFindFromAppBar(WidgetTester tester) async {
-    final trigger = find.byKey(const ValueKey('chat-find-trigger'));
-    expect(find.byTooltip('Buscar en el chat'), findsOneWidget);
+    // fh1215: search moved from the header icon to the header pill's menu.
+    expect(find.byKey(const ValueKey('chat-find-trigger')), findsNothing);
+    await openChatHeaderMenu(tester);
+    final trigger = find.byKey(const ValueKey('chat-menu-find'));
     expect(tester.getSize(trigger).height, greaterThanOrEqualTo(48));
     await tester.tap(trigger);
     await tester.pump();
@@ -255,6 +259,19 @@ void main() {
     await settleReveal(tester);
     expect(find.text('2 de 2'), findsOneWidget);
     expect(_isOnScreen(tester, far), isTrue);
+    // fh1215: the match lands below the floating header and the find bar
+    // under it, not under them.
+    final header = tester.getRect(
+      find.byKey(const ValueKey('floating-header')),
+    );
+    final bar = tester.getRect(find.byKey(const ValueKey('chat-find-bar')));
+    expect(
+      tester.getRect(far.first).top,
+      greaterThanOrEqualTo(
+        math.max(header.bottom - FloatingChatHeader.scrimTail, bar.bottom) -
+            0.5,
+      ),
+    );
     expect(
       find.bySemanticsLabel(RegExp('^Resultado de búsqueda actual')),
       findsOneWidget,

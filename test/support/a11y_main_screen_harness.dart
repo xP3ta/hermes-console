@@ -23,6 +23,7 @@ import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/main.dart';
+import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -209,12 +210,29 @@ Future<void> expectA11yLayoutUsable(
     final target = entry.value;
     await tester.ensureVisible(target);
     await tester.pump();
+    // fh1215: the transcript scrolls under the floating header, so a row
+    // brought to the viewport's top edge lands under it. Like a reader,
+    // bring transcript targets to the middle of the screen instead.
+    final headers = find.byType(FloatingChatHeader);
+    if (headers.evaluate().isNotEmpty &&
+        find.ancestor(of: target, matching: headers).evaluate().isEmpty &&
+        Scrollable.maybeOf(tester.element(target)) != null) {
+      await Scrollable.ensureVisible(tester.element(target), alignment: 0.5);
+      await tester.pump();
+    }
     expect(tester.takeException(), isNull, reason: name);
 
-    final inAppBar = find
-        .ancestor(of: target, matching: find.byType(AppBar))
-        .evaluate()
-        .isNotEmpty;
+    // fh1215: the floating chat header clamps its pill like an app bar
+    // title (1.34x).
+    final inAppBar =
+        find
+            .ancestor(of: target, matching: find.byType(AppBar))
+            .evaluate()
+            .isNotEmpty ||
+        find
+            .ancestor(of: target, matching: find.byType(FloatingChatHeader))
+            .evaluate()
+            .isNotEmpty;
     if (!inAppBar) {
       expect(
         MediaQuery.textScalerOf(tester.element(target)).scale(10),
@@ -258,6 +276,13 @@ Future<void> expectA11yLayoutUsable(
       final otherRect = rectOf(other.value);
       // A target scrolled partly out of view is checked on its own turn.
       if (otherRect == null || !within(otherRect, clipOf(other.value))) {
+        continue;
+      }
+      // fh1215: a transcript row scrolled under the floating header is
+      // covered by design (it is hit-tested on its own turn, once brought
+      // into view).
+      if (find.byType(FloatingChatHeader).evaluate().isNotEmpty &&
+          other.value.hitTestable().evaluate().isEmpty) {
         continue;
       }
       final overlap = rect.intersect(otherRect);

@@ -195,7 +195,11 @@ ActivityPillModel? buildActivityPillModel(
     live = false;
   }
 
-  final tasks = snapshot.showTasks ? snapshot.tasks : null;
+  // fh1215: once the turn is idle (the «Todo completado» linger) the pill
+  // carries no counter at all.
+  final tasks = snapshot.showTasks && snapshot.turnActive
+      ? snapshot.tasks
+      : null;
   final extras = <String>[
     if (primary != 'background' && snapshot.backgroundCount > 0)
       strings.liveMoreBackground(snapshot.backgroundCount),
@@ -212,7 +216,10 @@ ActivityPillModel? buildActivityPillModel(
   final semantics = <String>[
     action,
     ?detail,
-    if (tasks != null) strings.liveTasksShort(tasks.done, tasks.total),
+    // fh1215: a finished list has no counter to announce (the pill flashes
+    // «✓ N tareas» and drops it).
+    if (tasks != null && !tasks.isFinished)
+      strings.liveTasksShort(tasks.done, tasks.total),
     ...extras,
   ].join(', ');
 
@@ -373,7 +380,11 @@ class ActivityGlyphBadge extends StatelessWidget {
 }
 
 /// Anillo diminuto + «2/4»: el progreso de las tareas dentro de la pastilla.
-class ActivityTaskChip extends StatelessWidget {
+///
+/// fh1215: a finished list does not linger as «5/5». The chip flashes
+/// «✓ 5 tareas» for [doneFlash] and then disappears; partial progress keeps
+/// the ring and «3/5».
+class ActivityTaskChip extends StatefulWidget {
   const ActivityTaskChip({
     required this.done,
     required this.total,
@@ -385,34 +396,91 @@ class ActivityTaskChip extends StatelessWidget {
   final int total;
   final double fraction;
 
+  static const Duration doneFlash = Duration(seconds: 2);
+
+  @override
+  State<ActivityTaskChip> createState() => _ActivityTaskChipState();
+}
+
+class _ActivityTaskChipState extends State<ActivityTaskChip> {
+  Timer? _flash;
+  bool _flashOver = false;
+
+  bool get _finished => widget.total > 0 && widget.done >= widget.total;
+
+  @override
+  void initState() {
+    super.initState();
+    _sync();
+  }
+
+  @override
+  void didUpdateWidget(ActivityTaskChip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _sync();
+  }
+
+  void _sync() {
+    if (!_finished) {
+      // New open work (or a new list): the counter is back.
+      _flash?.cancel();
+      _flash = null;
+      _flashOver = false;
+      return;
+    }
+    if (_flash != null || _flashOver) return;
+    _flash = Timer(ActivityTaskChip.doneFlash, () {
+      if (!mounted) return;
+      setState(() => _flashOver = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _flash?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).hermes;
+    final textStyle = TextStyle(
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+      color: colors.textSecondary,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+    if (_finished) {
+      if (_flashOver) {
+        return const SizedBox.shrink(key: ValueKey('activity-task-chip-gone'));
+      }
+      return Padding(
+        padding: const EdgeInsetsDirectional.only(start: 9),
+        child: Text(
+          Strings.of(context).fh1215TasksDoneFlash(widget.total),
+          key: const ValueKey('activity-task-chip-done'),
+          maxLines: 1,
+          style: textStyle.copyWith(color: colors.success),
+        ),
+      );
+    }
     return Row(
       key: const ValueKey('activity-task-chip'),
       mainAxisSize: MainAxisSize.min,
       children: [
+        const SizedBox(width: 9),
         SizedBox(
           width: 14,
           height: 14,
           child: CircularProgressIndicator(
-            value: fraction,
+            value: widget.fraction,
             strokeWidth: 2.2,
             backgroundColor: colors.divider,
-            color: done >= total ? colors.success : colors.accent,
+            color: colors.accent,
           ),
         ),
         const SizedBox(width: 4),
-        Text(
-          '$done/$total',
-          maxLines: 1,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: colors.textSecondary,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
+        Text('${widget.done}/${widget.total}', maxLines: 1, style: textStyle),
       ],
     );
   }
@@ -476,77 +544,90 @@ class ActivityPillRow extends StatelessWidget {
       style: const TextStyle(fontSize: 13),
     );
 
-    final children = <Widget>[
-      ActivityGlyphBadge(glyph: model.glyph, live: model.live),
-      const SizedBox(width: 9),
-      fill ? Expanded(child: text) : Flexible(child: text),
-      if (model.hasTasks && !bigText) ...[
+    Widget row(bool roomy) {
+      final children = <Widget>[
+        ActivityGlyphBadge(glyph: model.glyph, live: model.live),
         const SizedBox(width: 9),
-        ActivityTaskChip(
-          done: model.tasksDone!,
-          total: model.tasksTotal!,
-          fraction: model.tasksFraction ?? 0,
-        ),
-      ],
-      if (model.extras != null && !bigText) ...[
-        const SizedBox(width: 9),
-        Flexible(
-          flex: 0,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 150),
+        fill ? Expanded(child: text) : Flexible(child: text),
+        if (model.hasTasks && !bigText) ...[
+          // The chip carries its own leading gap: gone, it leaves none.
+          ActivityTaskChip(
+            done: model.tasksDone!,
+            total: model.tasksTotal!,
+            fraction: model.tasksFraction ?? 0,
+          ),
+        ],
+        if (model.extras != null && !bigText && roomy) ...[
+          const SizedBox(width: 9),
+          Flexible(
+            flex: 0,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 150),
+              child: Text(
+                model.extras!,
+                key: const ValueKey('activity-pill-extras'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: colors.textSecondary),
+              ),
+            ),
+          ),
+        ],
+        if (timer != null) ...[
+          const SizedBox(width: 9),
+          // El cronómetro no entra en la etiqueta semántica: se anunciaría cada
+          // segundo. La acción sí, y solo cuando cambia.
+          ExcludeSemantics(
             child: Text(
-              model.extras!,
-              key: const ValueKey('activity-pill-extras'),
+              timer,
+              key: const ValueKey('activity-pill-elapsed'),
               maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, color: colors.textSecondary),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: colors.textSecondary,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
           ),
-        ),
-      ],
-      if (timer != null) ...[
-        const SizedBox(width: 9),
-        // El cronómetro no entra en la etiqueta semántica: se anunciaría cada
-        // segundo. La acción sí, y solo cuando cambia.
-        ExcludeSemantics(
-          child: Text(
-            timer,
-            key: const ValueKey('activity-pill-elapsed'),
-            maxLines: 1,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: colors.textSecondary,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
+        ],
+        const SizedBox(width: 4),
+        AnimatedRotation(
+          turns: expanded ? 0.5 : 0,
+          duration: reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 200),
+          child: Icon(
+            Icons.keyboard_arrow_up_rounded,
+            size: 20,
+            color: colors.textSecondary,
           ),
         ),
-      ],
-      const SizedBox(width: 4),
-      AnimatedRotation(
-        turns: expanded ? 0.5 : 0,
-        duration: reduceMotion
-            ? Duration.zero
-            : const Duration(milliseconds: 200),
-        child: Icon(
-          Icons.keyboard_arrow_up_rounded,
-          size: 20,
-          color: colors.textSecondary,
-        ),
-      ),
-    ];
+      ];
 
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 44),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-        child: Row(
-          mainAxisSize: fill ? MainAxisSize.max : MainAxisSize.min,
-          children: children,
+      return ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 44),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+          child: Row(
+            mainAxisSize: fill ? MainAxisSize.max : MainAxisSize.min,
+            children: children,
+          ),
         ),
-      ),
+      );
+    }
+
+    // fh1215: in the narrow header slot the «+1 en segundo plano» extras
+    // give way first (the panel and the semantics label still carry them),
+    // so the action and the timer keep their room.
+    return LayoutBuilder(
+      builder: (context, constraints) =>
+          row(constraints.maxWidth >= roomyWidth),
     );
   }
+
+  /// Below this width the pill drops its extras.
+  static const double roomyWidth = 300;
 }
 
 /// La pastilla plegada: UNA superficie flotante para todo lo vivo.
@@ -555,12 +636,21 @@ class ActivityPill extends StatelessWidget {
     required this.model,
     required this.now,
     required this.onTap,
+    this.onLongPress,
+    this.inHeader = false,
     super.key,
   });
 
   final ActivityPillModel model;
   final DateTime now;
   final VoidCallback? onTap;
+
+  /// fh1215: in the floating header a long press opens the chat menu.
+  final VoidCallback? onLongPress;
+
+  /// fh1215: in the floating chat header the panel opens downwards, so the
+  /// chevron points down and the pill casts a softer shadow.
+  final bool inHeader;
 
   @override
   Widget build(BuildContext context) {
@@ -581,11 +671,12 @@ class ActivityPill extends StatelessWidget {
           side: BorderSide(color: colors.divider, width: 0.8),
         ),
         clipBehavior: Clip.antiAlias,
-        elevation: 10,
+        elevation: inHeader ? 2 : 10,
         shadowColor: Colors.black.withValues(alpha: 0.45),
         child: InkWell(
           onTap: onTap,
-          child: ActivityPillRow(model: model, now: now),
+          onLongPress: onLongPress,
+          child: ActivityPillRow(model: model, now: now, expanded: inHeader),
         ),
       ),
     );

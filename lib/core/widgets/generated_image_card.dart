@@ -6,6 +6,7 @@ import '../../l10n/app_localizations.dart';
 import '../services/media_dimensions.dart';
 import '../theme/app_theme.dart';
 import 'attachment_card.dart';
+import 'stacked_image_cards.dart';
 
 /// Estado de una imagen generada dentro de la burbuja del asistente (spec 030).
 enum GeneratedImageStatus {
@@ -121,6 +122,8 @@ class GeneratedImageCard extends StatelessWidget {
         text: s.genImgHint,
       ),
     };
+    // Inside a stack of images the card is the stack's top card: centred.
+    if (ImageStackScope.maybeOf(context) != null) return Center(child: child);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Align(alignment: Alignment.centerLeft, child: child),
@@ -134,13 +137,19 @@ class GeneratedImageCard extends StatelessWidget {
     final fade = MediaQuery.maybeDisableAnimationsOf(context) ?? false
         ? Duration.zero
         : const Duration(milliseconds: 150);
+    // In a stack the card fills it (cover) and a tap opens the gallery of
+    // the whole stack at this image.
+    final stack = ImageStackScope.maybeOf(context);
+    stack?.controller.report(stack.index, f);
     return Semantics(
       label: s.genImgSemanticLabel,
       image: true,
       button: true,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: () => showImageViewer(context, f),
+        onTap: () => stack == null
+            ? showImageViewer(context, f)
+            : stack.controller.open(stack.index),
         child: Material(
           key: const ValueKey('generated-image-thumbnail'),
           color: colors.surfaceVariant.withValues(alpha: 0.28),
@@ -162,7 +171,7 @@ class GeneratedImageCard extends StatelessWidget {
                     // precarga): una imagen ya precargada pinta en el primer
                     // frame; si no, aparece con un fundido corto.
                     image: generatedImageThumbnailProvider(f),
-                    fit: BoxFit.contain,
+                    fit: stack == null ? BoxFit.contain : BoxFit.cover,
                     width: box.width,
                     height: box.height,
                     frameBuilder: (_, child, frame, synchronous) => synchronous
@@ -184,27 +193,28 @@ class GeneratedImageCard extends StatelessWidget {
                       text: Strings.of(ctx).genImgError,
                     ),
                   ),
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: IgnorePointer(
-                      child: Container(
-                        key: const ValueKey('generated-image-expand'),
-                        width: 30,
-                        height: 30,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.58),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.open_in_full_rounded,
-                          size: 14,
-                          color: Colors.white,
+                  if (stack == null)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: IgnorePointer(
+                        child: Container(
+                          key: const ValueKey('generated-image-expand'),
+                          width: 30,
+                          height: 30,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.58),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.open_in_full_rounded,
+                            size: 14,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -278,6 +288,12 @@ class GeneratedImageFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The top card of a stack of images: fill the card.
+    if (ImageStackScope.maybeOf(context) != null) {
+      return LayoutBuilder(
+        builder: (context, constraints) => builder(constraints.biggest),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Align(

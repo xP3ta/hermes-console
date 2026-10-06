@@ -9,17 +9,18 @@ import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/bots/ui/room/room_header.dart';
 
 import '../../support/inter_font.dart';
 import 'room_fixtures.dart';
 
 /// Owner QA (room "Hermes Console Devs"): the room top was three stacked
 /// layers (mosaic + name + availability, then a faces strip with the round
-/// line). The header is now ONE calm layer (Dots chat header): back, a
-/// centred cluster of member faces next to the room name with one grey
-/// status line, and the overflow button. Tapping it opens the round /
-/// members detail the old strip opened. It collapses to the name while the
-/// reader is up in the history.
+/// line). fh1215: the header now FLOATS over the transcript (no app bar
+/// band): a round back button and the room's activity pill with the member
+/// faces sitting on it. Idle, the pill says the room name; while someone
+/// works or needs you it says that one line. Tapping it opens the round /
+/// members detail; a long press opens the room menu.
 final class _FakeTimer implements Timer {
   @override
   void cancel() {}
@@ -94,6 +95,7 @@ Future<void> _pump(
   tester.view.physicalSize = size * 3;
   tester.view.devicePixelRatio = 3;
   tester.view.padding = const FakeViewPadding(top: _statusBar * 3);
+  tester.view.viewPadding = const FakeViewPadding(top: _statusBar * 3);
   tester.platformDispatcher.textScaleFactorTestValue = textScale;
   addTearDown(tester.view.reset);
   addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
@@ -129,15 +131,19 @@ Future<void> _frames(WidgetTester tester) async {
 
 Finder get _header => find.byKey(const ValueKey('room-header'));
 Finder get _cluster => find.byKey(const ValueKey('room-header-cluster'));
-Finder get _status => find.byKey(const ValueKey('room-header-status'));
-Finder get _title => find.byKey(const ValueKey('room-title'));
-Finder get _bar => find.byType(AppBar);
+Finder get _pillText => find.descendant(
+  of: _header,
+  matching: find.byKey(const ValueKey('floating-header-text')),
+);
+Finder get _bar => find.byKey(const ValueKey('room-header-bar'));
 Finder get _transcript => find.byKey(const ValueKey('room-transcript'));
 
-String _statusText(WidgetTester tester) => tester.widget<Text>(_status).data!;
+/// The room's status line: shown in the pill while someone works or needs
+/// you; idle it lives in the header's semantics.
+String _statusText(WidgetTester tester) =>
+    tester.widget<RoomHeaderBar>(find.byType(RoomHeaderBar)).status;
 
-double _barHeight(WidgetTester tester) =>
-    tester.getSize(_bar).height - _statusBar;
+String _pillLine(WidgetTester tester) => tester.widget<Text>(_pillText).data!;
 
 List<Map<String, dynamic>> _finished(EventSeq seq) {
   final u = seq.user('@builder go');
@@ -174,28 +180,29 @@ void main() {
   setUpAll(loadInterFont);
 
   group('room header · one calm layer', () {
-    testWidgets('cluster, name and one status line; no mosaic, no strip', (
-      tester,
-    ) async {
+    testWidgets('floating: faces sit on the pill, idle says the room name; '
+        'no app bar band, no mosaic, no strip', (tester) async {
       await _pump(tester, events: _finished(EventSeq()), status: driver());
+      expect(find.byType(AppBar), findsNothing);
       expect(find.descendant(of: _bar, matching: _cluster), findsOneWidget);
-      expect(find.descendant(of: _bar, matching: _title), findsOneWidget);
-      expect(find.descendant(of: _bar, matching: _status), findsOneWidget);
+      expect(_pillLine(tester), 'Console Devs');
       expect(
         _statusText(tester),
         matches(RegExp(r'^4 bots · round finished \d+ min ago$')),
       );
+      final cluster = tester.getRect(_cluster);
+      final pill = tester.getRect(_header);
+      expect(cluster.top, lessThan(pill.top));
+      expect(cluster.bottom, greaterThan(pill.top), reason: 'sits on it');
+      expect((cluster.center.dx - pill.center.dx).abs(), lessThan(24));
       // The old layers are gone: the 2×2 mosaic, the availability subtitle
       // and the second strip of faces under the app bar.
       expect(find.byKey(const ValueKey('room-header-faces')), findsNothing);
       expect(find.byKey(const ValueKey('room-availability')), findsNothing);
       expect(find.byKey(const ValueKey('room-status-strip')), findsNothing);
-      // Nothing sits between the header and the conversation.
-      expect(
-        tester.getTopLeft(_transcript).dy - tester.getBottomLeft(_bar).dy,
-        lessThanOrEqualTo(0.5),
-      );
-      expect(_barHeight(tester), lessThanOrEqualTo(64));
+      // The conversation runs UNDER the header, from the top of the screen.
+      expect(tester.getTopLeft(_transcript).dy, 0);
+      expect(pill.top, greaterThanOrEqualTo(_statusBar));
       expect(tester.takeException(), isNull);
     });
 
@@ -238,6 +245,12 @@ void main() {
         _statusText(tester),
         matches(RegExp(r'^console-radar is replying · \d+:\d\d$')),
       );
+      // Working: the pill says it, with a green dot.
+      expect(_pillLine(tester), _statusText(tester));
+      expect(
+        find.byKey(const ValueKey('floating-header-dot-working')),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('room-header-dot-m-radar-working')),
         findsOneWidget,
@@ -269,6 +282,13 @@ void main() {
         locale: const Locale('es'),
       );
       expect(_statusText(tester), 'Te esperan 2');
+      // Needs you: amber in the pill.
+      expect(_pillLine(tester), 'Te esperan 2');
+      final text = tester.widget<Text>(_pillText);
+      expect(
+        text.style!.color,
+        Theme.of(tester.element(_pillText)).hermes.warning,
+      );
     });
 
     testWidgets('at most four faces plus "+N", working face first', (
@@ -365,49 +385,44 @@ void main() {
     });
   });
 
-  group('room header · collapse and scale', () {
-    testWidgets('reading history collapses to the name; bottom expands', (
-      tester,
-    ) async {
+  group('room header · floating and scale', () {
+    testWidgets('scrolling never changes the header; the oldest row is not '
+        'hidden under it', (tester) async {
       await _pump(tester, events: _longRoom(EventSeq()), status: driver());
-      final expanded = _barHeight(tester);
+      final before = tester.getRect(_header);
       await tester.drag(_transcript, const Offset(0, 500));
       await _frames(tester);
-      expect(_title, findsOneWidget);
-      expect(_cluster, findsNothing);
-      expect(_status, findsNothing);
-      expect(_barHeight(tester), lessThan(expanded));
-      await tester.drag(_transcript, const Offset(0, -5000));
-      await _frames(tester);
-      await tester.pumpAndSettle();
+      expect(tester.getRect(_header), before);
       expect(_cluster, findsOneWidget);
-      expect(_status, findsOneWidget);
-      expect(_barHeight(tester), expanded);
-    });
-
-    testWidgets('a jump the app makes (no finger) keeps it expanded', (
-      tester,
-    ) async {
-      await _pump(tester, events: _longRoom(EventSeq()), status: driver());
+      // At the very top the first row starts below the header.
       final position = tester
           .state<ScrollableState>(
             find.descendant(of: _transcript, matching: find.byType(Scrollable)),
           )
           .position;
-      // Landing on an unread divider or a pinned prompt moves the list
-      // without the reader dragging it: the header must not collapse.
-      position.jumpTo(position.minScrollExtent + 600);
+      position.jumpTo(position.maxScrollExtent);
       await _frames(tester);
-      expect(position.pixels, greaterThan(position.minScrollExtent + 56));
-      expect(_cluster, findsOneWidget);
-      expect(_status, findsOneWidget);
+      final first = find.textContaining('question 0 @builder');
+      expect(first, findsOneWidget);
+      expect(
+        tester.getTopLeft(first).dy,
+        greaterThan(tester.getBottomLeft(_header).dy),
+      );
+    });
+
+    testWidgets('long press on the pill opens the room menu', (tester) async {
+      await _pump(tester, events: _finished(EventSeq()), status: driver());
+      expect(find.byKey(const ValueKey('room-overflow')), findsNothing);
+      await tester.longPress(_header);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('room-overflow-menu')), findsOneWidget);
     });
 
     for (final (label, size) in const [
       ('phone', Size(360, 800)),
       ('tablet', Size(1280, 800)),
     ]) {
-      testWidgets('text scale 2.0 on $label: one line each, ≤ 64 dp', (
+      testWidgets('text scale 2.0 on $label: one line, centred, fits', (
         tester,
       ) async {
         await _pump(
@@ -419,23 +434,19 @@ void main() {
           locale: const Locale('es'),
         );
         expect(tester.takeException(), isNull);
-        expect(_barHeight(tester), lessThanOrEqualTo(64));
-        for (final f in [_title, _status]) {
-          final p = tester.renderObject<RenderParagraph>(
-            find.descendant(of: f, matching: find.byType(RichText)),
-          );
-          final line = p.text.style?.fontSize ?? 14;
-          expect(
-            tester.getSize(f).height,
-            lessThan(line * p.textScaler.scale(1) * 2),
-            reason: 'one line',
-          );
-          expect(p.textScaler.scale(1), greaterThan(1));
-        }
-        if (size.width > 600) {
-          // Tablet: the cluster and name stay centred, not stretched.
-          expect(tester.getCenter(_header).dx, closeTo(size.width / 2, 24));
-        }
+        final p = tester.renderObject<RenderParagraph>(
+          find.descendant(of: _pillText, matching: find.byType(RichText)),
+        );
+        final line = p.text.style?.fontSize ?? 14;
+        expect(
+          tester.getSize(_pillText).height,
+          lessThan(line * p.textScaler.scale(1) * 2),
+          reason: 'one line',
+        );
+        expect(p.textScaler.scale(1), greaterThan(1));
+        expect(tester.getCenter(_header).dx, closeTo(size.width / 2, 2));
+        final bar = tester.getRect(_bar);
+        expect(tester.getRect(_header).bottom, lessThan(bar.bottom));
       });
     }
   });

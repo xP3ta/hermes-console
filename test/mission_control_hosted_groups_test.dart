@@ -1508,7 +1508,7 @@ void main() {
     await tester.pumpAndSettle();
 
     Future<void> menu(String item) async {
-      await tester.tap(find.byKey(const ValueKey('room-overflow')));
+      await tester.longPress(find.byKey(const ValueKey('room-header')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(ValueKey('room-menu-$item')));
       await tester.pumpAndSettle();

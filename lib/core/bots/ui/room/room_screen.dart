@@ -4,8 +4,6 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollDirection;
-import 'package:flutter/scheduler.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
@@ -20,6 +18,7 @@ import '../../../widgets/anchored_transcript_scroll.dart';
 import '../../../widgets/attachment_source_sheet.dart';
 import '../../../widgets/chat/composer_pasted_image.dart';
 import '../../../widgets/chat/console_composer.dart';
+import '../../../widgets/floating_chat_header.dart';
 import '../../../widgets/hermes_app_bar.dart';
 import '../../../widgets/hermes_notice.dart';
 import '../../../widgets/hermes_premium_ui.dart';
@@ -245,8 +244,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
   bool _detailOpen = false;
 
   /// Header shows only the name while the reader is up in the history.
-  bool _headerCollapsed = false;
-  bool _userScrolling = false;
+  /// fh1215: what the floating header covers at the top of the screen.
+  /// The transcript reserves it above its oldest row and the landing keeps
+  /// the divider below it.
+  double _headerInset = 0;
   final List<AttachmentDraft> _attachments = [];
   Future<void> _pasteTail = Future<void>.value();
   final Set<String> _answering = {};
@@ -1797,7 +1798,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     if (_reading != null || _transcriptScroll.landingPending) return;
     final viewport = list.findRenderObject();
     if (viewport is! RenderBox || !viewport.hasSize) return;
-    final top = viewport.localToGlobal(Offset.zero).dy;
+    // fh1215: the readable top is below the floating header.
+    final top = viewport.localToGlobal(Offset.zero).dy + _headerInset;
     double? shift;
     void visit(Element element) {
       if (shift != null) return;
@@ -1872,9 +1874,14 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
 
   // ── Build ────────────────────────────────────────────────────────────
 
+  /// fh1215: how the header pill shows [_statusLine]'s last answer: idle
+  /// lines stay in the semantics label, the rest ride in the pill.
+  FloatingHeaderTone _lineTone = FloatingHeaderTone.idle;
+
   String _statusLine(Strings s, RoomRoundModel? round) {
     _agoSince = null;
     final driver = _driver;
+    _lineTone = FloatingHeaderTone.waiting;
     if (driver != null && driver.approvals.isNotEmpty) {
       return s.roomStatusNeedsApproval;
     }
@@ -1888,6 +1895,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
         _recoveringRetries.isNotEmpty) {
       // The server is still checking an interrupted reply; it settles or
       // defers it on its own, so this is not a failure (yet).
+      _lineTone = FloatingHeaderTone.working;
       return s.roomStatusRecovering;
     }
     if (driver != null &&
@@ -1900,6 +1908,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           : s.roomStatusFailed;
     }
     if (driver?.working ?? false) {
+      _lineTone = FloatingHeaderTone.working;
       final working = round?.rows
           .where((r) => r.state == RoomTurnState.working)
           .toList();
@@ -1911,6 +1920,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     }
     // Idle: who is in the room and how the last round ended, in ONE grey
     // line ("4 bots · round finished 5 min ago").
+    _lineTone = FloatingHeaderTone.idle;
     final presence = _presenceLine(s);
     final events = _events;
     if (events.isEmpty) return presence;
@@ -2388,38 +2398,8 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     return p.pixels <= p.minScrollExtent + 0.5;
   }
 
-  /// Collapse the header once the reader drags this far into the history.
-  static const double _collapseAfter = 56;
-
-  void _trackHeaderCollapse(ScrollNotification n) {
-    if (n is UserScrollNotification) {
-      _userScrolling = n.direction != ScrollDirection.idle;
-    }
-    final away = n.metrics.pixels - n.metrics.minScrollExtent;
-    bool? collapsed;
-    if (away <= 8) {
-      collapsed = false;
-    } else if (_userScrolling &&
-        n is ScrollUpdateNotification &&
-        away > _collapseAfter) {
-      collapsed = true;
-    }
-    if (collapsed == null || collapsed == _headerCollapsed) return;
-    void apply() {
-      if (mounted) setState(() => _headerCollapsed = collapsed!);
-    }
-
-    if (SchedulerBinding.instance.schedulerPhase ==
-        SchedulerPhase.persistentCallbacks) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => apply());
-    } else {
-      apply();
-    }
-  }
-
   bool _onScroll(ScrollNotification n) {
     if (n.depth != 0) return false;
-    _trackHeaderCollapse(n);
     if (_programmaticScroll) return false;
     if (n is ScrollUpdateNotification && _reading == null && !_atBottom) {
       // The reader left the bottom (drag or fling): keep the boundary at
@@ -2712,7 +2692,9 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
           boundary: transcript[at - 1].key,
           ceiling: _arrivedThroughSeq ?? _log?.latestSeq ?? 0,
         );
-        _transcriptScroll.requestLanding(context: _landingContext);
+        _transcriptScroll.requestLanding(
+          context: _landingContext + _headerInset,
+        );
       }
     }
     var reading = _reading;
@@ -2780,6 +2762,12 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
                         ),
                       ),
                     ),
+                    // Under the floating header: the oldest row is never
+                    // hidden behind it.
+                    SliverToBoxAdapter(
+                      key: const ValueKey('room-top-inset'),
+                      child: SizedBox(height: _headerInset),
+                    ),
                   ],
                 ),
               ),
@@ -2793,6 +2781,7 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     final s = Strings.of(context);
     final colors = Theme.of(context).hermes;
     final round = _roundView();
+    _headerInset = FloatingChatHeader.insetFor(context);
     final view = _transcriptView(s, colors);
     if (!_openAnchored && _lastItemKeys.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _anchorOnOpen());
@@ -2810,138 +2799,157 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     final detailOpen = _detailOpen && round != null;
     return Scaffold(
       key: const ValueKey('room-screen'),
-      appBar: RoomHeaderBar(
-        title: widget.displayName ?? _room.name,
-        status: summary,
-        members: _room.members,
-        states: {
-          for (final r in round?.rows ?? const <RoomRoundRow>[])
-            r.member.memberId: r.state,
-        },
-        profileFor: widget.profileFor,
-        avatarCache: widget.avatarCache,
-        roomAvatar: widget.roomAvatar,
-        collapsed: _headerCollapsed,
-        onOpenDetail: () => _openHeaderDetail(round),
-        onMore: () => unawaited(_openMenu()),
+      body: Stack(
+        children: [
+          _body(s, colors, round, view, detailOpen),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: RoomHeaderBar(
+              title: widget.displayName ?? _room.name,
+              status: summary,
+              members: _room.members,
+              states: {
+                for (final r in round?.rows ?? const <RoomRoundRow>[])
+                  r.member.memberId: r.state,
+              },
+              lineTone: _lineTone,
+              profileFor: widget.profileFor,
+              avatarCache: widget.avatarCache,
+              roomAvatar: widget.roomAvatar,
+              onOpenDetail: () => _openHeaderDetail(round),
+              onMore: () => unawaited(_openMenu()),
+            ),
+          ),
+        ],
       ),
-      body: SafeArea(
-        top: false,
-        // The real height left (after app bar, safe area and IME) bounds the
-        // composer so it never overflows in landscape with the keyboard.
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final available = constraints.maxHeight;
-            return Column(
-              children: [
-                Expanded(
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: FocusScope(
-                          node: _transcriptFocus,
-                          child: view.widget,
+    );
+  }
+
+  Widget _body(
+    Strings s,
+    HermesThemeColors colors,
+    RoomRoundModel? round,
+    ({Widget widget, int unread}) view,
+    bool detailOpen,
+  ) {
+    return SafeArea(
+      top: false,
+      // The real height left (after app bar, safe area and IME) bounds the
+      // composer so it never overflows in landscape with the keyboard.
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final available = constraints.maxHeight;
+          return Column(
+            children: [
+              Expanded(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: FocusScope(
+                        node: _transcriptFocus,
+                        child: view.widget,
+                      ),
+                    ),
+                    if (unreadPillVisible(
+                      present: _presence.present,
+                      reading: _reading != null,
+                      count: view.unread,
+                    ))
+                      Positioned(
+                        bottom: 20,
+                        left: 0,
+                        right: 0,
+                        child: Center(
+                          child: RoomNewPill(
+                            count: view.unread,
+                            onTap: _toBottom,
+                          ),
                         ),
                       ),
-                      if (unreadPillVisible(
-                        present: _presence.present,
-                        reading: _reading != null,
-                        count: view.unread,
-                      ))
-                        Positioned(
-                          bottom: 20,
-                          left: 0,
-                          right: 0,
-                          child: Center(
-                            child: RoomNewPill(
-                              count: view.unread,
-                              onTap: _toBottom,
-                            ),
+                    if (detailOpen) ...[
+                      Positioned.fill(
+                        child: GestureDetector(
+                          key: const ValueKey('room-round-sheet-barrier'),
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => setState(() => _detailOpen = false),
+                          child: ColoredBox(
+                            color: colors.background.withValues(alpha: 0.35),
                           ),
                         ),
-                      if (detailOpen) ...[
-                        Positioned.fill(
-                          child: GestureDetector(
-                            key: const ValueKey('room-round-sheet-barrier'),
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () => setState(() => _detailOpen = false),
-                            child: ColoredBox(
-                              color: colors.background.withValues(alpha: 0.35),
-                            ),
+                      ),
+                      Positioned(
+                        top: _headerInset + 4,
+                        left: 8,
+                        right: 8,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxHeight: math.max(120, available * 0.55),
                           ),
-                        ),
-                        Positioned(
-                          top: 4,
-                          left: 8,
-                          right: 8,
-                          child: ConstrainedBox(
-                            constraints: BoxConstraints(
-                              maxHeight: math.max(120, available * 0.55),
-                            ),
-                            child: Material(
-                              color: colors.surface,
-                              elevation: 8,
-                              borderRadius: BorderRadius.circular(16),
-                              clipBehavior: Clip.antiAlias,
-                              child: SingleChildScrollView(
-                                child: RoomRoundDetail(
-                                  round: round,
-                                  now: _now,
-                                  profileFor: widget.profileFor,
-                                  avatarCache: widget.avatarCache,
-                                  onStopAll:
-                                      widget.capabilities.canStop && !_stopping
-                                      ? () => unawaited(_stop())
-                                      : null,
-                                  onRetry: widget.capabilities.canRetry
-                                      ? (row) {
-                                          final task = row.taskId;
-                                          if (task != null) {
-                                            unawaited(_retry(task));
-                                          }
+                          child: Material(
+                            color: colors.surface,
+                            elevation: 8,
+                            borderRadius: BorderRadius.circular(16),
+                            clipBehavior: Clip.antiAlias,
+                            child: SingleChildScrollView(
+                              child: RoomRoundDetail(
+                                round: round!,
+                                now: _now,
+                                profileFor: widget.profileFor,
+                                avatarCache: widget.avatarCache,
+                                onStopAll:
+                                    widget.capabilities.canStop && !_stopping
+                                    ? () => unawaited(_stop())
+                                    : null,
+                                onRetry: widget.capabilities.canRetry
+                                    ? (row) {
+                                        final task = row.taskId;
+                                        if (task != null) {
+                                          unawaited(_retry(task));
                                         }
-                                      : null,
-                                  onOpenActivity: () {
-                                    setState(() => _detailOpen = false);
-                                    unawaited(_openActivity());
-                                  },
-                                  onOpenMembers: () {
-                                    setState(() => _detailOpen = false);
-                                    unawaited(_openMembers());
-                                  },
-                                ),
+                                      }
+                                    : null,
+                                onOpenActivity: () {
+                                  setState(() => _detailOpen = false);
+                                  unawaited(_openActivity());
+                                },
+                                onOpenMembers: () {
+                                  setState(() => _detailOpen = false);
+                                  unawaited(_openMembers());
+                                },
                               ),
                             ),
                           ),
                         ),
-                      ],
+                      ),
                     ],
+                  ],
+                ),
+              ),
+              if (_stale) _staleStatus(s, colors),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: math.max(
+                    0,
+                    math.min(available * 0.6, available - 48),
                   ),
                 ),
-                if (_stale) _staleStatus(s, colors),
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: math.max(
-                      0,
-                      math.min(available * 0.6, available - 48),
-                    ),
-                  ),
-                  child: SingleChildScrollView(
-                    reverse: true,
-                    child: ListenableBuilder(
-                      listenable: Listenable.merge([
-                        _composer,
-                        _focus,
-                        widget.dictation,
-                      ]),
-                      builder: (context, _) => _composerArea(s),
-                    ),
+                child: SingleChildScrollView(
+                  reverse: true,
+                  child: ListenableBuilder(
+                    listenable: Listenable.merge([
+                      _composer,
+                      _focus,
+                      widget.dictation,
+                    ]),
+                    builder: (context, _) => _composerArea(s),
                   ),
                 ),
-              ],
-            );
-          },
-        ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

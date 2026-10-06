@@ -230,7 +230,10 @@ import '../design/modal.dart'
 import 'subagent_detail_screen.dart'
     show SubagentTranscriptPage, subagentIsLive;
 import '../widgets/activity_panel.dart';
+import '../widgets/activity_pill.dart' show ActivityPill;
 import '../widgets/bot_chat_header.dart';
+import '../widgets/floating_chat_header.dart';
+import '../widgets/stacked_image_cards.dart';
 import '../widgets/activity_side_panel.dart';
 import '../widgets/activity_task_linger.dart';
 import '../widgets/compaction_dock.dart';
@@ -326,6 +329,7 @@ int _assistantRenderPlanCacheBytes(
         _AssistantGeneratedImageChunk(:final basename) => basename.length,
         _AssistantGeneratedMediaChunk(:final reference) =>
           reference.source.length + reference.displayName.length,
+        _AssistantImageRunChunk(:final items) => items.length * 64,
       };
     }
   }
@@ -701,6 +705,47 @@ final class _AssistantGeneratedMediaChunk extends _AssistantBodyChunk {
   const _AssistantGeneratedMediaChunk(this.reference);
 }
 
+/// fh1215: two or more images in a row of a long reply stay in ONE row, so
+/// they render as one stack of cards.
+final class _AssistantImageRunChunk extends _AssistantBodyChunk {
+  final List<_AssistantBodyChunk> items;
+
+  const _AssistantImageRunChunk(this.items);
+}
+
+bool _isImageChunk(_AssistantBodyChunk chunk) => switch (chunk) {
+  _AssistantGeneratedImageChunk() => true,
+  _AssistantGeneratedMediaChunk(:final reference) =>
+    reference.kind == GeneratedMediaKind.image,
+  _ => false,
+};
+
+/// Joins every run of two or more consecutive image chunks into one
+/// [_AssistantImageRunChunk].
+List<_AssistantBodyChunk> _mergeImageRuns(List<_AssistantBodyChunk> chunks) {
+  final out = <_AssistantBodyChunk>[];
+  final run = <_AssistantBodyChunk>[];
+  void flush() {
+    if (run.length >= 2) {
+      out.add(_AssistantImageRunChunk(List.unmodifiable(run)));
+    } else {
+      out.addAll(run);
+    }
+    run.clear();
+  }
+
+  for (final chunk in chunks) {
+    if (_isImageChunk(chunk)) {
+      run.add(chunk);
+      continue;
+    }
+    flush();
+    out.add(chunk);
+  }
+  flush();
+  return out;
+}
+
 final class _StructuredGeneratedImage {
   final GeneratedImageSourceKind kind;
   final String source;
@@ -941,6 +986,56 @@ final class _ProjectedAssistantImage extends _ProjectedAssistantBlock {
 final class _ProjectedAssistantMedia extends _ProjectedAssistantBlock {
   final GeneratedMediaReference reference;
   const _ProjectedAssistantMedia(this.reference);
+}
+
+String _imageChunkId(_AssistantBodyChunk chunk) => switch (chunk) {
+  _AssistantGeneratedImageChunk(:final basename) => 'image:$basename',
+  _AssistantGeneratedMediaChunk(:final reference) =>
+    'media:${reference.source}',
+  _ => '',
+};
+
+/// fh1215: inside one reply, two or more consecutive images (generated
+/// images or `MEDIA:` images, with only spacing between them) become one
+/// [StackedImageCards]. A single image is unchanged.
+List<Widget> _stackImageRuns(Iterable<Widget> blocks) {
+  bool isImage(Widget w) =>
+      w is _GeneratedImageSlot ||
+      (w is _GeneratedMediaSlot &&
+          w.reference.kind == GeneratedMediaKind.image);
+  bool isGap(Widget w) => w is SizedBox && w.child == null && w.width == null;
+  final out = <Widget>[];
+  final run = <Widget>[];
+  final gaps = <Widget>[];
+  void flush() {
+    if (run.length >= 2) {
+      out.add(
+        StackedImageCards(
+          key: ValueKey(('image-stack', run.first.key)),
+          children: List.of(run),
+        ),
+      );
+    } else {
+      out.addAll(run);
+    }
+    out.addAll(gaps);
+    run.clear();
+    gaps.clear();
+  }
+
+  for (final w in blocks) {
+    if (isImage(w)) {
+      gaps.clear();
+      run.add(w);
+    } else if (run.isNotEmpty && isGap(w)) {
+      gaps.add(w);
+    } else {
+      flush();
+      out.add(w);
+    }
+  }
+  flush();
+  return out;
 }
 
 ValueKey<String> _generatedMediaWidgetKey(
@@ -1933,12 +2028,14 @@ class _ChatScreenState extends State<ChatScreen>
   Map<String, dynamic>? _stickyPromptCandidate() {
     Map<String, dynamic>? topMessage;
     var topOffset = double.infinity;
+    // fh1215: under a floating header the reader's top is its inset.
+    final readTop = _readTop;
     void consider(RenderBox anchor, Map<String, dynamic> message) {
       final top = _ChatStreamingViewportLock._visualOffsetInViewport(anchor);
       final height = anchor is ChatAnswerAnchorRenderBox
           ? anchor.laidOutHeight
           : null;
-      if (top == null || height == null || top + height <= 0) return;
+      if (top == null || height == null || top + height <= readTop) return;
       if (top < topOffset) {
         topOffset = top;
         topMessage = message;
@@ -1951,7 +2048,9 @@ class _ChatScreenState extends State<ChatScreen>
     for (final entry in _stickySliceAnchors.entries) {
       consider(entry.key, entry.value);
     }
-    if (topMessage == null || topOffset > chatPromptActiveSlack) return null;
+    if (topMessage == null || topOffset - readTop > chatPromptActiveSlack) {
+      return null;
+    }
     final source = _stickySource;
     var index = _stickyIndex;
     if (index == null) {
@@ -1979,7 +2078,7 @@ class _ChatScreenState extends State<ChatScreen>
         : null;
     if (promptTop != null &&
         promptHeight != null &&
-        promptTop + promptHeight > 0) {
+        promptTop + promptHeight > readTop) {
       return null;
     }
     return prompt;
@@ -2238,6 +2337,7 @@ class _ChatScreenState extends State<ChatScreen>
       anchor,
       _scrollController.position,
       duration: _reduceMotion ? Duration.zero : chatNavigationDuration,
+      topInset: _readTop,
     );
   }
 
@@ -2389,7 +2489,7 @@ class _ChatScreenState extends State<ChatScreen>
     _showScrollToBottom = true;
     position.jumpTo(
       math.min(
-        target + buttonExtent + _newSinceLandingContext,
+        target + buttonExtent + _newSinceLandingContext + _readTop,
         position.maxScrollExtent + buttonExtent,
       ),
     );
@@ -2399,7 +2499,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (!_disposed && _scrollController.hasClients) {
       _streamingViewportLock.holdLanding(
         _newSinceAnchor,
-        visualOffset: _newSinceLandingContext,
+        visualOffset: _newSinceLandingContext + _readTop,
       );
     }
   }
@@ -6988,6 +7088,260 @@ class _ChatScreenState extends State<ChatScreen>
   /// the newest message. Never rebuilds inside a frame.
   bool _botHeaderCompact = false;
 
+  /// fh1215: what the floating Bot Chat header covers at the top of the
+  /// transcript (0 under a normal app bar). The transcript reserves it above
+  /// its first row and landings keep their target below it.
+  double _floatingTopInset = 0;
+
+  /// fh1215: height of the notices floating under the header (find bar,
+  /// connection row…), measured on layout. Never rebuilds anything.
+  double _floatingNoticesExtent = 0;
+
+  /// Where the reader's view starts: below the header and its notices.
+  double get _readTop => _floatingTopInset + _floatingNoticesExtent;
+
+  /// The notices are measured during layout; the transcript reserves them
+  /// above its oldest row, so a change rebuilds once, after the frame. In a
+  /// reversed list that padding sits at the far (oldest) end: the rows the
+  /// reader is looking at never move.
+  void _setFloatingNoticesExtent(double value) {
+    if ((value - _floatingNoticesExtent).abs() < 0.5) return;
+    _floatingNoticesExtent = value;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposed || !mounted) return;
+      setState(() {});
+    });
+  }
+
+  /// fh1215: the floating header of every chat. Left: the menu (or back);
+  /// right: + new chat where this chat can start one; centre: the activity
+  /// pill with the face sitting on it. The pill names what is live
+  /// («Pensando… 0:54», «terminal · flutter test 0:44 3/5»), «Te necesita»
+  /// in amber, «Sin conexión» in red, or the name with a chevron when idle.
+  /// A tap opens the activity panel (idle: the chat menu with search, model
+  /// and controls, which the header no longer shows as buttons); a long
+  /// press always opens that menu.
+  Widget _buildFloatingHeader(Strings str, ConnectionManager? connManager) {
+    final botSurface = _isBotChatSurface;
+    final navigator = Navigator.of(context);
+    final Widget? leading;
+    if (!botSurface && connManager != null) {
+      leading = Builder(
+        builder: (ctx) => FloatingHeaderButton(
+          key: const ValueKey('chat-menu-button'),
+          icon: Icons.menu_rounded,
+          tooltip: str.chaMenuTooltip,
+          onPressed: () => Scaffold.of(ctx).openDrawer(),
+        ),
+      );
+    } else if (navigator.canPop()) {
+      leading = FloatingHeaderButton(
+        key: const ValueKey('floating-header-back'),
+        icon: Icons.arrow_back_rounded,
+        tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+        onPressed: () => navigator.maybePop(),
+      );
+    } else {
+      leading = null;
+    }
+    // A Bot Chat continues one conversation: no new chat there.
+    final trailing = botSurface
+        ? null
+        : FloatingHeaderButton(
+            key: const ValueKey('chat-new-session'),
+            icon: Icons.add_rounded,
+            tooltip: str.chaNewChatTooltip,
+            onPressed: _newChat,
+          );
+    final profile = botSurface ? widget.missionBotProfile : null;
+    final botName = profile != null && profile.name.isNotEmpty
+        ? profile.name
+        : Session.profileOwner(widget.session.profile);
+    final name = botSurface ? (profile?.botTitle ?? botName) : _assistantName;
+    final attention =
+        _chat.pendingApproval != null || _chat.pendingInteractivePrompt != null;
+    final transportOffline =
+        _chatBound &&
+        _chat.transportStatusListenable.value.state ==
+            ChatTransportState.offline;
+    return FloatingChatHeader(
+      key: ValueKey(botSurface ? 'bot-chat-header' : 'chat-header'),
+      leading: leading,
+      trailing: trailing,
+      // Seam for the mascot engine (review/1215-mascot).
+      mascot: HeaderMascotRequest(
+        identity: botSurface ? botName : (_activeProfile ?? 'hermes'),
+        state: transportOffline
+            ? HeaderMascotState.offline
+            : attention
+            ? HeaderMascotState.waiting
+            : switch (_chatBound ? _chat.activityKind : null) {
+                ChatActivityKind.thinking => HeaderMascotState.thinking,
+                ChatActivityKind.usingTools => HeaderMascotState.working,
+                ChatActivityKind.responding => HeaderMascotState.speaking,
+                ChatActivityKind.awaitingApproval => HeaderMascotState.waiting,
+                null => HeaderMascotState.idle,
+              },
+      ),
+      faces: botSurface
+          ? _BotChatHeaderFace(
+              profile: profile,
+              fallbackName: botName,
+              activity: _chatBound ? _chat.activityKind : null,
+              avatarCache: widget.missionAvatarCache,
+              attention: attention,
+            )
+          : _ChatHeaderFace(
+              profileName: _activeProfile,
+              working: _chatBound && _chat.isStreaming,
+            ),
+      pill: ActivityTaskLingerHost(
+        key: const ValueKey('chat-activity-pill'),
+        snapshot: _buildActivitySnapshot(),
+        actions: _buildActivityActions(),
+        // ps1215: the same clock the chat measures the turn with.
+        clock: _chat.wallNow,
+        headerBuilder: (context, model, now, openPanel) =>
+            ValueListenableBuilder<ChatTransportStatus>(
+              valueListenable: _chat.transportStatusListenable,
+              builder: (context, transport, _) {
+                final menu = _showHeaderMenu;
+                if (transport.state == ChatTransportState.offline) {
+                  return FloatingHeaderPill(
+                    key: const ValueKey('chat-header-pill'),
+                    text: str.fh1215Offline,
+                    tone: FloatingHeaderTone.offline,
+                    semanticsLabel: '$name, ${str.fh1215Offline}',
+                    onTap: openPanel ?? menu,
+                    onLongPress: menu,
+                  );
+                }
+                if (attention) {
+                  return FloatingHeaderPill(
+                    key: const ValueKey('chat-header-pill'),
+                    text: str.roomStateNeedsYou,
+                    tone: FloatingHeaderTone.waiting,
+                    semanticsLabel: '$name, ${str.roomStateNeedsYou}',
+                    hint: str.liveShowActivity,
+                    onTap: openPanel ?? menu,
+                    onLongPress: menu,
+                  );
+                }
+                if (model != null) {
+                  return ActivityPill(
+                    model: model,
+                    now: now,
+                    onTap: openPanel,
+                    onLongPress: menu,
+                    inHeader: true,
+                  );
+                }
+                return FloatingHeaderPill(
+                  key: const ValueKey('chat-header-pill'),
+                  text: name,
+                  semanticsLabel: name,
+                  hint: str.chaControlTitle,
+                  onTap: menu,
+                  onLongPress: menu,
+                );
+              },
+            ),
+      ),
+    );
+  }
+
+  /// fh1215: the model entry of the header menu names the model in use.
+  Widget _modelMenuLabel(Strings str) {
+    final colors = Theme.of(context).hermes;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          str.chaModelSheetTitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        Text(
+          _activeModelLabel,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+        ),
+      ],
+    );
+  }
+
+  /// fh1215: the chat menu that replaces the header's search, model and
+  /// ⋮ buttons until the notch sheet hosts them.
+  Future<void> _showHeaderMenu() async {
+    final str = Strings.of(context);
+    releaseTextFocusIfKeyboardHidden(context);
+    final size = MediaQuery.sizeOf(context);
+    final top = _floatingTopInset > 0
+        ? _floatingTopInset - 6
+        : MediaQuery.viewPaddingOf(context).top + 56;
+    final action = await showMenu<_BotChatHeaderAction>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        size.width / 2 - 110,
+        top,
+        size.width / 2 - 110,
+        0,
+      ),
+      items: [
+        for (final (action, key, icon, label) in [
+          (
+            _BotChatHeaderAction.find,
+            'chat-menu-find',
+            Icons.search_rounded,
+            str.cs1215FindAction,
+          ),
+          (
+            _BotChatHeaderAction.model,
+            'chat-menu-model',
+            Icons.tune_rounded,
+            str.chaModelSheetTitle,
+          ),
+          (
+            _BotChatHeaderAction.controls,
+            'chat-menu-controls',
+            Icons.settings_outlined,
+            str.chaControlTitle,
+          ),
+        ])
+          PopupMenuItem(
+            key: ValueKey(key),
+            value: action,
+            child: Row(
+              children: [
+                Icon(icon, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: action == _BotChatHeaderAction.model
+                      ? _modelMenuLabel(str)
+                      : Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _BotChatHeaderAction.find:
+        _openFind();
+      case _BotChatHeaderAction.model:
+        _showModelSheet();
+      case _BotChatHeaderAction.controls:
+        unawaited(_showChatControlSheet());
+    }
+  }
+
   void _onBotHeaderCompactChanged() {
     if (!_isBotChatSurface) return;
     final compact = _scrollToBottomVisibility.value;
@@ -8814,11 +9168,12 @@ class _ChatScreenState extends State<ChatScreen>
           }
       }
     }
-    final plan = chunks.length > 1
+    final merged = _mergeImageRuns(chunks);
+    final plan = merged.length > 1
         ? _AssistantRenderPlan(
             sourceContent: content,
             split: split,
-            chunks: List<_AssistantBodyChunk>.unmodifiable(chunks),
+            chunks: List<_AssistantBodyChunk>.unmodifiable(merged),
           )
         : null;
     _cacheAssistantRenderPlan(content, plan);
@@ -12404,6 +12759,7 @@ class _ChatScreenState extends State<ChatScreen>
       anchor,
       _scrollController.position,
       duration: _reduceMotion ? Duration.zero : chatNavigationDuration,
+      topInset: _readTop,
     );
     return true;
   }
@@ -13579,6 +13935,84 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  /// The Bot Chat overflow (find, model, controls). [floating] gives it the
+  /// round surface-tinted look of the floating header.
+  Widget _botOverflowMenu(Strings str, {bool floating = false}) =>
+      PopupMenuButton<_BotChatHeaderAction>(
+        key: const ValueKey('bot-chat-overflow-appbar'),
+        tooltip: str.chaControlTitle,
+        icon: Icon(
+          floating ? Icons.more_horiz_rounded : Icons.more_vert_rounded,
+          size: floating ? 20 : null,
+        ),
+        style: floating
+            ? FloatingChatHeader.buttonStyle(Theme.of(context).hermes)
+            : null,
+        onSelected: (action) {
+          switch (action) {
+            case _BotChatHeaderAction.find:
+              _openFind();
+            case _BotChatHeaderAction.model:
+              _showModelSheet();
+            case _BotChatHeaderAction.controls:
+              unawaited(_showChatControlSheet());
+          }
+        },
+        itemBuilder: (context) => [
+          PopupMenuItem(
+            key: const ValueKey('bot-chat-find-action'),
+            value: _BotChatHeaderAction.find,
+            child: Row(
+              children: [
+                const Icon(Icons.search_rounded, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    str.cs1215FindAction,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            key: const ValueKey('bot-chat-model-action'),
+            value: _BotChatHeaderAction.model,
+            child: Row(
+              children: [
+                const Icon(Icons.tune_rounded, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    str.chaModelSheetTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            key: const ValueKey('bot-chat-control-action'),
+            value: _BotChatHeaderAction.controls,
+            child: Row(
+              children: [
+                const Icon(Icons.settings_outlined, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    str.chaControlTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+
   @override
   Widget build(BuildContext context) {
     widget.performanceProbe?.screenBuilds++;
@@ -13593,10 +14027,83 @@ class _ChatScreenState extends State<ChatScreen>
     // sin drawer ni "nueva sesión", y modelo/controles al overflow.
     final botSurface = _isBotChatSurface;
     final dedicatedChrome = botSurface;
+    // fh1215: no app bar band in any chat. The header floats over the
+    // transcript, which scrolls under it; the voice stage keeps its bar.
+    final floatingHeader = !showVoiceSurface;
+    _floatingTopInset = floatingHeader
+        ? FloatingChatHeader.insetFor(context)
+        : 0;
     // El observador del teclado envuelve al Scaffold en vez de leerse desde
     // este State: así la dependencia de `viewInsets` (que cambia en cada
     // frame de la animación del IME) vive en un elemento hoja y el Scaffold
     // —misma instancia de widget— no se vuelve a construir por ello.
+    // Notices under the header: in flow under a normal app bar, floating
+    // under the Bot Chat's floating header (over the transcript top).
+    final topNotices = <Widget>[
+      if (floatingHeader && !dedicatedChrome && _activeProfile != null)
+        _ProfileContextChip(
+          label: str.chaProfileChip(_activeProfile!),
+          colors: colors,
+        ),
+      if (_chat.dashboardAuthNoticeVisible)
+        _DesktopAuthRequiredBanner(
+          message: str.chaDesktopAuthRequiredBanner,
+          onDismiss: () => setState(_chat.dismissDashboardAuthNotice),
+        ),
+      ValueListenableBuilder<ChatTransportStatus>(
+        valueListenable: _chat.transportStatusListenable,
+        builder: (_, status, _) => ChatConnectionRecoveryRow(
+          visibility: _transportVisibility,
+          status: status,
+          activeTurn: _chat.isStreaming,
+          authRequired: _chat.dashboardAuthRequired,
+          appForeground: _appInForeground,
+          offlineLabel: str.chaConnectionOffline,
+          reconnectingLabel: str.chaConnectionReconnecting,
+          recoveredLabel: str.chaConnectionRecovered,
+        ),
+      ),
+      if (_chat.awaitsUnseenInput)
+        _AwaitingUnseenInputNotice(
+          message: _chat.openRequestRecoveryFailed
+              ? str.cq1215QuestionNotRecovered
+              : str.cr1215AwaitingUnseenInput,
+          actionLabel: _chat.openRequestRecoveryFailed
+              ? str.cq1215RetryQuestion
+              : str.cr1215ShowQuestion,
+          busy: _chat.openRequestRecoveryInFlight,
+          onShow: () => unawaited(_chat.rehydrateOpenRequests()),
+          stopLabel: _chat.openRequestRecoveryFailed
+              ? str.cq1215StopTurn
+              : null,
+          onStop: () => unawaited(_cancelStream()),
+        ),
+      if (_chat.localTranscriptTruncationNoticeVisible)
+        _LocalTranscriptTruncationNotice(
+          message: str.chaLocalTranscriptTruncated,
+          onDismiss: () =>
+              setState(_chat.dismissLocalTranscriptTruncationNotice),
+        ),
+      // En flujo bajo la cabecera, como los avisos de
+      // arriba: ya no flota sobre el botón «cargar
+      // anteriores» ni sobre los primeros mensajes.
+      if (_chat.earlierMessagesLoadFailed && !_coreReadCoverageNoticeDismissed)
+        _CoreReadPartialCoverageNotice(
+          message: str.chaEarlierMessagesError,
+          onDismiss: () =>
+              setState(() => _coreReadCoverageNoticeDismissed = true),
+        ),
+      if (_findOpen)
+        ChatFindBar(
+          status: _findStatus,
+          initialQuery: _findInitialQuery,
+          onQueryChanged: _applyFindQuery,
+          onOlder: () => _stepFindMatch(1),
+          onNewer: () => _stepFindMatch(-1),
+          onSearchOlderMessages: () => unawaited(_searchOlderFindMessages()),
+          onClose: _closeFind,
+        ),
+    ];
     final scaffold = _KeyboardInsetWatcher(
       onBottomInset: _onKeyboardBottomInset,
       child: Scaffold(
@@ -13619,248 +14126,185 @@ class _ChatScreenState extends State<ChatScreen>
                   connected: transport.isConnected,
                 ),
               ),
-        appBar: HermesAppBar(
-          centerTitle: !dedicatedChrome || botSurface,
-          titleSpacing: 0,
-          // dc1215: the Dots header (face over a name pill) needs a taller
-          // bar, and a standard one while the reader is away from the end.
-          toolbarHeight: botSurface && !showVoiceSurface
-              ? BotChatDotsHeader.heightFor(
-                  MediaQuery.textScalerOf(context),
-                  compact: _botHeaderCompact,
-                )
-              : null,
-          // Cabecera plana: sin línea/sombra de elevación al hacer scroll del
-          // transcript por debajo (Material 3 la añade por defecto vía
-          // `scrolledUnderElevation`). Se funde con el chat en vez de
-          // cortarlo con un borde.
-          scrolledUnderElevation: 0,
-          bottom: dedicatedChrome || _activeProfile == null
-              ? null
-              : _ProfileContextChip(
-                  label: str.chaProfileChip(_activeProfile!),
-                  colors: colors,
-                ),
-          automaticallyImplyLeading: dedicatedChrome || connManager == null,
-          leading: dedicatedChrome || connManager == null
-              ? null
-              : Builder(
-                  builder: (ctx) => Center(
-                    child: IconButton(
-                      icon: const Icon(Icons.menu_rounded, size: 20),
-                      tooltip: str.chaMenuTooltip,
-                      // Botón circular sutil, estilo Claude.
-                      style: IconButton.styleFrom(
-                        backgroundColor: colors.surfaceVariant.withValues(
-                          alpha: 0.5,
-                        ),
-                        shape: const CircleBorder(),
-                        minimumSize: const Size(48, 48),
+        appBar: floatingHeader
+            ? null
+            : HermesAppBar(
+                centerTitle: !dedicatedChrome || botSurface,
+                titleSpacing: 0,
+                // dc1215: the Dots header (face over a name pill) needs a taller
+                // bar, and a standard one while the reader is away from the end.
+                toolbarHeight: botSurface && !showVoiceSurface
+                    ? BotChatDotsHeader.heightFor(
+                        MediaQuery.textScalerOf(context),
+                        compact: _botHeaderCompact,
+                      )
+                    : null,
+                // Cabecera plana: sin línea/sombra de elevación al hacer scroll del
+                // transcript por debajo (Material 3 la añade por defecto vía
+                // `scrolledUnderElevation`). Se funde con el chat en vez de
+                // cortarlo con un borde.
+                scrolledUnderElevation: 0,
+                bottom: dedicatedChrome || _activeProfile == null
+                    ? null
+                    : _ProfileContextChip(
+                        label: str.chaProfileChip(_activeProfile!),
+                        colors: colors,
                       ),
-                      onPressed: () => Scaffold.of(ctx).openDrawer(),
-                    ),
-                  ),
-                ),
-          title: botSurface
-              ? _BotChatAppBarTitle(
-                  key: const ValueKey('bot-chat-header'),
-                  profile: widget.missionBotProfile,
-                  fallbackName: Session.profileOwner(widget.session.profile),
-                  activity: _chatBound ? _chat.activityKind : null,
-                  avatarCache: widget.missionAvatarCache,
-                  status: _botHeaderStatus(str),
-                  compact: _botHeaderCompact,
-                  attention:
-                      _chat.pendingApproval != null ||
-                      _chat.pendingInteractivePrompt != null,
-                )
-              : Semantics(
-                  button: !showVoiceSurface,
-                  label: str.chaModelSheetTitle,
-                  excludeSemantics: true,
-                  child: InkWell(
-                    onTap: showVoiceSurface ? null : _showModelSheet,
-                    borderRadius: BorderRadius.circular(10),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(minHeight: 48),
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 180),
-                        child: Padding(
-                          key: ValueKey(_activeModelLabel),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 6,
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (_headerModelId case final model?) ...[
-                                ProviderLogo(
-                                  key: const ValueKey(
-                                    'provider-logo-chat-header',
-                                  ),
-                                  provider: _headerProviderSlug,
-                                  model: model,
-                                ),
-                                const SizedBox(width: 7),
-                              ],
-                              Flexible(
-                                child: Text(
-                                  _activeModelLabel,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 15.5,
-                                    fontWeight: FontWeight.w700,
-                                    color: colors.textPrimary,
-                                  ),
-                                ),
+                automaticallyImplyLeading:
+                    dedicatedChrome || connManager == null,
+                leading: dedicatedChrome || connManager == null
+                    ? null
+                    : Builder(
+                        builder: (ctx) => Center(
+                          child: IconButton(
+                            icon: const Icon(Icons.menu_rounded, size: 20),
+                            tooltip: str.chaMenuTooltip,
+                            // Botón circular sutil, estilo Claude.
+                            style: IconButton.styleFrom(
+                              backgroundColor: colors.surfaceVariant.withValues(
+                                alpha: 0.5,
                               ),
-                              if (_modelChangePending) ...[
-                                const SizedBox(width: 5),
-                                Tooltip(
-                                  key: const ValueKey('md1215-model-pending'),
-                                  message: str.md1215ModelPending,
-                                  child: Icon(
-                                    Icons.schedule_rounded,
-                                    size: 14,
-                                    color: colors.textSecondary,
-                                  ),
-                                ),
-                              ],
-                              const SizedBox(width: 3),
-                              Icon(
-                                Icons.expand_more_rounded,
-                                size: 19,
-                                color: colors.textSecondary,
-                              ),
-                            ],
+                              shape: const CircleBorder(),
+                              minimumSize: const Size(48, 48),
+                            ),
+                            onPressed: () => Scaffold.of(ctx).openDrawer(),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                ),
-          actions: showVoiceSurface
-              ? [
-                  IconButton(
-                    key: const ValueKey('voice-stage-minimize'),
-                    icon: const Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      size: 26,
-                    ),
-                    tooltip: str.chaVoiceMinimizeTooltip,
-                    onPressed: _vc?.minimizeOverlay,
-                  ),
-                  const SizedBox(width: 4),
-                ]
-              : botSurface
-              ? [
-                  PopupMenuButton<_BotChatHeaderAction>(
-                    key: const ValueKey('bot-chat-overflow-appbar'),
-                    tooltip: str.chaControlTitle,
-                    icon: const Icon(Icons.more_vert_rounded),
-                    onSelected: (action) {
-                      switch (action) {
-                        case _BotChatHeaderAction.find:
-                          _openFind();
-                        case _BotChatHeaderAction.model:
-                          _showModelSheet();
-                        case _BotChatHeaderAction.controls:
-                          unawaited(_showChatControlSheet());
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      PopupMenuItem(
-                        key: const ValueKey('bot-chat-find-action'),
-                        value: _BotChatHeaderAction.find,
-                        child: Row(
-                          children: [
-                            const Icon(Icons.search_rounded, size: 20),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                str.cs1215FindAction,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                title: botSurface
+                    ? _BotChatAppBarTitle(
+                        key: const ValueKey('bot-chat-header'),
+                        profile: widget.missionBotProfile,
+                        fallbackName: Session.profileOwner(
+                          widget.session.profile,
+                        ),
+                        activity: _chatBound ? _chat.activityKind : null,
+                        avatarCache: widget.missionAvatarCache,
+                        status: _botHeaderStatus(str),
+                        compact: _botHeaderCompact,
+                        attention:
+                            _chat.pendingApproval != null ||
+                            _chat.pendingInteractivePrompt != null,
+                      )
+                    : Semantics(
+                        button: !showVoiceSurface,
+                        label: str.chaModelSheetTitle,
+                        excludeSemantics: true,
+                        child: InkWell(
+                          onTap: showVoiceSurface ? null : _showModelSheet,
+                          borderRadius: BorderRadius.circular(10),
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(minHeight: 48),
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 180),
+                              child: Padding(
+                                key: ValueKey(_activeModelLabel),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 6,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (_headerModelId case final model?) ...[
+                                      ProviderLogo(
+                                        key: const ValueKey(
+                                          'provider-logo-chat-header',
+                                        ),
+                                        provider: _headerProviderSlug,
+                                        model: model,
+                                      ),
+                                      const SizedBox(width: 7),
+                                    ],
+                                    Flexible(
+                                      child: Text(
+                                        _activeModelLabel,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 15.5,
+                                          fontWeight: FontWeight.w700,
+                                          color: colors.textPrimary,
+                                        ),
+                                      ),
+                                    ),
+                                    if (_modelChangePending) ...[
+                                      const SizedBox(width: 5),
+                                      Tooltip(
+                                        key: const ValueKey(
+                                          'md1215-model-pending',
+                                        ),
+                                        message: str.md1215ModelPending,
+                                        child: Icon(
+                                          Icons.schedule_rounded,
+                                          size: 14,
+                                          color: colors.textSecondary,
+                                        ),
+                                      ),
+                                    ],
+                                    const SizedBox(width: 3),
+                                    Icon(
+                                      Icons.expand_more_rounded,
+                                      size: 19,
+                                      color: colors.textSecondary,
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                          ],
+                          ),
                         ),
                       ),
-                      PopupMenuItem(
-                        key: const ValueKey('bot-chat-model-action'),
-                        value: _BotChatHeaderAction.model,
-                        child: Row(
-                          children: [
-                            const Icon(Icons.tune_rounded, size: 20),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                str.chaModelSheetTitle,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
+                actions: showVoiceSurface
+                    ? [
+                        IconButton(
+                          key: const ValueKey('voice-stage-minimize'),
+                          icon: const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            size: 26,
+                          ),
+                          tooltip: str.chaVoiceMinimizeTooltip,
+                          onPressed: _vc?.minimizeOverlay,
                         ),
-                      ),
-                      PopupMenuItem(
-                        key: const ValueKey('bot-chat-control-action'),
-                        value: _BotChatHeaderAction.controls,
-                        child: Row(
-                          children: [
-                            const Icon(Icons.settings_outlined, size: 20),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                str.chaControlTitle,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
+                        const SizedBox(width: 4),
+                      ]
+                    : botSurface
+                    ? [_botOverflowMenu(str), const SizedBox(width: 4)]
+                    : [
+                        // La presencia del Companion ya NO vive en el AppBar (ni el
+                        // spinner de carga): el estado vivo lo expresa la mascota
+                        // dentro del propio turno de Hermes.
+                        // El indicador de contexto+modo (antes aquí, como pill de
+                        // modo + SessionContextPopoverButton) ya no vive en la
+                        // AppBar: flota como una sola píldora combinada bajo el
+                        // composer — ver `_buildFloatingStatusPill` en
+                        // `_buildInputBar`.
+                        IconButton(
+                          key: const ValueKey('chat-new-session'),
+                          icon: Transform.translate(
+                            offset: const Offset(3, 0),
+                            child: const Icon(Icons.add_rounded, size: 26),
+                          ),
+                          tooltip: str.chaNewChatTooltip,
+                          color: (_messages.isNotEmpty || _sending)
+                              ? colors.accent
+                              : colors.textSecondary,
+                          onPressed: _newChat,
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(width: 4),
-                ]
-              : [
-                  // La presencia del Companion ya NO vive en el AppBar (ni el
-                  // spinner de carga): el estado vivo lo expresa la mascota
-                  // dentro del propio turno de Hermes.
-                  // El indicador de contexto+modo (antes aquí, como pill de
-                  // modo + SessionContextPopoverButton) ya no vive en la
-                  // AppBar: flota como una sola píldora combinada bajo el
-                  // composer — ver `_buildFloatingStatusPill` en
-                  // `_buildInputBar`.
-                  IconButton(
-                    key: const ValueKey('chat-new-session'),
-                    icon: Transform.translate(
-                      offset: const Offset(3, 0),
-                      child: const Icon(Icons.add_rounded, size: 26),
-                    ),
-                    tooltip: str.chaNewChatTooltip,
-                    color: (_messages.isNotEmpty || _sending)
-                        ? colors.accent
-                        : colors.textSecondary,
-                    onPressed: _newChat,
-                  ),
-                  IconButton(
-                    key: const ValueKey('chat-find-trigger'),
-                    icon: const Icon(Icons.search_rounded),
-                    tooltip: str.cs1215FindAction,
-                    onPressed: _openFind,
-                  ),
-                  IconButton(
-                    key: const ValueKey('chat-control-trigger'),
-                    icon: const Icon(Icons.more_vert),
-                    tooltip: str.chaControlTitle,
-                    onPressed: _showChatControlSheet,
-                  ),
-                ],
-        ),
+                        IconButton(
+                          key: const ValueKey('chat-find-trigger'),
+                          icon: const Icon(Icons.search_rounded),
+                          tooltip: str.cs1215FindAction,
+                          onPressed: _openFind,
+                        ),
+                        IconButton(
+                          key: const ValueKey('chat-control-trigger'),
+                          icon: const Icon(Icons.more_vert),
+                          tooltip: str.chaControlTitle,
+                          onPressed: _showChatControlSheet,
+                        ),
+                      ],
+              ),
         body: showVoiceSurface
             ? ColoredBox(
                 color: colors.background,
@@ -13886,72 +14330,7 @@ class _ChatScreenState extends State<ChatScreen>
                       ),
                       child: Column(
                         children: [
-                          if (_chat.dashboardAuthNoticeVisible)
-                            _DesktopAuthRequiredBanner(
-                              message: str.chaDesktopAuthRequiredBanner,
-                              onDismiss: () =>
-                                  setState(_chat.dismissDashboardAuthNotice),
-                            ),
-                          ValueListenableBuilder<ChatTransportStatus>(
-                            valueListenable: _chat.transportStatusListenable,
-                            builder: (_, status, _) =>
-                                ChatConnectionRecoveryRow(
-                                  visibility: _transportVisibility,
-                                  status: status,
-                                  activeTurn: _chat.isStreaming,
-                                  authRequired: _chat.dashboardAuthRequired,
-                                  appForeground: _appInForeground,
-                                  offlineLabel: str.chaConnectionOffline,
-                                  reconnectingLabel:
-                                      str.chaConnectionReconnecting,
-                                  recoveredLabel: str.chaConnectionRecovered,
-                                ),
-                          ),
-                          if (_chat.awaitsUnseenInput)
-                            _AwaitingUnseenInputNotice(
-                              message: _chat.openRequestRecoveryFailed
-                                  ? str.cq1215QuestionNotRecovered
-                                  : str.cr1215AwaitingUnseenInput,
-                              actionLabel: _chat.openRequestRecoveryFailed
-                                  ? str.cq1215RetryQuestion
-                                  : str.cr1215ShowQuestion,
-                              busy: _chat.openRequestRecoveryInFlight,
-                              onShow: () =>
-                                  unawaited(_chat.rehydrateOpenRequests()),
-                              stopLabel: _chat.openRequestRecoveryFailed
-                                  ? str.cq1215StopTurn
-                                  : null,
-                              onStop: () => unawaited(_cancelStream()),
-                            ),
-                          if (_chat.localTranscriptTruncationNoticeVisible)
-                            _LocalTranscriptTruncationNotice(
-                              message: str.chaLocalTranscriptTruncated,
-                              onDismiss: () => setState(
-                                _chat.dismissLocalTranscriptTruncationNotice,
-                              ),
-                            ),
-                          // En flujo bajo la cabecera, como los avisos de
-                          // arriba: ya no flota sobre el botón «cargar
-                          // anteriores» ni sobre los primeros mensajes.
-                          if (_chat.earlierMessagesLoadFailed &&
-                              !_coreReadCoverageNoticeDismissed)
-                            _CoreReadPartialCoverageNotice(
-                              message: str.chaEarlierMessagesError,
-                              onDismiss: () => setState(
-                                () => _coreReadCoverageNoticeDismissed = true,
-                              ),
-                            ),
-                          if (_findOpen)
-                            ChatFindBar(
-                              status: _findStatus,
-                              initialQuery: _findInitialQuery,
-                              onQueryChanged: _applyFindQuery,
-                              onOlder: () => _stepFindMatch(1),
-                              onNewer: () => _stepFindMatch(-1),
-                              onSearchOlderMessages: () =>
-                                  unawaited(_searchOlderFindMessages()),
-                              onClose: _closeFind,
-                            ),
+                          if (!floatingHeader) ...topNotices,
                           Expanded(
                             child: Stack(
                               children: [
@@ -13971,6 +14350,21 @@ class _ChatScreenState extends State<ChatScreen>
                                     crossAxisAlignment:
                                         CrossAxisAlignment.stretch,
                                     children: [
+                                      if (floatingHeader) ...[
+                                        SizedBox(height: _floatingTopInset),
+                                        _ExtentReporter(
+                                          onExtent: _setFloatingNoticesExtent,
+                                          child: ColoredBox(
+                                            color: colors.background,
+                                            child: Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.stretch,
+                                              children: topNotices,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                       _buildPinnedPromptHeader(str),
                                       _buildEarlierHistoryRow(str),
                                     ],
@@ -14072,18 +14466,9 @@ class _ChatScreenState extends State<ChatScreen>
                                         child: Column(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            ActivityTaskLingerHost(
-                                              key: const ValueKey(
-                                                'chat-activity-pill',
-                                              ),
-                                              snapshot:
-                                                  _buildActivitySnapshot(),
-                                              actions: _buildActivityActions(),
-                                              // ps1215: the same clock the
-                                              // chat measures the turn with.
-                                              clock: _chat.wallNow,
-                                              suspended: _slashPaletteVisible,
-                                            ),
+                                            // fh1215: the activity pill lives
+                                            // in the floating header now
+                                            // (`_buildFloatingHeader`).
                                             KeyedSubtree(
                                               key: const ValueKey(
                                                 'chat-session-activity',
@@ -14348,6 +14733,13 @@ class _ChatScreenState extends State<ChatScreen>
                       ),
                     ),
                   ),
+                  if (floatingHeader)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: _buildFloatingHeader(str, connManager),
+                    ),
                 ],
               ),
       ),
@@ -17162,24 +17554,106 @@ class _ChatScreenState extends State<ChatScreen>
     final flag = _modeFlag(colors);
     return Padding(
       padding: const EdgeInsets.only(top: 8),
-      child: Center(
-        child: SessionContextPopoverButton(
-          key: const ValueKey('chat-status-pill'),
-          metrics: _sessionContextMetrics,
-          loadBreakdown: _loadSessionContextDetails,
-          onMetricsSnapshot: (metrics) {
-            if (_disposed || !mounted) return;
-            _commitSessionContextMetrics(metrics);
-          },
-          modeLabel: flag?.$1,
-          modeColor: flag?.$2,
-          modeSectionBuilder: _buildApprovalModeSection,
-          compressionCount: _chatBound
-              ? _chat.desktopSessionCompressionCount
-              : 0,
-          compaction: compaction,
+      child: Row(
+        children: [
+          // fh1215: the model left the header for the activity pill. It
+          // waits here, left of the context pill, until the bottom status
+          // pill (review/1215-spill) takes it over. The context pill stays
+          // centred: the chip only uses the free space on its left.
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: _modelChip(colors),
+            ),
+          ),
+          const SizedBox(width: 6),
+          _contextPill(flag, compaction),
+          const SizedBox(width: 6),
+          const Spacer(),
+        ],
+      ),
+    );
+  }
+
+  Widget _modelChip(HermesThemeColors colors) {
+    final str = Strings.of(context);
+    return Semantics(
+      button: true,
+      label: str.chaModelSheetTitle,
+      excludeSemantics: true,
+      child: InkWell(
+        key: const ValueKey('chat-model-chip'),
+        onTap: () {
+          // Hidden keyboard: closing the sheet must not bring it back.
+          releaseTextFocusIfKeyboardHidden(context);
+          _showModelSheet();
+        },
+        borderRadius: BorderRadius.circular(16),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 36),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            child: Padding(
+              key: ValueKey(_activeModelLabel),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_headerModelId case final model?) ...[
+                    ProviderLogo(
+                      key: const ValueKey('provider-logo-chat-header'),
+                      provider: _headerProviderSlug,
+                      model: model,
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  Flexible(
+                    child: Text(
+                      _activeModelLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ),
+                  if (_modelChangePending) ...[
+                    const SizedBox(width: 5),
+                    Tooltip(
+                      key: const ValueKey('md1215-model-pending'),
+                      message: str.md1215ModelPending,
+                      child: Icon(
+                        Icons.schedule_rounded,
+                        size: 14,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
         ),
       ),
+    );
+  }
+
+  Widget _contextPill((String, Color)? flag, CompactionProgress? compaction) {
+    return SessionContextPopoverButton(
+      key: const ValueKey('chat-status-pill'),
+      metrics: _sessionContextMetrics,
+      loadBreakdown: _loadSessionContextDetails,
+      onMetricsSnapshot: (metrics) {
+        if (_disposed || !mounted) return;
+        _commitSessionContextMetrics(metrics);
+      },
+      modeLabel: flag?.$1,
+      modeColor: flag?.$2,
+      modeSectionBuilder: _buildApprovalModeSection,
+      compressionCount: _chatBound ? _chat.desktopSessionCompressionCount : 0,
+      compaction: compaction,
     );
   }
 
@@ -17532,7 +18006,9 @@ class _ChatScreenState extends State<ChatScreen>
             // `bottom` reserva la altura medida de toda la pila flotante y de la
             // flecha cuando está visible. Así ninguna fila tapa el último mensaje,
             // aunque cambie de alto o convivan varias actividades.
-            padding: EdgeInsets.only(bottom: 12 + overlayExtent),
+            // fh1215: under the floating Bot Chat header the transcript
+            // reserves its height above the first row.
+            padding: EdgeInsets.only(top: _readTop, bottom: 12 + overlayExtent),
             reverse: true,
             // Precarga ~1 pantalla extra fuera del viewport: al seguir el stream no
             // se materializan entradas frías en medio de un frame de scroll.
@@ -18357,6 +18833,8 @@ class _ChatScreenState extends State<ChatScreen>
         'image:${slice!.index}:$basename',
       _AssistantGeneratedMediaChunk(:final reference) =>
         'media:${slice!.index}:${sha256.convert(utf8.encode(reference.source))}',
+      _AssistantImageRunChunk(:final items) =>
+        'images:${slice!.index}:${sha256.convert(utf8.encode(items.map(_imageChunkId).join('\n')))}',
       null => '',
     };
     final key = _AssistantTerminalProjectionKey(
@@ -18419,6 +18897,17 @@ class _ChatScreenState extends State<ChatScreen>
         blocks.add(_ProjectedAssistantImage(basename));
       case _AssistantGeneratedMediaChunk(:final reference):
         blocks.add(_ProjectedAssistantMedia(reference));
+      case _AssistantImageRunChunk(:final items):
+        for (final item in items) {
+          switch (item) {
+            case _AssistantGeneratedImageChunk(:final basename):
+              blocks.add(_ProjectedAssistantImage(basename));
+            case _AssistantGeneratedMediaChunk(:final reference):
+              blocks.add(_ProjectedAssistantMedia(reference));
+            default:
+              break;
+          }
+        }
       case null:
         for (final mediaSegment in GeneratedMediaService.parseSegments(
           suggestions.body,
@@ -18980,6 +19469,107 @@ class _BotChatAppBarTitle extends StatelessWidget {
                 size: size,
                 entrance: false,
               ),
+      ),
+    );
+  }
+}
+
+/// fh1215: the bot's living face sitting on the header pill.
+class _BotChatHeaderFace extends StatelessWidget {
+  final AgentProfile? profile;
+  final String fallbackName;
+  final ChatActivityKind? activity;
+  final MissionProfileAvatarCache? avatarCache;
+  final bool attention;
+
+  const _BotChatHeaderFace({
+    required this.profile,
+    required this.fallbackName,
+    required this.activity,
+    required this.avatarCache,
+    this.attention = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final profile = this.profile;
+    final name = profile != null && profile.name.isNotEmpty
+        ? profile.name
+        : fallbackName;
+    final signal = attention
+        ? BotFaceSignal.attention
+        : switch (activity) {
+            ChatActivityKind.thinking => BotFaceSignal.thinking,
+            ChatActivityKind.usingTools => BotFaceSignal.working,
+            ChatActivityKind.responding => BotFaceSignal.speaking,
+            ChatActivityKind.awaitingApproval => BotFaceSignal.attention,
+            null => BotFaceSignal.idle,
+          };
+    const size = FloatingChatHeader.faceSize;
+    return SizedBox.square(
+      dimension: size,
+      child: profile == null
+          ? MissionProfileAvatar(
+              key: ValueKey('bot-chat-avatar-$name'),
+              profileName: name,
+              hasAvatar: false,
+              cache: avatarCache,
+              size: size,
+            )
+          // The same living face as the roster: it blinks rarely while idle
+          // and reads a line while the bot works.
+          : LivingBotFace(
+              key: ValueKey('bot-chat-avatar-$name'),
+              profileName: profile.name,
+              profile: profile,
+              avatarCache: avatarCache,
+              signal: signal,
+              size: size,
+              entrance: false,
+            ),
+    );
+  }
+}
+
+/// fh1215: the face on a plain chat's header pill: the companion mascot
+/// when it is shown in this app, else the profile's geometric face.
+class _ChatHeaderFace extends StatelessWidget {
+  final String? profileName;
+  final bool working;
+
+  const _ChatHeaderFace({required this.profileName, required this.working});
+
+  @override
+  Widget build(BuildContext context) {
+    const size = FloatingChatHeader.faceSize;
+    Widget fallback() => MissionProfileAvatar(
+      key: const ValueKey('chat-header-face'),
+      profileName: profileName ?? 'hermes',
+      hasAvatar: false,
+      cache: null,
+      size: size,
+    );
+    final app = context.findAncestorStateOfType<HermesAppState>();
+    if (app == null) return SizedBox.square(dimension: size, child: fallback());
+    final companion = app.companion;
+    return SizedBox.square(
+      dimension: size,
+      child: AnimatedBuilder(
+        animation: companion,
+        builder: (context, _) {
+          final visible =
+              companion.isInitialized &&
+              companion.enabled &&
+              companion.presenceLevel.showsStatusPresence;
+          if (!visible) return fallback();
+          return CompanionStatusIndicator(
+            key: const ValueKey('chat-header-companion'),
+            companion: companion,
+            mood: working ? HermesSparkMood.thinking : HermesSparkMood.idle,
+            size: size,
+            animate: working,
+          );
+        },
       ),
     );
   }
@@ -22247,6 +22837,22 @@ class _AssistantMessage extends StatelessWidget {
               key: _generatedMediaWidgetKey(reference, renderSlice.index),
               reference: reference,
             );
+          case _AssistantImageRunChunk(:final items):
+            var ordinal = 0;
+            for (final item in items) {
+              switch (item) {
+                case _AssistantGeneratedImageChunk(:final basename):
+                  final ref = _StructuredGeneratedImage.textPath(basename);
+                  yield _GeneratedImageSlot(key: ref.widgetKey, reference: ref);
+                case _AssistantGeneratedMediaChunk(:final reference):
+                  yield _GeneratedMediaSlot(
+                    key: _generatedMediaWidgetKey(reference, ordinal++),
+                    reference: reference,
+                  );
+                default:
+                  break;
+              }
+            }
           case _AssistantMarkdownChunk(:final data):
             yield* buildAssistantAnswerBlocks(
               stripStructuredEchoes(data),
@@ -22403,7 +23009,7 @@ class _AssistantMessage extends StatelessWidget {
       children: [
         if (showHeader && metaLines.isNotEmpty)
           _MetaBlock(lines: metaLines, onDark: false),
-        if (answer.isNotEmpty) ...answerWidgets(),
+        if (answer.isNotEmpty) ..._stackImageRuns(answerWidgets()),
         if (changedFiles.isNotEmpty) TurnChangesChip(files: changedFiles),
         if (showFooter && technicalDetails.isNotEmpty)
           _AssistantTechnicalDetails(details: technicalDetails),
@@ -24066,6 +24672,38 @@ class _SurfaceTurnInitialExtentReporter extends SingleChildRenderObjectWidget {
   }
 }
 
+/// fh1215: reports its child's height after every layout, without
+/// rebuilding anything.
+class _ExtentReporter extends SingleChildRenderObjectWidget {
+  const _ExtentReporter({required this.onExtent, required super.child});
+
+  final ValueChanged<double> onExtent;
+
+  @override
+  _RenderExtentReporter createRenderObject(BuildContext context) =>
+      _RenderExtentReporter(onExtent);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderExtentReporter renderObject,
+  ) {
+    renderObject.onExtent = onExtent;
+  }
+}
+
+class _RenderExtentReporter extends RenderProxyBox {
+  _RenderExtentReporter(this.onExtent);
+
+  ValueChanged<double> onExtent;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    onExtent(size.height);
+  }
+}
+
 class _SurfaceTurnInitialExtentRenderBox extends RenderProxyBox {
   ValueChanged<double> onInitialExtent;
   bool _reported = false;
@@ -24088,9 +24726,19 @@ Future<void> scrollChatAnswerToStart(
   RenderObject targetObject,
   ScrollPosition position, {
   Duration duration = chatNavigationDuration,
+  double topInset = 0,
 }) async {
-  final target = chatAnswerStartOffset(targetObject, position);
-  if (target == null) return;
+  final viewport = RenderAbstractViewport.maybeOf(targetObject);
+  if (viewport == null) return;
+  // fh1215: a floating header covers [topInset] of the viewport top; the
+  // answer starts just below it (reversed list: more offset = lower). The
+  // inset is added BEFORE clamping: a short newest answer already in view
+  // has a reveal offset below zero and must stay at the bottom, not be
+  // pushed down by the header's height.
+  final target =
+      (viewport.getOffsetToReveal(targetObject, 1).offset +
+              math.max(0.0, topInset))
+          .clamp(position.minScrollExtent, position.maxScrollExtent);
   if (duration == Duration.zero) {
     position.jumpTo(target);
     return;
