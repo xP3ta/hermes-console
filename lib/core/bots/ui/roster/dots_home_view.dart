@@ -624,7 +624,7 @@ class _SectionLabel extends StatelessWidget {
             Text(
               '$count',
               style: style.copyWith(
-                color: colors.textDisabled,
+                color: colors.textTertiary,
                 letterSpacing: 0,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
