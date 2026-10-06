@@ -118,6 +118,32 @@ void main() {
     expect(merged[2].canRemove, isFalse);
   });
 
+  test('profile scope rides hub search and uninstall too', () async {
+    // Guard (passes on base): the hub is now the only skills surface, so
+    // search (skills.sh is one of the upstream hub sources) and uninstall
+    // must reach the selected profile, not the default home.
+    final rest = FakeRest()
+      ..gets['skills/hub/search'] = {
+        'results': <Object>[],
+        'installed': <String, Object>{},
+      }
+      ..gets['actions/uninstall-coder/status'] = {
+        'name': 'uninstall-coder',
+        'running': false,
+        'exit_code': 0,
+      }
+      ..posts['skills/hub/uninstall'] = {'ok': true, 'name': 'uninstall-coder'};
+    final repo = CapabilitiesRepository(rest: rest, profile: 'coder');
+    await repo.searchHub('pdf');
+    await repo.uninstallSkill('arxiv');
+    expect(rest.calls, [
+      'GET skills/hub/search?q=pdf&limit=30&profile=coder',
+      'POST skills/hub/uninstall?profile=coder',
+      'GET actions/uninstall-coder/status?lines=200',
+    ]);
+    expect(rest.bodies.last, {'name': 'arxiv', 'profile': 'coder'});
+  });
+
   test('profile scope rides every REST call', () async {
     final rest = FakeRest()
       ..gets['skills'] = <Object>[]
