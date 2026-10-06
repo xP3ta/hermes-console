@@ -244,7 +244,10 @@ import '../widgets/read_only.dart';
 import '../widgets/read_aloud_button.dart';
 import '../widgets/session_deletion_dialogs.dart';
 import '../widgets/session_artifacts_sheet.dart';
+import '../widgets/chat_status_pill.dart';
 import '../widgets/session_context_usage.dart';
+import '../widgets/session_model_sheet.dart';
+import '../widgets/status_pill_sheet.dart';
 import '../widgets/provider_logo.dart';
 import '../widgets/voice_disclosure_dialog.dart';
 import '../widgets/voice_stage.dart';
@@ -1378,6 +1381,17 @@ class _ChatScreenState extends State<ChatScreen>
   bool _chatBound = false;
   final ValueNotifier<SessionContextMetrics> _sessionContextMetrics =
       ValueNotifier(SessionContextMetrics.unknown);
+
+  /// The status-pill sheet this screen opened, removed with the screen so it
+  /// never outlives the state its callbacks use.
+  Route<void>? _statusSheetRoute;
+
+  void _trackStatusSheet(Route<void> route) => _statusSheetRoute = route;
+
+  /// The compaction the open context sheet shows; follows the pill.
+  final ValueNotifier<CompactionProgress?> _sheetCompaction = ValueNotifier(
+    null,
+  );
   late Session _sessionUsageSnapshot;
   DateTime? _sessionUsageRefreshedAt;
   Future<void>? _sessionUsageRefreshInFlight;
@@ -2010,7 +2024,8 @@ class _ChatScreenState extends State<ChatScreen>
                 prefs.isHiddenFor(_pinnedPromptChatKey)
             ? null
             : candidate;
-        final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+        final reduceMotion =
+            MediaQuery.maybeDisableAnimationsOf(context) ?? false;
         Widget child = const SizedBox.shrink(
           key: ValueKey('chat-pinned-prompt-none'),
         );
@@ -8029,6 +8044,11 @@ class _ChatScreenState extends State<ChatScreen>
     _disposed = true;
     _composerTurnSettleRetryTimer?.cancel();
     _composerTurnSettleRetryTimer = null;
+    final statusSheet = _statusSheetRoute;
+    _statusSheetRoute = null;
+    if (statusSheet != null && statusSheet.isActive) {
+      statusSheet.navigator?.removeRoute(statusSheet);
+    }
     final modelConfirmationNavigator = _modelConfirmationNavigator;
     final modelConfirmationRoute = _modelConfirmationRoute;
     _modelConfirmationNavigator = null;
@@ -8152,6 +8172,7 @@ class _ChatScreenState extends State<ChatScreen>
     _activityPillExtent.dispose();
     _compaction.dispose();
     _sessionContextMetrics.dispose();
+    _sheetCompaction.dispose();
     super.dispose();
   }
 
@@ -8338,11 +8359,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   bool get _appLocked =>
-      context
-          .findAncestorStateOfType<HermesAppState>()
-          ?.appLock
-          .locked
-          .value ??
+      context.findAncestorStateOfType<HermesAppState>()?.appLock.locked.value ??
       false;
 
   /// Loads the next earlier page when the reader is within
@@ -13641,11 +13658,12 @@ class _ChatScreenState extends State<ChatScreen>
                       _chat.pendingInteractivePrompt != null,
                 )
               : Semantics(
-                  button: !showVoiceSurface,
-                  label: str.chaModelSheetTitle,
+                  button: false,
+                  label: _activeModelLabel,
                   excludeSemantics: true,
                   child: InkWell(
-                    onTap: showVoiceSurface ? null : _showModelSheet,
+                    // The bottom status pill is the sole model picker.
+                    onTap: null,
                     borderRadius: BorderRadius.circular(10),
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(minHeight: 48),
@@ -13694,12 +13712,6 @@ class _ChatScreenState extends State<ChatScreen>
                                   ),
                                 ),
                               ],
-                              const SizedBox(width: 3),
-                              Icon(
-                                Icons.expand_more_rounded,
-                                size: 19,
-                                color: colors.textSecondary,
-                              ),
                             ],
                           ),
                         ),
@@ -13730,8 +13742,6 @@ class _ChatScreenState extends State<ChatScreen>
                       switch (action) {
                         case _BotChatHeaderAction.find:
                           _openFind();
-                        case _BotChatHeaderAction.model:
-                          _showModelSheet();
                         case _BotChatHeaderAction.controls:
                           unawaited(_showChatControlSheet());
                       }
@@ -13747,23 +13757,6 @@ class _ChatScreenState extends State<ChatScreen>
                             Expanded(
                               child: Text(
                                 str.cs1215FindAction,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      PopupMenuItem(
-                        key: const ValueKey('bot-chat-model-action'),
-                        value: _BotChatHeaderAction.model,
-                        child: Row(
-                          children: [
-                            const Icon(Icons.tune_rounded, size: 20),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                str.chaModelSheetTitle,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -13796,11 +13789,8 @@ class _ChatScreenState extends State<ChatScreen>
                   // La presencia del Companion ya NO vive en el AppBar (ni el
                   // spinner de carga): el estado vivo lo expresa la mascota
                   // dentro del propio turno de Hermes.
-                  // El indicador de contexto+modo (antes aquí, como pill de
-                  // modo + SessionContextPopoverButton) ya no vive en la
-                  // AppBar: flota como una sola píldora combinada bajo el
-                  // composer — ver `_buildFloatingStatusPill` en
-                  // `_buildInputBar`.
+                  // Contexto, modelo y permisos viven en la píldora de
+                  // estado bajo el composer — ver `_buildFloatingStatusPill`.
                   IconButton(
                     key: const ValueKey('chat-new-session'),
                     icon: Transform.translate(
@@ -14631,448 +14621,175 @@ class _ChatScreenState extends State<ChatScreen>
         final info = res.$1;
         if (info.model.isNotEmpty) setState(() => _activeModel = info);
       }).catchError((_) {});
-    var modelQuery = '';
-    showHermesFloatingSurface<void>(
+    final strings = Strings.of(context);
+    final active = _activeModel;
+    showStatusPillSheet<void>(
       context: context,
+      onRoute: _trackStatusSheet,
       surfaceKey: const ValueKey('chat-model-dialog'),
-      maxWidth: 620,
+      title: strings.chaModelSheetTitle,
+      subtitle: active == null || active.model.isEmpty
+          ? strings.chaModelSheetSubtitleDefault
+          : active.provider.isNotEmpty
+          ? strings.chaModelSheetSubtitleActive(
+              friendlyModelName(active.model),
+              active.provider,
+            )
+          : strings.chaModelSheetSubtitleActiveOnly(
+              friendlyModelName(active.model),
+            ),
       builder: (ctx) {
         final colors = Theme.of(ctx).hermes;
-        return SafeArea(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(ctx).size.height * 0.8,
-            ),
-            child: StatefulBuilder(
-              builder: (ctx, setSheet) {
-                return FutureBuilder<(ModelActiveInfo, List<ModelProvider>)>(
-                  future: _modelOptionsFuture ??= _loadModelOptions(),
-                  initialData: _modelOptionsPainted,
-                  builder: (ctx, snap) {
-                    // A failed background refresh keeps the painted catalog.
-                    final data = snap.data ?? _modelOptionsPainted;
-                    final loading =
-                        data == null &&
-                        snap.connectionState == ConnectionState.waiting;
-                    final active = _chat.hasDesktopRuntime
-                        ? _activeModel
-                        : data?.$1;
-                    final providers = data?.$2 ?? const <ModelProvider>[];
-                    final visibleProviders = filterModelProviders(
-                      providers,
-                      modelQuery,
-                    );
-                    final selectedOption = _desktopModelCatalog?.optionFor(
-                      _selectedProvider,
-                      _selectedModel,
-                    );
-                    final reasoningSupported =
-                        selectedOption?.capabilities.reasoning != false;
-                    final fastSupported =
-                        selectedOption?.capabilities.fast != false;
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  Strings.of(ctx).chaModelSheetTitle,
-                                  style: Theme.of(ctx).textTheme.titleMedium,
-                                ),
-                                Text(
-                                  active == null
-                                      ? Strings.of(
-                                          ctx,
-                                        ).chaModelSheetSubtitleDefault
-                                      : (active.provider.isNotEmpty
-                                            ? Strings.of(
-                                                ctx,
-                                              ).chaModelSheetSubtitleActive(
-                                                friendlyModelName(active.model),
-                                                active.provider,
-                                              )
-                                            : Strings.of(
-                                                ctx,
-                                              ).chaModelSheetSubtitleActiveOnly(
-                                                friendlyModelName(active.model),
-                                              )),
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: colors.textSecondary,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                          child: TextField(
-                            key: const ValueKey('chat-model-search'),
-                            textInputAction: TextInputAction.search,
-                            onChanged: (value) {
-                              setSheet(() => modelQuery = value);
-                            },
-                            decoration: InputDecoration(
-                              hintText: Strings.of(ctx).modelSearchHint,
-                              prefixIcon: const Icon(Icons.search_rounded),
-                              isDense: true,
-                            ),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                Strings.of(ctx).chaSessionReasoningLabel,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  color: colors.textSecondary,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: Row(
-                                  children: [
-                                    for (final effort
-                                        in DesktopReasoningEffort.values)
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                          right: 6,
-                                        ),
-                                        child: ChoiceChip(
-                                          label: Text(effort.wire),
-                                          selected:
-                                              _selectedReasoning == effort,
-                                          onSelected:
-                                              _settingModel ||
-                                                  !reasoningSupported
-                                              ? null
-                                              : (_) async {
-                                                  await _applySessionReasoning(
-                                                    effort,
-                                                  );
-                                                  if (ctx.mounted) {
-                                                    setSheet(() {});
-                                                  }
-                                                },
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                              if (!reasoningSupported)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 5),
-                                  child: Text(
-                                    Strings.of(
-                                      ctx,
-                                    ).chaModelReasoningUnavailable,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: colors.textSecondary,
-                                    ),
-                                  ),
-                                ),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Text(
-                                    Strings.of(ctx).chaSessionFastLabel,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                      color: colors.textSecondary,
-                                    ),
-                                  ),
-                                  const Spacer(),
-                                  SegmentedButton<DesktopFastMode>(
-                                    segments: [
-                                      ButtonSegment(
-                                        value: DesktopFastMode.normal,
-                                        label: Text(
-                                          Strings.of(ctx).chaSessionFastNormal,
-                                        ),
-                                      ),
-                                      ButtonSegment(
-                                        value: DesktopFastMode.fast,
-                                        label: Text(
-                                          Strings.of(ctx).chaSessionFastEnabled,
-                                        ),
-                                      ),
-                                    ],
-                                    selected: {
-                                      _selectedFastMode ??
-                                          DesktopFastMode.normal,
-                                    },
-                                    onSelectionChanged:
-                                        _settingModel || !fastSupported
-                                        ? null
-                                        : (selection) async {
-                                            await _applySessionFastMode(
-                                              selection.single,
-                                            );
-                                            if (ctx.mounted) setSheet(() {});
-                                          },
-                                    showSelectedIcon: false,
-                                  ),
-                                ],
-                              ),
-                              if (!fastSupported)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 5),
-                                  child: Text(
-                                    Strings.of(ctx).chaModelFastUnavailable,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: colors.textSecondary,
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        // Bridge ausente (solo se pudo listar el alias del
-                        // gateway): ofrece instalarlo para ver TODOS los modelos.
-                        if (!loading && _modelSource == _ModelSource.gateway)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                            child: InkWell(
-                              onTap: () => _promptInstallBridge(ctx),
+        return StatefulBuilder(
+          builder: (ctx, setSheet) {
+            return FutureBuilder<(ModelActiveInfo, List<ModelProvider>)>(
+              future: _modelOptionsFuture ??= _loadModelOptions(),
+              initialData: _modelOptionsPainted,
+              builder: (ctx, snap) {
+                // A failed background refresh keeps the painted catalog.
+                final data = snap.data ?? _modelOptionsPainted;
+                final loading =
+                    data == null &&
+                    snap.connectionState == ConnectionState.waiting;
+                final providers = data?.$2 ?? const <ModelProvider>[];
+                final selectedOption = _desktopModelCatalog?.optionFor(
+                  _selectedProvider,
+                  _selectedModel,
+                );
+                final reasoningSupported =
+                    selectedOption?.capabilities.reasoning != false;
+                final fastSupported =
+                    selectedOption?.capabilities.fast != false;
+                Widget note(String text) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    text,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                );
+                final header = Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Bridge ausente (solo se pudo listar el alias del
+                    // gateway): ofrece instalarlo para ver TODOS los modelos.
+                    if (!loading && _modelSource == _ModelSource.gateway)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: InkWell(
+                          onTap: () => _promptInstallBridge(ctx),
+                          borderRadius: BorderRadius.circular(10),
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: colors.surface,
                               borderRadius: BorderRadius.circular(10),
-                              child: Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: colors.surface,
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: colors.accent),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.download_for_offline_outlined,
-                                      color: colors.accent,
-                                      size: 20,
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(
-                                        Strings.of(
-                                          context,
-                                        ).chatInstallBridgeModels,
-                                        style: TextStyle(
-                                          fontSize: 12.5,
-                                          color: colors.textPrimary,
-                                        ),
-                                      ),
-                                    ),
-                                    Icon(
-                                      Icons.chevron_right,
-                                      color: colors.textSecondary,
-                                      size: 18,
-                                    ),
-                                  ],
-                                ),
-                              ),
+                              border: Border.all(color: colors.accent),
                             ),
-                          ),
-                        if (_settingModel)
-                          LinearProgressIndicator(
-                            minHeight: 2,
-                            backgroundColor: colors.surface,
-                            color: colors.accent,
-                          ),
-                        if (loading)
-                          const Padding(
-                            padding: EdgeInsets.all(24),
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        else if (data == null && snap.hasError)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                            child: Text(
-                              '${Strings.of(ctx).chaModelSheetError}\n\n${snap.error}',
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                color: colors.textSecondary,
-                              ),
-                            ),
-                          )
-                        else if (providers.isEmpty)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                            child: Text(
-                              Strings.of(ctx).chaModelSheetEmpty,
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                color: colors.textSecondary,
-                              ),
-                            ),
-                          )
-                        else if (visibleProviders.isEmpty)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 18, 16, 20),
-                            child: Text(
-                              Strings.of(ctx).modelSearchEmpty,
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                color: colors.textSecondary,
-                              ),
-                            ),
-                          )
-                        else
-                          Flexible(
-                            child: ListView(
-                              shrinkWrap: true,
+                            child: Row(
                               children: [
-                                for (final p in visibleProviders) ...[
-                                  Padding(
-                                    padding: const EdgeInsets.fromLTRB(
-                                      16,
-                                      12,
-                                      16,
-                                      4,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        // Provider mark tinted like the
-                                        // header text: identity without
-                                        // brand colours.
-                                        ProviderLogo(
-                                          key: ValueKey(
-                                            'provider-logo-picker-provider-'
-                                            '${p.slug}',
-                                          ),
-                                          provider: p.slug,
-                                          providerName: p.name,
-                                          size: 16,
-                                          color: colors.accent,
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Text(
-                                          (p.name.isNotEmpty ? p.name : p.slug)
-                                              .toUpperCase(),
-                                          style: TextStyle(
-                                            fontSize: 10.5,
-                                            fontWeight: FontWeight.w700,
-                                            letterSpacing: 0.8,
-                                            color: colors.accent,
-                                          ),
-                                        ),
-                                        if (p.isCurrent) ...[
-                                          const SizedBox(width: 6),
-                                          Icon(
-                                            Icons.bolt,
-                                            size: 13,
-                                            color: colors.accent,
-                                          ),
-                                        ],
-                                      ],
+                                Icon(
+                                  Icons.download_for_offline_outlined,
+                                  color: colors.accent,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    Strings.of(ctx).chatInstallBridgeModels,
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      color: colors.textPrimary,
                                     ),
                                   ),
-                                  for (final modelId in p.models)
-                                    _modelTile(
-                                      ctx,
-                                      setSheet,
-                                      colors,
-                                      provider: p,
-                                      modelId: modelId,
-                                      isActive:
-                                          _isSelectedProvider(p.slug) &&
-                                          _selectedModel == modelId,
-                                    ),
-                                ],
-                                const SizedBox(height: 8),
+                                ),
+                                Icon(
+                                  Icons.chevron_right,
+                                  color: colors.textSecondary,
+                                  size: 18,
+                                ),
                               ],
                             ),
                           ),
-                      ],
+                        ),
+                      ),
+                    if (_settingModel)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: LinearProgressIndicator(
+                          minHeight: 2,
+                          backgroundColor: colors.surface,
+                          color: colors.accent,
+                        ),
+                      ),
+                    if (loading)
+                      const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    else if (data == null && snap.hasError)
+                      note(
+                        '${Strings.of(ctx).chaModelSheetError}\n\n${snap.error}',
+                      )
+                    else if (providers.isEmpty)
+                      note(Strings.of(ctx).chaModelSheetEmpty),
+                  ],
+                );
+                return SessionModelSheetBody(
+                  providers: providers,
+                  header: header,
+                  isSelected: (slug, modelId) =>
+                      _isSelectedProvider(slug) && _selectedModel == modelId,
+                  isSelectedProvider: _isSelectedProvider,
+                  modelLabel: friendlyModelName,
+                  cardInfo: (slug, modelId) {
+                    final option = _desktopModelCatalog
+                        ?.providerFor(slug)
+                        ?.optionFor(modelId);
+                    return SessionModelCardInfo(
+                      usable:
+                          _modelSource != _ModelSource.desktop ||
+                          (option != null && !option.unavailable),
+                      reasoning: option?.capabilities.reasoning,
+                      fast: option?.capabilities.fast,
+                      free: option?.pricing?.free == true,
                     );
                   },
+                  onPick: _settingModel
+                      ? null
+                      : (provider, modelId) =>
+                            _applyModel(ctx, setSheet, provider, modelId),
+                  reasoning: _selectedReasoning,
+                  reasoningSupported: reasoningSupported,
+                  onReasoning: _settingModel
+                      ? null
+                      : (effort) async {
+                          await _applySessionReasoning(effort);
+                          if (ctx.mounted) setSheet(() {});
+                        },
+                  fastMode: _selectedFastMode ?? DesktopFastMode.normal,
+                  fastSupported: fastSupported,
+                  onFastMode: _settingModel
+                      ? null
+                      : (mode) async {
+                          await _applySessionFastMode(mode);
+                          if (ctx.mounted) setSheet(() {});
+                        },
                 );
               },
-            ),
-          ),
+            );
+          },
         );
       },
     ).whenComplete(() {
       _modelOptionsFuture = null;
       _modelOptionsPainted = null;
     });
-  }
-
-  Widget _modelTile(
-    BuildContext sheetCtx,
-    void Function(void Function()) setSheet,
-    HermesThemeColors colors, {
-    required ModelProvider provider,
-    required String modelId,
-    required bool isActive,
-  }) {
-    final desktopProvider = _desktopModelCatalog?.providerFor(provider.slug);
-    final desktopOption = desktopProvider?.optionFor(modelId);
-    final isUsable =
-        _modelSource != _ModelSource.desktop ||
-        (desktopOption != null && !desktopOption.unavailable);
-    final unavailableLabel = Strings.of(sheetCtx).chaModelUnavailable;
-    return ListTile(
-      dense: true,
-      // The model's maker (Claude via OpenRouter shows Anthropic), tinted
-      // with the theme; the trailing check marks the active model.
-      leading: SizedBox(
-        width: 24,
-        height: 24,
-        child: Center(
-          child: ProviderLogo(
-            key: ValueKey(
-              'provider-logo-picker-model-${provider.slug}-$modelId',
-            ),
-            provider: provider.slug,
-            providerName: provider.name,
-            model: modelId,
-            size: 20,
-            selected: isActive && isUsable,
-            color: isUsable ? null : colors.textDisabled,
-          ),
-        ),
-      ),
-      title: Text(
-        friendlyModelName(modelId),
-        style: TextStyle(
-          fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-          color: !isUsable
-              ? colors.textDisabled
-              : isActive
-              ? colors.accent
-              : colors.textPrimary,
-        ),
-      ),
-      subtitle: Text(
-        isUsable ? modelId : '$modelId · $unavailableLabel',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
-      ),
-      trailing: !isUsable
-          ? Icon(Icons.block_outlined, color: colors.textDisabled, size: 18)
-          : isActive
-          ? Icon(Icons.check, color: colors.accent)
-          : desktopOption?.pricing?.free == true
-          ? Icon(Icons.savings_outlined, color: colors.success, size: 18)
-          : null,
-      onTap: _settingModel || isActive || !isUsable
-          ? null
-          : () => _applyModel(sheetCtx, setSheet, provider, modelId),
-    );
   }
 
   /// md1215: `session.info` names a user-defined endpoint `custom:<key>`
@@ -15131,11 +14848,9 @@ class _ChatScreenState extends State<ChatScreen>
     return (effective.label, _modeColor(effective, colors));
   }
 
-  /// Lista de opciones de modo (radio buttons), compartida por el sheet
-  /// independiente (menú ⋮ → "Permisos") y la sección de modo embebida en el
-  /// popover de contexto — una sola fuente de verdad para evitar duplicar el
-  /// bucle de `ListTile`s en dos sitios. [dismissHost] cierra la superficie
-  /// que aloja esta lista (el sheet o el popover) antes de aplicar el modo.
+  /// Opciones de modo (radio) de «Permisos de esta sesión». YOLO se confirma
+  /// con la ventana aún abierta y el modo no cambia hasta aceptar; cancelar
+  /// lo deja como estaba. El resto se aplica y cierra la ventana.
   List<Widget> _approvalModeOptionTiles({
     required BuildContext ctx,
     required ApprovalPolicyService policy,
@@ -15163,20 +14878,39 @@ class _ChatScreenState extends State<ChatScreen>
     return [
       for (final (mode, title, sub) in options)
         ListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
+          key: ValueKey('chat-mode-option-${mode?.name ?? 'global'}'),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          minVerticalPadding: 8,
+          selected: override == mode,
+          selectedTileColor: colors.accent.withValues(alpha: 0.12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           leading: Icon(
             (override == mode)
                 ? Icons.radio_button_checked
                 : Icons.radio_button_unchecked,
             color: mode == null ? colors.accent : _modeColor(mode, colors),
           ),
-          title: Text(title),
+          title: Text(
+            title,
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              color: mode == ApprovalMode.yolo
+                  ? colors.error
+                  : colors.textPrimary,
+            ),
+          ),
           subtitle: Text(
             sub,
-            style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+            style: TextStyle(fontSize: 12, color: colors.textSecondary),
           ),
           onTap: () async {
+            if (mode == ApprovalMode.yolo) {
+              final applied = await _selectSessionMode(policy, mode);
+              if (applied && ctx.mounted) dismissHost();
+              return;
+            }
             dismissHost();
             await _selectSessionMode(policy, mode);
           },
@@ -15185,96 +14919,40 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _showModeSheet(ApprovalPolicyService policy) {
-    showHermesFloatingSurface<void>(
+    final strings = Strings.of(context);
+    showStatusPillSheet<void>(
       context: context,
+      onRoute: _trackStatusSheet,
       surfaceKey: const ValueKey('chat-mode-dialog'),
-      maxWidth: 560,
+      title: strings.chaModeSheetTitle,
+      subtitle: strings.chaModeSheetEffective(
+        policy.effectiveMode(widget.session.id).label,
+      ),
       builder: (ctx) {
         final colors = Theme.of(ctx).hermes;
-        final s = Strings.of(ctx);
-        return ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.only(bottom: 10),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      s.chaModeSheetTitle,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    Text(
-                      s.chaModeSheetEffective(
-                        policy.effectiveMode(widget.session.id).label,
-                      ),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
             ..._approvalModeOptionTiles(
               ctx: ctx,
               policy: policy,
               colors: colors,
               dismissHost: () => Navigator.pop(ctx),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
+            Text(
+              Strings.of(ctx).sp1215ModeAppliesNow,
+              style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+            ),
           ],
         );
       },
     );
   }
 
-  /// Sección de modo embebida al final del popover de contexto (ver
-  /// `showSessionContextPopover`'s `modeSectionBuilder`): mismo contenido que
-  /// `_showModeSheet`, reutilizado vía `_approvalModeOptionTiles` en vez de
-  /// duplicar el listado. [closePopover] es el `onClose` del propio popover.
-  Widget _buildApprovalModeSection(
-    BuildContext ctx,
-    VoidCallback closePopover,
-  ) {
-    final policy = context
-        .findAncestorStateOfType<HermesAppState>()
-        ?.approvalPolicy;
-    if (policy == null) return const SizedBox.shrink();
-    final colors = Theme.of(ctx).hermes;
-    final s = Strings.of(ctx);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          s.chaModeSheetTitle,
-          style: Theme.of(
-            ctx,
-          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          s.chaModeSheetEffective(
-            policy.effectiveMode(widget.session.id).label,
-          ),
-          style: TextStyle(fontSize: 12, color: colors.textSecondary),
-        ),
-        ..._approvalModeOptionTiles(
-          ctx: ctx,
-          policy: policy,
-          colors: colors,
-          dismissHost: closePopover,
-        ),
-      ],
-    );
-  }
-
-  Future<void> _selectSessionMode(
+  /// Applies [mode] to this session; true once it is applied.
+  Future<bool> _selectSessionMode(
     ApprovalPolicyService policy,
     ApprovalMode? mode,
   ) async {
@@ -15288,7 +14966,7 @@ class _ChatScreenState extends State<ChatScreen>
           lock,
           reason: Strings.of(context).chaYoloLockReason,
         );
-        if (!ok || !mounted) return;
+        if (!ok || !mounted) return false;
       }
       releaseTextFocusIfKeyboardHidden(context);
       final confirmed = await showDialog<bool>(
@@ -15311,7 +14989,7 @@ class _ChatScreenState extends State<ChatScreen>
           );
         },
       );
-      if (confirmed != true || !mounted) return;
+      if (confirmed != true || !mounted) return false;
     }
     // El modo se evalúa EN VIVO en cada `approval.request` (no se manda al
     // agente al iniciar el run), así que el cambio se aplica de inmediato,
@@ -15319,7 +14997,7 @@ class _ChatScreenState extends State<ChatScreen>
     // esta sesión (sobrevive a reinicios).
     final wasSending = _sending;
     policy.setSessionMode(widget.session.id, mode);
-    if (!mounted) return;
+    if (!mounted) return true;
     setState(() {});
     if (wasSending) {
       final label = policy.effectiveMode(widget.session.id).label;
@@ -15333,6 +15011,7 @@ class _ChatScreenState extends State<ChatScreen>
           kind: HermesNoticeKind.success,
         );
     }
+    return true;
   }
 
   VoiceService? get _voice => _voiceService;
@@ -17106,14 +16785,18 @@ class _ChatScreenState extends State<ChatScreen>
             )
           : null);
 
-  /// Píldora combinada contexto+modo flotando bajo el composer (ver mockup
-  /// aprobado "v8 · estado debajo del input"): sustituye a los antiguos
-  /// `_buildModeBadge` + `SessionContextPopoverButton` de la AppBar. Oculta
-  /// en Bot Chat, igual que ocultaban esos widgets antes.
-  /// Sigue abriendo el mismo `showSessionContextPopover`; la sección de modo
-  /// se reutiliza de `_buildApprovalModeSection` en vez de duplicarla.
+  /// Píldora de estado bajo el composer: `45% ⤓ | Sonnet 5 ▾ | 🛡`. Cada
+  /// zona abre su ventana: uso de contexto, modelo y sesión, y permisos de
+  /// esta sesión. Oculta en Bot Chat (solo queda la señal de compactación).
   Widget _buildFloatingStatusPill(HermesThemeColors colors) {
     final compaction = _visibleCompaction;
+    if (!identical(_sheetCompaction.value, compaction)) {
+      // The open context sheet lives on another route: notify after this
+      // frame, never mid-build.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_disposed && mounted) _sheetCompaction.value = _visibleCompaction;
+      });
+    }
     if (_isBotChatSurface) {
       // Sin píldora de contexto: la compactación nunca se queda sin señal.
       return compaction == null
@@ -17125,26 +16808,54 @@ class _ChatScreenState extends State<ChatScreen>
               ),
             );
     }
+    final policy = context
+        .findAncestorStateOfType<HermesAppState>()
+        ?.approvalPolicy;
     final flag = _modeFlag(colors);
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Center(
-        child: SessionContextPopoverButton(
-          key: const ValueKey('chat-status-pill'),
-          metrics: _sessionContextMetrics,
-          loadBreakdown: _loadSessionContextDetails,
-          onMetricsSnapshot: (metrics) {
-            if (_disposed || !mounted) return;
-            _commitSessionContextMetrics(metrics);
-          },
-          modeLabel: flag?.$1,
-          modeColor: flag?.$2,
-          modeSectionBuilder: _buildApprovalModeSection,
-          compressionCount: _chatBound
-              ? _chat.desktopSessionCompressionCount
-              : 0,
-          compaction: compaction,
-        ),
+    return Center(
+      child: ChatStatusPill(
+        key: const ValueKey('chat-status-pill'),
+        metrics: _sessionContextMetrics,
+        onOpenContext: _showContextSheet,
+        compaction: compaction,
+        compressionCount: _chatBound ? _chat.desktopSessionCompressionCount : 0,
+        modelLabel: _activeModelLabel,
+        onOpenModel: _showModelSheet,
+        // Hermes computes subscription limits (`agent/account_usage.py`)
+        // but publishes them to clients only as rendered text lines; no
+        // structured feed exists yet, so no dot and no block are shown.
+        limitLevel: SubscriptionLimitLevel.none,
+        permissionsLabel: policy?.effectiveMode(widget.session.id).label,
+        permissionsFlag: flag?.$1,
+        permissionsColor: flag?.$2,
+        onOpenPermissions: policy == null ? null : () => _showModeSheet(policy),
+      ),
+    );
+  }
+
+  /// «Uso de contexto»: anillo grande, tokens de la ventana, Compactar (el
+  /// mismo `/compress` del composer), métricas y el desglose si Hermes lo
+  /// publica.
+  void _showContextSheet() {
+    final strings = Strings.of(context);
+    final readOnly =
+        widget.connection.readOnly ||
+        _chat.conflictReadOnly ||
+        _cronRunReadOnly;
+    showStatusPillSheet<void>(
+      context: context,
+      onRoute: _trackStatusSheet,
+      surfaceKey: const ValueKey('desktop-context-usage-popover-surface'),
+      title: strings.chaContextUsageTitle,
+      builder: (_) => SessionContextSheetBody(
+        metrics: _sessionContextMetrics,
+        loadBreakdown: _loadSessionContextDetails,
+        onMetricsSnapshot: (metrics) {
+          if (_disposed || !mounted) return;
+          _commitSessionContextMetrics(metrics);
+        },
+        compaction: _sheetCompaction,
+        onCompact: readOnly ? null : () => unawaited(_compressFromError()),
       ),
     );
   }
@@ -18875,7 +18586,7 @@ class _UserTurnGroup {
   _UserTurnGroup(this.primary);
 }
 
-enum _BotChatHeaderAction { find, model, controls }
+enum _BotChatHeaderAction { find, controls }
 
 /// Cabecera del Bot Chat: avatar + nombre del bot + estado vivo, con el mismo
 /// protagonismo que la cabecera de una Room. El modelo y los controles viven

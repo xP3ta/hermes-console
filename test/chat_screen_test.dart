@@ -137,7 +137,7 @@ import 'package:hermes_android/core/widgets/reasoning_block.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/core/widgets/mission_profile_avatar.dart';
 import 'package:hermes_android/core/widgets/motion_entrance.dart';
-import 'package:hermes_android/core/widgets/session_context_usage.dart';
+import 'package:hermes_android/core/widgets/chat_status_pill.dart';
 import 'package:hermes_android/core/models/subagent_activity.dart';
 import 'package:hermes_android/core/widgets/subagent_activity_card.dart';
 
@@ -14837,12 +14837,12 @@ void main() {
           >[
             (
               'uso de contexto',
-              () => find.byKey(const ValueKey('chat-status-pill')),
+              () => find.byKey(const ValueKey('desktop-context-usage-status')),
               () => find.byKey(const ValueKey('desktop-context-usage-popover')),
               (tester) => tester.tap(
                 find.descendant(
                   of: find.byKey(
-                    const ValueKey('desktop-context-usage-popover'),
+                    const ValueKey('desktop-context-usage-popover-surface'),
                   ),
                   matching: find.byTooltip('Cerrar'),
                 ),
@@ -14851,8 +14851,40 @@ void main() {
               true,
             ),
             (
+              'uso de contexto (arrastrar)',
+              () => find.byKey(const ValueKey('desktop-context-usage-status')),
+              () => find.byKey(const ValueKey('desktop-context-usage-popover')),
+              (tester) => tester.fling(
+                find.byKey(const ValueKey('status-sheet-handle')),
+                const Offset(0, 160),
+                1500,
+              ),
+              false,
+              true,
+            ),
+            (
+              'modelo de la píldora',
+              () => find.byKey(const ValueKey('status-pill-model')),
+              () => find.byKey(const ValueKey('chat-model-dialog')),
+              (tester) => tester.tapAt(const Offset(200, 60)),
+              true,
+              true,
+            ),
+            (
+              'permisos de la píldora',
+              () => find.byKey(const ValueKey('status-pill-permissions')),
+              () => find.byKey(const ValueKey('chat-mode-dialog')),
+              (tester) => tester.fling(
+                find.byKey(const ValueKey('status-sheet-handle')),
+                const Offset(0, 160),
+                1500,
+              ),
+              true,
+              true,
+            ),
+            (
               'modelo y sesión',
-              () => find.bySemanticsLabel('Modelo y sesión'),
+              () => find.byKey(const ValueKey('status-pill-model')),
               () => find.byKey(const ValueKey('chat-model-dialog')),
               null,
               true,
@@ -14958,7 +14990,9 @@ void main() {
         final focus = tester.widget<TextField>(composer).focusNode!;
         expect(focus.hasFocus, isTrue);
 
-        await tester.tap(find.byKey(const ValueKey('chat-status-pill')));
+        await tester.tap(
+          find.byKey(const ValueKey('desktop-context-usage-status')),
+        );
         await settle(tester);
         expect(
           find.byKey(const ValueKey('desktop-context-usage-popover')),
@@ -15000,11 +15034,11 @@ void main() {
       );
       expect(gateway.contextBreakdownCalls, 1);
       // El indicador de contexto+modo ahora flota como una sola píldora
-      // (`SessionContextPopoverButton`) bajo el composer en vez de un
+      // (`ChatStatusPill`) bajo el composer en vez de un
       // `SessionContextTrigger` suelto en la AppBar (rediseño 1.2.11); sigue
       // exponiendo las mismas `metrics` y el mismo texto de porcentaje.
-      final contextPill = tester.widget<SessionContextPopoverButton>(
-        find.byType(SessionContextPopoverButton),
+      final contextPill = tester.widget<ChatStatusPill>(
+        find.byType(ChatStatusPill),
       );
       expect(contextPill.metrics.value.percent, 25);
       expect(find.text('25%'), findsOneWidget);
@@ -15049,7 +15083,11 @@ void main() {
       expect(find.text('Prompt del sistema'), findsOneWidget);
       expect(find.text('Conversación'), findsOneWidget);
       expect(gateway.contextBreakdownCalls, 2);
-      expect(find.byKey(const ValueKey('context-compress-now')), findsNothing);
+      // 1.2.15: the context sheet offers the chat's own /compress.
+      expect(
+        find.byKey(const ValueKey('context-compress-now')),
+        findsOneWidget,
+      );
 
       final popoverRect = tester.getRect(
         find.byKey(const ValueKey('desktop-context-usage-popover')),
@@ -15092,9 +15130,7 @@ void main() {
       // tp1216: while compacting the pill shows «Compactando…» in place of
       // the percentage; the metrics behind it keep the last real value.
       int? pillPercent() => tester
-          .widget<SessionContextPopoverButton>(
-            find.byType(SessionContextPopoverButton),
-          )
+          .widget<ChatStatusPill>(find.byType(ChatStatusPill))
           .metrics
           .value
           .percent;
@@ -15603,6 +15639,229 @@ void main() {
     expect(gateway.createCalls, 0);
     expect(gateway.nativeCompressionCalls, 1);
     await tester.pump(const Duration(seconds: 4));
+  });
+
+  group('sp1215: píldora de estado bajo el composer', () {
+    testWidgets('Compactar del uso de contexto lanza el /compress del chat '
+        'y conserva el borrador', (tester) async {
+      final gateway = _UiNativeCompressionGateway(
+        _uiNativeCompressionResult(DesktopCompressionStatus.compressed),
+      );
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-sp1215-compact'),
+        messagesLoaded: true,
+      );
+      await tester.enterText(find.byType(TextField), 'borrador a medias');
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.tap(
+        find.byKey(const ValueKey('desktop-context-usage-status')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        find.byKey(const ValueKey('desktop-context-usage-popover')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('context-compress-now')));
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(gateway.nativeCompressionCalls, 1);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        'borrador a medias',
+      );
+      await tester.pump(const Duration(seconds: 8));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('el uso de contexto abierto sigue la compactación en vivo', (
+      tester,
+    ) async {
+      final gateway = _UiRewindGateway();
+      await pumpChat(
+        tester,
+        desktopGateway: gateway,
+        connection: _remoteConn('conn-sp1215-live-compaction'),
+        messagesLoaded: false,
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(
+        find.byKey(const ValueKey('desktop-context-usage-status')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        find.byKey(const ValueKey('context-panel-compaction')),
+        findsNothing,
+      );
+
+      gateway.emit('status.update', const {
+        'kind': 'compacting',
+        'text': 'Compacting context — summarizing earlier conversation',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('context-panel-compaction')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('context-panel-compaction-text')),
+            )
+            .data,
+        startsWith('Compactando'),
+      );
+      // Mientras compacta no se puede pedir otra.
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.byKey(const ValueKey('context-compress-now')),
+            )
+            .onPressed,
+        isNull,
+      );
+
+      gateway.emit('status.update', const {
+        'kind': 'compacted',
+        'text': 'Context compaction complete — continuing turn',
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        tester
+            .widget<Text>(
+              find.byKey(const ValueKey('context-panel-compaction-text')),
+            )
+            .data,
+        startsWith('Compactado'),
+      );
+      await tester.pump(const Duration(seconds: 8));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('una ventana de la píldora no sobrevive a su chat', (
+      tester,
+    ) async {
+      await pumpChat(tester);
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('chat-model-dialog')), findsOneWidget);
+
+      final screenContext = tester.element(find.byType(ChatScreen));
+      Navigator.of(screenContext).removeRoute(ModalRoute.of(screenContext)!);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(ChatScreen), findsNothing);
+      expect(find.byKey(const ValueKey('chat-model-dialog')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('YOLO pide confirmación y no cambia hasta aceptar', (
+      tester,
+    ) async {
+      await pumpChat(tester);
+      final permissions = find.byKey(const ValueKey('status-pill-permissions'));
+      expect(permissions, findsOneWidget);
+      expect(
+        tester.getSemantics(permissions).getSemanticsData().label,
+        startsWith('Permisos: '),
+      );
+      expect(
+        find.descendant(of: permissions, matching: find.text('YOLO')),
+        findsNothing,
+      );
+
+      await tester.tap(permissions);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('chat-mode-dialog')), findsOneWidget);
+      expect(
+        find.text('Se aplica desde ahora, solo a esta sesión.'),
+        findsOneWidget,
+      );
+
+      // Cancelar: el modo queda como estaba y la ventana sigue abierta.
+      await tester.tap(find.byKey(const ValueKey('chat-mode-option-yolo')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('¿YOLO en esta sesión?'), findsOneWidget);
+      await tester.tap(find.text('Cancelar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('chat-mode-dialog')), findsOneWidget);
+      expect(
+        tester
+            .widget<ListTile>(
+              find.byKey(const ValueKey('chat-mode-option-yolo')),
+            )
+            .selected,
+        isFalse,
+      );
+      expect(
+        find.descendant(of: permissions, matching: find.text('YOLO')),
+        findsNothing,
+      );
+
+      // Aceptar: se aplica, se cierra y la píldora lo señala.
+      await tester.tap(find.byKey(const ValueKey('chat-mode-option-yolo')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('Activar'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('chat-mode-dialog')), findsNothing);
+      expect(
+        find.descendant(of: permissions, matching: find.text('YOLO')),
+        findsOneWidget,
+      );
+      expect(
+        tester.getSemantics(permissions).getSemanticsData().label,
+        'Permisos: YOLO',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('un modo normal se aplica al tocarlo y cierra la ventana', (
+      tester,
+    ) async {
+      await pumpChat(tester);
+      final permissions = find.byKey(const ValueKey('status-pill-permissions'));
+      await tester.tap(permissions);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('chat-mode-option-readOnly')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('chat-mode-dialog')), findsNothing);
+      expect(find.text('¿YOLO en esta sesión?'), findsNothing);
+      expect(
+        find.descendant(of: permissions, matching: find.text('Solo lectura')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('la zona de modelo abre «Modelo y sesión» con la nota del '
+        'próximo turno', (tester) async {
+      await pumpChat(tester);
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('chat-model-dialog')), findsOneWidget);
+      expect(find.text('Se aplica desde el próximo turno.'), findsOneWidget);
+      // Sin feed estructurado de Hermes: ningún límite inventado.
+      expect(
+        find.byKey(const ValueKey('subscription-limit-block')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('status-pill-limit-dot')), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
   });
 
   testWidgets('REGRESSION_COMP_FIX1_UI_STALE_COMPLETED', (tester) async {
@@ -16904,9 +17163,7 @@ void main() {
       // never the cumulative tokens; the percentage returns right after.
       expect(
         tester
-            .widget<SessionContextPopoverButton>(
-              find.byType(SessionContextPopoverButton),
-            )
+            .widget<ChatStatusPill>(find.byType(ChatStatusPill))
             .metrics
             .value
             .percent,
@@ -17028,9 +17285,7 @@ void main() {
       // nunca salta a los tokens acumulados.
       expect(
         tester
-            .widget<SessionContextPopoverButton>(
-              find.byType(SessionContextPopoverButton),
-            )
+            .widget<ChatStatusPill>(find.byType(ChatStatusPill))
             .metrics
             .value
             .percent,
@@ -19837,7 +20092,21 @@ void main() {
       ],
     );
 
-    expect(find.text('Modelo del servidor'), findsOneWidget);
+    // The header keeps its model; the status pill names it too.
+    expect(
+      find.descendant(
+        of: find.byType(AppBar),
+        matching: find.text('Modelo del servidor'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('status-pill-model')),
+        matching: find.text('Modelo del servidor'),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('ejecutando…'), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -20252,7 +20521,7 @@ void main() {
     (tester) async {
       await pumpChat(tester);
 
-      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
 
@@ -20292,7 +20561,7 @@ void main() {
       await tester.pump();
       expect(find.byKey(const ValueKey('old-model')), findsOneWidget);
 
-      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
@@ -20323,7 +20592,7 @@ void main() {
       // (un toque o deslizar en el dispositivo) antes de volver a tocarla.
       HermesNotice.of(tester.element(find.byType(ChatScreen))).clearSnackBars();
       await tester.pump();
-      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
@@ -20382,7 +20651,7 @@ void main() {
       expect(providerLogoId(tester, header), 'anthropic');
       expect(providerLogoTint(tester, header), colors.textSecondary);
 
-      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
@@ -20443,7 +20712,7 @@ void main() {
       });
       await tester.pump();
 
-      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
@@ -20521,7 +20790,7 @@ void main() {
       });
       await tester.pump();
 
-      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
@@ -20585,7 +20854,7 @@ void main() {
       });
       await tester.pump();
 
-      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
@@ -20629,7 +20898,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(find.byType(ChatScreen), findsNothing);
-      expect(find.text('Confirm expensive model'), findsNothing);
+      // A detached dialog may still animate out, but it cannot become current.
+      final detached = find.text('Confirm expensive model');
+      if (detached.evaluate().isNotEmpty) {
+        expect(
+          ModalRoute.of(tester.element(detached.first))?.isCurrent,
+          isFalse,
+        );
+      }
       await tester.tap(
         find.byKey(const ValueKey('model-confirm-successor-action')),
       );
@@ -20676,7 +20952,7 @@ void main() {
       chat.markStoredSessionMissing();
       await _primeUiReleaseOwnership(tester, chat, gateway);
 
-      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
@@ -20776,7 +21052,7 @@ void main() {
     }
 
     Future<void> openModelSheet(WidgetTester tester) async {
-      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
@@ -20938,7 +21214,7 @@ void main() {
       await tester.pump();
 
       await openModelSheet(tester);
-      await tester.tap(find.widgetWithText(ChoiceChip, 'high'));
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Alto'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
@@ -21158,7 +21434,7 @@ void main() {
 
     /// Fake-time milliseconds from the tap until a catalog row is painted.
     Future<int> openModelSheetTimed(WidgetTester tester) async {
-      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
       await tester.pump();
       await tester.pump();
       var ms = 0;
@@ -21402,24 +21678,25 @@ void main() {
         expect(find.byKey(const ValueKey('qwen3:8b')), findsOneWidget);
 
         await openModelSheet(tester);
-        final tile = find.ancestor(
-          of: find.text('qwen3:8b').last,
-          matching: find.byType(ListTile),
+        final tile = find.byKey(
+          const ValueKey('model-card-ollama-local-qwen3:8b'),
         );
         expect(tile, findsOneWidget);
         expect(
-          find.descendant(of: tile, matching: find.byIcon(Icons.check)),
+          find.descendant(of: tile, matching: find.byIcon(Icons.check_rounded)),
           findsOneWidget,
           reason: 'el modelo activo debe marcarse aunque el slug sea el alias',
         );
-        final chip = tester.widget<ChoiceChip>(
-          find.widgetWithText(ChoiceChip, 'high'),
-        );
         expect(
-          chip.onSelected,
-          isNull,
+          find.widgetWithText(ChoiceChip, 'Alto'),
+          findsNothing,
           reason: 'el catálogo dice que qwen3:8b no razona',
         );
+        expect(
+          find.text('Este modelo no admite razonamiento ajustable.'),
+          findsOneWidget,
+        );
+
         expect(tester.takeException(), isNull);
       },
     );
@@ -21540,7 +21817,7 @@ void main() {
       await tester.pump();
       expect(find.byKey(const ValueKey('old-model')), findsOneWidget);
 
-      await tester.tap(find.bySemanticsLabel('Modelo y sesión'));
+      await tester.tap(find.byKey(const ValueKey('status-pill-model')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 240));
       await tester.pump(const Duration(milliseconds: 50));
@@ -32272,7 +32549,8 @@ void main() {
     expect(avatarLoads, ['infra']);
     expect(find.byKey(const ValueKey('voice')), findsNothing);
     expect(find.byKey(const ValueKey('send')), findsOneWidget);
-    // Sin drawer ni "nueva sesión": el modelo y los controles van al overflow.
+    // Sin drawer ni "nueva sesión": el único selector de modelo está en
+    // la píldora inferior; el overflow conserva sólo los controles.
     expect(find.byKey(const ValueKey('chat-new-session')), findsNothing);
     expect(find.byKey(const ValueKey('chat-control-trigger')), findsNothing);
     expect(
@@ -32282,7 +32560,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('bot-chat-overflow-appbar')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('bot-chat-model-action')), findsOneWidget);
+    expect(find.byKey(const ValueKey('bot-chat-model-action')), findsNothing);
     expect(
       find.byKey(const ValueKey('bot-chat-control-action')),
       findsOneWidget,
