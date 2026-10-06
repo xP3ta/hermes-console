@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
-import 'settings_search.dart';
+import 'settings_sections.dart';
 
 /// A search result that leads to a section of the main Settings screen: the
 /// section scrolls into view and is highlighted once.

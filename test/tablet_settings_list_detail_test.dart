@@ -7,7 +7,7 @@ import 'package:hermes_android/core/screens/embed_settings_screen.dart';
 import 'package:hermes_android/core/screens/settings_screen.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/settings/settings_deep_link.dart';
-import 'package:hermes_android/core/settings/settings_search.dart';
+import 'package:hermes_android/core/settings/settings_sections.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
