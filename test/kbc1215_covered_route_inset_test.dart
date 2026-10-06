@@ -9,7 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:hermes_android/core/bots/ui/roster/bots_roster_view.dart';
+import 'package:hermes_android/core/bots/ui/roster/dots_home_view.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
@@ -378,7 +378,7 @@ void main() {
     for (var i = 0; i < 20; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
-    expect(find.byType(BotsRosterView), findsOneWidget);
+    expect(find.byType(DotsHomeView), findsOneWidget);
     expect(botsTab(), findsOneWidget);
     nav.push(
       MaterialPageRoute(

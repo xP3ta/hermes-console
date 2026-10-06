@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
-import 'package:hermes_android/core/bots/ui/roster/roster_rows.dart';
 import 'package:hermes_android/core/models/agent_profile.dart';
 import 'package:hermes_android/core/models/kanban.dart';
 import 'package:hermes_android/core/models/mission_control.dart';
@@ -385,7 +384,7 @@ void main() {
     addTearDown(manager.dispose);
     final snapshot = _snapshot(
       profiles: [
-        // Four pinned tiles and six rows: both roster shapes share the blink.
+        // Ten grid tiles (four pinned): every face shares the one blink.
         for (var i = 0; i < 10; i++)
           AgentProfile(
             name: 'quiet_bot_$i',
@@ -398,8 +397,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
     expect(find.byType(LivingBotFace).evaluate().length, greaterThan(8));
-    expect(find.byType(RosterPinnedTile), findsNWidgets(4));
-    expect(find.byType(RosterBotRow), findsNWidgets(6));
+    expect(
+      find.byWidgetPredicate(
+        (w) =>
+            w.key is ValueKey<String> &&
+            (w.key! as ValueKey<String>).value.startsWith('dots-tile-'),
+      ),
+      findsNWidgets(10),
+    );
     expect(livingBotFaceActiveTickers, 0);
     // Count wake-ups: rising edges of "a frame callback is pending" over one
     // minute of fake time. One edge per blink (220 ms, sampled every 100 ms).
@@ -473,8 +478,15 @@ void main() {
         find.byKey(const ValueKey('mission-bot-unread-radar')),
         findsNothing,
       );
+      // The room card carries the amber "waiting for you" dot instead.
       expect(
-        find.byKey(const ValueKey('roster-section-needs-you')),
+        find.byWidgetPredicate(
+          (w) =>
+              w.key is ValueKey<String> &&
+              (w.key! as ValueKey<String>).value.startsWith(
+                'roster-room-needs-you-',
+              ),
+        ),
         findsOneWidget,
       );
     },

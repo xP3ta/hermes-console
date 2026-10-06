@@ -116,6 +116,12 @@ Widget _host(ConnectionManager manager, MissionControlDataSource source) =>
       ),
     );
 
+/// The infra tile of the Bots home, by its TalkBack label (the grid shows
+/// only "Trabajando"; the label carries the canonical chat's title).
+Finder _infra(String status) => find.byWidgetPredicate(
+  (w) => w is Semantics && w.properties.label == 'infra, $status',
+);
+
 Future<void> _idle(WidgetTester tester, Duration span) async {
   for (var elapsed = Duration.zero; elapsed < span;) {
     await tester.pump(const Duration(seconds: 1));
@@ -288,7 +294,7 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(find.text('Trabajando · Migrar'), findsOneWidget);
+      expect(_infra('trabajando: Migrar'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
     });
 
@@ -300,7 +306,7 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(find.text('Esperando tu respuesta · Desplegar'), findsOneWidget);
+      expect(_infra('te espera: Desplegar'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
     });
 
@@ -314,7 +320,7 @@ void main() {
       await tester.pumpWidget(_host(manager, wire.repository(feed: feed)));
       await tester.pump();
       await tester.pump();
-      expect(find.text('Trabajando · Migrar'), findsOneWidget);
+      expect(_infra('trabajando: Migrar'), findsOneWidget);
 
       // The roster refresh after sessions.changed times out on active_list.
       wire.activeList = () => Future.error(TimeoutException('timed out'));
@@ -322,16 +328,16 @@ void main() {
       feed.sessionsChanged();
       await tester.pump();
       await tester.pump();
-      expect(find.text('Trabajando · Migrar'), findsOneWidget);
+      expect(_infra('trabajando: Migrar'), findsOneWidget);
 
       // A full reload that fails the same way keeps it too.
       await _idle(tester, const Duration(seconds: 125));
-      expect(find.text('Trabajando · Migrar'), findsOneWidget);
+      expect(_infra('trabajando: Migrar'), findsOneWidget);
 
       // Only an answer, even an empty one, ends it.
       wire.activeList = () async => const DesktopActiveSessionList();
       await _idle(tester, const Duration(seconds: 125));
-      expect(find.text('Trabajando · Migrar'), findsNothing);
+      expect(_infra('trabajando: Migrar'), findsNothing);
       await tester.pumpWidget(const SizedBox());
     });
 
@@ -362,7 +368,7 @@ void main() {
         await tester.pumpWidget(_host(manager, wire.repository(feed: feed)));
         await tester.pump();
         await tester.pump();
-        expect(find.text('Trabajando · Migrar'), findsOneWidget);
+        expect(_infra('trabajando: Migrar'), findsOneWidget);
 
         // A roster refresh starts and its active_list answer is held back.
         final stale = Completer<DesktopActiveSessionList>();
@@ -380,13 +386,13 @@ void main() {
         feed.sessionsChanged();
         await tester.pump();
         await tester.pump();
-        expect(find.text('Trabajando · Migrar'), findsNothing);
+        expect(_infra('trabajando: Migrar'), findsNothing);
 
         // The pre-drop answer finally arrives: it must not repaint «working».
         stale.complete(_list('working'));
         await tester.pump();
         await tester.pump();
-        expect(find.text('Trabajando · Migrar'), findsNothing);
+        expect(_infra('trabajando: Migrar'), findsNothing);
         await tester.pumpWidget(const SizedBox());
       },
     );

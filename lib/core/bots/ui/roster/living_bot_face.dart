@@ -30,6 +30,14 @@ extension BotFaceSignalMotion on BotFaceSignal {
       this == BotFaceSignal.working || this == BotFaceSignal.attention;
 }
 
+/// Look of a [LivingBotFace]: [classic] (pulsing ring, flat face) or
+/// [dots] (Bots home, owner variant C): matte volume, larger eyes, a soft
+/// contact shadow, a thin orbit ring with one travelling dot while busy and
+/// a static amber ring plus dot while the bot waits for the user. Both share
+/// the same clock rules (idle never ticks, busy ≤ ~30 fps, covered,
+/// background or reduced motion paint a static frame).
+enum LivingBotFaceStyle { classic, dots }
+
 /// Test switch: when true every [LivingBotFace] paints its static frame
 /// (exactly as with reduced motion) so widget tests of whole screens can
 /// `pumpAndSettle`. Set for the whole suite in `flutter_test_config.dart`;
@@ -142,6 +150,8 @@ class LivingBotFace extends StatefulWidget {
   /// faces are the most expressive.
   final double? expressiveness;
 
+  final LivingBotFaceStyle style;
+
   const LivingBotFace({
     super.key,
     required this.profileName,
@@ -153,6 +163,7 @@ class LivingBotFace extends StatefulWidget {
     this.entrance = true,
     this.expressiveness,
     this.blink = LivingBotFaceBlink.own,
+    this.style = LivingBotFaceStyle.classic,
   });
 
   /// Amplitude used for a face of [size] dp: small faces need more relative
@@ -377,7 +388,9 @@ class _LivingBotFaceState extends State<LivingBotFace>
       blink: _motion ? _blink : null,
       signal: signal,
       gain: gain,
+      matte: widget.style == LivingBotFaceStyle.dots,
     );
+    final dots = widget.style == LivingBotFaceStyle.dots;
     final ringColor = signal == BotFaceSignal.attention
         ? colors.warning
         : colors.accent;
@@ -405,6 +418,15 @@ class _LivingBotFaceState extends State<LivingBotFace>
             dy = -math.sin(k * math.pi) * size * .07;
             turn = math.sin(k * math.pi * 4) * .09 * (1 - k);
           }
+        }
+        if (dots) {
+          return Opacity(
+            opacity: entrance.clamp(0.0, 1.0),
+            child: Transform.scale(
+              scale: .6 + .4 * entrance,
+              child: _dotsFrame(colors, ms, child!, dy, turn),
+            ),
+          );
         }
         final pulse = _continuous && signal.hasRing
             ? (math.sin((ms + _phaseMs) / 1300 * 2 * math.pi) + 1) / 2
@@ -474,6 +496,143 @@ class _LivingBotFaceState extends State<LivingBotFace>
   }
 }
 
+extension on _LivingBotFaceState {
+  /// Dots look: contact shadow, the face, then the state mark (orbit while
+  /// busy, amber ring and dot while waiting, nothing when idle).
+  Widget _dotsFrame(
+    HermesThemeColors colors,
+    double ms,
+    Widget face,
+    double dy,
+    double turn,
+  ) {
+    final signal = widget.signal;
+    final size = widget.size;
+    final busy =
+        signal == BotFaceSignal.working ||
+        signal == BotFaceSignal.thinking ||
+        signal == BotFaceSignal.speaking;
+    final waiting = signal == BotFaceSignal.attention;
+    // One lap every 2.6 s while the clock runs; a fixed top position in the
+    // static frame (reduced motion, covered route, tests).
+    final angle = _continuous
+        ? ((ms + _phaseMs) % 2600) / 2600 * 2 * math.pi - math.pi / 2
+        : -math.pi / 2;
+    final dotSize = math.max(7.0, size * .13);
+    final ring = size * .56;
+    return SizedBox.square(
+      dimension: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          if (size >= 40)
+            Positioned(
+              left: size * .2,
+              right: size * .2,
+              bottom: -size * .04,
+              height: size * .1,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(size),
+                    gradient: RadialGradient(
+                      colors: [
+                        Colors.black.withValues(alpha: .32),
+                        Colors.black.withValues(alpha: 0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          Transform.translate(
+            offset: Offset(0, dy),
+            child: Transform.rotate(angle: turn, child: face),
+          ),
+          if (busy || waiting)
+            Positioned.fill(
+              // Same identity as the classic ring: "this face shows a state".
+              key: ValueKey('living-face-ring-${signal.name}'),
+              child: IgnorePointer(
+                child: CustomPaint(
+                  key: ValueKey(busy ? 'dots-face-orbit' : 'dots-face-ring'),
+                  painter: _DotsRingPainter(
+                    color: waiting ? colors.warning : colors.accent,
+                    radius: ring,
+                    width: size >= 56 ? 1.6 : 1.3,
+                    // A waiting ring carries no travelling dot.
+                    dotAngle: busy ? angle : null,
+                    dotRadius: dotSize / 2,
+                  ),
+                ),
+              ),
+            ),
+          if (waiting)
+            Positioned(
+              key: const ValueKey('dots-face-waiting-dot'),
+              left: size / 2 + ring * math.cos(-math.pi / 4) - dotSize / 2,
+              top: size / 2 + ring * math.sin(-math.pi / 4) - dotSize / 2,
+              width: dotSize,
+              height: dotSize,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colors.warning,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Thin ring around a Dots face, with an optional dot on it.
+final class _DotsRingPainter extends CustomPainter {
+  final Color color;
+  final double radius;
+  final double width;
+  final double? dotAngle;
+  final double dotRadius;
+
+  const _DotsRingPainter({
+    required this.color,
+    required this.radius,
+    required this.width,
+    required this.dotAngle,
+    required this.dotRadius,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = width
+        ..color = color.withValues(alpha: .62),
+    );
+    final angle = dotAngle;
+    if (angle == null) return;
+    canvas.drawCircle(
+      center + Offset(math.cos(angle), math.sin(angle)) * radius,
+      dotRadius,
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_DotsRingPainter old) =>
+      old.color != color ||
+      old.radius != radius ||
+      old.width != width ||
+      old.dotAngle != dotAngle ||
+      old.dotRadius != dotRadius;
+}
+
 /// Procedural Blobatar or raster avatar, both driven by the shared clock.
 class _Face extends StatelessWidget {
   final String profileName;
@@ -485,6 +644,7 @@ class _Face extends StatelessWidget {
   final Animation<double>? blink;
   final BotFaceSignal signal;
   final double gain;
+  final bool matte;
 
   const _Face({
     required this.profileName,
@@ -496,6 +656,7 @@ class _Face extends StatelessWidget {
     required this.blink,
     required this.signal,
     required this.gain,
+    this.matte = false,
   });
 
   @override
@@ -543,6 +704,7 @@ class _Face extends StatelessWidget {
       motionState: signal.motionState,
       motionGain: gain,
       eyeGain: LivingBotFace.eyeGainFor(gain),
+      finish: matte ? HermesBotFaceFinish.matte : HermesBotFaceFinish.flat,
     );
   }
 }
