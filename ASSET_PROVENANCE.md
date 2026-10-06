@@ -4,28 +4,32 @@ This file records the origin, redistribution terms and reproducible SHA-256
 digests for artwork maintained by Hermes Console. It does not grant rights in
 third-party names or trademarks.
 
-## Hermes Console identity
+## Console identity
 
-The project owner states that the current gold woman-and-circuit logo was
-created under their direction using ChatGPT and selected by them as original
-Hermes Console artwork. It was not copied from or derived from Nous Research or
-Hermes Agent artwork. The owner licenses the files listed below for this
-repository under `GPL-3.0-only`.
+The Console mark (a terracotta «C» with a cursor bar on a graphite rounded
+square) was supplied by the project owner as vector artwork and selected as
+the app identity for launcher, splash, notifications, store and repository
+use. It was not copied from or derived from Nous Research or Hermes Agent
+artwork. The owner licenses the files listed below for this repository under
+`GPL-3.0-only`.
 
 This statement is limited to copyright permission for the listed files in this
 repository. It makes no broader trademark claim and grants no trademark rights.
 
 | File | Role | Source | License | SHA-256 |
 |---|---|---|---|---|
-| `assets/branding/hermes_logo.webp` | Canonical dark-background in-app logo | Owner-directed ChatGPT output, selected and edited for Hermes Console | GPL-3.0-only | `400bdeabc916c7f17dfb3434acdc8064f1c5d3a5dfd5d1612834e93a08fd1359` |
-| `assets/branding/hermes_logo_light.png` | Light-background in-app variant | Owner-directed ChatGPT output, selected and edited for Hermes Console | GPL-3.0-only | `75a8a05bff4bd92ab17dc2720f171e004a98f372fdaf363d27fc770fe492d98c` |
-| `assets/icon/play_store_512.png` | Store/readme rendition of the current logo | Raster preparation of the owner-selected identity | GPL-3.0-only | `f6826e87e7f751b253e83efacbf2f67fd9af583b6e9ca6b19c3e8bb87f193161` |
-| `assets/branding/hermes_console_hero.svg` | Editable repository hero | Project-authored vector composition using the owner-selected Hermes Console identity | GPL-3.0-only | `455f918d7fe75605831cf0e692848bf261d08ba57dafb838e9443ef6afa3e9e0` |
-| `assets/branding/hermes_console_hero.png` | Raster repository hero | PNG render of `hermes_console_hero.svg` | GPL-3.0-only | `456f6743ca3bc463009bc822c06c5c042f383ad075a70e39d2d4294834659883` |
+| `assets/branding/console_mark.svg` | Editable mark (terracotta) | Owner-supplied vector artwork | GPL-3.0-only | `259d95c15bc2ffc4e4c5aefd9f6f6e4e3986bbcb90e396561847d604a9a5baa2` |
+| `assets/branding/console_icon.svg` | Editable app icon (graphite rounded square + mark) | Owner-supplied vector artwork | GPL-3.0-only | `e543e80eb6bdcb38fc19d8a74a1b709fffc37f80cfcba51494ea1b7531905e9f` |
+| `assets/branding/console_mark.png` | In-app mark (splash, onboarding) | PNG render of `console_mark.svg` | GPL-3.0-only | `34efb1edb6ac87ebb8d94fa5947d4bdee777cbf0e0edee21bead7a6fd298ac71` |
+| `assets/branding/console_icon.png` | In-app app icon (About) | Owner-supplied 512 px render of `console_icon.svg` | GPL-3.0-only | `7401045439e5fb107905b4e331eaa16def54bd8856fe7d77f44862446fde8fc4` |
+| `assets/icon/play_store_512.png` | Store/readme rendition of the icon (full-bleed square) | Owner-supplied Play Store render | GPL-3.0-only | `8af00bd7efe9c16c998e3aefd9e65010f9896a4484535acb29bdc6de99a91442` |
+| `assets/branding/hermes_console_hero.svg` | Editable repository hero | Project-authored vector composition of the mark and an outlined Inter wordmark | GPL-3.0-only | `19cf1e8e28c2d04f3e57b0e292cfcd7b365cc33df90135a6bc0517169f44923c` |
+| `assets/branding/hermes_console_hero.png` | Raster repository hero | PNG render of `hermes_console_hero.svg` | GPL-3.0-only | `fbfada6ff6e3a7a21a0cf9eca106ec1f8b57f495e2cc712be2bddbd6dc02f9ae` |
 
-The launcher, adaptive-icon and splash PNGs below are raster derivatives of
-this identity generated for Android densities and flavors. Their complete
-file-by-file digest manifest is
+The Android launcher, adaptive-icon, notification and splash resources are
+vector drawables transcribed from the mark's SVG geometry plus raster
+derivatives for legacy densities and the splash. The complete file-by-file
+digest manifest of the raster files is
 [`assets/branding/android-launcher-splash.sha256`](assets/branding/android-launcher-splash.sha256).
 
 The geometric Spark symbol is project-native artwork authored for Hermes
@@ -75,8 +79,10 @@ To verify the canonical files from the repository root:
 
 ```bash
 sha256sum -c assets/branding/android-launcher-splash.sha256
-sha256sum assets/branding/hermes_logo.webp \
-  assets/branding/hermes_logo_light.png \
+sha256sum assets/branding/console_mark.svg \
+  assets/branding/console_icon.svg \
+  assets/branding/console_mark.png \
+  assets/branding/console_icon.png \
   assets/branding/spark_mark.svg \
   assets/branding/spark_mark.png \
   assets/branding/spark_mark.webp \
