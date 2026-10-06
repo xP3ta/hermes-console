@@ -35,6 +35,7 @@ import '../utils/session_timestamp.dart';
 import '../utils/session_title.dart';
 import '../../l10n/app_localizations.dart';
 import 'hermes_notice.dart';
+import 'menu_back_guard.dart';
 import 'owned_resource_host.dart';
 import 'profile_switcher.dart';
 
@@ -912,145 +913,151 @@ class _DrawerHeader extends StatelessWidget {
     final canSwitch = connections.isNotEmpty;
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 
-    return MenuAnchor(
-      key: const ValueKey('drawer-instance-menu'),
-      animated: !reduceMotion,
-      crossAxisUnconstrained: false,
-      alignmentOffset: const Offset(-10, 0),
-      style: MenuStyle(
-        backgroundColor: WidgetStatePropertyAll(colors.surface),
-        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
-        elevation: const WidgetStatePropertyAll(10),
-        minimumSize: const WidgetStatePropertyAll(Size(240, 0)),
-        maximumSize: const WidgetStatePropertyAll(Size(280, double.infinity)),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: colors.divider.withValues(alpha: 0.72)),
+    // Back closes the open instance menu only, not the drawer.
+    return MenuBackGuard(
+      builder: (context, menuController, onOpen, onClose) => MenuAnchor(
+        key: const ValueKey('drawer-instance-menu'),
+        controller: menuController,
+        onOpen: onOpen,
+        onClose: onClose,
+        animated: !reduceMotion,
+        crossAxisUnconstrained: false,
+        alignmentOffset: const Offset(-10, 0),
+        style: MenuStyle(
+          backgroundColor: WidgetStatePropertyAll(colors.surface),
+          surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+          elevation: const WidgetStatePropertyAll(10),
+          minimumSize: const WidgetStatePropertyAll(Size(240, 0)),
+          maximumSize: const WidgetStatePropertyAll(Size(280, double.infinity)),
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: colors.divider.withValues(alpha: 0.72)),
+            ),
+          ),
+          padding: const WidgetStatePropertyAll(
+            EdgeInsets.symmetric(vertical: 6),
           ),
         ),
-        padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(vertical: 6),
-        ),
-      ),
-      menuChildren: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
-          child: Text(
-            Strings.of(context).drawerSwitchInstance,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(
-              context,
-            ).textTheme.labelLarge?.copyWith(color: colors.textSecondary),
-          ),
-        ),
-        for (final saved in connections)
-          MenuItemButton(
-            key: ValueKey('drawer-instance-option-${saved.id}'),
-            leadingIcon: Icon(
-              Icons.dns_outlined,
-              size: 20,
-              color: saved.id == activeConnectionId
-                  ? colors.accent
-                  : colors.textSecondary,
-            ),
-            trailingIcon: saved.id == activeConnectionId
-                ? Icon(
-                    Icons.check_rounded,
-                    size: 20,
-                    color: colors.accent,
-                    semanticLabel: Strings.of(context).drawerActiveInstance,
-                  )
-                : const SizedBox(width: 20),
-            style: const ButtonStyle(
-              minimumSize: WidgetStatePropertyAll(Size(0, 48)),
-              padding: WidgetStatePropertyAll(
-                EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              ),
-            ),
-            onPressed: () => onSelected(saved.id),
+        menuChildren: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
             child: Text(
-              saved.label,
+              Strings.of(context).drawerSwitchInstance,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: colors.textPrimary,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(color: colors.textSecondary),
             ),
           ),
-      ],
-      builder: (context, controller, child) => Semantics(
-        header: true,
-        button: canSwitch,
-        hint: canSwitch ? Strings.of(context).drawerSwitchInstance : null,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            key: const ValueKey('drawer-instance-selector'),
-            onTap: !canSwitch
-                ? null
-                : () {
-                    if (controller.isOpen) {
-                      controller.close();
-                    } else {
-                      controller.open();
-                    }
-                  },
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 14, 13),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Hermes Console',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.3,
-                      color: colors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          color: dotColor,
-                          shape: BoxShape.circle,
-                        ),
+          for (final saved in connections)
+            MenuItemButton(
+              key: ValueKey('drawer-instance-option-${saved.id}'),
+              leadingIcon: Icon(
+                Icons.dns_outlined,
+                size: 20,
+                color: saved.id == activeConnectionId
+                    ? colors.accent
+                    : colors.textSecondary,
+              ),
+              trailingIcon: saved.id == activeConnectionId
+                  ? Icon(
+                      Icons.check_rounded,
+                      size: 20,
+                      color: colors.accent,
+                      semanticLabel: Strings.of(context).drawerActiveInstance,
+                    )
+                  : const SizedBox(width: 20),
+              style: const ButtonStyle(
+                minimumSize: WidgetStatePropertyAll(Size(0, 48)),
+                padding: WidgetStatePropertyAll(
+                  EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                ),
+              ),
+              onPressed: () => onSelected(saved.id),
+              child: Text(
+                saved.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: colors.textPrimary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+        ],
+        builder: (context, controller, child) => Semantics(
+          header: true,
+          button: canSwitch,
+          hint: canSwitch ? Strings.of(context).drawerSwitchInstance : null,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              key: const ValueKey('drawer-instance-selector'),
+              onTap: !canSwitch
+                  ? null
+                  : () {
+                      if (controller.isOpen) {
+                        controller.close();
+                      } else {
+                        controller.open();
+                      }
+                    },
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 14, 13),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Hermes Console',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.3,
+                        color: colors.textPrimary,
                       ),
-                      const SizedBox(width: 7),
-                      Expanded(
-                        child: Text(
-                          connectionLabel == null
-                              ? Strings.of(context).drawerNoActiveInstance
-                              : '$connectionLabel · $statusWord',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            height: 1.2,
-                            color: colors.textSecondary,
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: dotColor,
+                            shape: BoxShape.circle,
                           ),
                         ),
-                      ),
-                      if (canSwitch) ...[
-                        const SizedBox(width: 4),
-                        Icon(
-                          Icons.expand_more_rounded,
-                          size: 18,
-                          color: colors.textSecondary,
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            connectionLabel == null
+                                ? Strings.of(context).drawerNoActiveInstance
+                                : '$connectionLabel · $statusWord',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              height: 1.2,
+                              color: colors.textSecondary,
+                            ),
+                          ),
                         ),
+                        if (canSwitch) ...[
+                          const SizedBox(width: 4),
+                          Icon(
+                            Icons.expand_more_rounded,
+                            size: 18,
+                            color: colors.textSecondary,
+                          ),
+                        ],
                       ],
-                    ],
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
