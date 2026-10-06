@@ -3,7 +3,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// The one-line pinned prompt at the top of a chat: on by default, can be
 /// switched off globally in Settings, or hidden for a single chat with its
-/// × (remembered per chat).
+/// × (remembered per chat). A hidden chat gets it back from the chat menu,
+/// the × SnackBar's Undo, or by switching the Settings toggle back on.
 class PinnedPromptPrefs extends ChangeNotifier {
   PinnedPromptPrefs._(this._prefs)
     : _enabled = _prefs?.getBool(key) ?? true,
@@ -37,12 +38,17 @@ class PinnedPromptPrefs extends ChangeNotifier {
 
   bool get enabled => _enabled;
 
+  /// Turning the switch back on also forgets every per-chat hide, so the
+  /// Settings switch is a way back for a prompt hidden with ×.
   Future<void> setEnabled(bool value) async {
     if (_enabled == value) return;
     _enabled = value;
+    final clearHidden = value && _hidden.isNotEmpty;
+    if (clearHidden) _hidden.clear();
     notifyListeners();
     if (value) {
       await _prefs?.remove(key);
+      if (clearHidden) await _prefs?.remove(hiddenKey);
     } else {
       await _prefs?.setBool(key, false);
     }
@@ -59,5 +65,16 @@ class PinnedPromptPrefs extends ChangeNotifier {
     }
     notifyListeners();
     await _prefs?.setStringList(hiddenKey, List.of(_hidden));
+  }
+
+  /// Undoes [hideFor] for one chat.
+  Future<void> showFor(String chatKey) async {
+    if (!_hidden.remove(chatKey)) return;
+    notifyListeners();
+    if (_hidden.isEmpty) {
+      await _prefs?.remove(hiddenKey);
+    } else {
+      await _prefs?.setStringList(hiddenKey, List.of(_hidden));
+    }
   }
 }

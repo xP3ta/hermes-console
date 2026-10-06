@@ -17,6 +17,7 @@ import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
 import 'package:hermes_android/core/services/pinned_prompt_prefs.dart';
+import 'package:hermes_android/core/widgets/hermes_notice.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
@@ -1663,6 +1664,101 @@ void main() {
       await PinnedPromptPrefs.shared.setEnabled(false);
       await settleHeader(tester);
       expect(header(), findsNothing);
+      await tearDownChat(tester, gateway);
+    });
+
+    // QA 9490: once hidden with ×, the pinned prompt could never come back:
+    // the Settings switch off/on kept the per-chat hide.
+    testWidgets('× offers Undo in a notice, which shows it again', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: twoLongTurns());
+      await settle(tester);
+      await settleHeader(tester);
+      expect(headerState(tester), 'B');
+
+      await tester.tap(dismiss());
+      await settleHeader(tester);
+      expect(header(), findsNothing);
+      // The app's notice lane (HermesNotice) stands in for a SnackBar.
+      expect(find.text('Oculta en este chat'), findsOneWidget);
+      await tester.tap(find.text('Deshacer'));
+      await settleHeader(tester);
+      expect(PinnedPromptPrefs.shared.isHiddenFor(sessionKey), isFalse);
+      expect(headerState(tester), 'B');
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('the chat menu shows it again only while it is hidden', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: twoLongTurns());
+      await settle(tester);
+      await settleHeader(tester);
+      expect(headerState(tester), 'B');
+      final show = find.byKey(
+        const ValueKey('chat-control-show-pinned-prompt'),
+      );
+
+      Future<void> openMenu() async {
+        await tester.tap(find.byKey(const ValueKey('chat-control-trigger')));
+        await settleHeader(tester);
+        expect(find.byKey(const ValueKey('chat-control-dialog')), findsOne);
+      }
+
+      await openMenu();
+      expect(show, findsNothing);
+      await tester.binding.handlePopRoute();
+      await settleHeader(tester);
+
+      await tester.tap(dismiss());
+      await settleHeader(tester);
+      HermesNotice.of(
+        tester.element(find.byType(Scaffold).last),
+      ).removeCurrentSnackBar();
+      await settleHeader(tester);
+      expect(header(), findsNothing);
+
+      await openMenu();
+      expect(
+        find.descendant(
+          of: show,
+          matching: find.text('Mostrar tu pregunta fijada'),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(show);
+      await settleHeader(tester);
+      await settleHeader(tester);
+      expect(find.byKey(const ValueKey('chat-control-dialog')), findsNothing);
+      expect(PinnedPromptPrefs.shared.isHiddenFor(sessionKey), isFalse);
+      expect(headerState(tester), 'B');
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('switching the Settings toggle back on clears every per-chat '
+        'hide', (tester) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: twoLongTurns());
+      await settle(tester);
+      await settleHeader(tester);
+      await PinnedPromptPrefs.shared.hideFor('conn-x.other');
+      await tester.tap(dismiss());
+      await settleHeader(tester);
+      expect(header(), findsNothing);
+
+      await PinnedPromptPrefs.shared.setEnabled(false);
+      await settleHeader(tester);
+      expect(PinnedPromptPrefs.shared.isHiddenFor(sessionKey), isTrue);
+      await PinnedPromptPrefs.shared.setEnabled(true);
+      await settleHeader(tester);
+      expect(PinnedPromptPrefs.shared.isHiddenFor(sessionKey), isFalse);
+      expect(PinnedPromptPrefs.shared.isHiddenFor('conn-x.other'), isFalse);
+      expect(headerState(tester), 'B');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getStringList(PinnedPromptPrefs.hiddenKey), isNull);
       await tearDownChat(tester, gateway);
     });
 

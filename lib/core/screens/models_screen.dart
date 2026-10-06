@@ -2141,12 +2141,14 @@ class _ModelsScreenState extends State<ModelsScreen>
         shape: const Border(),
         collapsedShape: const Border(),
         tilePadding: const EdgeInsets.symmetric(horizontal: 14),
-        leading: Icon(Icons.tune, color: colors.accent),
+        leading: SizedBox.square(
+          dimension: 30,
+          child: Icon(Icons.tune, size: 21, color: colors.accent),
+        ),
         title: Text(
           s.mdlAuxSection,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
+          style: HermesListRow.titleStyle(
+            Theme.of(context),
             color: colors.textPrimary,
           ),
         ),
@@ -2154,7 +2156,10 @@ class _ModelsScreenState extends State<ModelsScreen>
           customized == 0
               ? s.mdlAuxAllAuto
               : s.mdlAuxCustomized(customized, _auxTasks.length),
-          style: TextStyle(fontSize: 11, color: colors.textDisabled),
+          style: HermesListRow.subtitleStyle(
+            Theme.of(context),
+            color: colors.textSecondary,
+          ),
         ),
         childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
         children: [
@@ -2185,12 +2190,14 @@ class _ModelsScreenState extends State<ModelsScreen>
         shape: const Border(),
         collapsedShape: const Border(),
         tilePadding: const EdgeInsets.symmetric(horizontal: 14),
-        leading: Icon(Icons.lock_outline, color: colors.textDisabled),
+        leading: SizedBox.square(
+          dimension: 30,
+          child: Icon(Icons.lock_outline, size: 21, color: colors.textDisabled),
+        ),
         title: Text(
           Strings.of(context).mdlUnconfiguredProviders,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
+          style: HermesListRow.titleStyle(
+            Theme.of(context),
             color: colors.textPrimary,
           ),
         ),
@@ -2200,7 +2207,10 @@ class _ModelsScreenState extends State<ModelsScreen>
           _catalogFromCache
               ? '${Strings.of(context).mdlUnconfiguredHint(providers.length)} · ${Strings.of(context).mdlCatalogOfflineSuffix}'
               : Strings.of(context).mdlUnconfiguredHint(providers.length),
-          style: TextStyle(fontSize: 11, color: colors.textDisabled),
+          style: HermesListRow.subtitleStyle(
+            Theme.of(context),
+            color: colors.textSecondary,
+          ),
         ),
         childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
         children: providers.map((p) => _buildUnauthTile(colors, p)).toList(),

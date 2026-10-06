@@ -14,6 +14,7 @@ class ChatControlLabels {
   final String artifacts;
   final String? content;
   final String? prompts;
+  final String? showPinnedPrompt;
   final String? branch;
   final String details;
   final String cron;
@@ -44,6 +45,7 @@ class ChatControlLabels {
     this.extensions,
     this.content,
     this.prompts,
+    this.showPinnedPrompt,
     this.branch,
     this.terminal,
   });
@@ -62,6 +64,9 @@ class ChatControlSheet extends StatelessWidget {
   final VoidCallback onArtifacts;
   final VoidCallback? onContent;
   final VoidCallback? onPrompts;
+
+  /// Shows the pinned prompt again; null while it is not hidden here.
+  final VoidCallback? onShowPinnedPrompt;
   final VoidCallback? onBranch;
   final VoidCallback? onDetails;
   final VoidCallback? onCron;
@@ -83,6 +88,7 @@ class ChatControlSheet extends StatelessWidget {
     this.onDelete,
     this.onContent,
     this.onPrompts,
+    this.onShowPinnedPrompt,
     this.onBranch,
     this.readOnly = false,
     this.showDetails = false,
@@ -181,6 +187,13 @@ class ChatControlSheet extends StatelessWidget {
                   icon: Icons.chat_bubble_outline_rounded,
                   title: labels.prompts!,
                   onTap: onPrompts,
+                ),
+              if (labels.showPinnedPrompt != null && onShowPinnedPrompt != null)
+                _ActionRow(
+                  key: const ValueKey('chat-control-show-pinned-prompt'),
+                  icon: Icons.vertical_align_top_rounded,
+                  title: labels.showPinnedPrompt!,
+                  onTap: onShowPinnedPrompt,
                 ),
               if (labels.branch != null && onBranch != null)
                 _ActionRow(

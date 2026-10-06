@@ -221,6 +221,7 @@ import '../widgets/motion_entrance.dart';
 import '../widgets/subagent_activity_card.dart';
 import '../design/modal.dart'
     show
+        releaseTextFocusIfKeyboardHidden,
         showHermesDialog,
         showHermesMenu,
         HermesAction,
@@ -1061,6 +1062,7 @@ enum _ChatControlAction {
   permissions,
   refresh,
   prompts,
+  showPinnedPrompt,
   content,
   branch,
   artifacts,
@@ -1972,6 +1974,23 @@ class _ChatScreenState extends State<ChatScreen>
   String get _pinnedPromptChatKey =>
       '${widget.connection.id}.${widget.session.logicalId}';
 
+  /// The pinned prompt's ×: hides it for this chat and offers Undo. The
+  /// chat menu can show it again later, and so can the Settings toggle.
+  void _hidePinnedPrompt() {
+    final prefs = PinnedPromptPrefs.shared;
+    final chatKey = _pinnedPromptChatKey;
+    unawaited(prefs.hideFor(chatKey));
+    final str = Strings.of(context);
+    HermesNotice.show(
+      context,
+      message: str.q90PinnedPromptHidden,
+      action: HermesNoticeAction(
+        label: str.q90PinnedPromptUndo,
+        onPressed: () => unawaited(prefs.showFor(chatKey)),
+      ),
+    );
+  }
+
   /// The slim one-line pinned prompt. It listens to the pinned prompt and
   /// its preferences itself, so following the scroll never rebuilds the
   /// screen or the transcript rows.
@@ -2015,7 +2034,7 @@ class _ChatScreenState extends State<ChatScreen>
               semanticLabel: str.pj1215StickyPromptLabel,
               hideLabel: str.cs1215PinnedPromptHide,
               onTap: () => unawaited(_revealStickyPrompt(prompt)),
-              onHide: () => unawaited(prefs.hideFor(_pinnedPromptChatKey)),
+              onHide: _hidePinnedPrompt,
             ),
           );
         }
@@ -10365,6 +10384,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (userOrdinal == null) return;
     final prompt = (user['content'] ?? '').toString().trim();
     if (prompt.isEmpty) return;
+    releaseTextFocusIfKeyboardHidden(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -10419,6 +10439,7 @@ class _ChatScreenState extends State<ChatScreen>
       ).showSnackBar(SnackBar(content: Text(str.setUpdateAlreadyRunning)));
       return;
     }
+    releaseTextFocusIfKeyboardHidden(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -11510,6 +11531,7 @@ class _ChatScreenState extends State<ChatScreen>
             artifacts: strings.chaArtifactsAction,
             content: strings.sa1215ContentAction,
             prompts: strings.pj1215PromptsAction,
+            showPinnedPrompt: strings.q90PinnedPromptShow,
             branch: strings.tc1215BranchChat,
             details: strings.chaSessionDetailsAction,
             cron: strings.crnOpenFromConversation,
@@ -11533,6 +11555,11 @@ class _ChatScreenState extends State<ChatScreen>
           onArtifacts: () => select(_ChatControlAction.artifacts),
           onContent: () => select(_ChatControlAction.content),
           onPrompts: () => select(_ChatControlAction.prompts),
+          onShowPinnedPrompt:
+              PinnedPromptPrefs.shared.enabled &&
+                  PinnedPromptPrefs.shared.isHiddenFor(_pinnedPromptChatKey)
+              ? () => select(_ChatControlAction.showPinnedPrompt)
+              : null,
           onBranch: _chat.canBranchChat
               ? () => select(_ChatControlAction.branch)
               : null,
@@ -11570,6 +11597,8 @@ class _ChatScreenState extends State<ChatScreen>
         unawaited(_fetchMessages());
       case _ChatControlAction.prompts:
         unawaited(_showPromptSheet());
+      case _ChatControlAction.showPinnedPrompt:
+        unawaited(PinnedPromptPrefs.shared.showFor(_pinnedPromptChatKey));
       case _ChatControlAction.content:
         unawaited(_openChatContent());
       case _ChatControlAction.branch:
@@ -11762,6 +11791,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   Future<void> _releaseRuntimeForDesktop() async {
     final strings = Strings.of(context);
+    releaseTextFocusIfKeyboardHidden(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -12457,6 +12487,7 @@ class _ChatScreenState extends State<ChatScreen>
       cronDeletion = choice;
     } else {
       final colors = Theme.of(context).hermes;
+      releaseTextFocusIfKeyboardHidden(context);
       final confirm = await showDialog<bool>(
         context: context,
         builder: (_) => AlertDialog(
@@ -14099,6 +14130,7 @@ class _ChatScreenState extends State<ChatScreen>
     final strings = Strings.of(context);
     final progress = ValueNotifier<String>(strings.bridgeUpdating);
     BuildContext? progressDialogContext;
+    releaseTextFocusIfKeyboardHidden(context);
     final progressDialog = showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -14194,6 +14226,7 @@ class _ChatScreenState extends State<ChatScreen>
     // arrancó sin el catálogo requerido. Mostramos siempre el motivo que antes
     // quedaba oculto y mantenemos la vía fiable de copia-pega + verificación.
     final verifying = ValueNotifier<bool>(false);
+    releaseTextFocusIfKeyboardHidden(context);
     showDialog<void>(
       context: context,
       builder: (dctx) => AlertDialog(
@@ -14970,6 +15003,7 @@ class _ChatScreenState extends State<ChatScreen>
         );
         if (!ok || !mounted) return;
       }
+      releaseTextFocusIfKeyboardHidden(context);
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (_) {
@@ -15397,6 +15431,7 @@ class _ChatScreenState extends State<ChatScreen>
       ),
       SttStatus.ready => ('', '', ''),
     };
+    releaseTextFocusIfKeyboardHidden(context);
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(

@@ -14671,6 +14671,163 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // QA 9490 (físico, 4/4): composer enfocado → Atrás oculta el teclado (el
+  // campo sigue enfocado) → abrir un panel desde el chat → cerrarlo → el
+  // teclado se reabría solo porque la ruta del chat devolvía el foco al
+  // composer. Ningún panel alcanzable desde el chat puede reabrirlo.
+  group(
+    'qa9490: cerrar un panel del chat con el teclado oculto no lo reabre',
+    () {
+      Future<void> settle(WidgetTester tester) async {
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+      }
+
+      final overlays =
+          <
+            (
+              String,
+              Finder Function() trigger,
+              Finder Function() surface,
+              Future<void> Function(WidgetTester)? close,
+              bool backCloses,
+            )
+          >[
+            (
+              'uso de contexto',
+              () => find.byKey(const ValueKey('chat-status-pill')),
+              () => find.byKey(const ValueKey('desktop-context-usage-popover')),
+              (tester) => tester.tap(
+                find.descendant(
+                  of: find.byKey(
+                    const ValueKey('desktop-context-usage-popover'),
+                  ),
+                  matching: find.byTooltip('Cerrar'),
+                ),
+              ),
+              true,
+            ),
+            (
+              'modelo y sesión',
+              () => find.bySemanticsLabel('Modelo y sesión'),
+              () => find.byKey(const ValueKey('chat-model-dialog')),
+              null,
+              true,
+            ),
+            (
+              'control del chat',
+              () => find.byKey(const ValueKey('chat-control-trigger')),
+              () => find.byKey(const ValueKey('chat-control-dialog')),
+              null,
+              true,
+            ),
+            (
+              'adjuntos',
+              () => find.byKey(const ValueKey('composer-add')),
+              () => find.byType(MenuItemButton),
+              // El menú de adjuntos es un MenuAnchor (sin ruta): se cierra al
+              // tocar fuera, no con Atrás.
+              (tester) => tester.tapAt(const Offset(200, 300)),
+              false,
+            ),
+          ];
+
+      for (final (name, trigger, surface, close, backCloses) in overlays) {
+        for (final viaButton in [
+          if (backCloses) false,
+          if (close != null) true,
+        ]) {
+          testWidgets(
+            '$name (${viaButton ? 'botón cerrar' : 'Atrás'}): sin TextInput.show '
+            'y el composer queda sin foco',
+            (tester) async {
+              final gateway = _UiRewindGateway();
+              await pumpChat(
+                tester,
+                desktopGateway: gateway,
+                connection: _remoteConn('kb-$name'),
+              );
+              await tester.pump(const Duration(milliseconds: 100));
+              for (var frame = 0; frame < 4; frame++) {
+                await tester.pump(const Duration(milliseconds: 50));
+              }
+              final composer = find.byType(TextField);
+              await tester.tap(composer);
+              await tester.pump();
+              final focus = tester.widget<TextField>(composer).focusNode!;
+              expect(focus.hasFocus, isTrue);
+              // Atrás del sistema ocultó el IME: sin inset inferior, el campo
+              // sigue siendo el nodo enfocado.
+              tester.view.viewInsets = FakeViewPadding.zero;
+              await tester.pump();
+              expect(focus.hasFocus, isTrue);
+
+              await tester.tap(trigger());
+              await settle(tester);
+              expect(surface(), findsWidgets);
+              tester.testTextInput.log.clear();
+
+              if (viaButton) {
+                await close!(tester);
+              } else {
+                await tester.binding.handlePopRoute();
+              }
+              await settle(tester);
+
+              expect(surface(), findsNothing);
+              expect(
+                tester.testTextInput.log.where(
+                  (call) => call.method == 'TextInput.show',
+                ),
+                isEmpty,
+              );
+              // Las superficies con ruta sueltan el foco; el menú de adjuntos
+            // no lo toma (sin ruta), así que no hay nada que restaurar.
+            if (backCloses) expect(focus.hasFocus, isFalse);
+              expect(tester.takeException(), isNull);
+            },
+          );
+        }
+      }
+
+      testWidgets('uso de contexto con el teclado visible: al cerrar el '
+          'composer recupera el foco', (tester) async {
+        final gateway = _UiRewindGateway();
+        await pumpChat(
+          tester,
+          desktopGateway: gateway,
+          connection: _remoteConn('kb-visible'),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        for (var frame = 0; frame < 4; frame++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        tester.view.viewInsets = const FakeViewPadding(bottom: 600);
+        addTearDown(tester.view.resetViewInsets);
+        final composer = find.byType(TextField);
+        await tester.tap(composer);
+        await tester.pump();
+        final focus = tester.widget<TextField>(composer).focusNode!;
+        expect(focus.hasFocus, isTrue);
+
+        await tester.tap(find.byKey(const ValueKey('chat-status-pill')));
+        await settle(tester);
+        expect(
+          find.byKey(const ValueKey('desktop-context-usage-popover')),
+          findsOneWidget,
+        );
+        await tester.binding.handlePopRoute();
+        await settle(tester);
+
+        expect(
+          find.byKey(const ValueKey('desktop-context-usage-popover')),
+          findsNothing,
+        );
+        expect(focus.hasFocus, isTrue);
+      });
+    },
+  );
+
   testWidgets(
     'session.info actualiza el trigger aislado y abre el desglose Desktop',
     (tester) async {
