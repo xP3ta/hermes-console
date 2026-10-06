@@ -11,10 +11,10 @@ import '../../../models/hosted_groups.dart';
 import '../../../services/artifact_export_service.dart';
 import '../../../theme/app_theme.dart';
 import '../../../widgets/attachment_card.dart' show showImageViewer;
+import '../../../widgets/attachment_preview.dart';
 import '../../../widgets/chat/chat_markdown_body.dart';
 import '../../../widgets/chat/chat_message_frame.dart';
 import '../../../widgets/chat/chat_message_selection_area.dart';
-import '../../../widgets/cover_resize_image.dart';
 import '../../../widgets/hermes_notice.dart';
 import '../../../widgets/mission_profile_avatar.dart';
 import '../../../widgets/room_team_row.dart' show RoomMemberAvatar;
@@ -1848,6 +1848,62 @@ enum _AttachmentOp { preview, download, open, share }
 class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
   bool _busy = false;
   late File? _file = widget.localFile;
+  bool _previewFailed = false;
+
+  /// Bounded preview fetches across every room card on screen: a long room
+  /// full of photos must not open dozens of downloads at once.
+  static const int _maxConcurrentPreviews = 2;
+  static int _activePreviews = 0;
+  static final List<Completer<void>> _previewWaiters = <Completer<void>>[];
+
+  AttachmentPreviewKind get _kind =>
+      attachmentPreviewKindFor(widget.attachment.name, '');
+
+  /// Images, videos and audio preview in place, so they are fetched without
+  /// a tap; documents still wait for one.
+  bool get _hasMediaPreview => switch (_kind) {
+    AttachmentPreviewKind.image ||
+    AttachmentPreviewKind.video ||
+    AttachmentPreviewKind.audio => true,
+    _ => false,
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadPreview());
+  }
+
+  Future<void> _loadPreview() async {
+    final actions = widget.actions;
+    if (_file != null ||
+        !_hasMediaPreview ||
+        actions == null ||
+        !actions.canFetch(widget.attachment)) {
+      return;
+    }
+    if (_activePreviews >= _maxConcurrentPreviews) {
+      final waiter = Completer<void>();
+      _previewWaiters.add(waiter);
+      await waiter.future;
+    } else {
+      _activePreviews++;
+    }
+    try {
+      if (!mounted || _file != null) return;
+      final file = await actions.fetch(widget.attachment);
+      if (!mounted) return;
+      setState(() => _file ??= file);
+    } catch (_) {
+      if (mounted) setState(() => _previewFailed = true);
+    } finally {
+      if (_previewWaiters.isNotEmpty) {
+        _previewWaiters.removeAt(0).complete();
+      } else {
+        _activePreviews--;
+      }
+    }
+  }
 
   Future<void> _run(_AttachmentOp op) async {
     final actions = widget.actions;
@@ -1891,6 +1947,16 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
     final colors = Theme.of(context).hermes;
     final ref = widget.attachment;
     final enabled = !_busy && (widget.actions?.canFetch(ref) ?? false);
+    final file = _file;
+    final preview = file != null && _hasMediaPreview && !_previewFailed
+        ? AttachmentPreview(
+            key: ValueKey('room-attachment-media-${ref.path}'),
+            name: ref.name,
+            mimeType: '',
+            sizeLabel: '',
+            file: file,
+          )
+        : null;
     Widget action(String key, IconData icon, String label, _AttachmentOp op) =>
         ChatMessageActionButton(
           key: ValueKey('room-attachment-$key-${ref.path}'),
@@ -1899,86 +1965,128 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
           iconSize: 18,
           onPressed: enabled ? () => unawaited(_run(op)) : null,
         );
+    final openOp = ref.isImage ? _AttachmentOp.preview : _AttachmentOp.open;
+    // Media with a preview shows it above a slim name row; everything else
+    // is the shared type card (badge, short name) instead of a bare name.
+    final Widget leading = preview != null
+        ? Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Icon(
+              _kind == AttachmentPreviewKind.video
+                  ? Icons.movie_outlined
+                  : _kind == AttachmentPreviewKind.audio
+                  ? Icons.graphic_eq_rounded
+                  : Icons.image_outlined,
+              size: 18,
+              color: colors.textSecondary,
+            ),
+          )
+        : InkWell(
+            key: ValueKey('room-attachment-preview-${ref.path}'),
+            borderRadius: BorderRadius.circular(12),
+            onTap: enabled ? () => unawaited(_run(openOp)) : null,
+            child: SizedBox(
+              width: 48,
+              height: 48,
+              child:
+                  _busy ||
+                      (_hasMediaPreview &&
+                          file == null &&
+                          enabled &&
+                          !_previewFailed)
+                  ? const Padding(
+                      padding: EdgeInsets.all(14),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      _kind == AttachmentPreviewKind.video
+                          ? Icons.movie_outlined
+                          : ref.isImage
+                          ? Icons.image_outlined
+                          : Icons.insert_drive_file_outlined,
+                      color: colors.textSecondary,
+                    ),
+            ),
+          );
+    final Widget label = preview != null || _hasMediaPreview
+        ? Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                middleEllipsis(ref.name),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12.5, color: colors.textPrimary),
+              ),
+              // A fetch the server refused (403/404/not allowed) says so,
+              // by name only: the server path is never shown.
+              if (_previewFailed)
+                Text(
+                  s.cm1215AttachmentUnavailable,
+                  key: ValueKey('room-attachment-unavailable-${ref.path}'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: colors.textSecondary),
+                ),
+            ],
+          )
+        : Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: AttachmentPreview(
+              name: ref.name,
+              mimeType: '',
+              sizeLabel: '',
+              onOpen: enabled ? () => unawaited(_run(openOp)) : null,
+            ),
+          );
+    final row = Row(
+      children: [
+        if (preview != null || _hasMediaPreview) leading,
+        Expanded(
+          child: preview == null && !_hasMediaPreview
+              ? Padding(padding: const EdgeInsets.all(6), child: label)
+              : label,
+        ),
+        if (widget.localFile != null) const SizedBox(width: 12),
+        if (widget.localFile == null) ...[
+          action(
+            'download',
+            Icons.download_rounded,
+            s.roomFileDownload,
+            _AttachmentOp.download,
+          ),
+          action(
+            'open',
+            Icons.open_in_new_rounded,
+            s.roomFileOpen,
+            _AttachmentOp.open,
+          ),
+          action(
+            'share',
+            Icons.ios_share_rounded,
+            s.roomFileShare,
+            _AttachmentOp.share,
+          ),
+        ],
+      ],
+    );
     return Container(
       decoration: BoxDecoration(
         color: colors.surfaceVariant.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: colors.divider.withValues(alpha: 0.45)),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
-            key: ValueKey('room-attachment-preview-${ref.path}'),
-            borderRadius: BorderRadius.circular(12),
-            onTap: enabled
-                ? () => unawaited(
-                    _run(
-                      ref.isImage ? _AttachmentOp.preview : _AttachmentOp.open,
-                    ),
-                  )
-                : null,
-            child: SizedBox(
-              width: 48,
-              height: 48,
-              child: _busy
-                  ? const Padding(
-                      padding: EdgeInsets.all(14),
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : ref.isImage && _file != null
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      // Decode near the 48 px box, not the full photo.
-                      child: Image(
-                        image: CoverResizeImage(
-                          FileImage(_file!),
-                          target: (48 * MediaQuery.devicePixelRatioOf(context))
-                              .ceil(),
-                        ),
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => Icon(
-                          Icons.image_outlined,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                    )
-                  : Icon(
-                      ref.isImage
-                          ? Icons.image_outlined
-                          : Icons.insert_drive_file_outlined,
-                      color: colors.textSecondary,
-                    ),
+          if (preview != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(6, 6, 6, 0),
+              child: preview,
             ),
-          ),
-          Expanded(
-            child: Text(
-              ref.name,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12.5, color: colors.textPrimary),
-            ),
-          ),
-          if (widget.localFile != null) const SizedBox(width: 12),
-          if (widget.localFile == null) ...[
-            action(
-              'download',
-              Icons.download_rounded,
-              s.roomFileDownload,
-              _AttachmentOp.download,
-            ),
-            action(
-              'open',
-              Icons.open_in_new_rounded,
-              s.roomFileOpen,
-              _AttachmentOp.open,
-            ),
-            action(
-              'share',
-              Icons.ios_share_rounded,
-              s.roomFileShare,
-              _AttachmentOp.share,
-            ),
-          ],
+          row,
         ],
       ),
     );

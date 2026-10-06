@@ -680,6 +680,26 @@ void main() {
     ]);
   });
 
+  testWidgets('a MEDIA line renders as a preview and the raw line is hidden', (
+    tester,
+  ) async {
+    final seq = EventSeq();
+    final u = seq.user('Look at this:\nMEDIA:/srv/out/cat.png\nDone.');
+    final actions = FakeActions();
+    await _pump(tester, events: [u], actions: actions);
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('MEDIA:'), findsNothing);
+    expect(find.textContaining('/srv/out'), findsNothing);
+    expect(find.textContaining('Look at this:'), findsOneWidget);
+    expect(find.textContaining('Done.'), findsOneWidget);
+    expect(actions.calls, contains('fetch:cat.png'));
+    expect(
+      find.byKey(const ValueKey('room-attachment-media-/srv/out/cat.png')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets(
     'shared composer: @ palette inserts a member and send carries it',
     (tester) async {
