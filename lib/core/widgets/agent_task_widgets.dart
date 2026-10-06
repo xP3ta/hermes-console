@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../utils/plain_preview.dart';
 import '../../l10n/app_localizations.dart';
 import '../models/agent_task_list.dart';
 import '../services/session_reconciler.dart';
@@ -289,7 +290,7 @@ class _TaskRow extends StatelessWidget {
             SizedBox(width: dense ? 6 : 8),
             Expanded(
               child: Text(
-                item.content,
+                plainPreview(item.content),
                 style: textStyle.copyWith(
                   fontSize: dense ? 12 : 14,
                   height: 1.35,
