@@ -1056,7 +1056,14 @@ class AppTheme {
   /// (12 familias, mismo orden). `nous` pasa a ser el Nous sobre GitHub como
   /// en Desktop y la paleta anterior vive como `nous-alt`; `everforest` y
   /// `solarized-dark` vuelven a ser temas reales y salen de la migración.
-  static final List<HermesThemePreset> presets = List.unmodifiable([
+  ///
+  /// rt1215: every preset passes through [_withReadableInk], so secondary
+  /// text and links reach AA on all of its surfaces.
+  static final List<HermesThemePreset> presets = List.unmodifiable(
+    _curatedPresets.map(_withReadableInk),
+  );
+
+  static final List<HermesThemePreset> _curatedPresets = List.unmodifiable([
     // ── Oscuros ──
     // Amber es el tema por defecto (la firma de Hermes) y va primero.
     HermesThemePreset(
@@ -1534,6 +1541,44 @@ class AppTheme {
       titleSpacing: 0.0,
     ),
   ]);
+
+  /// rt1215: secondary text (`onSurfaceVariant`) and links are body copy;
+  /// nudge them, only when needed, to WCAG AA 4.5:1 on the background, the
+  /// surface and the surface variant. Identity colours (background, surfaces,
+  /// primary text, accent) stay as designed.
+  static HermesThemePreset _withReadableInk(HermesThemePreset p) {
+    final c = p.colors;
+    final surfaces = [c.background, c.surface, c.surfaceVariant];
+    final secondary = ThemeContrast.adjustForContrast(
+      c.textSecondary,
+      surfaces,
+      minimum: 4.5,
+    );
+    final link = ThemeContrast.adjustForContrast(
+      c.accentText,
+      surfaces,
+      minimum: 4.5,
+    );
+    if (secondary == c.textSecondary && link == c.accentText) return p;
+    return HermesThemePreset(
+      id: p.id,
+      name: p.name,
+      tagline: p.tagline,
+      brightness: p.brightness,
+      colors: c.copyWith(
+        textSecondary: secondary,
+        accentText: link == c.accentText ? null : link,
+      ),
+      fontFamily: p.fontFamily,
+      radius: p.radius,
+      secondary: p.secondary,
+      titleWeight: p.titleWeight,
+      titleSpacing: p.titleSpacing,
+      uppercaseTitles: p.uppercaseTitles,
+      desktopOfficial: p.desktopOfficial,
+      desktopFamily: p.desktopFamily,
+    );
+  }
 
   static const String defaultThemeId = 'amber';
 

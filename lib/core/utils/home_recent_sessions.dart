@@ -4,7 +4,7 @@ import '../models/session.dart';
 import '../services/session_reconciler.dart';
 import 'chat_turn.dart';
 import 'fts_snippet.dart';
-import 'markdown_clipboard.dart';
+import 'plain_preview.dart';
 
 enum HomeRecentDateGroup { today, yesterday, earlier }
 
@@ -182,9 +182,7 @@ bool _sameDate(DateTime left, DateTime right) =>
 String? _compactPreview(String value) {
   final raw = value.trim();
   if (raw.isEmpty || _isNonHumanPreview(raw)) return null;
-  final compact = markdownToCompactText(
-    Session.stripCronPreamble(raw),
-  ).replaceAll(RegExp(r'\s+'), ' ').trim();
+  final compact = plainPreview(Session.stripCronPreamble(raw));
   if (compact.isEmpty || _isNonHumanPreview(compact)) return null;
   final lower = compact.toLowerCase();
   if (lower == 'operation interrupted.' ||

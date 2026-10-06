@@ -30,6 +30,7 @@ import '../services/delegation_control.dart';
 import '../services/tui_gateway_client.dart' show TuiGatewayRpcError;
 import '../theme/app_theme.dart';
 import '../utils/assistant_content.dart' show finalizedPublicAssistantText;
+import '../utils/plain_preview.dart';
 import '../widgets/activity_pill.dart' show formatTurnElapsed;
 import '../widgets/chat/chat_markdown_body.dart';
 import '../widgets/hermes_app_bar.dart';
@@ -108,7 +109,9 @@ Duration? subagentElapsed(SubagentActivity activity, DateTime now) {
 String subagentTitle(Strings s, SubagentActivity activity, {int? maxChars}) {
   final goal = activity.goalPreview?.trim() ?? '';
   if (goal.isEmpty) return s.subagentUiRowTitle;
-  final line = goal.split('\n').first.trim();
+  // rt1215: a goal is agent Markdown; its title line is plain text.
+  final line = plainPreview(goal.split('\n').first);
+  if (line.isEmpty) return s.subagentUiRowTitle;
   if (maxChars != null && line.runes.length > maxChars) {
     return '${String.fromCharCodes(line.runes.take(maxChars)).trimRight()}…';
   }

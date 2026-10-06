@@ -53,7 +53,12 @@ class ChatMarkdownBody extends StatelessWidget {
     this.selectionIdentity,
     this.onLinkTap,
     this.embeds = false,
+    this.styleSheet,
   });
+
+  /// Alternative style sheet for every block (e.g. the compact one of
+  /// [CompactMarkdown]); defaults to [assistantMarkdownStyleSheet].
+  final MarkdownStyleSheet? styleSheet;
 
   /// Rich embeds for a finished message (never while [isStreaming]).
   final bool embeds;
@@ -87,6 +92,7 @@ class ChatMarkdownBody extends StatelessWidget {
             markdown: (d) => ChatMarkdownBlock(
               data: d,
               onLinkTap: tap,
+              styleSheet: styleSheet,
               embeds: embeds && !isStreaming,
             ),
             callout: (b) =>

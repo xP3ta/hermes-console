@@ -3,7 +3,7 @@ import '../../../models/hosted_groups.dart';
 import '../../../models/mission_control.dart';
 import '../../../models/room_member_status.dart';
 import '../../../models/room_mirror.dart';
-import '../../../utils/markdown_clipboard.dart';
+import '../../../utils/plain_preview.dart';
 import '../../state/bot_presence.dart';
 import '../../state/attention.dart';
 import '../../state/bot_chat_target.dart';
@@ -279,7 +279,7 @@ final class RoomRosterEntry extends RosterEntry {
 /// One-line plain-text preview for roster rows (Bots and rooms): Markdown
 /// marks are stripped with the same helper notifications and session
 /// previews use, so a row never shows `**`, `##` or backticks.
-String rosterPreviewText(String markdown) => markdownToCompactText(markdown);
+String rosterPreviewText(String markdown) => plainPreview(markdown);
 
 final RegExp _foldA = RegExp(r'[áàäâãå]');
 final RegExp _foldE = RegExp(r'[éèëê]');

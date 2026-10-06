@@ -197,7 +197,8 @@ void main() {
         rosterPreviewText('Reviewed. Summary: **Failure today (16:20:21)**'),
         'Reviewed. Summary: Failure today (16:20:21)',
       );
-      expect(rosterPreviewText('## Plan\n\n- `a`\n- b'), 'Plan • a • b');
+      // rt1215: list markers go too (shared plainPreview).
+      expect(rosterPreviewText('## Plan\n\n- `a`\n- b'), 'Plan a b');
 
       final bot = BotRosterEntry.from(
         agent: _agent(

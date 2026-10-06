@@ -2,7 +2,7 @@ import '../utils/bot_mention_text.dart';
 import 'package:flutter/foundation.dart';
 
 import '../utils/chat_turn.dart';
-import '../utils/markdown_clipboard.dart';
+import '../utils/plain_preview.dart';
 import '../utils/session_timestamp.dart';
 import 'session_category.dart';
 
@@ -368,7 +368,7 @@ class Session implements SessionSortKey {
         isBackgroundProcessFlattenedPreview(preview)) {
       return '';
     }
-    return markdownToCompactText(
+    return plainPreview(
       stripCronPreamble(
         stripBackgroundProcessCarrier(stripBotMentionNote(preview)),
       ),

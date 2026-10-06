@@ -251,7 +251,7 @@ void main() {
       expect(position.pixels, position.maxScrollExtent);
     });
 
-    testWidgets('12 sp secondary text that follows the text scale', (
+    testWidgets('12.5 sp secondary text that follows the text scale', (
       tester,
     ) async {
       await _pumpNow(
@@ -260,13 +260,18 @@ void main() {
         textScale: 2,
       );
       final paragraph = tester.renderObject<RenderParagraph>(
-        find.descendant(of: _tail, matching: find.byType(RichText)),
+        find.descendant(of: _tail, matching: find.byType(RichText)).first,
       );
       expect(paragraph.textScaler.scale(14) / 14, 2);
-      final text = tester.widget<Text>(
-        find.descendant(of: _tail, matching: find.byType(Text)),
-      );
-      expect(text.style!.fontSize, 12);
+      // rt1215: the reasoning is compact Markdown in the secondary ink.
+      final sizes = <double?>{};
+      paragraph.text.visitChildren((span) {
+        if (span is TextSpan && (span.text ?? '').trim().isNotEmpty) {
+          sizes.add(span.style?.fontSize);
+        }
+        return true;
+      });
+      expect(sizes, {12.5});
     });
 
     testWidgets('thinking with no reasoning: no extra hint (dc1215)', (

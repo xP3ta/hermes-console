@@ -44,6 +44,7 @@ import '../widgets/profile_scope.dart';
 import '../widgets/feature_dependency_notice.dart';
 import 'instance_edit_screen.dart';
 import '../../l10n/app_localizations.dart';
+import '../utils/plain_preview.dart';
 
 @visibleForTesting
 bool skillsProfileMutationsBlocked(String profile) {
@@ -1375,7 +1376,7 @@ class _StoreSkillCard extends StatelessWidget {
             if (skill.description.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(
-                skill.description,
+                plainPreview(skill.description),
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(fontSize: 12, color: colors.textSecondary),
