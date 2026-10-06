@@ -144,9 +144,25 @@ MascotPermission _permission(
   return p;
 }
 
+/// Wander script: a 4.5 s pause, "walk" (not the 20 % stay), then a long
+/// walk to the left (-162 px), so every run walks the same way.
+class _ScriptedRandom implements math.Random {
+  static const _values = [0.5, 0.9, 0.05];
+  int _i = 0;
+
+  @override
+  double nextDouble() => _values[_i++ % _values.length];
+
+  @override
+  int nextInt(int max) => (nextDouble() * max).floor();
+
+  @override
+  bool nextBool() => nextDouble() >= 0.5;
+}
+
 void main() {
   setUp(() {
-    debugMascotOverlayRandom = () => math.Random(7);
+    debugMascotOverlayRandom = _ScriptedRandom.new;
     SharedPreferences.setMockInitialValues({});
     FeatureFlags.floatingMascot = true;
     debugMascotSpritesStill = true;
@@ -638,8 +654,14 @@ void main() {
           frames.where((f) => f >= frames[i] && f < frames[i] + 1000).length,
         ].reduce((a, b) => a > b ? a : b);
       }
-      expect(frames, isNotEmpty); // it did wander
+      // Two scripted walks (162 px and 104 px) at 56 px/s: ~4.8 s of
+      // ~30 fps motion, so well over 100 position frames.
+      expect(frames.length, greaterThanOrEqualTo(100));
       expect(best, lessThanOrEqualTo(30));
+      // Consecutive motion frames are one ~33 ms timer apart, never closer.
+      for (var i = 1; i < frames.length; i++) {
+        expect(frames[i] - frames[i - 1], greaterThanOrEqualTo(30));
+      }
       // Asleep after 16 s without interaction while Hermes is idle.
       await _settle(tester, 4000);
       final before = debugMascotOverlayFrames;

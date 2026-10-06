@@ -48,8 +48,8 @@ abstract final class MascotFloatPhysics {
   static const Duration avoidDuration = Duration(milliseconds: 450);
   static const Cubic avoidCurve = Cubic(.3, 1.3, .5, 1);
 
-  /// Motion frames (walk, fall, avoid, hop) are capped at ~30 fps.
-  static const Duration frame = Duration(milliseconds: 33);
+  /// Motion frames (walk, fall, avoid, hop): one every 34 ms, ≤ 30 fps.
+  static const Duration frame = Duration(milliseconds: 34);
 
   /// Size of the floating sprite box (guide: 56 x 60; the engine draws in a
   /// square box, so 56 dp).
