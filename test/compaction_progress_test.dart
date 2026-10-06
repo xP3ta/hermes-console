@@ -5,6 +5,7 @@ import 'package:hermes_android/core/models/compaction_progress.dart';
 import 'package:hermes_android/core/services/compaction_tracker.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/core/widgets/compaction_dock.dart';
+import 'package:hermes_android/core/widgets/chat_status_pill.dart';
 import 'package:hermes_android/core/widgets/session_context_usage.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'support/inter_font.dart';
@@ -278,11 +279,12 @@ void main() {
                             compaction: progress,
                             clock: () => clock.now,
                           ))
-                  : SessionContextPopoverButton(
+                  : ChatStatusPill(
                       metrics: metrics,
-                      loadBreakdown: () async => null,
-                      onMetricsSnapshot: (_) {},
-                      modeLabel: 'YOLO',
+                      onOpenContext: () {},
+                      permissionsLabel: 'YOLO',
+                      permissionsFlag: 'YOLO',
+                      onOpenPermissions: () {},
                       compressionCount: 2,
                       compaction: progress,
                       clock: () => clock.now,
@@ -340,8 +342,14 @@ void main() {
       expect(label, startsWith('Compactando · 38 msj · ~32.2k tok'));
       expect(label, isNot(contains('0:23')));
       expect(tester.getSemantics(pill).flagsCollection.isLiveRegion, isTrue);
-      // Still the same small pill, not a floating bar.
-      expect(tester.getSize(pill).height, lessThanOrEqualTo(32));
+      // Still the same small pill, not a floating bar (the zone around it is
+      // only the thumb-sized hit area).
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('status-pill-capsule')))
+            .height,
+        lessThanOrEqualTo(32),
+      );
       clock.advance(const Duration(seconds: 2));
       await tester.pump(const Duration(seconds: 1));
       expect(
@@ -486,7 +494,7 @@ void main() {
       expect(ring.value, isNotNull);
     });
 
-    testWidgets('tapping the pill opens the panel with the full facts', (
+    testWidgets('the context sheet shows the full facts and follows them', (
       tester,
     ) async {
       tester.view.physicalSize = const Size(412, 915);
@@ -500,9 +508,34 @@ void main() {
         messagesBefore: 22,
         tokensBefore: 21500,
       );
-      await tester.pumpWidget(host(running, clock));
-      await tester.tap(
-        find.byKey(const ValueKey('desktop-context-usage-status')),
+      final progress = ValueNotifier<CompactionProgress?>(running);
+      addTearDown(progress.dispose);
+      final metrics = ValueNotifier(
+        const SessionContextMetrics(
+          contextUsed: 41000,
+          contextMax: 200000,
+          percent: 21,
+        ),
+      );
+      addTearDown(metrics.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('es'),
+          localizationsDelegates: Strings.localizationsDelegates,
+          supportedLocales: Strings.supportedLocales,
+          theme: AppTheme.hermesRedDark,
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: SessionContextSheetBody(
+                metrics: metrics,
+                loadBreakdown: () async => null,
+                onMetricsSnapshot: (_) {},
+                compaction: progress,
+                clock: () => clock.now,
+              ),
+            ),
+          ),
+        ),
       );
       await tester.pump(const Duration(milliseconds: 300));
       expect(
@@ -513,17 +546,11 @@ void main() {
             .data,
         'Compactando · 22 msj · ~21.5k tok',
       );
-      // The panel follows the live state while it stays open.
-      await tester.pumpWidget(
-        host(
-          running.copyWith(
-            finishedAt: _t0.add(const Duration(seconds: 14)),
-            messagesAfter: 9,
-          ),
-          clock,
-        ),
+      // The sheet follows the live state while it stays open.
+      progress.value = running.copyWith(
+        finishedAt: _t0.add(const Duration(seconds: 14)),
+        messagesAfter: 9,
       );
-      await tester.pump();
       await tester.pump();
       expect(
         tester

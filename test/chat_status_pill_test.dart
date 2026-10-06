@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/compaction_progress.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -243,6 +242,43 @@ void main() {
       tester.getSemantics(find.byKey(_modelZone)).getSemanticsData().label,
       'Model: Sonnet 5. Change model and session · '
       'Subscription limit reached',
+    );
+  });
+
+  testWidgets('context zone announces the best value available', (
+    tester,
+  ) async {
+    final metrics = ValueNotifier(
+      const SessionContextMetrics(
+        contextUsed: 800,
+        contextMax: 10000,
+        percent: 8,
+        cumulativeTotal: 1200,
+      ),
+    );
+    addTearDown(metrics.dispose);
+    await tester.pumpWidget(
+      _TestApp(
+        child: ChatStatusPill(metrics: metrics, onOpenContext: () {}),
+      ),
+    );
+    String label() =>
+        tester.getSemantics(find.byKey(_contextZone)).getSemanticsData().label;
+    expect(find.text('8%'), findsOneWidget);
+    expect(label(), 'Open context usage, 8% used');
+
+    metrics.value = const SessionContextMetrics(cumulativeTotal: 1200);
+    await tester.pump();
+    expect(find.text('1.2k tok'), findsOneWidget);
+    expect(label(), 'Open context usage, 1.2k tok');
+
+    metrics.value = SessionContextMetrics.unknown;
+    await tester.pump();
+    expect(find.text('—'), findsOneWidget);
+    expect(
+      label(),
+      'Open context usage, Hermes has not published this session\'s '
+      'context window yet.',
     );
   });
 

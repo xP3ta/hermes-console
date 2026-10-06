@@ -33,7 +33,7 @@ Color contextLevelColor(int? percent, HermesThemeColors colors) {
 ///
 /// Three zones, each opening its own sheet: context usage, model and
 /// session, and the permissions of this session. The capsule itself is 30 px
-/// tall; every zone's hit area is at least 44 px so a thumb can reach it.
+/// tall; every zone's hit area is at least 40 px so a thumb can reach it.
 /// Only the context zone listens to live usage, so a new percentage never
 /// rebuilds the transcript.
 class ChatStatusPill extends StatelessWidget {
@@ -82,7 +82,7 @@ class ChatStatusPill extends StatelessWidget {
   final VoidCallback? onOpenPermissions;
 
   static const double capsuleHeight = 30;
-  static const double minTouchHeight = 44;
+  static const double minTouchHeight = 40;
 
   @override
   Widget build(BuildContext context) {
@@ -230,7 +230,7 @@ class _Divider extends StatelessWidget {
       Container(width: 1, height: 12, color: color);
 }
 
-/// One tappable zone of the pill: a 44 px tall, labelled button.
+/// One tappable zone of the pill: a 40 px tall, labelled button.
 class _Zone extends StatelessWidget {
   const _Zone({
     required this.onTap,

@@ -24,6 +24,8 @@ const double kStatusSheetCloseVelocity = 550;
 /// * The content scrolls inside the sheet.
 /// * Closing never brings back a keyboard the user had already hidden.
 /// * Reduced motion: no open/close transition and no spring back.
+/// * [onRoute] hands the pushed route to its owner, so a screen that goes
+///   away can remove the sheet it opened instead of leaving it orphaned.
 Future<T?> showStatusPillSheet<T>({
   required BuildContext context,
   required Key surfaceKey,
@@ -31,22 +33,23 @@ Future<T?> showStatusPillSheet<T>({
   required WidgetBuilder builder,
   String? subtitle,
   double maxHeightFactor = 0.85,
+  ValueChanged<Route<T>>? onRoute,
 }) {
   final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
   // QA 9490: the chat route gives focus back to the composer when a route on
   // top pops, and a focused field shows the keyboard again by itself.
   releaseTextFocusIfKeyboardHidden(context);
-  return Navigator.of(context).push<T>(
-    _StatusSheetRoute<T>(
-      surfaceKey: surfaceKey,
-      title: title,
-      subtitle: subtitle,
-      builder: builder,
-      maxHeightFactor: maxHeightFactor,
-      reduceMotion: reduceMotion,
-      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
-    ),
+  final route = _StatusSheetRoute<T>(
+    surfaceKey: surfaceKey,
+    title: title,
+    subtitle: subtitle,
+    builder: builder,
+    maxHeightFactor: maxHeightFactor,
+    reduceMotion: reduceMotion,
+    barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
   );
+  onRoute?.call(route);
+  return Navigator.of(context).push<T>(route);
 }
 
 class _StatusSheetRoute<T> extends PopupRoute<T> {
@@ -83,11 +86,11 @@ class _StatusSheetRoute<T> extends PopupRoute<T> {
 
   @override
   Duration get transitionDuration =>
-      reduceMotion ? Duration.zero : const Duration(milliseconds: 320);
+      reduceMotion ? Duration.zero : const Duration(milliseconds: 240);
 
   @override
   Duration get reverseTransitionDuration =>
-      reduceMotion ? Duration.zero : const Duration(milliseconds: 240);
+      reduceMotion ? Duration.zero : const Duration(milliseconds: 200);
 
   @override
   Widget buildPage(

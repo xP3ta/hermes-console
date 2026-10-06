@@ -1,172 +1,18 @@
-import 'dart:math' as math;
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
-import '../design/modal.dart' show releaseTextFocusIfKeyboardHidden;
 import '../models/compaction_progress.dart';
 import '../models/desktop_context_breakdown.dart';
 import '../models/desktop_session_snapshot.dart';
 import '../models/session.dart';
 import '../theme/app_theme.dart';
 import 'activity_pill.dart' show ActivityTicker, formatTurnElapsed;
+import 'chat_status_pill.dart' show contextLevelColor;
 import 'compaction_dock.dart';
 
 typedef SessionContextBreakdownLoader =
     Future<DesktopContextBreakdown?> Function();
-
-/// Builds an optional extra section appended to the popover's content — used
-/// by the chat screen to fold its approval-mode radio list into the same
-/// surface the combined context+mode pill opens, instead of a second sheet.
-/// [closePopover] dismisses this popover; callers invoke it before applying a
-/// selection, mirroring how the standalone mode sheet pops itself first.
-typedef SessionContextModeSectionBuilder =
-    Widget Function(BuildContext context, VoidCallback closePopover);
-
-Future<void> showSessionContextPopover({
-  required BuildContext context,
-  required Rect anchorRect,
-  required ValueListenable<SessionContextMetrics> metrics,
-  required SessionContextBreakdownLoader loadBreakdown,
-  required ValueChanged<SessionContextMetrics> onMetricsSnapshot,
-  SessionContextModeSectionBuilder? modeSectionBuilder,
-  ValueListenable<CompactionProgress?>? compaction,
-  DateTime Function()? clock,
-}) {
-  final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-  final navigator = Navigator.of(context);
-  // QA 9490: closing this popover must not reopen a keyboard the user had
-  // already dismissed (the chat route restores focus to the composer on pop).
-  releaseTextFocusIfKeyboardHidden(context);
-  return showGeneralDialog<void>(
-    context: context,
-    useRootNavigator: false,
-    barrierDismissible: true,
-    barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
-    barrierColor: Colors.black.withValues(alpha: 0.22),
-    transitionDuration: reduceMotion
-        ? Duration.zero
-        : const Duration(milliseconds: 180),
-    pageBuilder: (dialogContext, animation, secondaryAnimation) =>
-        _SessionContextPopoverFrame(
-          anchorRect: anchorRect,
-          metrics: metrics,
-          loadBreakdown: loadBreakdown,
-          onMetricsSnapshot: onMetricsSnapshot,
-          modeSectionBuilder: modeSectionBuilder,
-          compaction: compaction,
-          clock: clock,
-          onClose: navigator.pop,
-        ),
-    transitionBuilder: (context, animation, secondaryAnimation, child) {
-      if (reduceMotion) return child;
-      final curved = CurvedAnimation(
-        parent: animation,
-        curve: Curves.easeOutCubic,
-        reverseCurve: Curves.easeInCubic,
-      );
-      return FadeTransition(
-        opacity: curved,
-        child: ScaleTransition(
-          alignment: Alignment.topCenter,
-          scale: Tween<double>(begin: 0.97, end: 1).animate(curved),
-          child: child,
-        ),
-      );
-    },
-  );
-}
-
-class _SessionContextPopoverFrame extends StatelessWidget {
-  const _SessionContextPopoverFrame({
-    required this.anchorRect,
-    required this.metrics,
-    required this.loadBreakdown,
-    required this.onMetricsSnapshot,
-    required this.onClose,
-    this.modeSectionBuilder,
-    this.compaction,
-    this.clock,
-  });
-
-  final Rect anchorRect;
-  final ValueListenable<SessionContextMetrics> metrics;
-  final SessionContextBreakdownLoader loadBreakdown;
-  final ValueChanged<SessionContextMetrics> onMetricsSnapshot;
-  final VoidCallback onClose;
-  final SessionContextModeSectionBuilder? modeSectionBuilder;
-  final ValueListenable<CompactionProgress?>? compaction;
-  final DateTime Function()? clock;
-
-  @override
-  Widget build(BuildContext context) {
-    final media = MediaQuery.of(context);
-    final colors = Theme.of(context).hermes;
-    const margin = 12.0;
-    const gap = 6.0;
-    final width = (media.size.width - margin * 2).clamp(288.0, 360.0);
-    // Centrado sobre la píldora que lo abre, no anclado por su borde derecho
-    // (eso lo hacía abrir sesgado hacia la izquierda en vez de crecer desde
-    // el centro de la píldora).
-    final left = (anchorRect.center.dx - width / 2)
-        .clamp(margin, math.max(margin, media.size.width - width - margin))
-        .toDouble();
-    final belowTop = anchorRect.bottom + gap;
-    final belowHeight =
-        media.size.height - media.padding.bottom - belowTop - margin;
-    final aboveHeight = anchorRect.top - media.padding.top - margin - gap;
-    final placeBelow = belowHeight >= math.min(280.0, aboveHeight);
-    final availableHeight = math.max(
-      220.0,
-      placeBelow ? belowHeight : aboveHeight,
-    );
-    final maxHeight = math.min(520.0, availableHeight).toDouble();
-
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            excludeFromSemantics: true,
-            onTap: onClose,
-          ),
-        ),
-        Positioned(
-          left: left,
-          top: placeBelow ? belowTop : null,
-          bottom: placeBelow ? null : media.size.height - anchorRect.top + gap,
-          width: width,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: maxHeight),
-            child: Material(
-              key: const ValueKey('desktop-context-usage-popover-surface'),
-              color: colors.surface,
-              surfaceTintColor: Colors.transparent,
-              elevation: 12,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-                side: BorderSide(color: colors.divider.withValues(alpha: 0.78)),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: SessionContextFloatingPanel(
-                width: width,
-                maxHeight: maxHeight,
-                metrics: metrics,
-                loadBreakdown: loadBreakdown,
-                onMetricsSnapshot: onMetricsSnapshot,
-                onClose: onClose,
-                modeSectionBuilder: modeSectionBuilder,
-                compaction: compaction,
-                clock: clock,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
 
 /// The one UI projection shared by the chat trigger and its detail sheet.
 ///
@@ -373,278 +219,6 @@ String sessionContextTriggerSemanticsLabel(
   return '${strings.chaContextUsageOpen}, $value';
 }
 
-/// Anchored context+mode control. Was two separate app-bar widgets (a
-/// context-usage ring trigger plus a colored approval-mode pill); the
-/// 1.2.11 redesign merges both into one compact floating pill — ring,
-/// percentage, and (only when the mode isn't the plain default) a small
-/// red-flag segment — that now lives below the composer instead of in
-/// `actions:`. Still opens the same [showSessionContextPopover]; when
-/// [modeSectionBuilder] is given, that popover also grows an approval-mode
-/// section built from it, so mode selection is reachable from the same
-/// surface without duplicating the mode-radio-list logic that already lives
-/// in the chat screen.
-class SessionContextPopoverButton extends StatefulWidget {
-  const SessionContextPopoverButton({
-    required this.metrics,
-    required this.loadBreakdown,
-    required this.onMetricsSnapshot,
-    this.modeLabel,
-    this.modeColor,
-    this.modeSectionBuilder,
-    this.compressionCount = 0,
-    this.compaction,
-    this.clock,
-    super.key,
-  });
-
-  final ValueListenable<SessionContextMetrics> metrics;
-  final SessionContextBreakdownLoader loadBreakdown;
-  final ValueChanged<SessionContextMetrics> onMetricsSnapshot;
-
-  /// A compaction running now or just finished (still lingering). While
-  /// non-null the ring and percentage give way to the compaction state —
-  /// spinner + «Compactando…» + elapsed, then a brief ✓ «Compactada» — and
-  /// the popover this pill opens carries the full facts. This replaced the
-  /// separate floating compaction pill above the composer.
-  final CompactionProgress? compaction;
-
-  /// Injectable clock for the compaction elapsed time (tests).
-  final DateTime Function()? clock;
-
-  /// Non-null only when the approval mode is worth flagging (YOLO / read-only
-  /// / a per-session override) — same "prominent" gate the old app-bar mode
-  /// pill used. Null hides the mode segment entirely.
-  final String? modeLabel;
-  final Color? modeColor;
-  final SessionContextModeSectionBuilder? modeSectionBuilder;
-
-  /// How many times this session has ever been compacted (0 hides the
-  /// segment). A durable fact of the session, unlike the transient
-  /// in-progress/just-finished [compaction] state — this is the only place
-  /// that says so once that state is gone.
-  final int compressionCount;
-
-  @override
-  State<SessionContextPopoverButton> createState() =>
-      _SessionContextPopoverButtonState();
-}
-
-class _SessionContextPopoverButtonState
-    extends State<SessionContextPopoverButton> {
-  final GlobalKey _anchorKey = GlobalKey();
-  late final ValueNotifier<CompactionProgress?> _compaction = ValueNotifier(
-    widget.compaction,
-  );
-  bool _opening = false;
-
-  @override
-  void didUpdateWidget(SessionContextPopoverButton oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // An open popover listens to this, so its compaction section stays live.
-    // It lives on another route: notify after this frame, never mid-build.
-    if (identical(_compaction.value, widget.compaction)) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _compaction.value = widget.compaction;
-    });
-  }
-
-  @override
-  void dispose() {
-    _compaction.dispose();
-    super.dispose();
-  }
-
-  Future<void> _open() async {
-    if (_opening) return;
-    final renderBox = _anchorKey.currentContext?.findRenderObject();
-    if (renderBox is! RenderBox || !renderBox.hasSize) return;
-    final topLeft = renderBox.localToGlobal(Offset.zero);
-    final anchorRect = topLeft & renderBox.size;
-    _opening = true;
-    try {
-      await showSessionContextPopover(
-        context: context,
-        anchorRect: anchorRect,
-        metrics: widget.metrics,
-        loadBreakdown: widget.loadBreakdown,
-        onMetricsSnapshot: widget.onMetricsSnapshot,
-        modeSectionBuilder: widget.modeSectionBuilder,
-        compaction: _compaction,
-        clock: widget.clock,
-      );
-    } finally {
-      _opening = false;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).hermes;
-    final strings = Strings.of(context);
-    return Padding(
-      key: _anchorKey,
-      padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: ValueListenableBuilder<SessionContextMetrics>(
-        valueListenable: widget.metrics,
-        builder: (context, value, _) {
-          final percent = value.percent;
-          final compaction = widget.compaction;
-          final reduceMotion =
-              MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-          final semanticsLabel = [
-            if (compaction != null)
-              compactionStatusText(
-                strings,
-                compaction,
-                Localizations.localeOf(context).languageCode,
-              ),
-            sessionContextTriggerSemanticsLabel(strings, value),
-            ?widget.modeLabel,
-            if (widget.compressionCount > 0 && compaction == null)
-              strings.chaSessionCompactedTooltip(widget.compressionCount),
-          ].join(' · ');
-          final modeLabel = widget.modeLabel;
-          // Ring + percentage normally; the compaction state while one runs
-          // or has just finished. One slot, cross-faded in place.
-          final Widget lead = compaction == null
-              ? Row(
-                  key: const ValueKey('context-pill-usage'),
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SessionContextRing(
-                      percent: percent,
-                      size: 14,
-                      strokeWidth: 2,
-                    ),
-                    const SizedBox(width: 5),
-                    Text(
-                      sessionContextTriggerText(value),
-                      style: TextStyle(
-                        color: colors.textPrimary,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w700,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ],
-                )
-              : CompactionPillSegment(
-                  key: const ValueKey('context-pill-compaction'),
-                  compaction: compaction,
-                  clock: widget.clock,
-                );
-          return Semantics(
-            button: true,
-            onTap: _open,
-            label: semanticsLabel,
-            // Announces compaction start/end: the label changes only then
-            // (the elapsed clock is not part of it).
-            liveRegion: compaction != null,
-            excludeSemantics: true,
-            child: Tooltip(
-              message: strings.chaContextUsageOpen,
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  key: const ValueKey('desktop-context-usage-status'),
-                  onTap: _open,
-                  customBorder: const StadiumBorder(),
-                  child: Container(
-                    height: 30,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    decoration: BoxDecoration(
-                      color: colors.surfaceVariant.withValues(alpha: 0.92),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: colors.divider.withValues(alpha: 0.7),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.24),
-                          blurRadius: 14,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Flexible(
-                          // Ring+percentage ⇄ compaction state, cross-faded
-                          // in place. No AnimatedSize: this pill sits in the
-                          // composer footer, which relayouts while the
-                          // transcript streams, and a size animation there
-                          // re-dirties itself mid-layout.
-                          child: AnimatedSwitcher(
-                            duration: reduceMotion
-                                ? Duration.zero
-                                : const Duration(milliseconds: 220),
-                            layoutBuilder: (current, previous) => Stack(
-                              alignment: Alignment.centerLeft,
-                              children: [...previous, ?current],
-                            ),
-                            child: lead,
-                          ),
-                        ),
-                        if (modeLabel != null) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            height: 12,
-                            width: 1,
-                            color: colors.divider,
-                          ),
-                          const SizedBox(width: 6),
-                          Container(
-                            width: 5,
-                            height: 5,
-                            decoration: BoxDecoration(
-                              color: widget.modeColor ?? colors.error,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            modeLabel,
-                            style: TextStyle(
-                              color: widget.modeColor ?? colors.error,
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                        if (widget.compressionCount > 0 &&
-                            compaction == null) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            height: 12,
-                            width: 1,
-                            color: colors.divider,
-                          ),
-                          const SizedBox(width: 6),
-                          Tooltip(
-                            message: strings.chaSessionCompactedTooltip(
-                              widget.compressionCount,
-                            ),
-                            child: Icon(
-                              Icons.compress_rounded,
-                              size: 13,
-                              color: colors.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
 /// Compact AI-Elements-inspired trigger. Only this subtree listens to live
 /// context changes, so a new percentage does not rebuild the transcript.
 class SessionContextTrigger extends StatelessWidget {
@@ -766,43 +340,41 @@ class SessionContextRing extends StatelessWidget {
   }
 }
 
-/// Anchored mobile counterpart of Hermes Desktop's ContextUsagePanel.
+/// Body of the «Uso de contexto» sheet: the mobile counterpart of Hermes
+/// Desktop's ContextUsagePanel.
 ///
-/// The panel performs exactly one breakdown request per opening. It remains a
-/// snapshot while open, matching Desktop, and never polls during streaming.
-class SessionContextFloatingPanel extends StatefulWidget {
-  const SessionContextFloatingPanel({
-    required this.width,
-    required this.maxHeight,
+/// It performs exactly one breakdown request per opening and stays a snapshot
+/// while open, matching Desktop; it never polls during streaming. The
+/// breakdown only appears when Hermes publishes it; otherwise the honest
+/// notice explains why.
+class SessionContextSheetBody extends StatefulWidget {
+  const SessionContextSheetBody({
     required this.metrics,
     required this.loadBreakdown,
     required this.onMetricsSnapshot,
-    required this.onClose,
-    this.modeSectionBuilder,
+    this.onCompact,
     this.compaction,
     this.clock,
     super.key,
   });
 
-  final double width;
-  final double maxHeight;
   final ValueListenable<SessionContextMetrics> metrics;
   final SessionContextBreakdownLoader loadBreakdown;
   final ValueChanged<SessionContextMetrics> onMetricsSnapshot;
-  final VoidCallback onClose;
-  final SessionContextModeSectionBuilder? modeSectionBuilder;
 
-  /// Compaction running or just finished; its full facts head the panel.
+  /// Runs the chat's existing `/compress`; null hides «Compactar».
+  final VoidCallback? onCompact;
+
+  /// Compaction running or just finished; its full facts head the sheet.
   final ValueListenable<CompactionProgress?>? compaction;
   final DateTime Function()? clock;
 
   @override
-  State<SessionContextFloatingPanel> createState() =>
-      _SessionContextFloatingPanelState();
+  State<SessionContextSheetBody> createState() =>
+      _SessionContextSheetBodyState();
 }
 
-class _SessionContextFloatingPanelState
-    extends State<SessionContextFloatingPanel> {
+class _SessionContextSheetBodyState extends State<SessionContextSheetBody> {
   DesktopContextBreakdown? _breakdown;
   Object? _error;
   bool _loading = true;
@@ -836,53 +408,31 @@ class _SessionContextFloatingPanelState
 
   @override
   Widget build(BuildContext context) {
-    return ConstrainedBox(
+    return KeyedSubtree(
       key: const ValueKey('desktop-context-usage-popover'),
-      constraints: BoxConstraints(
-        minWidth: widget.width,
-        maxWidth: widget.width,
-        maxHeight: widget.maxHeight,
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final horizontal = constraints.maxWidth < 330 ? 14.0 : 16.0;
-          return SingleChildScrollView(
-            primary: false,
-            padding: EdgeInsets.fromLTRB(horizontal, 12, horizontal, 18),
-            child: ValueListenableBuilder<SessionContextMetrics>(
-              valueListenable: widget.metrics,
-              builder: (context, liveMetrics, _) {
-                final metrics = _breakdown == null
-                    ? liveMetrics
-                    : SessionContextMetrics.fromBreakdown(
-                        _breakdown!,
-                        fallback: liveMetrics,
-                      );
-                final contents = _PanelContents(
-                  metrics: metrics,
-                  breakdown: _breakdown,
-                  loading: _loading,
-                  error: _error,
-                  onClose: widget.onClose,
-                  modeSectionBuilder: widget.modeSectionBuilder,
+      child: ValueListenableBuilder<SessionContextMetrics>(
+        valueListenable: widget.metrics,
+        builder: (context, liveMetrics, _) {
+          final metrics = _breakdown == null
+              ? liveMetrics
+              : SessionContextMetrics.fromBreakdown(
+                  _breakdown!,
+                  fallback: liveMetrics,
                 );
-                final compaction = widget.compaction;
-                if (compaction == null) return contents;
-                return ValueListenableBuilder<CompactionProgress?>(
-                  valueListenable: compaction,
-                  builder: (context, progress, _) => _PanelContents(
-                    metrics: metrics,
-                    breakdown: _breakdown,
-                    loading: _loading,
-                    error: _error,
-                    onClose: widget.onClose,
-                    modeSectionBuilder: widget.modeSectionBuilder,
-                    compaction: progress,
-                    clock: widget.clock,
-                  ),
-                );
-              },
-            ),
+          Widget contents(CompactionProgress? progress) => _PanelContents(
+            metrics: metrics,
+            breakdown: _breakdown,
+            loading: _loading,
+            error: _error,
+            onCompact: widget.onCompact,
+            compaction: progress,
+            clock: widget.clock,
+          );
+          final compaction = widget.compaction;
+          if (compaction == null) return contents(null);
+          return ValueListenableBuilder<CompactionProgress?>(
+            valueListenable: compaction,
+            builder: (context, progress, _) => contents(progress),
           );
         },
       ),
@@ -896,8 +446,7 @@ class _PanelContents extends StatelessWidget {
     required this.breakdown,
     required this.loading,
     required this.error,
-    required this.onClose,
-    this.modeSectionBuilder,
+    required this.onCompact,
     this.compaction,
     this.clock,
   });
@@ -906,51 +455,28 @@ class _PanelContents extends StatelessWidget {
   final DesktopContextBreakdown? breakdown;
   final bool loading;
   final Object? error;
-  final VoidCallback onClose;
-  final SessionContextModeSectionBuilder? modeSectionBuilder;
+  final VoidCallback? onCompact;
   final CompactionProgress? compaction;
   final DateTime Function()? clock;
 
   @override
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
-    final colors = Theme.of(context).hermes;
     final compaction = this.compaction;
     final categories = breakdown?.categories ?? const [];
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Semantics(
-                header: true,
-                child: Text(
-                  strings.chaContextUsageTitle,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: colors.textPrimary,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.2,
-                  ),
-                ),
-              ),
-            ),
-            IconButton(
-              tooltip: strings.commonClose,
-              visualDensity: VisualDensity.compact,
-              onPressed: onClose,
-              icon: const Icon(Icons.close_rounded, size: 20),
-            ),
-          ],
-        ),
         if (compaction != null) ...[
-          const SizedBox(height: 4),
           _CompactionPanelRow(compaction: compaction, clock: clock),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
         ],
-        const SizedBox(height: 6),
-        _ContextOverview(metrics: metrics),
+        _ContextOverview(
+          metrics: metrics,
+          onCompact: onCompact,
+          compacting: compaction != null && !compaction.isFinished,
+        ),
         const SizedBox(height: 10),
         SessionContextPerformance(metrics: metrics),
         const SizedBox(height: 14),
@@ -976,12 +502,6 @@ class _PanelContents extends StatelessWidget {
             icon: Icons.layers_clear_outlined,
             text: strings.chaContextUsageEmpty,
           ),
-        if (modeSectionBuilder != null) ...[
-          const SizedBox(height: 14),
-          const Divider(height: 1),
-          const SizedBox(height: 10),
-          modeSectionBuilder!(context, onClose),
-        ],
       ],
     );
   }
@@ -1148,9 +668,15 @@ class _PerformanceRow extends StatelessWidget {
 }
 
 class _ContextOverview extends StatelessWidget {
-  const _ContextOverview({required this.metrics});
+  const _ContextOverview({
+    required this.metrics,
+    required this.onCompact,
+    required this.compacting,
+  });
 
   final SessionContextMetrics metrics;
+  final VoidCallback? onCompact;
+  final bool compacting;
 
   @override
   Widget build(BuildContext context) {
@@ -1159,68 +685,87 @@ class _ContextOverview extends StatelessWidget {
     final used = metrics.contextUsed;
     final max = metrics.contextMax;
     final percent = metrics.percent;
-    return Semantics(
-      container: true,
-      label: metrics.hasWindow && used != null && max != null && percent != null
-          ? '${strings.chaContextUsageSummary(compactSessionContextTokens(used), compactSessionContextTokens(max))}. '
-                '${strings.chaContextUsagePercent(percent)}'
-          : strings.chaContextWindowUnavailable,
-      excludeSemantics: true,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: colors.surfaceVariant.withValues(alpha: 0.46),
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: colors.divider.withValues(alpha: 0.78)),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            SessionContextRing(percent: percent, size: 40, strokeWidth: 3.4),
-            const SizedBox(width: 12),
-            Expanded(
-              child:
-                  metrics.hasWindow &&
-                      used != null &&
-                      max != null &&
-                      percent != null
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '$percent%',
-                          style: Theme.of(context).textTheme.headlineSmall
-                              ?.copyWith(
-                                color: colors.textPrimary,
-                                fontWeight: FontWeight.w700,
-                                fontFeatures: const [
-                                  FontFeature.tabularFigures(),
-                                ],
-                              ),
+    final known =
+        metrics.hasWindow && used != null && max != null && percent != null;
+    final level = contextLevelColor(percent, colors);
+    final compact = onCompact;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Semantics(
+          container: true,
+          label: known
+              ? '${strings.chaContextUsageSummary(compactSessionContextTokens(used), compactSessionContextTokens(max))}. '
+                    '${strings.chaContextUsagePercent(percent)}'
+              : strings.chaContextWindowUnavailable,
+          excludeSemantics: true,
+          child: SizedBox.square(
+            dimension: 76,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                SessionContextRing(
+                  key: const ValueKey('context-sheet-ring'),
+                  percent: percent,
+                  size: 76,
+                  strokeWidth: 6,
+                  color: level,
+                ),
+                if (percent != null)
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Text(
+                        '$percent%',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: colors.textPrimary,
+                          fontFeatures: const [FontFeature.tabularFigures()],
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          strings.chaContextUsageSummary(
-                            compactSessionContextTokens(used),
-                            compactSessionContextTokens(max),
-                          ),
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: colors.textSecondary),
-                        ),
-                      ],
-                    )
-                  : Text(
-                      strings.chaContextWindowUnavailable,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: colors.textSecondary,
-                        height: 1.35,
                       ),
                     ),
+                  ),
+              ],
             ),
-          ],
+          ),
         ),
-      ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                known
+                    ? strings.chaContextUsageSummary(
+                        compactSessionContextTokens(used),
+                        compactSessionContextTokens(max),
+                      )
+                    : strings.chaContextWindowUnavailable,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: known ? colors.textPrimary : colors.textSecondary,
+                  fontWeight: known ? FontWeight.w600 : FontWeight.normal,
+                  height: 1.35,
+                ),
+              ),
+              if (compact != null) ...[
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  key: const ValueKey('context-compress-now'),
+                  onPressed: compacting ? null : compact,
+                  icon: const Icon(Icons.compress_rounded, size: 16),
+                  label: Text(
+                    compacting
+                        ? strings.sp1215CompactBusy
+                        : strings.sp1215Compact,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

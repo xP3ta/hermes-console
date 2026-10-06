@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/models/compaction_progress.dart';
 import 'package:hermes_android/core/models/desktop_context_breakdown.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/models/session.dart';
@@ -180,10 +182,7 @@ void main() {
     var semantics = tester.getSemantics(
       find.byKey(const ValueKey('desktop-context-usage-status')),
     );
-    expect(
-      semantics.getSemanticsData().label,
-      'Open context usage, 31% used',
-    );
+    expect(semantics.getSemanticsData().label, 'Open context usage, 31% used');
     expect(semantics.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
 
     metrics.value = const SessionContextMetrics(
@@ -199,10 +198,7 @@ void main() {
     semantics = tester.getSemantics(
       find.byKey(const ValueKey('desktop-context-usage-status')),
     );
-    expect(
-      semantics.getSemanticsData().label,
-      'Open context usage, 52% used',
-    );
+    expect(semantics.getSemanticsData().label, 'Open context usage, 52% used');
 
     await tester.tap(
       find.byKey(const ValueKey('desktop-context-usage-status')),
@@ -229,10 +225,7 @@ void main() {
     final semantics = tester.getSemantics(
       find.byKey(const ValueKey('desktop-context-usage-status')),
     );
-    expect(
-      semantics.getSemanticsData().label,
-      'Open context usage, 99k tok',
-    );
+    expect(semantics.getSemanticsData().label, 'Open context usage, 99k tok');
   });
 
   testWidgets('sin porcentaje ni acumulado muestra solo el marcador', (
@@ -272,14 +265,11 @@ void main() {
       await tester.pumpWidget(
         _TestApp(
           locale: locale,
-          child: SessionContextFloatingPanel(
+          child: SessionContextSheetBody(
             key: ValueKey(locale.languageCode),
-            width: 296,
-            maxHeight: 440,
             metrics: metrics,
             loadBreakdown: () async => null,
             onMetricsSnapshot: (value) => metrics.value = value,
-            onClose: () {},
           ),
         ),
       );
@@ -315,16 +305,16 @@ void main() {
     await tester.pumpWidget(
       _TestApp(
         textScale: 2,
-        child: SessionContextFloatingPanel(
-          width: 296,
-          maxHeight: 440,
-          metrics: metrics,
-          loadBreakdown: () {
-            calls += 1;
-            return result.future;
-          },
-          onMetricsSnapshot: (value) => metrics.value = value,
-          onClose: () {},
+        child: SingleChildScrollView(
+          child: SessionContextSheetBody(
+            metrics: metrics,
+            loadBreakdown: () {
+              calls += 1;
+              return result.future;
+            },
+            onMetricsSnapshot: (value) => metrics.value = value,
+            onCompact: () {},
+          ),
         ),
       ),
     );
@@ -382,185 +372,140 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('la píldora anuncia descripción y el mejor valor disponible', (
-    tester,
-  ) async {
-    final metrics = ValueNotifier(
-      const SessionContextMetrics(
-        contextUsed: 800,
-        contextMax: 10000,
-        percent: 8,
-        cumulativeTotal: 1200,
-      ),
-    );
-    addTearDown(metrics.dispose);
-
-    await tester.pumpWidget(
+  group('context sheet body', () {
+    Future<void> pumpBody(
+      WidgetTester tester, {
+      required ValueNotifier<SessionContextMetrics> metrics,
+      VoidCallback? onCompact,
+      ValueListenable<CompactionProgress?>? compaction,
+      Future<DesktopContextBreakdown?> Function()? load,
+    }) => tester.pumpWidget(
       _TestApp(
-        child: SessionContextPopoverButton(
-          metrics: metrics,
-          loadBreakdown: () async => null,
-          onMetricsSnapshot: (value) => metrics.value = value,
+        locale: const Locale('es'),
+        child: SingleChildScrollView(
+          child: SessionContextSheetBody(
+            metrics: metrics,
+            loadBreakdown: load ?? () async => null,
+            onMetricsSnapshot: (value) => metrics.value = value,
+            onCompact: onCompact,
+            compaction: compaction,
+            clock: () => DateTime(2026, 10, 6, 12, 0, 3),
+          ),
         ),
       ),
     );
 
-    final trigger = find.byKey(
-      const ValueKey('desktop-context-usage-status'),
-    );
-    expect(find.text('8%'), findsOneWidget);
-    expect(
-      tester.getSemantics(trigger).getSemanticsData().label,
-      'Open context usage, 8% used',
-    );
-
-    metrics.value = const SessionContextMetrics(cumulativeTotal: 1200);
-    await tester.pump();
-    expect(find.text('1.2k tok'), findsOneWidget);
-    expect(
-      tester.getSemantics(trigger).getSemanticsData().label,
-      'Open context usage, 1.2k tok',
-    );
-
-    metrics.value = SessionContextMetrics.unknown;
-    await tester.pump();
-    expect(find.text('—'), findsOneWidget);
-    expect(
-      tester.getSemantics(trigger).getSemanticsData().label,
-      'Open context usage, Hermes has not published this session\'s context window yet.',
-    );
-  });
-
-  testWidgets(
-    'la marca de compactación persiste y solo aparece cuando ya se compactó',
-    (tester) async {
+    testWidgets('big ring, tokens of the window and Compactar', (tester) async {
+      final colors = AppTheme.fromId('amber').hermes;
       final metrics = ValueNotifier(
         const SessionContextMetrics(
-          contextUsed: 800,
-          contextMax: 10000,
-          percent: 8,
+          contextUsed: 89600,
+          contextMax: 200000,
+          percent: 80,
         ),
       );
       addTearDown(metrics.dispose);
-
-      await tester.pumpWidget(
-        _TestApp(
-          child: SessionContextPopoverButton(
-            metrics: metrics,
-            loadBreakdown: () async => null,
-            onMetricsSnapshot: (value) => metrics.value = value,
-          ),
-        ),
+      var compacts = 0;
+      var loads = 0;
+      await pumpBody(
+        tester,
+        metrics: metrics,
+        onCompact: () => compacts++,
+        load: () async {
+          loads++;
+          return null;
+        },
       );
+      await tester.pump();
 
-      final trigger = find.byKey(
-        const ValueKey('desktop-context-usage-status'),
+      expect(find.text('80%'), findsOneWidget);
+      expect(find.text('89.6k de 200k tokens'), findsOneWidget);
+      final ring = tester.widget<SessionContextRing>(
+        find.byKey(const ValueKey('context-sheet-ring')),
       );
-      // Sin compactar nunca: nada de esto se muestra.
-      expect(find.byIcon(Icons.compress_rounded), findsNothing);
+      expect(ring.color, colors.warning);
+      // Honest notice: this server publishes no breakdown.
       expect(
-        tester.getSemantics(trigger).getSemanticsData().label,
-        'Open context usage, 8% used',
-      );
-
-      await tester.pumpWidget(
-        _TestApp(
-          child: SessionContextPopoverButton(
-            metrics: metrics,
-            loadBreakdown: () async => null,
-            onMetricsSnapshot: (value) => metrics.value = value,
-            compressionCount: 1,
-          ),
+        find.text(
+          Strings.of(
+            tester.element(find.byType(SessionContextSheetBody)),
+          ).chaContextUsageUnavailable,
         ),
-      );
-      expect(find.byIcon(Icons.compress_rounded), findsOneWidget);
-      expect(
-        tester.getSemantics(trigger).getSemanticsData().label,
-        'Open context usage, 8% used · This conversation has been compacted once',
+        findsOneWidget,
       );
 
-      await tester.pumpWidget(
-        _TestApp(
-          child: SessionContextPopoverButton(
-            metrics: metrics,
-            loadBreakdown: () async => null,
-            onMetricsSnapshot: (value) => metrics.value = value,
-            compressionCount: 3,
-          ),
-        ),
-      );
-      expect(find.byIcon(Icons.compress_rounded), findsOneWidget);
-      expect(
-        tester.getSemantics(trigger).getSemanticsData().label,
-        'Open context usage, 8% used · This conversation has been compacted 3 times',
-      );
-    },
-  );
-
-  testWidgets('el trigger abre una tarjeta anclada y el cierre la retira', (
-    tester,
-  ) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(393, 800);
-    addTearDown(() {
-      tester.view.resetDevicePixelRatio();
-      tester.view.resetPhysicalSize();
+      await tester.tap(find.byKey(const ValueKey('context-compress-now')));
+      expect(compacts, 1);
+      expect(loads, 1);
     });
 
-    final metrics = ValueNotifier(
-      const SessionContextMetrics(
-        contextUsed: 2900,
-        contextMax: 10000,
-        percent: 29,
-      ),
-    );
-    addTearDown(metrics.dispose);
-    var calls = 0;
+    testWidgets('no compact action without a callback', (tester) async {
+      final metrics = ValueNotifier(SessionContextMetrics.unknown);
+      addTearDown(metrics.dispose);
+      await pumpBody(tester, metrics: metrics);
+      expect(find.byKey(const ValueKey('context-compress-now')), findsNothing);
+    });
 
-    await tester.pumpWidget(
-      _TestApp(
-        child: Align(
-          alignment: Alignment.topRight,
-          child: SessionContextPopoverButton(
-            metrics: metrics,
-            loadBreakdown: () async {
-              calls += 1;
-              return const DesktopContextBreakdown(
-                contextUsed: 2900,
-                contextMax: 10000,
-                contextPercent: 29,
-              );
-            },
-            onMetricsSnapshot: (value) => metrics.value = value,
-          ),
+    testWidgets('while compacting the button waits and the row says so', (
+      tester,
+    ) async {
+      final metrics = ValueNotifier(
+        const SessionContextMetrics(
+          contextUsed: 45,
+          contextMax: 100,
+          percent: 45,
         ),
-      ),
-    );
+      );
+      addTearDown(metrics.dispose);
+      final progress = ValueNotifier<CompactionProgress?>(null);
+      addTearDown(progress.dispose);
+      var compacts = 0;
+      await pumpBody(
+        tester,
+        metrics: metrics,
+        onCompact: () => compacts++,
+        compaction: progress,
+      );
+      expect(
+        find.byKey(const ValueKey('context-panel-compaction')),
+        findsNothing,
+      );
 
-    final trigger = find.byKey(const ValueKey('desktop-context-usage-status'));
-    expect(find.text('29%'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('desktop-context-usage-popover')),
-      findsNothing,
-    );
+      progress.value = CompactionProgress(
+        startedAt: DateTime(2026, 10, 6, 12),
+        manual: true,
+        messagesBefore: 340,
+      );
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('context-panel-compaction')),
+        findsOneWidget,
+      );
+      expect(find.text('Compactando…'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('context-compress-now')));
+      expect(compacts, 0);
+    });
 
-    await tester.tap(trigger);
-    await tester.pumpAndSettle();
-
-    final popover = find.byKey(const ValueKey('desktop-context-usage-popover'));
-    expect(popover, findsOneWidget);
-    expect(calls, 1);
-    expect(
-      tester.getTopLeft(popover).dy,
-      greaterThanOrEqualTo(tester.getBottomLeft(trigger).dy),
-    );
-    expect(tester.getTopRight(popover).dx, lessThanOrEqualTo(393));
-
-    await tester.tap(find.byIcon(Icons.close_rounded));
-    await tester.pumpAndSettle();
-    expect(popover, findsNothing);
-    expect(calls, 1);
-    expect(tester.takeException(), isNull);
+    testWidgets('red ring from 90 %', (tester) async {
+      final colors = AppTheme.fromId('amber').hermes;
+      final metrics = ValueNotifier(
+        const SessionContextMetrics(
+          contextUsed: 92,
+          contextMax: 100,
+          percent: 92,
+        ),
+      );
+      addTearDown(metrics.dispose);
+      await pumpBody(tester, metrics: metrics);
+      expect(
+        tester
+            .widget<SessionContextRing>(
+              find.byKey(const ValueKey('context-sheet-ring')),
+            )
+            .color,
+        colors.error,
+      );
+    });
   });
 
   testWidgets('usa tokens semánticos en temas dark, OLED y light', (
