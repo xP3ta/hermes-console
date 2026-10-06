@@ -7982,7 +7982,6 @@
   "cr1215ShowQuestion": "Show question",
 "ss1215StatusWorking": "Working…",
   "ps1215NoDetailsYet": "No details yet: this updates with the next event.",
-  "lr1215ReasoningHiddenHint": "The model's reasoning only shows here if the server shares it.",
   "cq1215QuestionNotRecovered": "The question could not be recovered. Hermes is still waiting for your answer.",
   "cq1215RetryQuestion": "Retry",
   "cq1215StopTurn": "Stop turn",
@@ -8548,5 +8547,79 @@
   "tabletPickProject": "Pick a project to open it here",
   "@tabletPickProject": {
     "description": "Placeholder in the tablet detail pane of the Projects list before one is opened."
+  },
+  "dc1215SectionInProgress": "In progress",
+  "@dc1215SectionInProgress": {
+    "description": "Activity view section with the work running now (current step, subagents, background processes)."
+  },
+  "dc1215SectionBefore": "Earlier",
+  "@dc1215SectionBefore": {
+    "description": "Activity view section with the finished steps of this turn."
+  },
+  "dc1215StepRunning": "Running",
+  "@dc1215StepRunning": {
+    "description": "Gerund subtitle under a running tool step in the activity view."
+  },
+  "dc1215SkillRunning": "Using the skill",
+  "@dc1215SkillRunning": {
+    "description": "Gerund subtitle under a running skill step in the activity view."
+  },
+  "dc1215StepDone": "Done",
+  "@dc1215StepDone": {
+    "description": "Past-tense subtitle under a finished step in the activity view."
+  },
+  "dc1215StepFailed": "Failed",
+  "@dc1215StepFailed": {
+    "description": "Past-tense subtitle under a failed step in the activity view."
+  },
+  "dc1215ProcessRunning": "Running in the background",
+  "@dc1215ProcessRunning": {
+    "description": "Subtitle under a background process row in the activity view."
+  },
+  "dc1215ActivityTitle": "Activity",
+  "@dc1215ActivityTitle": {
+    "description": "Title of the activity view card."
+  },
+  "dc1215AddContext": "Add context",
+  "@dc1215AddContext": {
+    "description": "Activity view action: focus the composer to add more context to the running work."
+  },
+  "dc1215ChangeCourse": "Change course",
+  "@dc1215ChangeCourse": {
+    "description": "Activity view action: focus the composer to queue a new direction that can then be steered."
+  },
+  "dc1215StopAll": "Stop everything",
+  "@dc1215StopAll": {
+    "description": "Activity view action: stop all running work of this chat (same as the composer Stop)."
+  },
+  "dc1215StopItem": "Stop {item}",
+  "@dc1215StopItem": {
+    "description": "Accessibility label of a per-row stop button.",
+    "placeholders": {
+      "item": {
+        "type": "String"
+      }
+    }
+  },
+  "dc1215SteerHint": "New direction: it is queued and you can «Steer now»",
+  "@dc1215SteerHint": {
+    "description": "Composer hint after «Change course»: the message is queued and the queue offers «Steer now»."
+  },
+  "dc1215WaitingApproval": "Waiting for you: approval",
+  "@dc1215WaitingApproval": {
+    "description": "Bot chat header status while an approval is pending."
+  },
+  "dc1215WaitingAnswer": "Waiting for you: answer",
+  "@dc1215WaitingAnswer": {
+    "description": "Bot chat header status while the bot waits for an answer to a question."
+  },
+  "dc1215LastActive": "Last active · {time}",
+  "@dc1215LastActive": {
+    "description": "Bot chat header status when idle: time of the last activity.",
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
   }
 }
