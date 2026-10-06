@@ -214,7 +214,8 @@ class _MascotOverlayState extends State<MascotOverlay>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    if (identical(GestureDockController.welcomePresenter, _presentWelcome)) {
+    // Method tear-offs of one instance compare equal.
+    if (GestureDockController.welcomePresenter == _presentWelcome) {
       GestureDockController.welcomePresenter = null;
     }
     for (final l in _listenables) {
@@ -576,13 +577,12 @@ class _MascotOverlayState extends State<MascotOverlay>
   /// [GestureDockController.welcomePresenter]: shows the welcome in the
   /// mascot's bubble when the mascot is on screen; otherwise the dock
   /// shows its own card.
-  late final bool Function(GestureDockController) _presentWelcome =
-      (controller) {
-        if (!mounted || !_visible || _dragging) return false;
-        _welcomeFrom = controller;
-        _openBubble(_Bubble.welcome);
-        return true;
-      };
+  bool _presentWelcome(GestureDockController controller) {
+    if (!mounted || !_visible || _dragging) return false;
+    _welcomeFrom = controller;
+    _openBubble(_Bubble.welcome);
+    return true;
+  }
 
   void _answerWelcome({required bool teach, bool noMascot = false}) {
     final controller = _welcomeFrom;
