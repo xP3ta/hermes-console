@@ -348,11 +348,19 @@ void main() {
       tester.getTopLeft(find.textContaining('cached answer').first).dy,
       lessThan(dividerTop),
     );
+    // QA 9489: the owner's own question from another surface is not news;
+    // the divider marks the first reply.
     expect(
       tester
           .getTopLeft(
             find.textContaining('question from another surface').first,
           )
+          .dy,
+      lessThan(dividerTop),
+    );
+    expect(
+      tester
+          .getTopLeft(find.textContaining('answer from another surface').first)
           .dy,
       greaterThan(dividerTop),
     );
@@ -442,7 +450,8 @@ void main() {
     expect(divider, findsOneWidget, reason: 'the chat opens on the divider');
     final viewport = tester.getRect(list.first);
     expect(tester.getTopLeft(divider).dy, closeTo(viewport.top, 1));
-    expect(find.textContaining('long question 41 '), findsOneWidget);
+    // QA 9489: the first news is the reply, not the owner's question.
+    expect(find.textContaining('long answer 41.'), findsOneWidget);
     // One landing, then stillness.
     final landedAt = tester.getTopLeft(divider).dy;
     for (var frame = 0; frame < 20; frame++) {

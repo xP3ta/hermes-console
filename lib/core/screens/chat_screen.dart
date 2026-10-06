@@ -161,6 +161,7 @@ import '../utils/turn_control.dart';
 import '../utils/byte_bounded_lru_cache.dart';
 import '../utils/chat_turn.dart';
 import '../utils/chat_read_marker.dart';
+import '../utils/unread_rules.dart';
 import '../utils/markdown_clipboard.dart';
 import '../utils/responsive.dart';
 import '../utils/slash_commands.dart';
@@ -2197,6 +2198,9 @@ class _ChatScreenState extends State<ChatScreen>
   /// stored marker, and lands on the first unread row if it is off screen.
   void _resolveNewSinceYouLeft() {
     if (_newSinceResolved || _disposed || !_chatBound) return;
+    // Never position (or decide) under the App Lock, another route or in
+    // the background: resolved again on the next read once on screen.
+    if (!_unreadPresence.present) return;
     final markerKey = _lastReadKeyOnEntry;
     if (markerKey == null) {
       _newSinceResolved = true;
@@ -2312,14 +2316,11 @@ class _ChatScreenState extends State<ChatScreen>
     // recorded there) and include its extent in the single jump, so the
     // divider lands at the top in one frame instead of sliding 48 dp.
     final buttonExtent = _scrollToBottomVisibility.value ? 0.0 : 48.0;
+    // The divider already shows the news from while away: the pill
+    // starts at zero here and counts only what arrives from now on
+    // (unread_rules.dart). Showing the arrow sets that baseline.
     _showScrollToBottom = true;
     position.jumpTo(target + buttonExtent);
-    if (_scrollToBottomVisibility.value) {
-      _awayMarker = newestRead;
-      _awayMarkerKey = chatReadMarkerKey(newestRead);
-      _awayCountableBaseline = _countableMessages() - unread;
-      _newWhileAway.value = unread;
-    }
   }
 
   bool _isNewSinceFirstUnread(Map<String, dynamic> message) {
@@ -2328,6 +2329,41 @@ class _ChatScreenState extends State<ChatScreen>
     if (identical(message, target)) return true;
     final key = _newSinceFirstUnreadKey;
     return key != null && chatReadMarkerKey(message) == key;
+  }
+
+  /// Unread rules shared with rooms (unread_rules.dart): whether this chat
+  /// is on screen, and the read marker when it stopped being.
+  final UnreadPresence _unreadPresence = UnreadPresence();
+  String? _hiddenReadMarker;
+
+  /// The chat stopped being visible (background, covered, App Lock).
+  void _unreadHide() {
+    if (_unreadPresence.present && _chatBound) {
+      _hiddenReadMarker = chatReadMarkerForLeaving(_messages);
+    }
+    _unreadPresence.hide();
+  }
+
+  /// The chat is visible again. After a long enough absence, news that
+  /// arrived meanwhile gets the divider and the landing (reader at the
+  /// bottom); in every case it is never counted by the pill.
+  void _unreadShow() {
+    if (_unreadPresence.present) return;
+    final left = _unreadPresence.show();
+    if (_scrollToBottomVisibility.value) {
+      _newWhileAwayCarry = _newWhileAway.value;
+      final marker = chatNewestCountableMessage(_messages);
+      _awayMarker = marker;
+      _awayMarkerKey = marker == null ? null : chatReadMarkerKey(marker);
+      _awayCountableBaseline = _countableMessages() - _newWhileAwayCarry;
+    } else if (left && _hiddenReadMarker != null) {
+      _lastReadKeyOnEntry = _hiddenReadMarker;
+      _newSinceResolved = false;
+      _newSinceFirstUnread = null;
+      _newSinceFirstUnreadKey = null;
+    }
+    _hiddenReadMarker = null;
+    _resolveNewSinceYouLeft();
   }
 
   /// Marks the newest loaded message as read for the next entry.
@@ -2343,6 +2379,10 @@ class _ChatScreenState extends State<ChatScreen>
   String? _awayMarkerKey;
   int _awayCountableBaseline = 0;
 
+  /// Pill count reached before the chat was hidden; what arrives while
+  /// hidden is not counted (it is not "while you read").
+  int _newWhileAwayCarry = 0;
+
   int _countableMessages() {
     var total = 0;
     for (final message in _messages) {
@@ -2357,6 +2397,7 @@ class _ChatScreenState extends State<ChatScreen>
     _awayMarker = marker;
     _awayMarkerKey = marker == null ? null : chatReadMarkerKey(marker);
     _awayCountableBaseline = _countableMessages();
+    _newWhileAwayCarry = 0;
     _newWhileAway.value = 0;
   }
 
@@ -2364,11 +2405,14 @@ class _ChatScreenState extends State<ChatScreen>
     _awayMarker = null;
     _awayMarkerKey = null;
     _awayCountableBaseline = 0;
+    _newWhileAwayCarry = 0;
     _newWhileAway.value = 0;
   }
 
   void _recountNewWhileAway({bool olderHistoryOnly = false}) {
     if (_disposed || !_scrollToBottomVisibility.value) return;
+    // Hidden: arrivals are not "while you read"; the return rebases.
+    if (!_unreadPresence.present) return;
     if (olderHistoryOnly) {
       // Older rows extend the far end: they are never news for the reader,
       // only the baseline of the fallback count moves with them.
@@ -2384,7 +2428,7 @@ class _ChatScreenState extends State<ChatScreen>
     );
     final int count;
     if (found != null) {
-      count = found.count;
+      count = found.count + _newWhileAwayCarry;
     } else {
       // The marker row was replaced by a copy without a durable id (an
       // optimistic prompt reconciled by the server). The number of countable
@@ -6298,6 +6342,7 @@ class _ChatScreenState extends State<ChatScreen>
   void didPopNext() {
     _coveredByAppLock = false;
     _markChatVisible(true); // volvió al frente (pop de la de encima)
+    if (_appInForeground) _unreadShow();
     unawaited(_ensureDesktopRuntimeAndBootstrapContext());
     _syncPassiveTranscriptRefresh(refreshNow: true);
     // Recarga el perfil activo: pudo cambiarse en Perfiles mientras estábamos
@@ -6353,6 +6398,7 @@ class _ChatScreenState extends State<ChatScreen>
             .value ??
         false;
     _markChatVisible(false); // la tapó otra pantalla
+    _unreadHide();
   }
 
   @override
@@ -7855,6 +7901,7 @@ class _ChatScreenState extends State<ChatScreen>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.hidden) {
+      _unreadHide();
       _persistLastRead();
       // cs1215: a chat created during this visit has a durable id now.
       if (_chatRouteVisible) _rememberColdStartRoute();
@@ -7891,6 +7938,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
     // Al volver a primer plano, repinta la configuración conocida sin mutarla.
     if (state == AppLifecycleState.resumed) {
+      if (_chatRouteVisible) _unreadShow();
       _loadActiveModel();
       if (_chatBound) {
         unawaited(_chat.warmDesktopGatewayForAutomaticBootstrap());

@@ -1,0 +1,103 @@
+import 'package:flutter/widgets.dart';
+
+/// Scroll controller for a reversed transcript built as two slivers around
+/// a center: the history the reader has (center sliver, growing up) and
+/// everything newer than its last row (the sliver before the center,
+/// growing down). Content changes below the center never move the history
+/// on screen; this controller adds the two layout-time rules the screens
+/// would otherwise apply with post-frame jumps (one visible frame late, and
+/// the source of the "scrolls down, then up" jitter):
+///
+/// * **Stick to the bottom** while [following] and no finger is on the
+///   list: when the content extent changes, the position is corrected to
+///   the new bottom inside the same layout. Reading back is not following:
+///   the screen says so as soon as the reader leaves the bottom.
+/// * **Land** once at the center boundary: [requestLanding] puts the
+///   boundary [context] pixels below the top of the viewport in the first
+///   layout after the request (or at the bottom if what is below it is
+///   shorter than the screen).
+class AnchoredTranscriptScrollController extends ScrollController {
+  AnchoredTranscriptScrollController({this.following = _alwaysFollow});
+
+  static bool _alwaysFollow() => true;
+
+  /// Whether the reader follows the newest content (not reading back).
+  bool Function() following;
+
+  double? _landingContext;
+
+  /// Lands at the center boundary on the next layout.
+  void requestLanding({double context = 56}) => _landingContext = context;
+
+  /// Whether a landing is still waiting for its layout.
+  bool get landingPending => _landingContext != null;
+
+  double? _takeLanding() {
+    final value = _landingContext;
+    _landingContext = null;
+    return value;
+  }
+
+  @override
+  ScrollPosition createScrollPosition(
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) => _AnchoredTranscriptPosition(
+    owner: this,
+    physics: physics,
+    context: context,
+    oldPosition: oldPosition,
+    debugLabel: debugLabel,
+  );
+}
+
+class _AnchoredTranscriptPosition extends ScrollPositionWithSingleContext {
+  _AnchoredTranscriptPosition({
+    required this.owner,
+    required super.physics,
+    required super.context,
+    super.oldPosition,
+    super.debugLabel,
+  });
+
+  final AnchoredTranscriptScrollController owner;
+
+  bool get _fingerDown => activity is DragScrollActivity;
+
+  @override
+  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
+    final hadDimensions = hasContentDimensions && hasPixels;
+    final oldMin = hadDimensions ? this.minScrollExtent : null;
+    final oldMax = hadDimensions ? this.maxScrollExtent : null;
+    final settled = super.applyContentDimensions(
+      minScrollExtent,
+      maxScrollExtent,
+    );
+    if (!hasViewportDimension) return settled;
+    final landing = owner._takeLanding();
+    if (landing != null) {
+      final target = (-(viewportDimension - landing)).clamp(
+        minScrollExtent,
+        maxScrollExtent,
+      );
+      if ((pixels - target).abs() > 0.01) {
+        correctPixels(target);
+        return false;
+      }
+      return settled;
+    }
+    final changed =
+        oldMin == null ||
+        (oldMin - minScrollExtent).abs() > 0.01 ||
+        (oldMax! - maxScrollExtent).abs() > 0.01;
+    if (changed &&
+        owner.following() &&
+        !_fingerDown &&
+        (pixels - minScrollExtent).abs() > 0.01) {
+      correctPixels(minScrollExtent);
+      return false;
+    }
+    return settled;
+  }
+}

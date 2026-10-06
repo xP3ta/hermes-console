@@ -23,6 +23,7 @@ import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
+import 'package:hermes_android/core/utils/unread_rules.dart';
 import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/main.dart';
 
@@ -540,8 +541,10 @@ void main() {
       ];
       chat.debugEmitMessagesHydrated();
       await settle(tester);
+      // QA 9489: the owner's own question (from another surface) is not
+      // news; only the reply counts.
       expect(
-        find.descendant(of: jumpButton(), matching: find.text('2 nuevos')),
+        find.descendant(of: jumpButton(), matching: find.text('1 nuevo')),
         findsOneWidget,
       );
 
@@ -552,11 +555,11 @@ void main() {
       chat.debugEmitMessagesHydrated();
       await settle(tester);
       expect(
-        find.descendant(of: jumpButton(), matching: find.text('3 nuevos')),
+        find.descendant(of: jumpButton(), matching: find.text('2 nuevos')),
         findsOneWidget,
       );
       expect(
-        find.bySemanticsLabel('Ir al final de la conversación, 3 nuevos'),
+        find.bySemanticsLabel('Ir al final de la conversación, 2 nuevos'),
         findsOneWidget,
       );
 
@@ -661,17 +664,20 @@ void main() {
         closeTo(viewport.top, 1),
         reason: 'the divider lands at the top of the transcript',
       );
-      final firstUnread = find.textContaining('Pregunta histórica 25 ');
+      // QA 9489: the first news is the reply (the owner's own question
+      // sits above the divider), and landing shows no count: the pill is
+      // only for what arrives while reading.
+      final firstUnread = find.textContaining('Respuesta histórica 25.');
       expect(firstUnread, findsOneWidget);
       expect(tester.getTopLeft(firstUnread).dy, greaterThan(dividerTop));
       expect(controllerOf(tester).position.pixels, greaterThan(0));
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('chat-scroll-to-bottom')),
-          matching: find.text('10 nuevos'),
+          matching: find.textContaining('nuevo'),
         ),
-        findsOneWidget,
-        reason: 'every row from the first unread down is still unread',
+        findsNothing,
+        reason: 'no pill count for news from while away',
       );
       expect(tester.takeException(), isNull);
       await tearDownChat(tester, gateway);
@@ -739,13 +745,10 @@ void main() {
           () =>
               divider().evaluate().isNotEmpty &&
               transcriptPainted() &&
-              find
-                  .descendant(
-                    of: find.byKey(const ValueKey('chat-scroll-to-bottom')),
-                    matching: find.text('50 nuevos'),
-                  )
-                  .evaluate()
-                  .isNotEmpty,
+              (tester.getTopLeft(divider()).dy -
+                          tester.getRect(transcript()).top)
+                      .abs() <=
+                  1,
         );
         expect(
           divider(),
@@ -754,13 +757,14 @@ void main() {
         );
         final viewport = tester.getRect(transcript());
         expect(tester.getTopLeft(divider()).dy, closeTo(viewport.top, 1));
-        expect(find.textContaining('Pregunta histórica 5 '), findsOneWidget);
+        expect(find.textContaining('Respuesta histórica 5.'), findsOneWidget);
         expect(
           find.descendant(
             of: find.byKey(const ValueKey('chat-scroll-to-bottom')),
-            matching: find.text('50 nuevos'),
+            matching: find.textContaining('nuevo'),
           ),
-          findsOneWidget,
+          findsNothing,
+          reason: 'QA 9489: no pill count for news from while away',
         );
         // Stillness after landing.
         final landed = tester.getTopLeft(divider()).dy;
@@ -999,12 +1003,17 @@ void main() {
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('chat-scroll-to-bottom')),
-          matching: find.text('2 nuevos'),
+          matching: find.textContaining('nuevo'),
         ),
-        findsOneWidget,
+        findsNothing,
+        reason: 'QA 9489: no pill count for news from while away',
       );
       final dividerTop = tester.getTopLeft(divider()).dy;
-      final firstUnread = find.text('Pregunta desde otra superficie');
+      // The first news is the reply; the owner's own question from another
+      // surface is not news and stays above the divider.
+      final firstUnread = find.textContaining(
+        'Respuesta llegada desde otra superficie',
+      );
       expect(firstUnread, findsOneWidget);
       expect(tester.getTopLeft(firstUnread).dy, greaterThan(dividerTop));
       // The prompt sent before leaving sits above the divider (possibly
@@ -1689,6 +1698,149 @@ void main() {
       debugOnRebuildDirtyWidget = null;
       expect(states.last, 'A', reason: 'precondition: the header switched');
       expect(rebuilds, 0, reason: 'scrolling rebuilt transcript rows');
+      await tearDownChat(tester, gateway);
+    });
+  });
+
+  group('QA 9489 one unread model', () {
+    Finder divider() => find.byKey(const ValueKey('chat-new-since-divider'));
+    Finder jumpButton() => find.byKey(const ValueKey('chat-scroll-to-bottom'));
+    var now = DateTime(2026, 10, 6, 12);
+    setUp(() {
+      now = DateTime(2026, 10, 6, 12);
+      UnreadPresence.debugClock = () => now;
+    });
+    tearDown(() => UnreadPresence.debugClock = null);
+
+    Future<void> background(WidgetTester tester) async {
+      for (final s in [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(s);
+        await tester.pump();
+      }
+    }
+
+    Future<void> foreground(WidgetTester tester) async {
+      for (final s in [
+        AppLifecycleState.hidden,
+        AppLifecycleState.inactive,
+        AppLifecycleState.resumed,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(s);
+        await tester.pump();
+      }
+    }
+
+    List<Map<String, dynamic>> replies(String id, int n) => [
+      for (var i = n - 1; i >= 0; i--)
+        {
+          'id': '$id-$i',
+          'role': 'assistant',
+          'content': List.filled(
+            25,
+            'Respuesta $id $i en segundo plano.',
+          ).join(' '),
+        },
+    ];
+
+    testWidgets('backgrounded long enough: lands on the first reply that '
+        'arrived meanwhile, divider and no pill', (tester) async {
+      final gateway = _StreamingGateway();
+      final chat = await pumpChat(tester, gateway, history: _history());
+      await settle(tester);
+      expect(divider(), findsNothing);
+      await background(tester);
+      chat.internalMessagesForTesting = [
+        ...replies('away', 3),
+        ...chat.internalMessagesForTesting,
+      ];
+      chat.debugEmitMessagesHydrated();
+      await settle(tester);
+      expect(divider(), findsNothing, reason: 'nothing decided while hidden');
+      now = now.add(const Duration(minutes: 5));
+      await foreground(tester);
+      for (var f = 0; f < 120 && divider().evaluate().isEmpty; f++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await settle(tester);
+      expect(divider(), findsOneWidget);
+      final first = find.textContaining('Respuesta away 0 en');
+      expect(first, findsOneWidget);
+      expect(
+        tester.getTopLeft(first).dy,
+        greaterThan(tester.getTopLeft(divider()).dy),
+      );
+      expect(
+        controllerOf(tester).position.pixels,
+        greaterThan(0),
+        reason: 'opens at the first new reply, not at the last',
+      );
+      expect(
+        find.descendant(
+          of: jumpButton(),
+          matching: find.textContaining('nuevo'),
+        ),
+        findsNothing,
+      );
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('a short trip to another app is not leaving: no divider', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      final chat = await pumpChat(tester, gateway, history: _history());
+      await settle(tester);
+      await background(tester);
+      chat.internalMessagesForTesting = [
+        ...replies('blip', 2),
+        ...chat.internalMessagesForTesting,
+      ];
+      chat.debugEmitMessagesHydrated();
+      now = now.add(const Duration(seconds: 5));
+      await foreground(tester);
+      await settle(tester);
+      expect(divider(), findsNothing);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('reading back: what arrives while hidden is not counted, '
+        'what arrives while reading is', (tester) async {
+      final gateway = _StreamingGateway();
+      final chat = await pumpChat(tester, gateway, history: _history());
+      await tester.pump(const Duration(seconds: 1));
+      await scrollUp(tester, 300);
+      await background(tester);
+      chat.internalMessagesForTesting = [
+        ...replies('hidden', 2),
+        ...chat.internalMessagesForTesting,
+      ];
+      chat.debugEmitMessagesHydrated();
+      await settle(tester);
+      now = now.add(const Duration(seconds: 5));
+      await foreground(tester);
+      await settle(tester);
+      expect(
+        find.descendant(
+          of: jumpButton(),
+          matching: find.textContaining('nuevo'),
+        ),
+        findsNothing,
+        reason: 'the pill only counts while the reader is in the chat',
+      );
+      chat.internalMessagesForTesting = [
+        ...replies('live', 1),
+        ...chat.internalMessagesForTesting,
+      ];
+      chat.debugEmitMessagesHydrated();
+      await settle(tester);
+      expect(
+        find.descendant(of: jumpButton(), matching: find.text('1 nuevo')),
+        findsOneWidget,
+      );
       await tearDownChat(tester, gateway);
     });
   });
