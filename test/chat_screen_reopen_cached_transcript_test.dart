@@ -433,10 +433,6 @@ void main() {
     expect(divider, findsNothing, reason: 'the cached rows hold nothing new');
 
     network.complete(_longRows(1, 60));
-    final list = find.descendant(
-      of: find.byType(ChatScreen),
-      matching: find.byType(ListView),
-    );
     // fh1215: the transcript runs under the floating header; the reader's
     // view starts at its bottom edge.
     double readTop() =>
