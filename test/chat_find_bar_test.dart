@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -262,6 +263,19 @@ void main() {
     await settleReveal(tester);
     expect(find.text('2 de 2'), findsOneWidget);
     expect(_isOnScreen(tester, far), isTrue);
+    // fh1215: the match lands below the floating header and the find bar
+    // under it, not under them.
+    final header = tester.getRect(
+      find.byKey(const ValueKey('floating-header')),
+    );
+    final bar = tester.getRect(find.byKey(const ValueKey('chat-find-bar')));
+    expect(
+      tester.getRect(far.first).top,
+      greaterThanOrEqualTo(
+        math.max(header.bottom - FloatingChatHeader.scrimTail, bar.bottom) -
+            0.5,
+      ),
+    );
     expect(
       find.bySemanticsLabel(RegExp('^Resultado de búsqueda actual')),
       findsOneWidget,

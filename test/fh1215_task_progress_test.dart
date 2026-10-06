@@ -148,6 +148,46 @@ void main() {
       );
     });
 
+    testWidgets('a narrow header pill drops the extras first; the timer '
+        'stays whole', (tester) async {
+      final now = DateTime(2026, 10, 6, 12);
+      final model = ActivityPillModel(
+        glyph: ActivityGlyph.tool,
+        action: 'terminal',
+        detail: 'flutter test',
+        extras: '+1 en segundo plano',
+        timerStart: now.subtract(const Duration(seconds: 44)),
+        semanticsLabel: 'terminal, flutter test, +1 en segundo plano',
+      );
+      Widget sized(double width) => SizedBox(
+        width: width,
+        child: Center(
+          child: ActivityPill(
+            model: model,
+            now: now,
+            onTap: () {},
+            inHeader: true,
+          ),
+        ),
+      );
+      final extras = find.byKey(const ValueKey('activity-pill-extras'));
+      final timer = find.byKey(const ValueKey('activity-pill-elapsed'));
+      await tester.pumpWidget(_app(sized(420)));
+      expect(extras, findsOneWidget);
+      await tester.pumpWidget(_app(sized(236)));
+      expect(extras, findsNothing);
+      expect(timer, findsOneWidget);
+      expect(find.text('0:44'), findsOneWidget);
+      expect(
+        tester.getRect(timer).right,
+        lessThanOrEqualTo(
+          tester.getRect(find.byKey(const ValueKey('activity-pill'))).right,
+        ),
+      );
+      expect(model.semanticsLabel, contains('+1 en segundo plano'));
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('model: partial counts, finished announces no counter, idle '
         'carries none', (tester) async {
       final strings = await _strings(tester);
