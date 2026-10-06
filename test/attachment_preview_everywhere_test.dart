@@ -250,6 +250,25 @@ void main() {
     expect(find.textContaining('/srv/out'), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
+
+  testWidgets('room media the server will not serve is labelled, not '
+      'fetched and not spinning', (tester) async {
+    const ref = RoomAttachmentRef(name: 'cat.jpg', path: '/etc/ssh/cat.jpg');
+    final actions = _UnservedActions();
+    await tester.pumpWidget(
+      _host(RoomAttachmentCard(attachment: ref, actions: actions)),
+    );
+    await _settle(tester);
+    expect(actions.fetched, isEmpty);
+    expect(find.text('Not available'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+}
+
+final class _UnservedActions extends _Actions {
+  _UnservedActions() : super(const {});
+  @override
+  bool canFetch(RoomAttachmentRef ref) => false;
 }
 
 final class _FailingActions extends _Actions {

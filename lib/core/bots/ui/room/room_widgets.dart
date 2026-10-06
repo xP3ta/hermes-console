@@ -1948,6 +1948,11 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
     final ref = widget.attachment;
     final enabled = !_busy && (widget.actions?.canFetch(ref) ?? false);
     final file = _file;
+    // Media the server will not serve (outside the managed files, sensitive,
+    // or no connection) is labelled instead of spinning or showing a path.
+    final unavailable =
+        _previewFailed ||
+        (_hasMediaPreview && file == null && !enabled && !_busy);
     final preview = file != null && _hasMediaPreview && !_previewFailed
         ? AttachmentPreview(
             key: ValueKey('room-attachment-media-${ref.path}'),
@@ -2021,7 +2026,7 @@ class _RoomAttachmentCardState extends State<RoomAttachmentCard> {
               ),
               // A fetch the server refused (403/404/not allowed) says so,
               // by name only: the server path is never shown.
-              if (_previewFailed)
+              if (unavailable)
                 Text(
                   s.cm1215AttachmentUnavailable,
                   key: ValueKey('room-attachment-unavailable-${ref.path}'),
