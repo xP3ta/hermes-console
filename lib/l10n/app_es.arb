@@ -10244,5 +10244,6 @@
   "cs1215PinnedPromptHide": "Ocultar en este chat",
   "cs1215PinnedPromptSetting": "Fijar tu pregunta arriba",
   "cs1215PinnedPromptSettingSubtitle": "Una línea arriba del chat con la pregunta de la respuesta que estás leyendo.",
-  "cs1215LoadingEarlier": "Cargando mensajes anteriores…"
+  "cs1215LoadingEarlier": "Cargando mensajes anteriores…",
+  "tabletPickConversation": "Elige una conversación para abrirla aquí"
 }

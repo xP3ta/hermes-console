@@ -85,6 +85,8 @@ void main() {
       );
       tester.view.padding = FakeViewPadding(bottom: safeBottom * 3);
       tester.view.devicePixelRatio = 3;
+      // A phone window (390x844): tablets put the dock in a side rail.
+      tester.view.physicalSize = const Size(1170, 2532);
       addTearDown(tester.view.reset);
       await tester.pumpWidget(_host(manager, ownPadding: ownPadding));
       await tester.pumpAndSettle();

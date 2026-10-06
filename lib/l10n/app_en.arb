@@ -8537,5 +8537,9 @@
   "cs1215PinnedPromptHide": "Hide in this chat",
   "cs1215PinnedPromptSetting": "Pin your prompt at the top",
   "cs1215PinnedPromptSettingSubtitle": "One line at the top of the chat with the prompt of the reply you're reading.",
-  "cs1215LoadingEarlier": "Loading earlier messages…"
+  "cs1215LoadingEarlier": "Loading earlier messages…",
+  "tabletPickConversation": "Pick a conversation to open it here",
+  "@tabletPickConversation": {
+    "description": "Placeholder in the tablet detail pane of the conversation list before one is opened."
+  }
 }

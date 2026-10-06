@@ -38,6 +38,7 @@ import '../utils/session_timestamp.dart';
 import '../theme/app_theme.dart';
 import '../widgets/onstage_gate.dart';
 import '../widgets/accent_card.dart';
+import '../widgets/adaptive_list_detail.dart';
 import '../widgets/calendar_bucket_label.dart';
 import '../widgets/general_dock_shell.dart';
 import '../widgets/hermes_drawer.dart';
@@ -258,8 +259,13 @@ class SessionListScreen extends StatefulWidget {
     @visibleForTesting this.clockOverride,
     @visibleForTesting this.gatewayFactory,
     @visibleForTesting this.sessionExporter,
+    @visibleForTesting this.chatScreenBuilderOverride,
     super.key,
   });
+
+  /// Builds the conversation instead of [ChatScreen] (widget tests: the real
+  /// chat needs the whole app around it).
+  final Widget Function(Session session)? chatScreenBuilderOverride;
 
   @override
   State<SessionListScreen> createState() => _SessionListScreenState();
@@ -1842,15 +1848,58 @@ class _SessionListScreenState extends State<SessionListScreen>
       );
       return;
     }
+    final panes = _panes.currentState;
+    if (panes != null && panes.active) {
+      await _openChatInPane(panes, session);
+      return;
+    }
     final deleted = await openChatFromSection<bool>(
       context,
-      builder: (_) =>
-          ChatScreen(connection: widget.connection, session: session),
+      builder: (_) => _chatScreenFor(session),
     );
     if (deleted == true && mounted) {
       _evictDeletedSessions([session]);
     }
   }
+
+  final GlobalKey<AdaptiveListDetailState> _panes =
+      GlobalKey<AdaptiveListDetailState>(debugLabel: 'session-list-panes');
+
+  /// The conversation open in the tablet pane. One source of truth: the
+  /// pane shows the same [ChatScreen] a phone would push, and that screen
+  /// binds the session through `ActiveChatService.attach`, so a deep link or
+  /// notification for the same session reuses the very same chat.
+  Session? _paneSession;
+
+  Future<void> _openChatInPane(
+    AdaptiveListDetailState panes,
+    Session session,
+  ) async {
+    if (_paneSession?.id == session.id && panes.hasDetail) return;
+    _paneSession = session;
+    final deleted = await panes.show<bool>(
+      MaterialPageRoute<bool>(
+        settings: RouteSettings(name: 'session-pane:${session.id}'),
+        builder: (_) => _chatScreenFor(session),
+      ),
+    );
+    if (identical(_paneSession, session)) _paneSession = null;
+    if (deleted == true && mounted) _evictDeletedSessions([session]);
+  }
+
+  /// The window became phone-sized with a conversation open in the pane:
+  /// continue it with the phone flow instead of dropping the user back on
+  /// the list.
+  void _reopenPaneChatFullScreen() {
+    final session = _paneSession;
+    _paneSession = null;
+    if (session == null || !mounted) return;
+    unawaited(_openChat(session));
+  }
+
+  Widget _chatScreenFor(Session session) =>
+      widget.chatScreenBuilderOverride?.call(session) ??
+      ChatScreen(connection: widget.connection, session: session);
 
   Future<void> _openDetail(Session session) async {
     final deleted = await Navigator.push<bool>(
@@ -2707,7 +2756,16 @@ class _SessionListScreenState extends State<SessionListScreen>
         connManager: widget.connManager,
         onCreate: _createNewSession,
         includeSessionsAction: false,
-        body: _buildBody(),
+        paneLayout: true,
+        // Tablets: the open conversation lives beside the list (expanded)
+        // or in place of it (medium) instead of on a route of its own.
+        body: AdaptiveListDetail(
+          key: _panes,
+          visibilityObserver: hermesRouteObserver,
+          placeholder: const _ChatPanePlaceholder(),
+          onCollapsedWithDetail: _reopenPaneChatFullScreen,
+          list: _buildBody(),
+        ),
       ),
     );
   }
@@ -3856,3 +3914,34 @@ typedef _FilterKey = (
   SessionListSort,
   String?,
 );
+
+/// Detail pane of an expanded window before any conversation is opened.
+class _ChatPanePlaceholder extends StatelessWidget {
+  const _ChatPanePlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    return ColoredBox(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.forum_outlined, size: 40, color: colors.textSecondary),
+              const SizedBox(height: 12),
+              Text(
+                Strings.of(context).tabletPickConversation,
+                key: const ValueKey('chat-pane-placeholder'),
+                textAlign: TextAlign.center,
+                style: TextStyle(color: colors.textSecondary),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
