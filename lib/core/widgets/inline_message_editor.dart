@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../models/composer_reference.dart';
 import '../theme/app_theme.dart';
 
 class InlineMessageEditor extends StatefulWidget {
@@ -51,7 +52,7 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     final text = widget.draftText ?? widget.initialText;
-    _controller = TextEditingController(text: text)
+    _controller = _ReferenceAccentController(text: text)
       ..selection = TextSelection.collapsed(offset: text.length)
       ..addListener(_onTextChanged);
     _focusNode = FocusNode();
@@ -234,5 +235,51 @@ class _InlineMessageEditorState extends State<InlineMessageEditor>
         ],
       ),
     );
+  }
+}
+
+/// Edit composer text with complete `@file:`/`@folder:`/`@url:` references
+/// in the accent colour, like the main composer. The text itself stays the
+/// raw directive so saving sends exactly what Hermes reads.
+class _ReferenceAccentController extends TextEditingController {
+  _ReferenceAccentController({super.text});
+
+  @override
+  TextSpan buildTextSpan({
+    required BuildContext context,
+    TextStyle? style,
+    required bool withComposing,
+  }) {
+    final ranges = composerReferenceRanges(text).toList();
+    final composingActive =
+        withComposing &&
+        value.isComposingRangeValid &&
+        !value.composing.isCollapsed;
+    if (ranges.isEmpty || composingActive) {
+      return super.buildTextSpan(
+        context: context,
+        style: style,
+        withComposing: withComposing,
+      );
+    }
+    final accent = Theme.of(context).hermes.accent;
+    final children = <InlineSpan>[];
+    var cursor = 0;
+    for (final range in ranges) {
+      if (range.start > cursor) {
+        children.add(TextSpan(text: text.substring(cursor, range.start)));
+      }
+      children.add(
+        TextSpan(
+          text: range.textInside(text),
+          style: TextStyle(color: accent),
+        ),
+      );
+      cursor = range.end;
+    }
+    if (cursor < text.length) {
+      children.add(TextSpan(text: text.substring(cursor)));
+    }
+    return TextSpan(style: style, children: children);
   }
 }

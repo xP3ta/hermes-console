@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '../utils/chat_turn.dart';
 import '../utils/plain_preview.dart';
 import '../utils/session_timestamp.dart';
+import 'reference_directive.dart';
 import 'session_category.dart';
 
 /// Derived lifecycle state for a session.
@@ -369,8 +370,10 @@ class Session implements SessionSortKey {
       return '';
     }
     return plainPreview(
-      stripCronPreamble(
-        stripBackgroundProcessCarrier(stripBotMentionNote(preview)),
+      plainReferencePreview(
+        stripCronPreamble(
+          stripBackgroundProcessCarrier(stripBotMentionNote(preview)),
+        ),
       ),
     );
   }

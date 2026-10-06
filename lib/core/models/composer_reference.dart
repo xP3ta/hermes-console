@@ -3,7 +3,8 @@
 /// `rich-editor.ts::quoteRefValue`, `path-refs.ts`): a picked row becomes
 /// `@file:`path``/`@folder:`path/``, a starter row inserts the bare
 /// `@file:`/`@folder:`/`@url:` prefix so the user keeps typing, and a hand-typed
-/// bare path or link is promoted to that same quoted form when a space ends it.
+/// `@path` or `@kind:value` is promoted to that same quoted form when a space
+/// ends it. Bare links stay plain links.
 library;
 
 import 'package:flutter/services.dart';
@@ -206,11 +207,12 @@ final _typedBarePath = RegExp(
   r'''(?:^|\s)@((?!(?:file|folder|url|image|tool|line|terminal|session|git):)[^\s@:`"']*/[^\s@:`"']*)$''',
 );
 final _typedRef = RegExp(r'''(?:^|\s)@(file|folder|url):([^\s`"']+)$''');
-final _typedUrl = RegExp(r'''(?:^|\s)(https?://[^\s<>\[\]{}"'`]+)$''');
 
-/// Desktop commits a hand-typed `@path`, `@kind:value` or bare link as a
-/// reference when a plain space ends it (`path-refs.ts::chipTypedPathOnSpace`,
-/// `url-refs.ts`). Returns the promoted value, or null when nothing applies.
+/// Desktop commits a hand-typed `@path` or `@kind:value` as a reference when a
+/// plain space ends it (`path-refs.ts::chipTypedPathOnSpace`). A bare link is
+/// left as typed: Hermes reads links in prose, and only an explicit `@url`
+/// becomes a reference. Returns the promoted value, or null when nothing
+/// applies.
 TextEditingValue? promoteTypedReferenceOnSpace(
   TextEditingValue oldValue,
   TextEditingValue newValue,
@@ -226,7 +228,7 @@ TextEditingValue? promoteTypedReferenceOnSpace(
     return null;
   }
   final before = newValue.text.substring(0, caret - 1);
-  if (!before.contains('@') && !before.contains('http')) return null;
+  if (!before.contains('@')) return null;
   if ('```'.allMatches(before).length.isOdd) return null;
   final line = before.substring(before.lastIndexOf('\n') + 1);
   if ('`'.allMatches(line).length.isOdd) return null;
@@ -244,22 +246,6 @@ TextEditingValue? promoteTypedReferenceOnSpace(
     token = '@$path';
     replacement =
         '@${path.endsWith('/') ? 'folder' : 'file'}:${quoteRefValue(trimmed)}';
-  } else if (_typedUrl.firstMatch(before) case final match?) {
-    final typed = match.group(1)!;
-    // Prose punctuation after a link is not part of it; it stays after the
-    // reference (Desktop `splitUrlTail`).
-    final url = typed.replaceFirst(RegExp(r'[.,;:!?)]+$'), '');
-    final trailing = typed.substring(url.length);
-    final linkStart = before.length - typed.length;
-    final inLinkDestination =
-        linkStart >= 2 && before.substring(linkStart - 2, linkStart) == '](';
-    if (inLinkDestination ||
-        !RegExp(r'^https?://[^/?#\s]+').hasMatch(url) ||
-        RegExp(r'^https?://$').hasMatch(url)) {
-      return null;
-    }
-    token = typed;
-    replacement = '@url:${quoteRefValue(url)}$trailing';
   }
   if (token == null || replacement == null) return null;
   final start = before.length - token.length;
