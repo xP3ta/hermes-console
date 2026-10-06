@@ -185,11 +185,11 @@ void main() {
       });
     });
 
-    test('a stop phrase ends the conversation without a turn', () {
+    test('an end phrase ends the conversation without a turn', () {
       fakeAsync((async) {
         final rig = _Rig();
         rig.enter(async);
-        rig.delegate('del_stop', said: 'stop talking');
+        rig.delegate('del_stop', said: 'end the conversation');
         async.flushMicrotasks();
         expect(rig.desktop.submits, isEmpty);
         expect(rig.controller.active, isFalse);
@@ -219,6 +219,147 @@ void main() {
           'interrupt',
           'submit:y ahora lo de mañana',
         ]);
+      });
+    });
+  });
+
+  group('spoken silence interrupts the reply', () {
+    List<Map<String, dynamic>> hushes(_Rig rig) => rig.transport.sent
+        .where((e) => e['type'] == 'session.instructions.append')
+        .toList(growable: false);
+
+    void expectStillLive(_Rig rig) {
+      expect(rig.controller.active, isTrue);
+      expect(rig.controller.note, isNull);
+      expect(rig.controller.userPaused, isFalse);
+      expect(rig.controller.phase, VoicePhase.listening);
+      expect(rig.transport.sentTypes, isNot(contains('session.close')));
+      expect(rig.transport.disposeCalls, 0);
+      expect(rig.transport.micEnabled, isTrue);
+    }
+
+    test('a delegated "stop talking" asks the voice to stop speaking and '
+        'keeps the session open', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.enter(async);
+        rig.delegate('del_hush', said: 'stop talking');
+        async.flushMicrotasks();
+        expect(rig.desktop.submits, isEmpty);
+        final sent = hushes(rig);
+        expect(sent, hasLength(1));
+        expect(sent.single['delegation_id'], isNull);
+        expect(sent.single['content'], contains('Stop speaking'));
+        // The quiet window of the same utterance must not hush twice.
+        async.elapse(const Duration(seconds: 3));
+        expect(hushes(rig), hasLength(1));
+        expectStillLive(rig);
+      });
+    });
+
+    test('a spoken "stop talking" heard only in the transcript interrupts '
+        'after 1.5 s of quiet', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.enter(async);
+        rig.transport.emitEvent({
+          'type': 'session.input_transcript.delta',
+          'delta': 'please stop talking',
+        });
+        async.elapse(const Duration(milliseconds: 1400));
+        expect(hushes(rig), isEmpty);
+        async.elapse(const Duration(milliseconds: 200));
+        expect(hushes(rig), hasLength(1));
+        expectStillLive(rig);
+      });
+    });
+
+    test('a bare "enough" interrupts instead of ending', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.enter(async);
+        rig.delegate('del_enough', said: 'Enough.');
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 2));
+        expect(hushes(rig), hasLength(1));
+        expectStillLive(rig);
+      });
+    });
+
+    test('the unspoken rest of the current answer is dropped, Hermes keeps '
+        'working, and the next request is spoken again', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.enter(async);
+        rig.delegate('del_1');
+        async.flushMicrotasks();
+        rig.desktop.emit('message.start');
+        rig.desktop.emit('message.delta', {'text': 'Primera frase. '});
+        async.flushMicrotasks();
+        rig.voiceReplies();
+        rig.delegate('del_hush', said: 'stop talking');
+        async.flushMicrotasks();
+        rig.desktop.emit('message.delta', {'text': 'Segunda frase. '});
+        async.elapse(const Duration(milliseconds: 200));
+        rig.desktop.emit('message.complete', {
+          'text': 'Primera frase. Segunda frase. Y la cola',
+        });
+        async.elapse(const Duration(seconds: 20));
+        final say = rig.transport.sent
+            .where((e) => e['type'] == 'session.commentary.append')
+            .map((e) => e['content'])
+            .toList();
+        expect(say, ['Primera frase.']);
+        expect(
+          rig.desktop.calls.map((c) => c['call']),
+          isNot(contains('interrupt')),
+          reason: 'silencing the voice does not cancel the Hermes turn',
+        );
+        expect(rig.controller.responding, isFalse);
+        expectStillLive(rig);
+
+        rig.voiceReplies();
+        rig.delegate('del_2', said: 'y ahora lo de mañana');
+        async.flushMicrotasks();
+        rig.desktop.emit('message.start');
+        rig.desktop.emit('message.delta', {'text': 'Nueva frase. '});
+        async.flushMicrotasks();
+        expect(
+          rig.transport.sent
+              .where((e) => e['type'] == 'session.commentary.append')
+              .where((e) => e['delegation_id'] == 'del_2')
+              .map((e) => e['content']),
+          ['Nueva frase.'],
+        );
+      });
+    });
+  });
+
+  group('no silence-based auto-stop', () {
+    test('a live session with no user speech for over ten minutes stays '
+        'open and no client timer closes it', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.enter(async);
+        rig.transport.emitEvent({'type': 'session.started'});
+        // One exchange, then nobody speaks.
+        rig.transport.emitEvent({
+          'type': 'session.input_transcript.delta',
+          'delta': 'hola',
+        });
+        rig.voiceReplies();
+        async.elapse(const Duration(minutes: 11));
+        expect(rig.controller.active, isTrue);
+        expect(rig.controller.note, isNull);
+        expect(rig.controller.phase, VoicePhase.listening);
+        expect(rig.controller.spokenInterruptionArmed, isTrue);
+        expect(rig.transport.sentTypes, isNot(contains('session.close')));
+        expect(rig.transport.disposeCalls, 0);
+        expect(rig.transport.micEnabled, isTrue);
+        async.elapse(const Duration(hours: 1));
+        expect(rig.controller.active, isTrue);
+        expect(rig.transport.disposeCalls, 0);
+        expect(rig.transportsCreated, 1);
       });
     });
   });

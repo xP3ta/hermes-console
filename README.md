@@ -147,6 +147,23 @@ No paid provider, personal model, language or server address is hard-coded as
 a global default. An explicitly selected route fails visibly instead of
 silently sending audio somewhere else.
 
+### Experimental: GPT-Live voice
+
+Voice settings has an opt-in **GPT-Live voice (experimental)** switch. It is
+off by default and only works when the connected Hermes server runs
+`voice.voice_chat_mode: gpt-live` with an OpenAI key configured **on the
+server**. The phone never holds that key: it sends its WebRTC offer to the
+Dashboard (`POST /api/audio/voice-live/session`) and talks to the voice model
+with the answer the server returns. When the server reports GPT-Live as
+unavailable, Voice falls back to the turn-based mode with a notice.
+
+During a live session, saying "stop talking" (or "silence", "be quiet",
+"enough"; "cállate", "para de hablar", "basta" in Spanish) interrupts the
+current reply and keeps listening. Saying "stop" on its own or "end the
+conversation" ("termina la conversación") ends the session. Console never
+closes a live session because nobody spoke; the vendor's own session limits
+apply and are outside the app's control.
+
 ## Build from source
 
 Required toolchain: Flutter 3.47.x, its bundled Dart SDK, Java 17 and Android
