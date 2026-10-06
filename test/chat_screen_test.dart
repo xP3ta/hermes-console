@@ -11736,6 +11736,41 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('atrás con el menú + abierto cierra solo el menú', (
+    tester,
+  ) async {
+    await pumpChat(tester);
+    final anchor = find.byKey(const ValueKey('composer-add'));
+
+    await tester.tap(anchor);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Cámara'), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.byType(MenuItemButton), findsNothing);
+    expect(find.byType(ChatScreen), findsOneWidget);
+    expect(anchor, findsOneWidget);
+
+    // Closed by its own button: the guard lets the next Back leave the chat.
+    await tester.tap(anchor);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Cámara'), findsOneWidget);
+    await tester.tap(anchor);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(MenuItemButton), findsNothing);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatScreen), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('el + sigue disponible mientras el turno está activo', (
     tester,
   ) async {
@@ -14692,6 +14727,7 @@ void main() {
               Finder Function() surface,
               Future<void> Function(WidgetTester)? close,
               bool backCloses,
+              bool releasesFocus,
             )
           >[
             (
@@ -14707,12 +14743,14 @@ void main() {
                 ),
               ),
               true,
+              true,
             ),
             (
               'modelo y sesión',
               () => find.bySemanticsLabel('Modelo y sesión'),
               () => find.byKey(const ValueKey('chat-model-dialog')),
               null,
+              true,
               true,
             ),
             (
@@ -14721,19 +14759,23 @@ void main() {
               () => find.byKey(const ValueKey('chat-control-dialog')),
               null,
               true,
+              true,
             ),
             (
               'adjuntos',
               () => find.byKey(const ValueKey('composer-add')),
               () => find.byType(MenuItemButton),
               // El menú de adjuntos es un MenuAnchor (sin ruta): se cierra al
-              // tocar fuera, no con Atrás.
+              // tocar fuera y, por su guarda de Atrás, también con Atrás sin
+              // sacar del chat (QA 9491).
               (tester) => tester.tapAt(const Offset(200, 300)),
+              true,
               false,
             ),
           ];
 
-      for (final (name, trigger, surface, close, backCloses) in overlays) {
+      for (final (name, trigger, surface, close, backCloses, releasesFocus)
+          in overlays) {
         for (final viaButton in [
           if (backCloses) false,
           if (close != null) true,
@@ -14783,8 +14825,8 @@ void main() {
                 isEmpty,
               );
               // Las superficies con ruta sueltan el foco; el menú de adjuntos
-            // no lo toma (sin ruta), así que no hay nada que restaurar.
-            if (backCloses) expect(focus.hasFocus, isFalse);
+              // no lo toma (sin ruta), así que no hay nada que restaurar.
+              if (releasesFocus) expect(focus.hasFocus, isFalse);
               expect(tester.takeException(), isNull);
             },
           );

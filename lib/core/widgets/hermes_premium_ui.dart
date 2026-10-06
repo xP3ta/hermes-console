@@ -489,6 +489,19 @@ class HermesListRow extends StatelessWidget {
   static TextStyle? subtitleStyle(ThemeData theme, {required Color color}) =>
       theme.textTheme.bodySmall?.copyWith(color: color, height: 1.3);
 
+  /// Width of the leading icon slot of a list row.
+  static const double leadingExtent = 30;
+
+  /// Gap between the leading icon and the text of a list row.
+  static const double leadingGap = 11;
+
+  /// Gives a [ListTile]-based row (e.g. an [ExpansionTile] header) whose
+  /// leading is a [leadingExtent] icon slot the same gap as a
+  /// [HermesListRow], so its text starts where the sibling rows' does.
+  /// ListTile's default 16 dp gap pushed it to the right.
+  static Widget alignTile({required Widget child}) =>
+      ListTileTheme.merge(horizontalTitleGap: leadingGap, child: child);
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -537,13 +550,13 @@ class HermesListRow extends StatelessWidget {
                     leading!
                   else if (icon != null)
                     SizedBox.square(
-                      dimension: 30,
+                      dimension: leadingExtent,
                       child: ExcludeSemantics(
                         child: Icon(icon, size: 21, color: effectiveIconColor),
                       ),
                     ),
                   if (leading != null || icon != null)
-                    const SizedBox(width: 11),
+                    const SizedBox(width: leadingGap),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
