@@ -10097,5 +10097,223 @@
   "fh1215TasksHideCompleted": "Ocultar completadas",
   "@fh1215TasksHideCompleted": {
     "description": "Collapses the completed tasks again in the activity panel (fh1215)."
+  },
+  "inicioStatusCalm": "Todo en calma.",
+  "@inicioStatusCalm": {
+    "description": "Home status sentence when nothing is going on."
+  },
+  "inicioStatusNeedsYou": "Hermes te necesita para seguir.",
+  "@inicioStatusNeedsYou": {
+    "description": "Home status sentence while an approval waits."
+  },
+  "inicioStatusWorking": "Hermes está trabajando en «{title}».",
+  "@inicioStatusWorking": {
+    "description": "Home status sentence while a chat works. {title} = chat title.",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "inicioStatusFinished": "Hermes terminó «{title}».",
+  "@inicioStatusFinished": {
+    "description": "Home status sentence after a chat finished unread. {title} = chat title.",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "inicioTeamWorking": "{names} trabajando",
+  "@inicioTeamWorking": {
+    "description": "Home team line. {names} = bot names already joined.",
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "inicioTeamWaiting": "{count, plural, =1{{names} te espera} other{{names} te esperan}}",
+  "@inicioTeamWaiting": {
+    "description": "Home team line for bots waiting for the user.",
+    "placeholders": {
+      "names": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "inicioTeamMixed": "{working} trabajando · {waiting} te espera",
+  "@inicioTeamMixed": {
+    "description": "Home team line when some bots work and others wait.",
+    "placeholders": {
+      "working": {
+        "type": "String"
+      },
+      "waiting": {
+        "type": "String"
+      }
+    }
+  },
+  "inicioNamesTwo": "{first} y {second}",
+  "@inicioNamesTwo": {
+    "description": "Two bot names joined.",
+    "placeholders": {
+      "first": {
+        "type": "String"
+      },
+      "second": {
+        "type": "String"
+      }
+    }
+  },
+  "inicioNamesMore": "{first}, {second} y {count} más",
+  "@inicioNamesMore": {
+    "description": "Two bot names and how many more.",
+    "placeholders": {
+      "first": {
+        "type": "String"
+      },
+      "second": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "inicioTeamSheetTitle": "Tu equipo ahora",
+  "@inicioTeamSheetTitle": {
+    "description": "Title of the sheet listing working or waiting bots."
+  },
+  "inicioTeamBotWorking": "Trabajando",
+  "@inicioTeamBotWorking": {
+    "description": "Bot row in the team sheet: working."
+  },
+  "inicioTeamBotWorkingOn": "Trabajando en «{title}»",
+  "@inicioTeamBotWorkingOn": {
+    "description": "Bot row in the team sheet: working on a named chat.",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "inicioTeamBotWaiting": "Te espera",
+  "@inicioTeamBotWaiting": {
+    "description": "Bot row in the team sheet: waiting for the user."
+  },
+  "inicioNeedsYouLabel": "Te necesita",
+  "@inicioNeedsYouLabel": {
+    "description": "Label of the Home card for a pending approval."
+  },
+  "inicioNeedsYouTitle": "Quiere ejecutar un comando",
+  "@inicioNeedsYouTitle": {
+    "description": "Title of the Home approval card."
+  },
+  "inicioNeedsYouActorTitle": "{actor} quiere ejecutar un comando",
+  "@inicioNeedsYouActorTitle": {
+    "description": "Title of the Home approval card when a bot asks.",
+    "placeholders": {
+      "actor": {
+        "type": "String"
+      }
+    }
+  },
+  "inicioWhere": "en «{where}»",
+  "@inicioWhere": {
+    "description": "Where an approval or work happens. {where} = chat or room.",
+    "placeholders": {
+      "where": {
+        "type": "String"
+      }
+    }
+  },
+  "inicioAllow": "Permitir",
+  "@inicioAllow": {
+    "description": "Allow an approval once from Home."
+  },
+  "inicioDeny": "Rechazar",
+  "@inicioDeny": {
+    "description": "Deny an approval from Home."
+  },
+  "inicioView": "Ver",
+  "@inicioView": {
+    "description": "Open the chat or room of an approval."
+  },
+  "inicioApprovalFailed": "No se pudo responder. Ábrelo para comprobarlo.",
+  "@inicioApprovalFailed": {
+    "description": "Home approval answer failed."
+  },
+  "inicioWorkingLabel": "Trabajando",
+  "@inicioWorkingLabel": {
+    "description": "Label of the Home card while a chat works."
+  },
+  "inicioWorkingTitle": "Trabajando en «{title}»",
+  "@inicioWorkingTitle": {
+    "description": "Title of the Home working card.",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "inicioOpen": "Abrir",
+  "@inicioOpen": {
+    "description": "Open the chat of the Home card."
+  },
+  "inicioFinishedLabel": "Terminó mientras no estabas",
+  "@inicioFinishedLabel": {
+    "description": "Label of the Home card for a chat that finished unread."
+  },
+  "inicioStarterContinue": "Seguir con «{title}»",
+  "@inicioStarterContinue": {
+    "description": "Calm Home starter: reopen the last chat.",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "inicioStarterReview": "Revisar «{name}»",
+  "@inicioStarterReview": {
+    "description": "Calm Home starter: open a failed automation.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "inicioRoomNews": "{count, plural, =1{1 nuevo} other{{count} nuevos}}",
+  "@inicioRoomNews": {
+    "description": "New messages in a room row of Retomar.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "inicioNext": "Próximo: {name}, {when}",
+  "@inicioNext": {
+    "description": "Home line with the next automation run.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "when": {
+        "type": "String"
+      }
+    }
+  },
+  "inicioFailed": "Falló «{name}»",
+  "@inicioFailed": {
+    "description": "Home line for a failed automation.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
   }
 }
