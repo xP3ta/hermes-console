@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../design/modal.dart' show releaseTextFocusIfKeyboardHidden;
+import '../theme/motion.dart';
 
 /// Abre una superficie modal anclada a la posición actual de [anchorKey], en
 /// vez de centrada como [showHermesFloatingSurface] (`hermes_premium_ui.dart`).
@@ -76,17 +77,20 @@ class _DockAnchoredPopoverRoute<T> extends PageRouteBuilder<T> {
          reverseTransitionDuration: reduceMotion
              ? Duration.zero
              : const Duration(milliseconds: 150),
-         pageBuilder: (routeContext, animation, secondaryAnimation) => PopScope(
-           child: FocusScope(
-             node: focusScopeNode,
-             child: _DockAnchoredPopoverFrame(
-               anchor: anchor,
-               maxWidth: maxWidth,
-               decorated: decorated,
-               child: Builder(builder: builder),
+         pageBuilder: (routeContext, animation, secondaryAnimation) =>
+             CoveredRouteMediaQueryFreeze(
+               child: PopScope(
+                 child: FocusScope(
+                   node: focusScopeNode,
+                   child: _DockAnchoredPopoverFrame(
+                     anchor: anchor,
+                     maxWidth: maxWidth,
+                     decorated: decorated,
+                     child: Builder(builder: builder),
+                   ),
+                 ),
+               ),
              ),
-           ),
-         ),
          transitionsBuilder:
              (routeContext, animation, secondaryAnimation, child) {
                if (reduceMotion) return child;

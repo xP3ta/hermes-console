@@ -36,6 +36,46 @@ class Motion {
       reduced(context) ? Duration.zero : nominal;
 }
 
+/// Keeps a route that is covered by an opaque route off the MediaQuery
+/// stream.
+///
+/// The [Overlay] disables [TickerMode] for routes under an opaque route. Those
+/// routes are not painted, but every widget in them that depends on the
+/// MediaQuery is still rebuilt (and their layout boundaries laid out again)
+/// whenever it changes. While the soft keyboard animates in a chat, Android
+/// publishes a new `viewInsets` every frame, so the screens below the chat
+/// (Home, Mission Control's Bots tab) rebuilt on every step: about 20 ms of UI
+/// thread per frame on a Pixel.
+///
+/// While covered, this publishes the last MediaQueryData seen while the route
+/// was visible. As soon as the route is uncovered (the pop starts, so the
+/// TickerMode flips in that same frame) it publishes the live value again, so
+/// insets, size and text scale changed meanwhile are applied in the first
+/// visible frame.
+class CoveredRouteMediaQueryFreeze extends StatefulWidget {
+  final Widget child;
+
+  const CoveredRouteMediaQueryFreeze({super.key, required this.child});
+
+  @override
+  State<CoveredRouteMediaQueryFreeze> createState() =>
+      _CoveredRouteMediaQueryFreezeState();
+}
+
+class _CoveredRouteMediaQueryFreezeState
+    extends State<CoveredRouteMediaQueryFreeze> {
+  MediaQueryData? _visible;
+
+  @override
+  Widget build(BuildContext context) {
+    final live = MediaQuery.maybeOf(context);
+    if (live == null) return widget.child;
+    final covered = !TickerMode.valuesOf(context).enabled;
+    final data = covered ? (_visible ??= live) : (_visible = live);
+    return MediaQuery(data: data, child: widget.child);
+  }
+}
+
 /// Transición de navegación de la app: fade + un leve deslizamiento ascendente,
 /// con la curva y duración del catálogo. Respeta "reducir movimiento": si está
 /// activo, la pantalla aparece sin animación.
@@ -50,6 +90,7 @@ class HermesPageTransitionsBuilder extends PageTransitionsBuilder {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
+    child = CoveredRouteMediaQueryFreeze(child: child);
     if (Motion.reduced(context)) return child;
     final curved = CurvedAnimation(
       parent: animation,

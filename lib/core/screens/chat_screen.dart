@@ -151,6 +151,7 @@ import '../services/voice/voice_service.dart';
 import '../services/voice/voice_settings.dart';
 import 'voice_settings_screen.dart';
 import '../theme/app_theme.dart';
+import '../theme/motion.dart';
 import '../../l10n/app_localizations.dart';
 import '../utils/api_error.dart';
 import '../utils/session_title.dart';
@@ -10499,8 +10500,9 @@ class _ChatScreenState extends State<ChatScreen>
       context,
       PageRouteBuilder<void>(
         transitionDuration: const Duration(milliseconds: 250),
-        pageBuilder: (context, animation, _) =>
-            ChatScreen(connection: widget.connection, session: session),
+        pageBuilder: (context, animation, _) => CoveredRouteMediaQueryFreeze(
+          child: ChatScreen(connection: widget.connection, session: session),
+        ),
         transitionsBuilder: (context, animation, _, child) {
           final curved = CurvedAnimation(
             parent: animation,
