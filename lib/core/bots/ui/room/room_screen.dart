@@ -576,6 +576,10 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
       // no frame on a quiet poll.
       setState(() {});
     }
+    if ((added.isNotEmpty || reset || driverChanged) && _reading == null) {
+      // Following: what just arrived pins the list to the bottom.
+      _transcriptScroll.requestFollow();
+    }
     if (added.isNotEmpty || reset) _retirePublishedOutbox();
     _applyReturn();
     _settleHeldDraftFromLog();
@@ -1771,6 +1775,27 @@ class RoomScreenState extends State<RoomScreen> with WidgetsBindingObserver {
     (list as Element).visitChildElements(visit);
     final delta = shift;
     if (delta == null || delta <= 0) return;
+    // The newest row (e.g. a member's typing row) stays on screen: when the
+    // shift would push it below the list, opening at the live bottom wins.
+    final newestKey = _lastItemKeys.isEmpty ? null : _lastItemKeys.last;
+    double? newestTop;
+    void findNewest(Element element) {
+      if (newestTop != null) return;
+      final key = element.widget.key;
+      if (key is ValueKey<String> && key.value == newestKey) {
+        final box = element.renderObject;
+        if (box is RenderBox && box.attached && box.hasSize) {
+          newestTop = box.localToGlobal(Offset.zero).dy;
+        }
+        return;
+      }
+      element.visitChildElements(findNewest);
+    }
+
+    if (newestKey != null) list.visitChildElements(findNewest);
+    final bottom = top + viewport.size.height;
+    final newest = newestTop;
+    if (newest != null && newest + delta >= bottom) return;
     final position = _transcriptScroll.position;
     // Reverse list: a larger offset moves the content down.
     _programmaticScroll = true;

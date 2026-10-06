@@ -32,6 +32,21 @@ class AnchoredTranscriptScrollController extends ScrollController {
   /// Whether a landing is still waiting for its layout.
   bool get landingPending => _landingContext != null;
 
+  bool _followPending = false;
+
+  /// New content arrived while following: pin the next layout to the bottom
+  /// even if the reader sits a little above it (e.g. after the open anchor
+  /// revealed a run header). Without a request only a reader already at the
+  /// bottom (or a change at the bottom edge) is pinned, so a lazy
+  /// re-estimate of the far (oldest) edge never undoes that anchor.
+  void requestFollow() => _followPending = true;
+
+  bool _takeFollow() {
+    final value = _followPending;
+    _followPending = false;
+    return value;
+  }
+
   double? _takeLanding() {
     final value = _landingContext;
     _landingContext = null;
@@ -91,7 +106,11 @@ class _AnchoredTranscriptPosition extends ScrollPositionWithSingleContext {
         oldMin == null ||
         (oldMin - minScrollExtent).abs() > 0.01 ||
         (oldMax! - maxScrollExtent).abs() > 0.01;
-    if (changed &&
+    final follow = owner._takeFollow();
+    final atOldBottom = oldMin == null || (pixels - oldMin).abs() <= 0.01;
+    final bottomMoved =
+        oldMin != null && (oldMin - minScrollExtent).abs() > 0.01;
+    if ((follow || (changed && (atOldBottom || bottomMoved))) &&
         owner.following() &&
         !_fingerDown &&
         (pixels - minScrollExtent).abs() > 0.01) {
