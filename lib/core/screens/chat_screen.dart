@@ -17322,8 +17322,12 @@ class _ChatScreenState extends State<ChatScreen>
   static const double _kNotchTranscriptReserve = kChatNotchHeight;
 
   bool _notchHorizontalSwipeSafe(BuildContext context) {
-    final media = MediaQuery.of(context);
-    return chatNotchHorizontalSwipeSafe(media.size, media.systemGestureInsets);
+    // Aspect-scoped lookups: MediaQuery.of would rebuild the chat on every
+    // keyboard animation frame.
+    return chatNotchHorizontalSwipeSafe(
+      MediaQuery.sizeOf(context),
+      MediaQuery.systemGestureInsetsOf(context),
+    );
   }
 
   Widget _buildNotch(Strings str) {

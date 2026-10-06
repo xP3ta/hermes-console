@@ -88,13 +88,21 @@ void main() {
     await expectA11yLayoutUsable(tester, {
       'menu': find.byTooltip('Menu'),
       'new chat': find.byTooltip('New chat'),
-      // fh1215: search and settings moved into the header pill's menu.
+      // fh1215: the floating header's activity pill.
       'header pill': find.byKey(const ValueKey('chat-header-pill')),
       'composer': find.byKey(const ValueKey('chat-composer-host')),
       'user message': find.text('Review the release').last,
       'assistant message': find.text('The release is ready.'),
       'edit message': find.byTooltip('Edit message'),
       'copy message': find.byTooltip('Copy message'),
+    });
+    // Search and conversation settings live behind the composer notch. It
+    // floats over the transcript like the activity pill, so scrolled
+    // messages may pass under it; check it against the fixed chrome only.
+    await expectA11yLayoutUsable(tester, {
+      'conversation notch': find.byKey(const ValueKey('chat-notch')),
+      'composer': find.byKey(const ValueKey('chat-composer-host')),
+      'new chat': find.byTooltip('New chat'),
     });
   });
 
