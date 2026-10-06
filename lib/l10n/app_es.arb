@@ -9662,6 +9662,7 @@
   "cr1215ShowQuestion": "Mostrar pregunta",
 "ss1215StatusWorking": "Trabajando…",
   "ps1215NoDetailsYet": "Sin detalles todavía: se actualizará con el siguiente evento.",
+  "lr1215ReasoningHiddenHint": "El razonamiento del modelo solo aparece aquí si el servidor lo comparte.",
   "cq1215QuestionNotRecovered": "No se ha podido recuperar la pregunta. Hermes sigue esperando tu respuesta.",
   "cq1215RetryQuestion": "Reintentar",
   "cq1215StopTurn": "Detener turno",

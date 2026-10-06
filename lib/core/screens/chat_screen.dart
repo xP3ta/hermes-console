@@ -6398,12 +6398,9 @@ class _ChatScreenState extends State<ChatScreen>
   /// servicio va actualizando. Se memoiza por identidad de la lista para no
   /// renormalizar 256 pasos en cada token.
   Object? _activityStepsSource;
-  ({ActivityStep? current, List<ActivityStep> done}) _activitySteps = (
-    current: null,
-    done: const <ActivityStep>[],
-  );
+  ActivitySteps _activitySteps = ActivitySnapshot.noSteps;
 
-  ({ActivityStep? current, List<ActivityStep> done}) _liveActivitySteps() {
+  ActivitySteps _liveActivitySteps() {
     Map<String, dynamic>? live;
     for (final message in _messages) {
       if (message['role'] != 'assistant') continue;
@@ -6416,7 +6413,7 @@ class _ChatScreenState extends State<ChatScreen>
     final source = live?[assistantActivityTraceKey];
     if (live == null) {
       _activityStepsSource = null;
-      return (current: null, done: const <ActivityStep>[]);
+      return ActivitySnapshot.noSteps;
     }
     if (!identical(source, _activityStepsSource)) {
       _activityStepsSource = source;
@@ -6439,9 +6436,7 @@ class _ChatScreenState extends State<ChatScreen>
     }
     final turnActive = _turnLive;
     final activity = _chat.sessionActivity;
-    final steps = turnActive
-        ? _liveActivitySteps()
-        : (current: null, done: const <ActivityStep>[]);
+    final steps = turnActive ? _liveActivitySteps() : ActivitySnapshot.noSteps;
     final passiveTotal = _chat.hasRecentPassiveRemoteActivity
         ? _chat.passiveActivityAggregate.total
         : 0;
@@ -6457,6 +6452,7 @@ class _ChatScreenState extends State<ChatScreen>
       noActivityHint: turnActive && _chat.noActivityHint,
       current: steps.current,
       done: steps.done,
+      liveReasoning: steps.liveReasoning,
       tasks: _chat.agentTasks,
       processes: activity.processes,
       schedules: activity.schedules,

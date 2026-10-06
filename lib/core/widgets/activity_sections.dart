@@ -599,12 +599,19 @@ class ActivityNowSection extends StatelessWidget {
     // ps1215: with no step running, nothing finished in this turn and no
     // task list, the panel would only repeat the pill's headline. Say
     // honestly that the detail arrives with the next event.
+    final liveReasoning = snapshot.liveReasoning;
     final nothingKnown =
         current == null &&
+        liveReasoning == null &&
         !snapshot.noActivityHint &&
         !snapshot.waitingForUser &&
         snapshot.done.isEmpty &&
         !snapshot.showTasks;
+    // lr1215: the model is thinking and no reasoning arrived. The server may
+    // simply not share it (`display.show_reasoning`); say so without
+    // claiming it, since the setting is not known here.
+    final thinking =
+        (snapshot.headline ?? s.chaPipelineThinking) == s.chaPipelineThinking;
     return Column(
       key: sectionKey,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -624,6 +631,7 @@ class ActivityNowSection extends StatelessWidget {
             child: row,
           ),
         ),
+        if (liveReasoning != null) _LiveReasoningTail(text: liveReasoning),
         if (nothingKnown)
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
@@ -633,7 +641,108 @@ class ActivityNowSection extends StatelessWidget {
               style: TextStyle(fontSize: 12, color: colors.textSecondary),
             ),
           ),
+        if (nothingKnown && thinking)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 2, 8, 2),
+            child: Text(
+              s.lr1215ReasoningHiddenHint,
+              key: const ValueKey('activity-now-reasoning-hint'),
+              style: TextStyle(fontSize: 12, color: colors.textSecondary),
+            ),
+          ),
       ],
+    );
+  }
+}
+
+/// lr1215: the reasoning the model is writing now, as Desktop's live
+/// thinking disclosure: a short scrollable box that follows the newest
+/// tokens unless the reader scrolled up to read earlier ones.
+class _LiveReasoningTail extends StatefulWidget {
+  const _LiveReasoningTail({required this.text});
+
+  final String text;
+
+  @override
+  State<_LiveReasoningTail> createState() => _LiveReasoningTailState();
+}
+
+class _LiveReasoningTailState extends State<_LiveReasoningTail> {
+  static const double _maxHeight = 120;
+  final ScrollController _controller = ScrollController();
+  bool _followEnd = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleFollow();
+  }
+
+  @override
+  void didUpdateWidget(_LiveReasoningTail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text) _scheduleFollow();
+  }
+
+  void _scheduleFollow() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_followEnd || !_controller.hasClients) return;
+      final position = _controller.position;
+      if (position.pixels != position.maxScrollExtent) {
+        position.jumpTo(position.maxScrollExtent);
+      }
+    });
+  }
+
+  bool _onScroll(ScrollNotification notification) {
+    if (notification is ScrollUpdateNotification &&
+        notification.dragDetails != null) {
+      final metrics = notification.metrics;
+      _followEnd = metrics.pixels >= metrics.maxScrollExtent - 4;
+    } else if (notification is ScrollEndNotification) {
+      final metrics = notification.metrics;
+      _followEnd = metrics.pixels >= metrics.maxScrollExtent - 4;
+    }
+    return false;
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).hermes;
+    // The box grows with the reader's text size so it still shows a few
+    // lines at large scales.
+    final maxHeight = MediaQuery.textScalerOf(
+      context,
+    ).scale(_maxHeight).clamp(_maxHeight, _maxHeight * 2);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
+      child: ConstrainedBox(
+        key: const ValueKey('activity-now-reasoning'),
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        child: NotificationListener<ScrollNotification>(
+          onNotification: _onScroll,
+          child: SingleChildScrollView(
+            controller: _controller,
+            child: SizedBox(
+              width: double.infinity,
+              child: Text(
+                widget.text,
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.35,
+                  color: colors.textSecondary,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
