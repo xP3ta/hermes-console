@@ -9182,7 +9182,8 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// One actionable error for a named profile whose transcript neither route
-  /// serves; repeated failures never stack notices.
+  /// serves; repeated failures never stack notices. It is shown only by the
+  /// empty-history card: with rows on screen nothing is missing.
   void _showProfileTranscriptAccessError() {
     if (_disposed || !mounted) return;
     final marker = const ProfileTranscriptAccessRequired().toString();
@@ -17556,10 +17557,15 @@ class _ChatScreenState extends State<ChatScreen>
       cachedLabel: _chat.showingCachedTranscript
           ? Strings.of(context).cs1215CachedTranscript
           : null,
-      errorMessage: _error == null || _refreshErrorNoticeDismissed
+      // A named profile whose REST history is refused while rows are on
+      // screen (the live gateway channel serves the chat) is missing
+      // nothing: no notice over a working chat. The empty-history card above
+      // is where that refusal is explained.
+      errorMessage:
+          _error == null ||
+              _refreshErrorNoticeDismissed ||
+              classifyChatError(_error!) == ChatErrorKind.profileDashboardAccess
           ? null
-          : classifyChatError(_error!) == ChatErrorKind.profileDashboardAccess
-          ? Strings.of(context).chaErrProfileDashboardAccess
           : Strings.of(context).chaMessagesError,
       onDismissError: () => setState(() => _refreshErrorNoticeDismissed = true),
       // Bajo el botón «cargar anteriores» (8 + 48 + 8) cuando está a la vista.

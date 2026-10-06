@@ -302,6 +302,24 @@ final class ProfileTranscriptAccessRequired implements Exception {
   String toString() => 'ProfileTranscriptAccessRequired: $marker';
 }
 
+/// The Dashboard refused to authenticate this client: a 401/403 answer, a
+/// sign-in it requires, rejected credentials or a sign-in that set no
+/// session. A dropped connection, a timeout, a missing session (404), a
+/// server error, a throttled or failed sign-in is not a refusal: it is
+/// transient and must not be reported as missing Dashboard access.
+bool isDashboardAccessRefusal(Object error) => switch (error) {
+  DashboardAuthException(:final code) => switch (code) {
+    DashboardAuthFailureCode.loginRequired ||
+    DashboardAuthFailureCode.invalidCredentials ||
+    DashboardAuthFailureCode.sessionCookieMissing => true,
+    DashboardAuthFailureCode.rateLimited ||
+    DashboardAuthFailureCode.loginFailed => false,
+  },
+  DashboardHttpException(:final statusCode) =>
+    statusCode == 401 || statusCode == 403,
+  _ => false,
+};
+
 /// Bounded display-safe summary of durable passive work.
 ///
 /// Opaque tool-call identities stay private to [ActiveChat]. The UI receives
@@ -9319,14 +9337,36 @@ class ActiveChat {
   /// This is intentionally on-demand (screen attach / terminal event / context
   /// panel), never polling. It lets the chat chrome consume usage fields that
   /// Hermes publishes through REST but older `session.info` events omit.
+  ///
+  /// A named profile's row is read from the Dashboard (`?profile=`), as
+  /// Hermes Desktop does; its API server route is asked only when the
+  /// Dashboard refuses this client (a profile that shares the connection's
+  /// key). This read never blocks the chat or raises the access notice.
   Future<Session?> loadPersistedSessionSnapshot() async {
     final requestedId = serverSessionId;
-    final snapshot = await _api.getSession(
-      requestedId,
-      profile: sessionProfile,
-    );
+    final owner = sessionProfile.trim();
+    final Session snapshot;
+    if (!profileRoutes(owner)) {
+      snapshot = await _api.getSession(requestedId, profile: sessionProfile);
+    } else {
+      snapshot = await _readNamedProfileSessionRow(requestedId, owner);
+    }
     if (_disposed || serverSessionId != requestedId) return null;
     return snapshot;
+  }
+
+  Future<Session> _readNamedProfileSessionRow(
+    String storedSessionId,
+    String profile,
+  ) async {
+    try {
+      return await (_transcriptDashboard ??= DashboardClient.lazy(
+        connection,
+      )).getSessionDetail(storedSessionId, profile: profile);
+    } on Object catch (error) {
+      if (!isDashboardAccessRefusal(error)) rethrow;
+    }
+    return _api.getSession(storedSessionId, profile: profile);
   }
 
   ArtifactAuthorizationPolicy _artifactPolicy() {
@@ -11556,16 +11596,16 @@ class ActiveChat {
   }
 
   /// Runs a Dashboard read for a named profile whose gateway route is
-  /// unauthorized. A missing session (404) keeps its own meaning; any other
-  /// failure blocks further reads and is reported once.
+  /// unauthorized. Only a refusal to authenticate blocks further reads and
+  /// is reported (once) as missing Dashboard access. A missing session (404),
+  /// a dropped connection, a timeout or a server error keeps its own meaning:
+  /// the caller sees a transient read failure and the next read asks again.
   Future<T> _readProfileDashboard<T>(Future<T> Function() read) async {
     _throwIfProfileTranscriptAccessBlocked();
     try {
       return await read();
-    } on DashboardHttpException catch (error) {
-      if (error.statusCode == 404) rethrow;
-      _blockProfileTranscriptAccess();
-    } on Object {
+    } on Object catch (error) {
+      if (!isDashboardAccessRefusal(error)) rethrow;
       _blockProfileTranscriptAccess();
     }
     throw const ProfileTranscriptAccessRequired();
@@ -31759,6 +31799,7 @@ class ActiveChatService {
     @visibleForTesting ApiClient? api,
     @visibleForTesting HermesDesktopGateway? desktopGateway,
     @visibleForTesting StoredSessionMessageLoader? storedMessageLoader,
+    @visibleForTesting DashboardClient? transcriptDashboard,
     bool? attachDesktopRuntimeOnLoad,
     @visibleForTesting bool allowUnownedDesktopSnapshotForTesting = false,
     @visibleForTesting Future<bool> Function()? turnIdempotencyCapability,
@@ -31864,6 +31905,7 @@ class ActiveChatService {
       compressionRestoreStore: _compressionRestoreStore,
       storedMessageLoader:
           storedMessageLoader ?? defaultStoredMessageLoaderForTesting,
+      transcriptDashboard: transcriptDashboard,
       modelCatalogCache: modelCatalogCache,
       attachDesktopRuntimeOnLoad:
           attachDesktopRuntimeOnLoad ?? _attachDesktopRuntimeOnLoadByDefault,
