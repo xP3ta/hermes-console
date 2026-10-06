@@ -17,7 +17,6 @@ Future<void> _pumpHub(
   ScriptedRest rest, {
   bool readOnly = false,
   WidgetBuilder? advanced,
-  WidgetBuilder? classic,
   CapabilitiesRpc? rpc,
 }) async {
   await setPhone(tester);
@@ -27,7 +26,6 @@ Future<void> _pumpHub(
         repository: repoOf(rest, rpc: rpc),
         readOnly: readOnly,
         advancedBuilder: advanced,
-        classicSkillsBuilder: classic,
         searchDebounce: Duration.zero,
       ),
     ),
@@ -350,21 +348,15 @@ void main() {
     expect(rest.mutations, isEmpty);
   });
 
-  testWidgets('menu opens the classic skills screen', (tester) async {
-    await _pumpHub(
-      tester,
-      populatedServer(),
-      classic: (_) => const Scaffold(body: Text('classic-screen')),
-    );
+  testWidgets('menu has no bridge-only classic skills entry', (tester) async {
+    await _pumpHub(tester, populatedServer());
     await tester.tap(find.byTooltip('Más opciones'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('cph-menu-update-skills')),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(const ValueKey('cph-menu-classic')));
-    await tester.pumpAndSettle();
-    expect(find.text('classic-screen'), findsOneWidget);
+    expect(find.byKey(const ValueKey('cph-menu-classic')), findsNothing);
   });
 
   testWidgets('update skills runs the server action and reloads', (

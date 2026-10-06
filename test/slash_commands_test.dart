@@ -14,7 +14,6 @@ import 'package:hermes_android/core/models/desktop_model_catalog.dart';
 import 'package:hermes_android/core/models/desktop_session_config.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
-import 'package:hermes_android/core/screens/skills_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
@@ -1466,7 +1465,6 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('chat-slash-command-skills')));
       await tester.pumpAndSettle();
       expect(find.byType(CapabilitiesHub), findsOneWidget);
-      expect(find.byType(SkillsScreen), findsNothing);
       expect(controller.text, isEmpty);
       expect(gateway.submissions, isEmpty);
       expect(gateway.slashCalls, isEmpty);
@@ -1488,8 +1486,6 @@ void main() {
       final hub = tester.widget<CapabilitiesHub>(find.byType(CapabilitiesHub));
       expect(hub.connection.id, _connection().id);
       expect(hub.advancedBuilder, isNotNull);
-      expect(hub.classicSkillsBuilder, isNotNull);
-      expect(find.byType(SkillsScreen), findsNothing);
       expect(controller.text, isEmpty);
       expect(gateway.submissions, isEmpty);
       expect(gateway.slashCalls, isEmpty);
@@ -1499,6 +1495,30 @@ void main() {
       await tester.pumpAndSettle();
       final chatRoute = ModalRoute.of(tester.element(find.byType(ChatScreen)));
       expect(chatRoute?.isCurrent, isTrue);
+    });
+
+    testWidgets('the /skills hub menu offers no bridge-only skills screen', (
+      tester,
+    ) async {
+      final gateway = _SlashGateway();
+      await _pumpSlashChat(tester, gateway);
+      final composer = find.byType(TextField).last;
+      await tester.enterText(composer, '/skills');
+      await tester.pump(const Duration(milliseconds: 250));
+      await _submitSlash(tester);
+      await tester.pumpAndSettle();
+
+      final more = find.descendant(
+        of: find.byType(CapabilitiesHub),
+        matching: find.byIcon(Icons.more_vert_rounded),
+      );
+      expect(more, findsOneWidget);
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+      // Install, uninstall, toggle and hub search (skills.sh included) live
+      // in the hub itself; the menu keeps only the extensions center.
+      expect(find.byKey(const ValueKey('cph-menu-advanced')), findsOneWidget);
+      expect(find.byKey(const ValueKey('cph-menu-classic')), findsNothing);
     });
     testWidgets(
       '/model clears composer and restores focus after selector closes',
