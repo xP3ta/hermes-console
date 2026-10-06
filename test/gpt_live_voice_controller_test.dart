@@ -335,6 +335,35 @@ void main() {
     });
   });
 
+  group('no silence-based auto-stop', () {
+    test('a live session with no user speech for over ten minutes stays '
+        'open and no client timer closes it', () {
+      fakeAsync((async) {
+        final rig = _Rig();
+        rig.enter(async);
+        rig.transport.emitEvent({'type': 'session.started'});
+        // One exchange, then nobody speaks.
+        rig.transport.emitEvent({
+          'type': 'session.input_transcript.delta',
+          'delta': 'hola',
+        });
+        rig.voiceReplies();
+        async.elapse(const Duration(minutes: 11));
+        expect(rig.controller.active, isTrue);
+        expect(rig.controller.note, isNull);
+        expect(rig.controller.phase, VoicePhase.listening);
+        expect(rig.controller.spokenInterruptionArmed, isTrue);
+        expect(rig.transport.sentTypes, isNot(contains('session.close')));
+        expect(rig.transport.disposeCalls, 0);
+        expect(rig.transport.micEnabled, isTrue);
+        async.elapse(const Duration(hours: 1));
+        expect(rig.controller.active, isTrue);
+        expect(rig.transport.disposeCalls, 0);
+        expect(rig.transportsCreated, 1);
+      });
+    });
+  });
+
   group('feeding Hermes back to the voice', () {
     test('one thinking append per distinct tool name', () {
       fakeAsync((async) {
