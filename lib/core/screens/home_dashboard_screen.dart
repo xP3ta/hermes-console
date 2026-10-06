@@ -2009,12 +2009,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen>
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
-        final media = MediaQuery.of(context);
-        final reduceMotion = media.disableAnimations;
+        final reduceMotion = MediaQuery.disableAnimationsOf(context);
         final view = View.maybeOf(context);
         final rawKeyboardInset = view?.viewInsets.bottom ?? 0;
         final keyboardVisible =
-            media.viewInsets.bottom > 0 || rawKeyboardInset > 0;
+            MediaQuery.viewInsetsOf(context).bottom > 0 || rawKeyboardInset > 0;
         final showCompanion =
             controller.isInitialized &&
             controller.enabled &&

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show DisplayFeature, DisplayFeatureState, DisplayFeatureType;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -32,6 +33,7 @@ import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
+import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:hermes_android/main.dart';
 
 // QA 9490 profile build (Pixel): while the soft keyboard animated in a chat,
@@ -543,5 +545,45 @@ void main() {
       if (routes - (notInstalled[path] ?? 0) > wrapped) missing.add(path);
     }
     expect(missing, isEmpty);
+  });
+
+  testWidgets('visible Bots tab ignores MediaQuery fields it does not read', (
+    tester,
+  ) async {
+    usePhoneView(tester);
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: Strings.localizationsDelegates,
+        supportedLocales: Strings.supportedLocales,
+        theme: AppTheme.fromId('dark'),
+        home: MissionControlScreen(
+          connection: _connection(),
+          connManager: manager,
+          dataSource: _Source(_botsSnapshot()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(botsTab(), findsOneWidget);
+    final rebuilds = countRebuildsUnder([tester.element(botsTab())]);
+    // A field nothing in the Bots tab reads (a foldable hinge appearing).
+    for (final top in [100.0, 200.0]) {
+      tester.view.displayFeatures = [
+        DisplayFeature(
+          bounds: Rect.fromLTWH(0, top, 1280, 0),
+          type: DisplayFeatureType.fold,
+          state: DisplayFeatureState.postureFlat,
+        ),
+      ];
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(rebuilds(), 0);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }
