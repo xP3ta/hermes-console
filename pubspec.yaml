@@ -128,8 +128,10 @@ flutter:
     # (sin asset); estos son el logo/símbolo estático para splash/about/header.
     - assets/branding/spark_mark.png
     - assets/branding/spark_mark.webp
-    - assets/branding/hermes_logo.webp
-    - assets/branding/hermes_logo_light.png
+    # Identidad Console: la «C» terracota con cursor (splash/onboarding) y el
+    # icono completo (Acerca de). Fuentes editables: console_*.svg.
+    - assets/branding/console_mark.png
+    - assets/branding/console_icon.png
     # Mascotas "Companion" (Fase A): galería LOCAL de mascotas cosméticas en
     # formato compatible Petdex (pet.json + spritesheet.webp). Son assets locales
     # con licencia propia; nunca se descargan en runtime (la red es Fase C).

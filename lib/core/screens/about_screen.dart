@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../theme/app_theme.dart';
+import '../widgets/animated_hermes_logo.dart' show kConsoleIconAsset;
 import '../widgets/hermes_notice.dart';
 import '../design/hermes_design.dart';
 
@@ -125,11 +126,11 @@ SOFTWARE.
           child: Row(
             children: [
               Image.asset(
-                'assets/branding/hermes_logo.webp',
+                kConsoleIconAsset,
+                key: const Key('about-console-icon'),
                 width: 56,
                 height: 56,
-                // El master es 1024×1024; decodificar acotado al tamaño
-                // mostrado (×3 de DPR) ahorra ~4 MB de bitmap.
+                // Decodificar acotado al tamaño mostrado (×3 de DPR).
                 cacheWidth: 168,
                 cacheHeight: 168,
                 filterQuality: FilterQuality.medium,

@@ -4,7 +4,13 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
-/// Logo de marca de Hermes (emblema circular dorado, fondo transparente).
+/// Console brand mark: terracotta «C» with a cursor bar (transparent PNG).
+const kConsoleMarkAsset = 'assets/branding/console_mark.png';
+
+/// Console app icon (graphite rounded square + mark), for identity rows.
+const kConsoleIconAsset = 'assets/branding/console_icon.png';
+
+/// Logo de marca de Console (la «C» terracota con cursor, fondo transparente).
 ///
 /// Identificador de MARCA de la app (splash, estados de carga), distinto del
 /// `HermesSparkMascot`, que se reserva como mascota/companion.
@@ -35,8 +41,6 @@ class AnimatedHermesLogo extends StatefulWidget {
 
 class _AnimatedHermesLogoState extends State<AnimatedHermesLogo>
     with TickerProviderStateMixin {
-  static const _assetAccent = Color(0xFFF0A848);
-
   late final AnimationController _breath;
   late final AnimationController _orbit;
 
@@ -91,58 +95,8 @@ class _AnimatedHermesLogoState extends State<AnimatedHermesLogo>
     super.dispose();
   }
 
-  ColorFilter _themeTint(Color accent) {
-    final sourceHue = HSVColor.fromColor(_assetAccent).hue;
-    final targetHue = HSVColor.fromColor(accent).hue;
-    final angle = (targetHue - sourceHue) * math.pi / 180;
-    final cosine = math.cos(angle);
-    final sine = math.sin(angle);
-    // Matriz hue-rotate de SVG/CSS. A diferencia de un duotono, conserva los
-    // grises y la luminosidad del retrato; solo desplaza el dorado al matiz del
-    // tema. La fila alfa identidad evita cualquier fondo cuadrado.
-    return ColorFilter.matrix([
-      0.213 + cosine * 0.787 - sine * 0.213,
-      0.715 - cosine * 0.715 - sine * 0.715,
-      0.072 - cosine * 0.072 + sine * 0.928,
-      0,
-      0,
-      0.213 - cosine * 0.213 + sine * 0.143,
-      0.715 + cosine * 0.285 + sine * 0.140,
-      0.072 - cosine * 0.072 - sine * 0.283,
-      0,
-      0,
-      0.213 - cosine * 0.213 - sine * 0.787,
-      0.715 - cosine * 0.715 + sine * 0.715,
-      0.072 + cosine * 0.928 + sine * 0.072,
-      0,
-      0,
-      0,
-      0,
-      0,
-      1,
-      0,
-    ]);
-  }
-
   Widget _emblem(double scale, double glow, Color accent) {
     final emblemSize = widget.size * 0.82;
-    final isLight = Theme.of(context).brightness == Brightness.light;
-
-    Widget asset(String layer, String path) => Image.asset(
-      path,
-      key: ValueKey('animated_hermes_logo_asset_$layer'),
-      width: emblemSize,
-      height: emblemSize,
-      // Decodificar acotado al tamaño mostrado (×3 de DPR): el master es
-      // 1024×1024 y el emblema nunca supera `size` dp.
-      cacheWidth: (emblemSize * 3).round(),
-      cacheHeight: (emblemSize * 3).round(),
-      fit: BoxFit.contain,
-      excludeFromSemantics: true,
-      // El master es 1024×1024: con high queda nítido al escalar a tamaños
-      // grandes (splash), sin el desenfoque de medium.
-      filterQuality: FilterQuality.high,
-    );
 
     return Transform.scale(
       scale: scale,
@@ -162,18 +116,19 @@ class _AnimatedHermesLogoState extends State<AnimatedHermesLogo>
                 ]
               : null,
         ),
-        // Un único master dimensional evita que claro y oscuro presenten
-        // retratos o encuadres distintos. Su transparencia real deja que cada
-        // superficie aporte el fondo; el filtro solo desplaza el dorado al
-        // matiz del tema sin alterar sombras, luces ni alfa.
-        child: ColorFiltered(
-          key: isLight
-              ? const Key('animated_hermes_logo_light_artwork')
-              : const Key('animated_hermes_logo_tint'),
-          colorFilter: _themeTint(accent),
-          child: asset(
-            isLight ? 'light-dimensional-cutout' : 'dark-dimensional-cutout',
-            'assets/branding/hermes_logo_light.png',
+        // The Console mark is the app identity, identical on every theme
+        // (same as the launcher icon): only the orbit and glow follow the
+        // theme accent; the mark itself is never re-tinted.
+        child: Padding(
+          padding: EdgeInsets.all(emblemSize * 0.12),
+          child: Image.asset(
+            kConsoleMarkAsset,
+            key: const Key('animated_hermes_logo_mark'),
+            fit: BoxFit.contain,
+            // Decode bounded to the displayed size (x3 DPR).
+            cacheWidth: (emblemSize * 3).round(),
+            excludeFromSemantics: true,
+            filterQuality: FilterQuality.high,
           ),
         ),
       ),
