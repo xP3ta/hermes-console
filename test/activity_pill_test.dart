@@ -989,8 +989,8 @@ void main() {
       expect(tester.getSize(_frame).width, lessThanOrEqualTo(320));
     });
 
-    testWidgets('los 26 temas renderizan pastilla y panel', (tester) async {
-      expect(AppTheme.presets.length, 26);
+    testWidgets('los 38 temas renderizan pastilla y panel', (tester) async {
+      expect(AppTheme.presets.length, 38);
       for (final preset in AppTheme.presets) {
         await _pump(tester, _everything(), theme: AppTheme.fromId(preset.id));
         expect(_pill, findsOneWidget, reason: preset.id);
