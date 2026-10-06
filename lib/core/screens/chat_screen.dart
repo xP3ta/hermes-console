@@ -2027,7 +2027,8 @@ class _ChatScreenState extends State<ChatScreen>
                 prefs.isHiddenFor(_pinnedPromptChatKey)
             ? null
             : candidate;
-        final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+        final reduceMotion =
+            MediaQuery.maybeDisableAnimationsOf(context) ?? false;
         Widget child = const SizedBox.shrink(
           key: ValueKey('chat-pinned-prompt-none'),
         );
@@ -8374,11 +8375,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   bool get _appLocked =>
-      context
-          .findAncestorStateOfType<HermesAppState>()
-          ?.appLock
-          .locked
-          .value ??
+      context.findAncestorStateOfType<HermesAppState>()?.appLock.locked.value ??
       false;
 
   /// Loads the next earlier page when the reader is within
@@ -17822,47 +17819,53 @@ class _ChatScreenState extends State<ChatScreen>
   /// above the answered prompt can only be the live answer (one bubble per
   /// turn), tool groups and messages queued behind it; anything else means
   /// the turn has no prompt row here (started elsewhere) and nothing is
-  /// marked rather than guessing.
-  ({Map<String, dynamic>? answering, Set<Map<String, dynamic>> queued})
+  /// marked rather than guessing. [answerStreaming] is true once the live
+  /// answer shows text of its own.
+  ({
+    Map<String, dynamic>? answering,
+    Set<Map<String, dynamic>> queued,
+    bool answerStreaming,
+  })
   _liveUserTurnMarks() {
     final queued = Set<Map<String, dynamic>>.identity();
     if (!_chat.isStreaming || _compressingSession) {
-      return (answering: null, queued: queued);
+      return (answering: null, queued: queued, answerStreaming: false);
     }
     final messages = _messages;
     var passedAnswer = false;
+    var answerStreaming = false;
     for (final plan in _currentRenderProjection.units) {
       switch (plan) {
         case ChatToolActivityUnitPlan():
           continue;
         case ChatMessageUnitPlan(:final messageIndex):
-          if (passedAnswer || messages[messageIndex]['role'] != 'assistant') {
-            return (answering: null, queued: queued);
+          final message = messages[messageIndex];
+          if (passedAnswer || message['role'] != 'assistant') {
+            return (answering: null, queued: queued, answerStreaming: false);
           }
           passedAnswer = true;
+          answerStreaming = _hasVisibleAnswer(
+            (message['content'] as String?) ?? '',
+          );
         case ChatUserTurnUnitPlan(:final primaryMessageIndex):
           final message = messages[primaryMessageIndex];
           if (message['_desktopAcceptedQueued'] == true) {
             queued.add(message);
             continue;
           }
-          return (answering: message, queued: queued);
+          return (
+            answering: message,
+            queued: queued,
+            answerStreaming:
+                answerStreaming || _hasVisibleAnswer(_chat.assistantContent),
+          );
       }
     }
-    return (answering: null, queued: queued);
+    return (answering: null, queued: queued, answerStreaming: false);
   }
 
-  /// «Enviado» until the turn really started, then who is replying.
-  String _answeringStatusLabel() {
-    final s = Strings.of(context);
-    final started =
-        _chat.desktopTurnStartedAt != null ||
-        _pipelineState == ChatPipelineState.executing ||
-        _pipelineState == ChatPipelineState.streaming;
-    return started
-        ? s.rp1215NameReplying(displayAgentName(_assistantName))
-        : s.rp1215BubbleSent;
-  }
+  static bool _hasVisibleAnswer(String content) =>
+      content.isNotEmpty && splitReasoning(content).answer.trim().isNotEmpty;
 
   Widget _buildActiveThinkingState() {
     // La compresión no es actividad del modelo. Mostrar a la vez esta tarjeta,
@@ -17928,10 +17931,17 @@ class _ChatScreenState extends State<ChatScreen>
         metadata: unit.primary,
         compact: compact,
         supplements: supplements,
+        // One owner per state (rp1215): the typing row below says who is
+        // replying or thinking; the bubble only says it was sent, and goes
+        // quiet once the answer itself is streaming.
         status: answering
-            ? _answeringStatusLabel()
+            ? (marks.answerStreaming
+                  ? null
+                  : _UserBubbleStatus.sent(
+                      Strings.of(context).rp1215BubbleSent,
+                    ))
             : marks.queued.contains(unit.primary)
-            ? Strings.of(context).rp1215BubbleQueued
+            ? _UserBubbleStatus.queued(Strings.of(context).rp1215BubbleQueued)
             : null,
         answering:
             answering &&
@@ -21376,6 +21386,17 @@ class _RenderBubbleSizeReporter extends RenderProxyBox {
 /// area never cuts a thumbnail or a line in half. The bubble starts after the
 /// same 56 dp left gutter as the transcript bubble; the load-earlier chevron
 /// sits there.
+/// rp1215: what the footer under a user bubble of the open turn says.
+final class _UserBubbleStatus {
+  const _UserBubbleStatus.sent(this.label) : sent = true;
+  const _UserBubbleStatus.queued(this.label) : sent = false;
+
+  final String label;
+
+  /// «Enviado» carries a small check; «En cola» does not.
+  final bool sent;
+}
+
 class _UserMessage extends StatelessWidget {
   final String content;
   final bool verbose;
@@ -21392,9 +21413,9 @@ class _UserMessage extends StatelessWidget {
   final ValueChanged<String>? onSaveEdit;
   final bool compact;
 
-  /// rp1215: small line under the bubble while its turn is open («Enviado»,
-  /// «Hermes está respondiendo», «En cola»); `null` once answered.
-  final String? status;
+  /// rp1215: small line under the bubble while its turn is open («✓
+  /// Enviado», «En cola»); `null` once the answer streams.
+  final _UserBubbleStatus? status;
 
   /// rp1215: this is the bubble being answered while other messages wait;
   /// its left edge takes the accent.
@@ -21715,17 +21736,36 @@ class _UserMessage extends StatelessWidget {
                       color: colors.textSecondary,
                     ),
                   ),
-                  if (status != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 3, left: 4),
-                      child: Text(
-                        status!,
-                        key: const ValueKey('user-bubble-status'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          color: colors.textTertiary,
+                  if (status case final status?)
+                    Flexible(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 3, left: 4),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (status.sent)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 3),
+                                child: Icon(
+                                  Icons.check_rounded,
+                                  key: const ValueKey('user-bubble-sent-check'),
+                                  size: 12,
+                                  color: colors.textTertiary,
+                                ),
+                              ),
+                            Flexible(
+                              child: Text(
+                                status.label,
+                                key: const ValueKey('user-bubble-status'),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  color: colors.textTertiary,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),

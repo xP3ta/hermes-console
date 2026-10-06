@@ -288,6 +288,16 @@ void main() {
 
   Finder bubbleStatus() => find.byKey(const ValueKey('user-bubble-status'));
 
+  Finder sentCheck() => find.byKey(const ValueKey('user-bubble-sent-check'));
+
+  /// Every painted text run (Text and RichText) that contains [phrase].
+  List<String> paintedTextsContaining(WidgetTester tester, String phrase) =>
+      tester
+          .widgetList<RichText>(find.byType(RichText))
+          .map((w) => w.text.toPlainText())
+          .where((text) => text.contains(phrase))
+          .toList();
+
   String? bubbleStatusText(WidgetTester tester) {
     final found = bubbleStatus().evaluate();
     if (found.isEmpty) return null;
@@ -464,9 +474,8 @@ void main() {
   });
 
   group('rp1215 which bubble is being answered', () {
-    testWidgets('Enviado, then «… está respondiendo», then nothing', (
-      tester,
-    ) async {
+    testWidgets('footer says Enviado with a check until the answer streams, '
+        'then nothing', (tester) async {
       final gateway = _StreamingGateway();
       final chat = await startTurn(tester, gateway);
       // Accepted by the gateway, the turn itself has not started yet.
@@ -474,10 +483,14 @@ void main() {
       expect(chat.desktopTurnStartedAt, isNull, reason: 'precondition');
       expect(bubbleStatus(), findsOneWidget);
       expect(bubbleStatusText(tester), 'Enviado');
+      expect(sentCheck(), findsOneWidget);
 
       gateway.emit('message.start');
       await settle(tester);
-      expect(bubbleStatusText(tester), endsWith('está respondiendo'));
+      // The typing row owns «respondiendo»; the bubble keeps «Enviado».
+      expect(indicator(), findsOneWidget, reason: 'precondition: replying');
+      expect(bubbleStatusText(tester), 'Enviado');
+      expect(sentCheck(), findsOneWidget);
       // Only the bubble of this turn carries it, not the history.
       expect(bubbleStatus(), findsOneWidget);
       final bubble = find.ancestor(
@@ -494,11 +507,55 @@ void main() {
 
       gateway.emit('message.delta', {'text': 'Respuesta.'});
       await settle(tester);
-      expect(bubbleStatusText(tester), endsWith('está respondiendo'));
+      expect(
+        bubbleStatus(),
+        findsNothing,
+        reason: 'the answer is streaming: the bubble says nothing',
+      );
+      expect(sentCheck(), findsNothing);
       gateway.emit('message.complete', {'text': chat.assistantContent});
       await settle(tester, 40);
       expect(chat.isStreaming, isFalse);
       expect(bubbleStatus(), findsNothing, reason: 'answered: nothing extra');
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('«está respondiendo» appears exactly once while replying', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await startTurn(tester, gateway);
+      gateway.emit('message.start');
+      await settle(tester);
+      expect(indicator(), findsOneWidget, reason: 'precondition: replying');
+      expect(
+        paintedTextsContaining(tester, 'está respondiendo'),
+        hasLength(1),
+        reason: 'one owner: the typing row, never the bubble footer too',
+      );
+      expect(
+        find.descendant(
+          of: indicator(),
+          matching: find.textContaining('está respondiendo'),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('while thinking the footer still says only Enviado', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await startTurn(tester, gateway);
+      gateway.emit('message.start');
+      gateway.emit('reasoning.delta', {'text': 'Primero miro las fotos'});
+      await settle(tester);
+      expect(paintedTextsContaining(tester, 'está pensando'), hasLength(1));
+      expect(paintedTextsContaining(tester, 'está respondiendo'), isEmpty);
+      expect(bubbleStatusText(tester), 'Enviado');
       expect(tester.takeException(), isNull);
       await tearDownChat(tester, gateway);
     });
@@ -550,10 +607,7 @@ void main() {
         matching: bubbleStatus(),
       );
       expect(liveStatus, findsOneWidget);
-      expect(
-        (tester.widget(liveStatus) as Text).data,
-        endsWith('está respondiendo'),
-      );
+      expect((tester.widget(liveStatus) as Text).data, 'Enviado');
       expect(
         find.descendant(of: rowOf('Mira las fotos'), matching: answeringEdge()),
         findsOneWidget,
