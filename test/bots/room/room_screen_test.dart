@@ -25,6 +25,7 @@ import 'package:hermes_android/core/widgets/chat/console_composer.dart';
 import 'package:hermes_android/core/widgets/markdown_table.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
 
+import '../../support/clipboard_image_fake.dart';
 import '../../support/inter_font.dart';
 import 'room_fixtures.dart';
 
@@ -1505,6 +1506,36 @@ void main() {
   });
 
   group('keyboard paste into the room composer', () {
+    testWidgets('long-press "Paste image" adds the clipboard image as a chip', (
+      tester,
+    ) async {
+      _mockPathProvider();
+      final clipboard = FakeNativeClipboard(
+        read: {
+          'mimeType': 'image/png',
+          'name': 'shot.png',
+          'bytes': _pastedPng,
+        },
+      )..install();
+      await _pump(tester, events: const [], uploader: _RecordingUploader());
+      await openComposerTextMenu(
+        tester,
+        find.descendant(
+          of: find.byType(ConsoleComposer),
+          matching: find.byType(TextField),
+        ),
+      );
+      expect(find.text('Paste image'), findsOneWidget);
+      await tester.tap(find.text('Paste image'));
+      await _settlePaste(
+        tester,
+        until: () => _roomComposerCards(tester).isNotEmpty,
+      );
+
+      expect(clipboard.calls, containsAllInOrder(['hasImage', 'readImage']));
+      expect(_roomComposerCards(tester).single.name, 'pasted-image.png');
+    });
+
     testWidgets('a pasted image becomes a chip and is uploaded on send', (
       tester,
     ) async {
