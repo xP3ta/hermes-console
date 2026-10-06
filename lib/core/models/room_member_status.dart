@@ -37,6 +37,11 @@ final class BotLiveStatus {
 
   /// Join only seats owned by this gateway: a peer with the same profile
   /// name cannot donate liveness or work details to a local bot.
+  ///
+  /// The room logs are merged, sorted and scanned once per snapshot (see
+  /// [_RoomEventIndex]), not once per agent and seat: the Bots roster asks
+  /// for every agent on each build, and the per-call merge cost ~16 ms per
+  /// build on a Pixel with real room logs.
   static BotLiveStatus forAgent({
     required MissionAgent agent,
     required DateTime now,
@@ -50,32 +55,28 @@ final class BotLiveStatus {
       RoomPresence.idle => 1,
       RoomPresence.unknown => 0,
     };
+    final index = _RoomEventIndex.of(rooms);
     for (final room in rooms.rooms.where((r) => !r.disbanded)) {
       for (final member in room.members.where(
         (m) =>
             m.owner.connectionId == room.authorityGatewayId &&
             m.owner.profile == agent.profile.name,
       )) {
-        final events = rooms.logs
-            .where(
-              (log) =>
-                  log.authority.gatewayId == room.authorityGatewayId &&
-                  log.authority.epoch == room.authorityEpoch,
-            )
-            .expand((log) => log.events)
-            .where((e) => e.roomId == room.roomId)
-            .toList();
+        final events = index.eventsFor(room);
+        final scan = index.scanFor(room, member, events);
         final driver = rooms.driverStatusFor(room.roomId);
-        final candidate = derive(
+        final candidate = _derive(
           agent: agent,
           member: member,
-          events: events,
+          ordered: events,
+          scan: scan,
           now: now,
           driverStatus: driver,
         );
-        final roomOnly = derive(
+        final roomOnly = _derive(
           member: member,
-          events: events,
+          ordered: events,
+          scan: scan,
           now: now,
           driverStatus: driver,
         );
@@ -95,17 +96,39 @@ final class BotLiveStatus {
     HostedGroupEvent? addressedMessage,
     RoomDriverStatus? driverStatus,
   }) {
-    final ordered = [...events]
-      ..sort((a, b) => a.sequence.compareTo(b.sequence));
-    bool belongs(HostedGroupEvent e) =>
-        member != null &&
-        (e.activity.memberId == member.memberId ||
-            (e.activity.memberId == null &&
-                (e.actor.id == member.memberId ||
-                    (e.actor.connectionId == member.owner.connectionId &&
-                        e.actor.profile == member.owner.profile))));
-    final seconds = now.millisecondsSinceEpoch / 1000;
-    bool recent(num time) => seconds - time >= -60 && seconds - time <= 90;
+    final ordered = _ordered(events);
+    return _derive(
+      member: member,
+      ordered: ordered,
+      scan: _scan(member, ordered),
+      now: now,
+      agent: agent,
+      addressedMessage: addressedMessage,
+      driverStatus: driverStatus,
+    );
+  }
+
+  static List<HostedGroupEvent> _ordered(List<HostedGroupEvent> events) =>
+      [...events]..sort((a, b) => a.sequence.compareTo(b.sequence));
+
+  static bool Function(HostedGroupEvent) _belongsTo(
+    HostedGroupMember? member,
+  ) =>
+      (e) =>
+          member != null &&
+          (e.activity.memberId == member.memberId ||
+              (e.activity.memberId == null &&
+                  (e.actor.id == member.memberId ||
+                      (e.actor.connectionId == member.owner.connectionId &&
+                          e.actor.profile == member.owner.profile))));
+
+  /// The part of [derive] that depends only on the seat and its room log,
+  /// never on the clock or the agent, so it can be cached per snapshot.
+  static _SeatScan _scan(
+    HostedGroupMember? member,
+    List<HostedGroupEvent> ordered,
+  ) {
+    final belongs = _belongsTo(member);
     HostedGroupEvent? running;
     HostedGroupEvent? last;
     HostedGroupEvent? question;
@@ -143,6 +166,24 @@ final class BotLiveStatus {
         running = null;
       }
     }
+    return (running: running, last: last, question: question);
+  }
+
+  static BotLiveStatus _derive({
+    HostedGroupMember? member,
+    required List<HostedGroupEvent> ordered,
+    required _SeatScan scan,
+    required DateTime now,
+    MissionAgent? agent,
+    HostedGroupEvent? addressedMessage,
+    RoomDriverStatus? driverStatus,
+  }) {
+    final belongs = _belongsTo(member);
+    final seconds = now.millisecondsSinceEpoch / 1000;
+    bool recent(num time) => seconds - time >= -60 && seconds - time <= 90;
+    final running = scan.running;
+    final last = scan.last;
+    final question = scan.question;
     // Server driver evidence (spec 070 T204) is authoritative: an open turn
     // only counts while the room driver reports it is working. Older
     // gateways without driver_status keep the bounded stranded-start guard.
@@ -262,6 +303,59 @@ final class BotLiveStatus {
     }
     return BotLiveStatus(presence, workingOn: detail, response: response);
   }
+}
+
+typedef _SeatScan = ({
+  HostedGroupEvent? running,
+  HostedGroupEvent? last,
+  HostedGroupEvent? question,
+});
+
+/// Room events merged and sorted once per [HostedGroupsSnapshot], plus the
+/// clock-independent scan of each seat. Snapshots are immutable (a refresh
+/// builds a new one), so the index is attached to the snapshot instance and
+/// a new snapshot is always read again.
+final class _RoomEventIndex {
+  static final _bySnapshot = Expando<_RoomEventIndex>('room event index');
+
+  final Map<(String, int, String), List<HostedGroupEvent>> _events;
+  final Map<HostedGroupRoom, Map<HostedGroupMember, _SeatScan>> _scans =
+      Map.identity();
+
+  _RoomEventIndex._(this._events);
+
+  static _RoomEventIndex of(HostedGroupsSnapshot rooms) =>
+      _bySnapshot[rooms] ??= _build(rooms);
+
+  static _RoomEventIndex _build(HostedGroupsSnapshot rooms) {
+    // Same events, in the same order, as filtering the logs by authority and
+    // room per call; the sort then yields the same order as [derive].
+    final grouped = <(String, int, String), List<HostedGroupEvent>>{};
+    for (final log in rooms.logs) {
+      final gateway = log.authority.gatewayId;
+      final epoch = log.authority.epoch;
+      for (final e in log.events) {
+        (grouped[(gateway, epoch, e.roomId)] ??= []).add(e);
+      }
+    }
+    return _RoomEventIndex._({
+      for (final entry in grouped.entries)
+        entry.key: BotLiveStatus._ordered(entry.value),
+    });
+  }
+
+  List<HostedGroupEvent> eventsFor(HostedGroupRoom room) =>
+      _events[(room.authorityGatewayId, room.authorityEpoch, room.roomId)] ??
+      const [];
+
+  _SeatScan scanFor(
+    HostedGroupRoom room,
+    HostedGroupMember member,
+    List<HostedGroupEvent> ordered,
+  ) => (_scans[room] ??= Map.identity())[member] ??= BotLiveStatus._scan(
+    member,
+    ordered,
+  );
 }
 
 /// Most recent user send defines the current run. Explicit coordinates keep
