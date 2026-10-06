@@ -8337,7 +8337,7 @@
   "inicioStatusWorking": "Hermes is working on “{title}”.",
   "inicioStatusFinished": "Hermes finished “{title}”.",
   "inicioTeamWorking": "{names} working",
-  "inicioTeamWaiting": "{names} waiting for you",
+  "inicioTeamWaiting": "{count, plural, =1{{names} is waiting for you} other{{names} are waiting for you}}",
   "inicioTeamMixed": "{working} working · {waiting} waiting for you",
   "inicioNamesTwo": "{first} and {second}",
   "inicioNamesMore": "{first}, {second} and {count} more",
