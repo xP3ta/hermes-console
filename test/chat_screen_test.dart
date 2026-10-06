@@ -9935,6 +9935,151 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  Future<List<int>> legacyImagePng(WidgetTester tester) async {
+    final png = await tester.runAsync(() async {
+      final recorder = ui.PictureRecorder();
+      Canvas(recorder).drawRect(
+        const Rect.fromLTWH(0, 0, 40, 20),
+        Paint()..color = const Color(0xff2255aa),
+      );
+      final image = await recorder.endRecording().toImage(40, 20);
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      return data!.buffer.asUint8List();
+    });
+    return png!;
+  }
+
+  void useTempAppSupport() {
+    final support = Directory.systemTemp.createTempSync('legacy-image-');
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pathProvider, (call) async => support.path);
+    addTearDown(() {
+      TestWidgetsFlutterBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(pathProvider, null);
+      if (support.existsSync()) support.deleteSync(recursive: true);
+    });
+    MediaPrefetcher.instance.resetForTesting();
+    GeneratedMediaService.resetAutoLoadsForTesting();
+    addTearDown(MediaPrefetcher.instance.resetForTesting);
+  }
+
+  Future<void> pumpUntilLegacyImage(
+    WidgetTester tester,
+    GeneratedImageStatus status,
+  ) async {
+    for (var i = 0; i < 100; i++) {
+      final cards = tester.widgetList<GeneratedImageCard>(
+        find.byType(GeneratedImageCard),
+      );
+      if (cards.any((card) => card.status == status)) return;
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+  }
+
+  testWidgets(
+    'a server-cache image loads through the Dashboard without a bridge',
+    (tester) async {
+      useTempAppSupport();
+      final png = await legacyImagePng(tester);
+      final fetched = <String>[];
+      await pumpChat(
+        tester,
+        connection: _remoteConn('conn-legacy-image'),
+        messages: const [
+          {
+            'role': 'assistant',
+            'content': 'Imagen lista.',
+            '_generatedImages': [
+              {
+                'kind': 'serverCache',
+                'source': '/home/hermes/.hermes/cache/images/no-bridge.png',
+                'basename': 'no-bridge.png',
+                'tool_call_id': 'call-no-bridge',
+              },
+            ],
+          },
+          {'role': 'user', 'content': 'Genera una imagen'},
+        ],
+        generatedMediaFetcher: (path, destination) async {
+          fetched.add(path);
+          await destination.writeAsBytes(png, flush: true);
+        },
+      );
+      await pumpUntilLegacyImage(tester, GeneratedImageStatus.ready);
+
+      final card = tester.widget<GeneratedImageCard>(
+        find.byType(GeneratedImageCard),
+      );
+      expect(card.status, GeneratedImageStatus.ready);
+      // Only the validated basename travels, under the fixed cache root.
+      expect(fetched, ['~/.hermes/cache/images/no-bridge.png']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a server-cache image waits for App Lock and is prefetched once unlocked',
+    (tester) async {
+      useTempAppSupport();
+      final png = await legacyImagePng(tester);
+      const source = '/home/hermes/.hermes/cache/images/locked-render.png';
+      final fetched = <String>[];
+      final gateway = _UiRewindGateway();
+      final chat = await pumpChat(
+        tester,
+        connection: _remoteConn('conn-legacy-locked'),
+        desktopGateway: gateway,
+        messagesLoaded: false,
+        generatedMediaFetcher: (path, destination) async {
+          fetched.add(path);
+          await destination.writeAsBytes(png, flush: true);
+        },
+      );
+      final app = tester.state<HermesAppState>(find.byType(HermesApp));
+      // Production wires the prefetcher to App Lock at startup (main.dart).
+      final previousLock = MediaPrefetcher.appLocked;
+      MediaPrefetcher.appLocked = app.appLock.locked;
+      addTearDown(() => MediaPrefetcher.appLocked = previousLock);
+      expect(
+        await chat.send(
+          fullText: 'Genera la imagen',
+          model: 'hermes-agent',
+          history: const [],
+        ),
+        isTrue,
+      );
+
+      app.appLock.locked.value = true;
+      gateway.emit('message.complete', const {'text': 'Hecho: $source'});
+      for (var i = 0; i < 5; i++) {
+        await Future<void>.microtask(() {});
+      }
+      // Queued from the arriving event, but nothing is fetched while locked.
+      expect(
+        MediaPrefetcher.instance.trackedKeysForTesting.where(
+          (key) => key.contains('locked-render.png'),
+        ),
+        hasLength(1),
+      );
+      for (var i = 0; i < 10; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(fetched, isEmpty);
+
+      app.appLock.unlock();
+      await pumpUntilLegacyImage(tester, GeneratedImageStatus.ready);
+      expect(fetched, ['~/.hermes/cache/images/locked-render.png']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('dos calls con el mismo basename pintan dos tarjetas', (
     tester,
   ) async {
