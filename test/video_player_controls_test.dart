@@ -127,6 +127,40 @@ void main() {
     expect(platform.calls, contains('play:1'));
   }
 
+  // First in the file on purpose: a test that fails mid-playback leaks its
+  // players, and video_player's own lifecycle observer resumes them on
+  // `resumed`, which would make this test red as collateral damage.
+  testWidgets('backgrounding the app pauses playback and shows the controls', (
+    tester,
+  ) async {
+    await pumpCard(tester);
+    await startPlaying(tester);
+    await tester.pump(const Duration(seconds: 4));
+    expect(controlsVisible(tester), isFalse);
+    final mark = platform.calls.length;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await settle(tester);
+    expect(since(mark), contains('pause:1'));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await settle(tester);
+    expect(controlsVisible(tester), isTrue);
+    // Coming back does not resume on its own (video_player's own observer
+    // would, had the card not paused first). Read this card's controller
+    // through its button: platform calls may include players leaked by an
+    // earlier failed test in this file.
+    expect(
+      find.descendant(
+        of: find.byKey(playKey),
+        matching: find.byIcon(Icons.play_arrow_rounded),
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('replay after the end restarts at 0 even when a late position '
       'poll lands short of the end', (tester) async {
     installPlatform(const Duration(seconds: 5));
@@ -398,27 +432,6 @@ void main() {
     await settle(tester);
     expect(find.byKey(viewerKey), findsOneWidget);
     expect(platform.calls.where((c) => c.startsWith('play:')), isEmpty);
-  });
-
-  testWidgets('backgrounding the app pauses playback and shows the controls', (
-    tester,
-  ) async {
-    await pumpCard(tester);
-    await startPlaying(tester);
-    await tester.pump(const Duration(seconds: 4));
-    expect(controlsVisible(tester), isFalse);
-    final mark = platform.calls.length;
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-    await settle(tester);
-    expect(since(mark), contains('pause:1'));
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    await settle(tester);
-    expect(controlsVisible(tester), isTrue);
-    expect(since(mark).where((c) => c.startsWith('play:')), isEmpty);
   });
 
   testWidgets('a page pushed over the chat pauses the video', (tester) async {
