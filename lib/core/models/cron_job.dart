@@ -36,6 +36,11 @@ class CronJob {
   final String model;
   final String provider;
   final String profile;
+
+  /// Profile this job was fetched from (the store that holds it), recorded
+  /// when listing. Null when the listing could not tell (an aggregated read
+  /// without the server's per-job `profile`).
+  final String? sourceProfile;
   final String scheduleExpression;
   final String scheduleDisplay;
   final String? lastError;
@@ -56,6 +61,7 @@ class CronJob {
     required this.model,
     required this.provider,
     required this.profile,
+    this.sourceProfile,
     required this.scheduleExpression,
     required this.scheduleDisplay,
     required this.lastError,
@@ -111,6 +117,9 @@ class CronJob {
       model: _text(json['model']) ?? '',
       provider: _text(json['provider']) ?? '',
       profile: _text(json['profile']) ?? '',
+      // The Dashboard annotates every listed job with the profile it read
+      // it from (`_annotate_cron_job`).
+      sourceProfile: _text(json['profile']),
       scheduleExpression: expression,
       scheduleDisplay: display,
       lastError: lastError,
@@ -122,6 +131,45 @@ class CronJob {
       state: CronJobState.from(json['state']?.toString(), enabled: enabled),
       raw: Map<String, dynamic>.unmodifiable(json),
     );
+  }
+
+  /// Profile every action on this job must target: where it was fetched
+  /// from, else the bot owner from the `[bot:<name>]` prefix. Null when
+  /// neither is known; callers must refuse instead of defaulting.
+  String? get targetProfile => _profileName(sourceProfile) ?? ownerBot;
+
+  /// Same job with [sourceProfile] recorded. A value already recorded is
+  /// kept: the server's own per-job `profile` beats the listing's guess.
+  CronJob withSourceProfile(String? listed) {
+    final recorded = _profileName(sourceProfile);
+    final next = recorded ?? _profileName(listed);
+    if (next == sourceProfile) return this;
+    return CronJob(
+      id: id,
+      name: name,
+      prompt: prompt,
+      script: script,
+      deliver: deliver,
+      model: model,
+      provider: provider,
+      profile: profile,
+      sourceProfile: next,
+      scheduleExpression: scheduleExpression,
+      scheduleDisplay: scheduleDisplay,
+      lastError: lastError,
+      lastStatus: lastStatus,
+      lastRunAt: lastRunAt,
+      nextRunAt: nextRunAt,
+      enabled: enabled,
+      noAgent: noAgent,
+      state: state,
+      raw: raw,
+    );
+  }
+
+  static String? _profileName(String? value) {
+    final text = value?.trim() ?? '';
+    return text.isEmpty ? null : text;
   }
 
   bool get isScriptOnly => noAgent && script.isNotEmpty;
@@ -157,6 +205,16 @@ class CronJob {
 
   static String _clip(String value) =>
       value.length > 60 ? '${value.substring(0, 60)}…' : value;
+}
+
+/// The job's owning profile is unknown, so no action is sent: guessing a
+/// profile would act on (or report success for) the wrong store.
+class CronJobOwnerUnknownException implements Exception {
+  final String jobId;
+  const CronJobOwnerUnknownException(this.jobId);
+
+  @override
+  String toString() => 'cron_job_owner_unknown';
 }
 
 class CronDeliveryTarget {

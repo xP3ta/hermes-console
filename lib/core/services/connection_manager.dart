@@ -2414,6 +2414,16 @@ class CronDeleteRejectedException implements Exception {
   String toString() => 'cron_delete_rejected';
 }
 
+/// The Dashboard answered 404 for a cron job in [profile]: nothing was
+/// changed there. Never a success.
+class CronJobNotFoundException implements Exception {
+  final String profile;
+  const CronJobNotFoundException(this.profile);
+
+  @override
+  String toString() => 'cron_job_not_found';
+}
+
 /// Client for the Hermes Dashboard REST API (port 9119).
 ///
 /// Modos de auth soportados:
@@ -4378,6 +4388,7 @@ class DashboardClient {
     final endpoint = 'cron/jobs/${Uri.encodeComponent(id)}';
     final deleted = await _deleteCronEndpoint(
       '$endpoint${_profileQuery(scopedProfile)}',
+      profile: scopedProfile ?? 'default',
     );
     if (!deleted) {
       throw const CronDeleteRejectedException();
@@ -4386,6 +4397,7 @@ class DashboardClient {
 
   Future<bool> _deleteCronEndpoint(
     String endpoint, {
+    required String profile,
     bool retried = false,
   }) async {
     final headers = await _authHeaders();
@@ -4399,10 +4411,16 @@ class DashboardClient {
         retried: retried,
       );
       if (nextRetried != null) {
-        return _deleteCronEndpoint(endpoint, retried: nextRetried);
+        return _deleteCronEndpoint(
+          endpoint,
+          profile: profile,
+          retried: nextRetried,
+        );
       }
     }
-    if (res.statusCode == 404) return true;
+    // 404: the job is not in that profile, so nothing was removed. Reporting
+    // it as deleted hid a delete sent to the wrong profile.
+    if (res.statusCode == 404) throw CronJobNotFoundException(profile);
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw Exception('HTTP ${res.statusCode}');
     }
