@@ -162,6 +162,11 @@ class _ModelsScreenState extends State<ModelsScreen>
   /// (`GET /api/local-models/status`): null = checking, otherwise the probe
   /// outcome. 404 ⇒ the server has no local-models routes.
   _LocalModelsProbe? _localProbe;
+
+  /// Desktop's "Run locally" offer: the catalog model the server's hardware
+  /// fits while local models are not set up there. Read on open, never
+  /// polled; null hides the row.
+  LocalCatalogModel? _localSetupFit;
   BridgeState _bridge = BridgeState.unknown;
   bool _bridgeProbed = false;
   List<Map<String, String>> _fallback = [];
@@ -279,15 +284,59 @@ class _ModelsScreenState extends State<ModelsScreen>
   Future<void> _probeLocalModels() async {
     final ticket = profileReadTicket();
     _LocalModelsProbe probe;
+    LocalCatalogModel? fit;
     try {
       final status = await _localModels.status();
       probe = _LocalModelsProbe.available(status.models.length);
+      fit = await _readLocalSetupFit(status);
     } on LocalModelsUnavailable {
       probe = const _LocalModelsProbe.unavailable();
     } catch (_) {
       probe = const _LocalModelsProbe.failed();
     }
-    if (mounted && ticket.isCurrent) setState(() => _localProbe = probe);
+    if (mounted && ticket.isCurrent) {
+      setState(() {
+        _localProbe = probe;
+        _localSetupFit = fit;
+      });
+    }
+  }
+
+  /// The catalog is only read when the server is not set up yet: a set-up
+  /// server never qualifies, so it costs no extra request.
+  Future<LocalCatalogModel?> _readLocalSetupFit(
+    LocalModelsStatus status,
+  ) async {
+    if (status.runtimeInstalled && status.models.isNotEmpty) return null;
+    try {
+      return pickLocalSetupFit(status, await _localModels.catalog());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Widget _buildLocalSetupOffer(HermesThemeColors colors) {
+    final s = Strings.of(context);
+    final fit = _localSetupFit!;
+    return _ModelTonalGroup(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: HermesListRow(
+        key: const ValueKey('lm-setup-offer'),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        icon: Icons.memory_rounded,
+        iconColor: colors.accentHover,
+        title: s.lmSetupOfferTitle,
+        subtitle: s.lmSetupOfferText(fit.displayName, fit.sizeLabel),
+        trailing: Text(
+          s.lmSetupOfferAction,
+          style: TextStyle(
+            color: colors.accentHover,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        onTap: _openLocalModels,
+      ),
+    );
   }
 
   Future<void> _openLocalModels() async {
@@ -1674,6 +1723,7 @@ class _ModelsScreenState extends State<ModelsScreen>
                 onDismissed: () => unawaited(_ackFreeTierNotice()),
               ),
             ),
+          if (_localSetupFit != null) _buildLocalSetupOffer(colors),
           if (widget.connection.kind != InstanceKind.localhost)
             BridgeUpdateBanner(
               bridge: _bridge,

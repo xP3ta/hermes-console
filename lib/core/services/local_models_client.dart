@@ -307,6 +307,7 @@ class LocalCatalogModel {
     required this.downloadedModelId,
     required this.quant,
     required this.fits,
+    this.fitsConfirmed = false,
     required this.fitSummary,
     required this.needsEngine,
     required this.modelId,
@@ -321,6 +322,10 @@ class LocalCatalogModel {
   final String? downloadedModelId;
   final String? quant;
   final bool fits;
+
+  /// The server ran its fit check and said yes (`fits: true`). A missing
+  /// field reads as [fits] for the catalog rows but proves nothing.
+  final bool fitsConfirmed;
   final String fitSummary;
   final bool needsEngine;
 
@@ -340,10 +345,26 @@ class LocalCatalogModel {
         downloadedModelId: _string(json['downloaded_model_id']),
         quant: _string(json['downloaded_quant']) ?? _string(json['quant']),
         fits: json['fits'] != false,
+        fitsConfirmed: json['fits'] == true,
         fitSummary: _string(json['fit_summary']) ?? '',
         needsEngine: json['needs_engine'] == true,
         modelId: _string(json['model_id']),
       );
+}
+
+/// Desktop's local-setup offer rule (hermes-agent #121969/#129506): the
+/// server qualifies while local models are not set up (no runtime or no
+/// staged model) and its hardware fits a catalog model. Returns the model
+/// to name in the offer — the recommended fitting row, else the first
+/// fitting one — or null when there is nothing to offer.
+LocalCatalogModel? pickLocalSetupFit(
+  LocalModelsStatus status,
+  List<LocalCatalogModel> catalog,
+) {
+  if (status.runtimeInstalled && status.models.isNotEmpty) return null;
+  final fitting = catalog.where((m) => m.fitsConfirmed).toList();
+  if (fitting.isEmpty) return null;
+  return fitting.firstWhere((m) => m.recommended, orElse: () => fitting.first);
 }
 
 class LocalRuntimeJob {
