@@ -6499,17 +6499,6 @@
   },
   "settingsStartupBotsTitle": "Open Bots on launch",
   "settingsStartupBotsSubtitle": "Start the app in Bot Mode instead of Home. Notifications still open their own screen.",
-  "roomViewAvailability": "{available} of {total} available",
-  "@roomViewAvailability": {
-    "placeholders": {
-      "available": {
-        "type": "int"
-      },
-      "total": {
-        "type": "int"
-      }
-    }
-  },
   "roomRoundLabel": "Round {round}",
   "@roomRoundLabel": {
     "placeholders": {
@@ -6528,14 +6517,6 @@
   },
   "roomRoundQueued": "{count} queued",
   "@roomRoundQueued": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "roomRoundNeedsYou": "{count, plural, =1{1 needs you} other{{count} need you}}",
-  "@roomRoundNeedsYou": {
     "placeholders": {
       "count": {
         "type": "int"
@@ -6599,25 +6580,6 @@
   "roomStatusRecovering": "Checking an interrupted reply…",
   "@roomStatusRecovering": {
     "description": "Room header while the server re-checks a reply interrupted by a restart or lost connection; not a failure"
-  },
-  "roomStatusRoundFinished": "Round {round} finished · {ago}",
-  "@roomStatusRoundFinished": {
-    "placeholders": {
-      "round": {
-        "type": "int"
-      },
-      "ago": {
-        "type": "String"
-      }
-    }
-  },
-  "roomStatusLastActivity": "Last activity {ago}",
-  "@roomStatusLastActivity": {
-    "placeholders": {
-      "ago": {
-        "type": "String"
-      }
-    }
   },
   "roomAgoNow": "just now",
   "roomAgoMinutes": "{count} min ago",
@@ -6738,14 +6700,6 @@
       }
     }
   },
-  "roomStripNext": "Next: {names}",
-  "@roomStripNext": {
-    "placeholders": {
-      "names": {
-        "type": "String"
-      }
-    }
-  },
   "roomTypingLabel": "{name} is replying…",
   "@roomTypingLabel": {
     "placeholders": {
@@ -6755,7 +6709,6 @@
     }
   },
   "roomNewPill": "{count, plural, =1{1 new} other{{count} new}}",
-  "roomStripDetail": "See what each profile is doing",
   "roomActionFailed": "Hermes rejected the action. Try again.",
   "roomActivityTitle": "Activity",
   "roomActivityEmpty": "No passes, failures or retries yet.",
@@ -8548,5 +8501,66 @@
   "tabletPickProject": "Pick a project to open it here",
   "@tabletPickProject": {
     "description": "Placeholder in the tablet detail pane of the Projects list before one is opened."
+  },
+  "rhdrBots": "{count, plural, =1{1 bot} other{{count} bots}}",
+  "@rhdrBots": {
+    "description": "Room header status: how many bots are in the room.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "rhdrBotsAvailable": "{available} of {total} bots",
+  "@rhdrBotsAvailable": {
+    "description": "Room header status when some bots are unavailable.",
+    "placeholders": {
+      "available": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "rhdrRoundFinished": "round finished {ago}",
+  "@rhdrRoundFinished": {
+    "description": "Room header status after the presence part, e.g. '4 bots · round finished 5 min ago'.",
+    "placeholders": {
+      "ago": {
+        "type": "String"
+      }
+    }
+  },
+  "rhdrLastActivity": "active {ago}",
+  "@rhdrLastActivity": {
+    "description": "Room header status after the presence part when there is no round.",
+    "placeholders": {
+      "ago": {
+        "type": "String"
+      }
+    }
+  },
+  "rhdrNeedsYouMany": "{count} waiting on you",
+  "@rhdrNeedsYouMany": {
+    "description": "Room header status when several bots wait on the user.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "rhdrOpenDetailHint": "See members and round",
+  "@rhdrOpenDetailHint": {
+    "description": "Accessibility hint of the room header; tapping opens the members/round detail."
+  },
+  "rhdrMoreMembers": "{count} more",
+  "@rhdrMoreMembers": {
+    "description": "Accessibility: members not shown in the header face cluster.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   }
 }

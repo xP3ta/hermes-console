@@ -18,7 +18,6 @@ import '../../../widgets/chat/chat_message_selection_area.dart';
 import '../../../widgets/hermes_notice.dart';
 import '../../../widgets/mission_profile_avatar.dart';
 import '../../../widgets/room_team_row.dart' show RoomMemberAvatar;
-import '../room_avatar_tile.dart';
 import 'room_gateway.dart';
 import 'room_models.dart';
 
@@ -103,39 +102,6 @@ class RoomMemberFace extends StatelessWidget {
       working: working,
     ),
   );
-}
-
-/// Room header avatar: the same [RoomAvatarTile] as the room's roster row
-/// (2×2 grid of member faces, "+n" in the fourth cell), at header size.
-class RoomHeaderFaces extends StatelessWidget {
-  final List<HostedGroupMember> members;
-  final RoomProfileResolver profileFor;
-  final MissionProfileAvatarCache? avatarCache;
-
-  const RoomHeaderFaces({
-    super.key,
-    required this.members,
-    required this.profileFor,
-    required this.avatarCache,
-  });
-
-  static const double size = 36;
-
-  @override
-  Widget build(BuildContext context) {
-    if (members.isEmpty) return const SizedBox.shrink();
-    return KeyedSubtree(
-      key: const ValueKey('room-header-faces'),
-      child: RoomAvatarTile(
-        members: [
-          for (final m in members)
-            RoomAvatarTileMember(m.handle, profileFor(m)),
-        ],
-        avatarCache: avatarCache,
-        size: size,
-      ),
-    );
-  }
 }
 
 // ─── Separators ──────────────────────────────────────────────────────────────
@@ -719,9 +685,7 @@ String roomStripSummary(
     if (needs.length == 1) {
       return s.roomStripNeedsYou(nameOf(needs.single.member));
     }
-    if (needs.length > 1) {
-      return '${s.roomRoundLabel(round.round)} · ${s.roomRoundNeedsYou(needs.length)}';
-    }
+    if (needs.length > 1) return s.rhdrNeedsYouMany(needs.length);
     final working = [
       for (final r in round.rows)
         if (r.state == RoomTurnState.working) r,
@@ -751,22 +715,6 @@ String roomStripSummary(
     if (parts.isNotEmpty) return parts.join(' · ');
   }
   return idleStatus;
-}
-
-/// "Next: A, B" — the members still waiting their turn in the current
-/// round, in the order the room will ask them. Null when nobody waits.
-String? roomStripNext(
-  Strings s, {
-  required RoomRoundModel? round,
-  required String Function(HostedGroupMember member) nameOf,
-}) {
-  if (round == null) return null;
-  final waiting = [
-    for (final r in round.rows)
-      if (r.state == RoomTurnState.queued) nameOf(r.member),
-  ];
-  if (waiting.isEmpty) return null;
-  return s.roomStripNext(waiting.join(', '));
 }
 
 /// The replying bot at the bottom of the conversation, where its answer
@@ -845,182 +793,7 @@ class RoomTypingRow extends StatelessWidget {
   }
 }
 
-/// Fixed-height status strip (Bot Mode direction A): a face per member with
-/// a state dot and one summary line. It never changes height, so a round
-/// starting or ending never moves what the user is reading; tapping it opens
-/// the per-member detail floating over the room.
-class RoomStatusStrip extends StatelessWidget {
-  /// Constant in every state (spec: status never resizes the transcript).
-  static const double height = 48;
-  static const int maxFaces = 5;
-  static const double _faceSize = 26;
-
-  final List<HostedGroupMember> members;
-  final Map<String, RoomTurnState> states;
-  final String summary;
-
-  /// Second line ("Next: …"); the strip keeps its height either way.
-  final String? next;
-  final RoomProfileResolver profileFor;
-  final MissionProfileAvatarCache? avatarCache;
-  final VoidCallback? onTap;
-
-  const RoomStatusStrip({
-    super.key,
-    required this.members,
-    required this.states,
-    required this.summary,
-    this.next,
-    required this.profileFor,
-    required this.avatarCache,
-    this.onTap,
-  });
-
-  Widget _memberFace(BuildContext context, HostedGroupMember member) {
-    final colors = Theme.of(context).hermes;
-    final state = states[member.memberId];
-    final now = state == RoomTurnState.working;
-    return Padding(
-      key: now ? ValueKey('room-strip-face-now-${member.memberId}') : null,
-      padding: const EdgeInsets.only(right: 6),
-      child: DecoratedBox(
-        // The one replying gets a ring in the working colour.
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: now ? colors.success : Colors.transparent,
-            width: 1.5,
-          ),
-        ),
-        child: SizedBox.square(
-          dimension: _faceSize + 2,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              RoomMemberFace(
-                member: member,
-                fallbackName: member.handle,
-                profile: profileFor(member),
-                avatarCache: avatarCache,
-                size: _faceSize,
-                // The dot carries the state; an always-on animation here
-                // would repaint the room every frame for as long as a bot
-                // works. The floating detail animates the working faces.
-                working: false,
-              ),
-              Positioned(
-                right: -1,
-                bottom: -1,
-                child: SizedBox.square(
-                  key: ValueKey(
-                    'room-strip-dot-${member.memberId}-${state?.name ?? 'idle'}',
-                  ),
-                  dimension: 11,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: roomTurnDotColor(colors, state),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: colors.background, width: 2),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final s = Strings.of(context);
-    final colors = Theme.of(context).hermes;
-    // Who is replying leads, then who is next, then the rest.
-    int rank(HostedGroupMember m) => switch (states[m.memberId]) {
-      RoomTurnState.needsYou => 0,
-      RoomTurnState.working => 1,
-      RoomTurnState.queued => 2,
-      _ => 3,
-    };
-    final ordered = [...members]..sort((a, b) => rank(a).compareTo(rank(b)));
-    final shown = ordered.take(maxFaces).toList();
-    final more = members.length - shown.length;
-    return Semantics(
-      button: onTap != null,
-      label: s.roomStripDetail,
-      child: InkWell(
-        key: const ValueKey('room-status-strip'),
-        onTap: onTap,
-        child: Container(
-          height: height,
-          padding: const EdgeInsets.fromLTRB(14, 0, 10, 0),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(color: colors.divider.withValues(alpha: 0.5)),
-            ),
-          ),
-          child: Row(
-            children: [
-              for (final m in shown) _memberFace(context, m),
-              if (more > 0)
-                Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: Text(
-                    '+$more',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      summary,
-                      key: const ValueKey('room-strip-summary'),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: colors.textPrimary,
-                      ),
-                    ),
-                    if (next case final line?)
-                      Text(
-                        line,
-                        key: const ValueKey('room-strip-next'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: colors.textSecondary,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              if (onTap != null)
-                Icon(
-                  Icons.expand_more_rounded,
-                  size: 18,
-                  color: colors.textSecondary,
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Per-member detail of the current round (opened from the strip, floating
+/// Per-member detail of the current round (opened from the header, floating
 /// over the room): face, what it is doing, state chip, Stop all.
 class RoomRoundDetail extends StatelessWidget {
   final RoomRoundModel round;
@@ -1031,6 +804,9 @@ class RoomRoundDetail extends StatelessWidget {
   final void Function(RoomRoundRow row)? onRetry;
   final VoidCallback? onOpenActivity;
 
+  /// Opens the members sheet (who is in the room, availability).
+  final VoidCallback? onOpenMembers;
+
   const RoomRoundDetail({
     super.key,
     required this.round,
@@ -1040,6 +816,7 @@ class RoomRoundDetail extends StatelessWidget {
     this.onStopAll,
     this.onRetry,
     this.onOpenActivity,
+    this.onOpenMembers,
   });
 
   String _rowDetail(Strings s, RoomRoundRow row) => switch (row.state) {
@@ -1189,14 +966,23 @@ class RoomRoundDetail extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           for (final row in round.rows) _row(context, row),
-          if (onOpenActivity != null)
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                key: const ValueKey('room-round-activity'),
-                onPressed: onOpenActivity,
-                child: Text(s.roomActivityTitle),
-              ),
+          if (onOpenActivity != null || onOpenMembers != null)
+            Wrap(
+              alignment: WrapAlignment.end,
+              children: [
+                if (onOpenMembers != null)
+                  TextButton(
+                    key: const ValueKey('room-round-members'),
+                    onPressed: onOpenMembers,
+                    child: Text(s.roomMenuMembers),
+                  ),
+                if (onOpenActivity != null)
+                  TextButton(
+                    key: const ValueKey('room-round-activity'),
+                    onPressed: onOpenActivity,
+                    child: Text(s.roomActivityTitle),
+                  ),
+              ],
             ),
         ],
       ),

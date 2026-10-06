@@ -8,9 +8,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/state/attention.dart';
 import 'package:hermes_android/core/bots/ui/profile/bot_profile_screen.dart';
 import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
+import 'package:hermes_android/core/bots/ui/room/room_header.dart';
 import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
-import 'package:hermes_android/core/bots/ui/room/room_widgets.dart';
 import 'package:hermes_android/core/bots/ui/room_avatar_tile.dart';
 import 'package:hermes_android/core/bots/ui/roster/bots_roster_view.dart';
 import 'package:hermes_android/core/bots/ui/roster/living_bot_face.dart';
@@ -385,16 +385,16 @@ void main() {
       ];
     }
 
-    testWidgets('#5 opening never leaves a run header under the status strip', (
+    testWidgets('#5 opening never leaves a run header under the room header', (
       tester,
     ) async {
       final events = longRun();
       await _pumpRoom(tester, events: events);
       final transcript = find.byKey(const ValueKey('room-transcript'));
       final top = tester.getTopLeft(transcript).dy;
-      final status = find.byKey(const ValueKey('room-status-strip'));
+      final status = find.byType(AppBar);
       expect(status, findsOneWidget);
-      // Transcript starts below the status strip (column layout, no overlap).
+      // Transcript starts below the header (column layout, no overlap).
       expect(top, greaterThanOrEqualTo(tester.getBottomLeft(status).dy));
       // The newest speaker run's header (face, name, time) is fully visible
       // below the status line, not cut at (or hidden above) the list edge.
@@ -479,7 +479,7 @@ And whether `fix/tap-targets` is still open.''';
       expect(room, main);
     });
 
-    testWidgets('#7 header avatar: 2x2 tile, no overlap, +n in the 4th cell', (
+    testWidgets('#7 header faces: one overlapping cluster, four max, +n', (
       tester,
     ) async {
       final room = buildRoom(
@@ -492,45 +492,34 @@ And whether `fix/tap-targets` is still open.''';
         ],
       );
       await _pumpRoom(tester, events: const [], room: room);
-      final tile = find.descendant(
-        of: find.byKey(const ValueKey('room-header-faces')),
-        matching: find.byKey(const ValueKey('room-avatar-tile')),
-      );
-      expect(tester.getSize(tile), const Size.square(RoomHeaderFaces.size));
-      final rects = [
-        for (var i = 0; i < 3; i++)
-          tester.getRect(
-            find.descendant(
-              of: tile,
-              matching: find.byKey(ValueKey(RoomAvatarTile.cellKey(i))),
-            ),
-          ),
+      // The old 2×2 mosaic is gone from the header.
+      expect(find.byKey(const ValueKey('room-header-faces')), findsNothing);
+      final cluster = find.byKey(const ValueKey('room-header-cluster'));
+      final faces = [
+        for (final id in ['m-1', 'm-2', 'm-3', 'm-4'])
+          tester.getRect(find.byKey(ValueKey('room-header-face-$id'))),
       ];
-      expect(find.byKey(ValueKey(RoomAvatarTile.cellKey(3))), findsNothing);
-      final more = find.byKey(const ValueKey('room-avatar-more'));
+      expect(find.byKey(const ValueKey('room-header-face-m-5')), findsNothing);
       expect(
-        find.descendant(of: more, matching: find.text('+2')),
+        find.descendant(of: cluster, matching: find.text('+1')),
         findsOneWidget,
       );
-      final all = [...rects, tester.getRect(more)];
-      // Same size, fully inside the tile and never overlapping.
-      final box = tester.getRect(tile);
-      for (var a = 0; a < all.length; a++) {
-        expect(all[a].size, all[0].size);
-        expect(box.contains(all[a].topLeft), isTrue);
-        expect(
-          box.contains(all[a].bottomRight - const Offset(.01, .01)),
-          isTrue,
-        );
-        for (var b = a + 1; b < all.length; b++) {
-          expect(all[a].overlaps(all[b]), isFalse);
+      final bar = tester.getRect(find.byType(AppBar));
+      for (var i = 0; i < faces.length; i++) {
+        expect(faces[i].size, const Size.square(RoomFaceCluster.faceSize));
+        expect(bar.contains(faces[i].topLeft), isTrue);
+        expect(bar.contains(faces[i].bottomRight), isTrue);
+        if (i > 0) {
+          // Overlapping, in a stable left-to-right order.
+          expect(faces[i].left, greaterThan(faces[i - 1].left));
+          expect(faces[i].overlaps(faces[i - 1]), isTrue);
         }
       }
     });
 
     for (final (locale, expected) in const [
-      (Locale('en'), 'Round 1 finished · '),
-      (Locale('es'), 'Ronda 1 terminada · '),
+      (Locale('en'), '4 bots · round finished '),
+      (Locale('es'), '4 bots · ronda terminada '),
     ]) {
       testWidgets('#8 idle finished round is ONE compact line ($locale)', (
         tester,
@@ -550,18 +539,18 @@ And whether `fix/tap-targets` is still open.''';
           events: [u, started, reply, settled],
           locale: locale,
         );
-        // No panel stacked over a last-activity bar: one line in the
-        // fixed status strip.
+        // No panel stacked over a last-activity bar: one grey line in the
+        // header.
         expect(find.byKey(const ValueKey('room-round-panel')), findsNothing);
         final line = tester.widget<Text>(
-          find.byKey(const ValueKey('room-strip-summary')),
+          find.byKey(const ValueKey('room-header-status')),
         );
         expect(line.data, startsWith(expected));
         expect(line.maxLines, 1);
       });
     }
 
-    testWidgets('#8b a working round says who works, same strip height', (
+    testWidgets('#8b a working round says who works, same header height', (
       tester,
     ) async {
       final seq = EventSeq();
@@ -572,17 +561,22 @@ And whether `fix/tap-targets` is still open.''';
       seq.at = 1790000400 - 40;
       final started = seq.started('m-builder', disc);
       await _pumpRoom(tester, events: [u, started], locale: const Locale('en'));
-      final strip = find.byKey(const ValueKey('room-status-strip'));
-      expect(tester.getSize(strip).height, RoomStatusStrip.height);
+      expect(
+        tester
+            .widget<RoomHeaderBar>(find.byType(RoomHeaderBar))
+            .preferredSize
+            .height,
+        RoomHeaderBar.expandedHeight,
+      );
       // Who replies and for how long (the clock of the working turn).
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('room-strip-summary')))
+            .widget<Text>(find.byKey(const ValueKey('room-header-status')))
             .data,
         startsWith('console-builder is replying · '),
       );
       expect(
-        find.byKey(const ValueKey('room-strip-dot-m-builder-working')),
+        find.byKey(const ValueKey('room-header-dot-m-builder-working')),
         findsOneWidget,
       );
     });
@@ -597,12 +591,12 @@ And whether `fix/tap-targets` is still open.''';
       await _pumpRoom(tester, events: [u, started], locale: const Locale('en'));
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('room-strip-summary')))
+            .widget<Text>(find.byKey(const ValueKey('room-header-status')))
             .data,
         isNot(contains('is replying')),
       );
       expect(
-        find.byKey(const ValueKey('room-strip-dot-m-builder-working')),
+        find.byKey(const ValueKey('room-header-dot-m-builder-working')),
         findsNothing,
       );
     });
