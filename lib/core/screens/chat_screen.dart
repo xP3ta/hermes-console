@@ -18259,6 +18259,7 @@ class _ChatScreenState extends State<ChatScreen>
       isStreaming: isStreaming,
       companionMood: isStreaming || isPipeline ? _liveCompanionMood() : null,
       waitingForUser: (isStreaming || isPipeline) && _turnWaitsForUser,
+      turnLive: _chat.isStreaming,
       assistantSlice: displaySlice,
       terminalProjection: terminalProjection,
       technicalDetails: operationalProjection.technicalDetails,
@@ -20474,6 +20475,10 @@ class _MessageBubble extends StatelessWidget {
   final bool isStreaming;
   final HermesSparkMood? companionMood;
   final bool waitingForUser;
+
+  /// rp1215: the chat still runs this turn; a stopped or failed turn never
+  /// keeps the «está pensando…» row even while its row is not settled yet.
+  final bool turnLive;
   final _AssistantRenderSlice? assistantSlice;
   final _AssistantTerminalProjection? terminalProjection;
   final List<String> technicalDetails;
@@ -20512,6 +20517,7 @@ class _MessageBubble extends StatelessWidget {
     this.isStreaming = false,
     this.companionMood,
     this.waitingForUser = false,
+    this.turnLive = true,
     this.assistantSlice,
     this.terminalProjection,
     this.technicalDetails = const [],
@@ -20568,6 +20574,7 @@ class _MessageBubble extends StatelessWidget {
             isStreaming: isStreaming,
             companionMood: companionMood,
             waitingForUser: waitingForUser,
+            turnLive: turnLive,
             slice: assistantSlice,
             terminalProjection: terminalProjection,
             technicalDetails: technicalDetails,
@@ -22109,6 +22116,9 @@ class _AssistantMessage extends StatelessWidget {
   final bool isStreaming;
   final HermesSparkMood? companionMood;
   final bool waitingForUser;
+
+  /// rp1215: see [_MessageBubble.turnLive].
+  final bool turnLive;
   final _AssistantRenderSlice? slice;
   final _AssistantTerminalProjection? terminalProjection;
   final List<String> technicalDetails;
@@ -22144,6 +22154,7 @@ class _AssistantMessage extends StatelessWidget {
     this.isStreaming = false,
     this.companionMood,
     this.waitingForUser = false,
+    this.turnLive = true,
     this.slice,
     this.terminalProjection,
     this.technicalDetails = const [],
@@ -22550,7 +22561,8 @@ class _AssistantMessage extends StatelessWidget {
                       // says who is replying (or thinking, while only
                       // reasoning arrived); the pill keeps the detail.
                       subtitle:
-                          activityActive &&
+                          turnLive &&
+                              activityActive &&
                               !waitingForUser &&
                               !stopped &&
                               answer.trim().isEmpty

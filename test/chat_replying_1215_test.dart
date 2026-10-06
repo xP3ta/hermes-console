@@ -435,6 +435,44 @@ void main() {
       await tearDownChat(tester, gateway);
     });
 
+    testWidgets('leaves once answer text follows the reasoning', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      final chat = await startTurn(tester, gateway);
+      gateway.emit('message.start');
+      gateway.emit('reasoning.delta', {'text': 'Primero miro las fotos'});
+      await settle(tester);
+      expect(indicator(), findsOneWidget, reason: 'precondition: thinking');
+      gateway.emit('message.delta', {'text': 'La tercera es la mejor.'});
+      await settle(tester, 20);
+      expect(find.textContaining('La tercera es la mejor'), findsWidgets);
+      expect(indicator(), findsNothing, reason: 'the answer took its place');
+      expect(paintedTextsContaining(tester, 'está pensando'), isEmpty);
+      gateway.emit('message.complete', {'text': chat.assistantContent});
+      await settle(tester, 30);
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('leaves when the user stops a turn that was thinking', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      final chat = await startTurn(tester, gateway);
+      gateway.emit('message.start');
+      gateway.emit('reasoning.delta', {'text': 'Primero miro las fotos'});
+      await settle(tester);
+      expect(indicator(), findsOneWidget, reason: 'precondition: thinking');
+      unawaited(chat.cancel());
+      await settle(tester, 30);
+      expect(chat.isStreaming, isFalse);
+      expect(indicator(), findsNothing);
+      expect(paintedTextsContaining(tester, 'está pensando'), isEmpty);
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
     testWidgets('dots move, and stay still with reduced motion', (
       tester,
     ) async {
