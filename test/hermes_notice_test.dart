@@ -218,6 +218,31 @@ void main() {
       expect(find.text('Copiado'), findsNothing);
     });
 
+    // QA 9491: a notice with an action (Undo) yielded to the queue after
+    // 2.5 s, too short to reach the button. It holds 6 s, then yields.
+    testWidgets('un aviso con accion espera 6 s antes de ceder a la cola', (
+      tester,
+    ) async {
+      _phone(tester);
+      await tester.pumpWidget(_app());
+      final notices = HermesNotice.of(_ctx(tester));
+      notices.show(
+        message: 'Oculto',
+        action: const HermesNoticeAction(label: 'Deshacer', onPressed: _noop),
+      );
+      await _settle(tester);
+      notices.show(message: 'Siguiente');
+      for (var t = 0; t < 55; t++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.text('Oculto'), findsOneWidget, reason: '${t + 1}00 ms');
+      }
+      for (var t = 0; t < 10; t++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('Siguiente'), findsOneWidget);
+      expect(find.text('Oculto'), findsNothing);
+    });
+
     testWidgets('la cola es corta: se descartan los mas antiguos', (
       tester,
     ) async {

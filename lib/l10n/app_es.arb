@@ -9665,7 +9665,6 @@
   "cr1215ShowQuestion": "Mostrar pregunta",
 "ss1215StatusWorking": "Trabajando…",
   "ps1215NoDetailsYet": "Sin detalles todavía: se actualizará con el siguiente evento.",
-  "lr1215ReasoningHiddenHint": "El razonamiento del modelo solo aparece aquí si el servidor lo comparte.",
   "cq1215QuestionNotRecovered": "No se ha podido recuperar la pregunta. Hermes sigue esperando tu respuesta.",
   "cq1215RetryQuestion": "Reintentar",
   "cq1215StopTurn": "Detener turno",
@@ -10249,5 +10248,35 @@
   "q90PinnedPromptShow": "Mostrar tu pregunta fijada",
   "cs1215LoadingEarlier": "Cargando mensajes anteriores…",
   "tabletPickConversation": "Elige una conversación para abrirla aquí",
-  "tabletPickProject": "Elige un proyecto para abrirlo aquí"
+  "tabletPickProject": "Elige un proyecto para abrirlo aquí",
+  "dc1215SectionInProgress": "En curso",
+  "dc1215SectionBefore": "Antes",
+  "dc1215StepRunning": "Ejecutando",
+  "dc1215SkillRunning": "Usando la skill",
+  "dc1215StepDone": "Hecho",
+  "dc1215StepFailed": "Falló",
+  "dc1215ProcessRunning": "Ejecutándose en segundo plano",
+  "dc1215ActivityTitle": "Actividad",
+  "dc1215AddContext": "Añadir contexto",
+  "dc1215ChangeCourse": "Cambiar rumbo",
+  "dc1215StopAll": "Parar todo",
+  "dc1215StopItem": "Parar {item}",
+  "@dc1215StopItem": {
+    "placeholders": {
+      "item": {
+        "type": "String"
+      }
+    }
+  },
+  "dc1215SteerHint": "Nuevo rumbo: irá a la cola y podrás «Redirigir ahora»",
+  "dc1215WaitingApproval": "Te espera: aprobación",
+  "dc1215WaitingAnswer": "Te espera: respuesta",
+  "dc1215LastActive": "Última actividad · {time}",
+  "@dc1215LastActive": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  }
 }

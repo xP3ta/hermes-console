@@ -269,9 +269,11 @@ void main() {
       expect(text.style!.fontSize, 12);
     });
 
-    testWidgets('thinking with no reasoning: a hint that does not claim', (
+    testWidgets('thinking with no reasoning: no extra hint (dc1215)', (
       tester,
     ) async {
+      // Owner decision: when no reasoning arrives the panel just shows the
+      // steps; no explanation row about the server.
       await _pumpNow(
         tester,
         _thinking(headline: 'Thinking…'),
@@ -282,12 +284,11 @@ void main() {
         find.byKey(const ValueKey('activity-now-no-details')),
         findsOneWidget,
       );
-      final hint = find.byKey(const ValueKey('activity-now-reasoning-hint'));
-      expect(hint, findsOneWidget);
       expect(
-        tester.widget<Text>(hint).data,
-        "The model's reasoning only shows here if the server shares it.",
+        find.byKey(const ValueKey('activity-now-reasoning-hint')),
+        findsNothing,
       );
+      expect(find.textContaining('server shares'), findsNothing);
     });
 
     testWidgets('no hint while connecting or when a step is known', (
@@ -519,10 +520,6 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(_tail, findsNothing);
       expect(find.textContaining('pondering'), findsNothing);
-      expect(
-        find.byKey(const ValueKey('activity-now-reasoning-hint')),
-        findsOneWidget,
-      );
       await close(tester, service);
     });
   });

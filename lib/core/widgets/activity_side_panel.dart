@@ -196,30 +196,12 @@ class _ActivitySidePanel extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 4, 0),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  strings.liveActivityTitle,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w700,
-                                    color: colors.textPrimary,
-                                  ),
-                                ),
-                              ),
-                              IconButton(
-                                key: const ValueKey(
-                                  'activity-side-panel-close',
-                                ),
-                                tooltip: strings.liveHideActivity,
-                                onPressed: onClose,
-                                icon: const Icon(Icons.close_rounded),
-                              ),
-                            ],
+                          padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+                          child: ActivityCardTitleRow(
+                            closeKey: const ValueKey(
+                              'activity-side-panel-close',
+                            ),
+                            onClose: onClose,
                           ),
                         ),
                         ExcludeSemantics(
@@ -239,6 +221,12 @@ class _ActivitySidePanel extends StatelessWidget {
                               now: now,
                             ),
                           ),
+                        ),
+                        // dc1215: not modal, so the composer actions keep
+                        // the panel open beside the chat.
+                        ?activityActionsBarFor(
+                          current.snapshot,
+                          current.actions,
                         ),
                       ],
                     );

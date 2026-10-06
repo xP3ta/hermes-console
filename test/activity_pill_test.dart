@@ -585,12 +585,14 @@ void main() {
     testWidgets('secciones con contenido y en orden', (tester) async {
       await _pump(tester, _everything());
       await _openPanel(tester);
+      // dc1215 (Dots): background processes and delegated subagents are
+      // rows of «En curso», between it and «Antes».
       final order = [
         'activity-tasks-title',
         'activity-now-title',
+        'activity-subagent-child-1',
+        'activity-process-proc-1',
         'activity-done-title',
-        'activity-background-title',
-        'activity-subagents-title',
       ];
       double? last;
       for (final key in order) {

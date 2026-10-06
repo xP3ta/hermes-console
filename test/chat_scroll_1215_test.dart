@@ -1690,6 +1690,49 @@ void main() {
       await tearDownChat(tester, gateway);
     });
 
+    // QA 9491: the Undo notice vanished after 2-4 s on device: any other
+    // notice arriving behind it made it yield after the 2.5 s minimum. An
+    // undo stays readable and tappable for about 6 s even with a queue.
+    testWidgets('the Undo notice holds ~6 s even with another notice queued', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: twoLongTurns());
+      await settle(tester);
+      await settleHeader(tester);
+      expect(headerState(tester), 'B');
+
+      await tester.tap(dismiss());
+      await settleHeader(tester);
+      expect(find.text('Oculta en este chat'), findsOneWidget);
+      // A routine status notice lands right behind it.
+      HermesNotice.of(
+        tester.element(find.byType(ChatScreen)),
+      ).show(message: 'Aviso de fondo');
+      // Stepped frames so a close animation could actually run.
+      for (var t = 0; t < 55; t++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(
+          find.text('Oculta en este chat'),
+          findsOneWidget,
+          reason: 'Undo notice gone after ${(t + 1) * 100} ms',
+        );
+      }
+      expect(find.text('Oculta en este chat'), findsOneWidget);
+      expect(find.text('Deshacer'), findsOneWidget);
+      expect(find.text('Aviso de fondo'), findsNothing);
+
+      await tester.tap(find.text('Deshacer'));
+      await settleHeader(tester);
+      expect(PinnedPromptPrefs.shared.isHiddenFor(sessionKey), isFalse);
+      // Then the queued notice gets its turn.
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('Aviso de fondo'), findsOneWidget);
+      await tearDownChat(tester, gateway);
+    });
+
     testWidgets('the chat menu shows it again only while it is hidden', (
       tester,
     ) async {

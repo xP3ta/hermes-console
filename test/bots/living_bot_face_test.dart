@@ -285,6 +285,95 @@ void main() {
       expect(livingBotFaceActiveTickers, 0);
     });
 
+    // QA 9491: list faces share ONE rare blink; a lone face (bot chat
+    // header) keeps its own.
+    testWidgets(
+      'ten list faces share one rare blink; a lone face keeps its own',
+      (tester) async {
+        await tester.pumpWidget(
+          _app(
+            Column(
+              children: [
+                const LivingBotFace(
+                  key: ValueKey('header-face'),
+                  profileName: 'header',
+                  signal: BotFaceSignal.idle,
+                  size: 32,
+                  entrance: false,
+                ),
+                Wrap(
+                  children: [
+                    for (var i = 0; i < 10; i++)
+                      LivingBotFace(
+                        key: ValueKey('list-face-$i'),
+                        profileName: 'list_$i',
+                        signal: BotFaceSignal.idle,
+                        size: 48,
+                        entrance: false,
+                        blink: LivingBotFaceBlink.shared,
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+        await tester.pump();
+        Animation<double> blinkOf(String key) => tester
+            .widget<HermesBotFace>(
+              find.descendant(
+                of: find.byKey(ValueKey(key)),
+                matching: find.byType(HermesBotFace),
+              ),
+            )
+            .blink!;
+        final header = blinkOf('header-face');
+        final list = [for (var i = 0; i < 10; i++) blinkOf('list-face-$i')];
+        expect(livingBotFaceSharedBlinkFaces, 10);
+        expect(livingBotFaceSharedBlinkTimers, 1);
+        expect(livingBotFacePendingBlinks, 1, reason: 'only the header timer');
+
+        var headerBlinks = 0;
+        var listBlinks = 0;
+        final listBlinkAtMs = <int>[];
+        var headerShut = false;
+        final listShut = List<bool>.filled(10, false);
+        for (var i = 0; i < 600; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+          final h = header.value > 0;
+          if (h && !headerShut) headerBlinks++;
+          headerShut = h;
+          for (var f = 0; f < 10; f++) {
+            final shut = list[f].value > 0;
+            if (shut && !listShut[f]) {
+              listBlinks++;
+              listBlinkAtMs.add((i + 1) * 100);
+            }
+            listShut[f] = shut;
+          }
+          expect(livingBotFaceSharedBlinkTimers, lessThanOrEqualTo(1));
+        }
+        expect(listBlinks, inInclusiveRange(1, 6), reason: '$listBlinks/min');
+        expect(headerBlinks, greaterThanOrEqualTo(6), reason: 'header blinks');
+        // The whole list rests at least the shared minimum between blinks.
+        var previous = 0;
+        for (final at in listBlinkAtMs) {
+          expect(
+            at - previous,
+            // 12 s (QA 9491 spec), less one 100 ms sample.
+            greaterThanOrEqualTo(11900),
+            reason: 'list blinks at $listBlinkAtMs',
+          );
+          previous = at;
+        }
+
+        await tester.pumpWidget(const SizedBox());
+        expect(livingBotFaceSharedBlinkFaces, 0);
+        expect(livingBotFaceSharedBlinkTimers, 0);
+        expect(livingBotFacePendingBlinks, 0);
+      },
+    );
+
     testWidgets('idle faces in a covered route never blink or tick', (
       tester,
     ) async {

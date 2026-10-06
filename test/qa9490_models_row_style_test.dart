@@ -93,9 +93,7 @@ void _expectSameStyle(TextStyle actual, TextStyle expected, String what) {
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  testWidgets('collapsible Models rows share the sibling row text style', (
-    tester,
-  ) async {
+  Future<void> pumpModels(WidgetTester tester) async {
     tester.view.physicalSize = const Size(412, 2000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -115,6 +113,12 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+  }
+
+  testWidgets('collapsible Models rows share the sibling row text style', (
+    tester,
+  ) async {
+    await pumpModels(tester);
 
     final entry = find.byKey(const ValueKey('lm1215-entry'));
     expect(entry, findsOneWidget);
@@ -137,6 +141,41 @@ void main() {
         _painted(tester, find.text(subtitle)),
         siblingSubtitle,
         '$title subtitle',
+      );
+    }
+  });
+
+  // QA 9491: the collapsible rows' icon and text started ~12 px right of
+  // their navigation siblings (ListTile's 40 dp leading slot + 16 dp gap
+  // against the row's 30 dp icon + 11 dp gap).
+  testWidgets('collapsible Models rows start their icon and text in line', (
+    tester,
+  ) async {
+    await pumpModels(tester);
+
+    final entry = find.byKey(const ValueKey('lm1215-entry'));
+    expect(entry, findsOneWidget);
+    final entryTexts = find.descendant(of: entry, matching: find.byType(Text));
+    final siblingTitleX = tester.getTopLeft(entryTexts.at(0)).dx;
+    final siblingIconX = tester
+        .getTopLeft(
+          find.descendant(of: entry, matching: find.byType(Icon)).first,
+        )
+        .dx;
+
+    for (final (title, icon) in [
+      ('Modelos por función', Icons.tune),
+      ('Proveedores sin configurar', Icons.lock_outline),
+    ]) {
+      expect(
+        tester.getTopLeft(find.text(title)).dx,
+        moreOrLessEquals(siblingTitleX, epsilon: 0.5),
+        reason: '$title title x',
+      );
+      expect(
+        tester.getTopLeft(find.byIcon(icon)).dx,
+        moreOrLessEquals(siblingIconX, epsilon: 0.5),
+        reason: '$title icon x',
       );
     }
   });

@@ -31,6 +31,7 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.titleTextStyle,
     this.systemOverlayStyle,
     this.automaticallyImplyLeading = true,
+    this.toolbarHeight,
   });
 
   final Widget? title;
@@ -50,9 +51,14 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
   final SystemUiOverlayStyle? systemOverlayStyle;
   final bool automaticallyImplyLeading;
 
+  /// Taller toolbar for composite titles (the Bot Chat header); defaults to
+  /// [kToolbarHeight].
+  final double? toolbarHeight;
+
   @override
-  Size get preferredSize =>
-      Size.fromHeight(kToolbarHeight + (bottom?.preferredSize.height ?? 0.0));
+  Size get preferredSize => Size.fromHeight(
+    (toolbarHeight ?? kToolbarHeight) + (bottom?.preferredSize.height ?? 0.0),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -76,6 +82,7 @@ class HermesAppBar extends StatelessWidget implements PreferredSizeWidget {
       titleTextStyle: titleTextStyle,
       systemOverlayStyle: systemOverlayStyle,
       automaticallyImplyLeading: automaticallyImplyLeading,
+      toolbarHeight: toolbarHeight,
     );
   }
 
