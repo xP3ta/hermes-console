@@ -9337,14 +9337,36 @@ class ActiveChat {
   /// This is intentionally on-demand (screen attach / terminal event / context
   /// panel), never polling. It lets the chat chrome consume usage fields that
   /// Hermes publishes through REST but older `session.info` events omit.
+  ///
+  /// A named profile's row is read from the Dashboard (`?profile=`), as
+  /// Hermes Desktop does; its API server route is asked only when the
+  /// Dashboard refuses this client (a profile that shares the connection's
+  /// key). This read never blocks the chat or raises the access notice.
   Future<Session?> loadPersistedSessionSnapshot() async {
     final requestedId = serverSessionId;
-    final snapshot = await _api.getSession(
-      requestedId,
-      profile: sessionProfile,
-    );
+    final owner = sessionProfile.trim();
+    final Session snapshot;
+    if (!profileRoutes(owner)) {
+      snapshot = await _api.getSession(requestedId, profile: sessionProfile);
+    } else {
+      snapshot = await _readNamedProfileSessionRow(requestedId, owner);
+    }
     if (_disposed || serverSessionId != requestedId) return null;
     return snapshot;
+  }
+
+  Future<Session> _readNamedProfileSessionRow(
+    String storedSessionId,
+    String profile,
+  ) async {
+    try {
+      return await (_transcriptDashboard ??= DashboardClient.lazy(
+        connection,
+      )).getSessionDetail(storedSessionId, profile: profile);
+    } on Object catch (error) {
+      if (!isDashboardAccessRefusal(error)) rethrow;
+    }
+    return _api.getSession(storedSessionId, profile: profile);
   }
 
   ArtifactAuthorizationPolicy _artifactPolicy() {

@@ -675,4 +675,86 @@ void main() {
       },
     );
   });
+
+  group('the persisted session row of a named profile', () {
+    // Usage gauge, cron write gate and "was it deleted?" read the row.
+    // Hermes Desktop reads it from the Dashboard with ?profile=; the API
+    // server's /p/<profile>/ route wants that profile's own key.
+    Future<http.Response> detail(http.Request request) async {
+      if (request.url.path == '/api/sessions/stored-bot') {
+        return http.Response(
+          jsonEncode({
+            'id': 'stored-bot',
+            'title': 'Bot',
+            'profile': 'research',
+            'message_count': 2,
+            'input_tokens': 1200,
+          }),
+          200,
+        );
+      }
+      return http.Response(jsonEncode(_page(request)), 200);
+    }
+
+    test('is read from the Dashboard, never from the profile route', () async {
+      final harness = build(gatewayStatus: 401, dashboardHandler: detail);
+      addTearDown(harness.chat.dispose);
+
+      final row = await harness.chat.loadPersistedSessionSnapshot().timeout(
+        const Duration(seconds: 5),
+      );
+
+      expect(row?.id, 'stored-bot');
+      expect(harness.gatewayReads, isEmpty);
+      expect(harness.dashboardReads.single.path, '/api/sessions/stored-bot');
+      expect(
+        harness.dashboardReads.single.queryParameters['profile'],
+        'research',
+      );
+      expect(harness.chat.profileTranscriptAccessBlocked, isFalse);
+    });
+
+    test('a Dashboard refusal falls back to the profile route', () async {
+      final harness = build(
+        gatewayStatus: 200,
+        dashboardHandler: (_) async => http.Response('{}', 401),
+      );
+      addTearDown(harness.chat.dispose);
+      // The gateway route answers for a profile that shares the key.
+      await expectLater(harness.chat.loadPersistedSessionSnapshot(), completes);
+      expect(
+        harness.gatewayReads.single.path,
+        '/p/research/api/sessions/stored-bot',
+      );
+    });
+
+    test('a transient Dashboard failure is reported as such', () async {
+      final harness = build(
+        gatewayStatus: 200,
+        dashboardHandler: (_) async => http.Response('{}', 503),
+      );
+      addTearDown(harness.chat.dispose);
+      await expectLater(
+        harness.chat.loadPersistedSessionSnapshot(),
+        throwsA(isA<DashboardHttpException>()),
+      );
+      expect(harness.gatewayReads, isEmpty);
+    });
+
+    test('a deleted session keeps its 404 for the gone check', () async {
+      final harness = build(
+        gatewayStatus: 401,
+        dashboardHandler: (_) async => http.Response('{}', 404),
+      );
+      addTearDown(harness.chat.dispose);
+      Object? error;
+      try {
+        await harness.chat.loadPersistedSessionSnapshot();
+      } catch (e) {
+        error = e;
+      }
+      expect(error.toString(), contains('404'));
+      expect(harness.gatewayReads, isEmpty);
+    });
+  });
 }
