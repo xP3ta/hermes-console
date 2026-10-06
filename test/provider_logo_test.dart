@@ -266,6 +266,14 @@ void main() {
       expect(bounds.bottom, lessThanOrEqualTo(24.01));
     });
 
+    test('arc flags packed with a fractional number parse as flags', () {
+      // "00.5.5" is large-arc 0, sweep 0, then the point (.5, .5).
+      final packed = parseSvgPathData('M0 0a1 1 0 00.5.5l1 1').getBounds();
+      final spaced = parseSvgPathData('M0 0a1 1 0 0 0 .5 .5l1 1').getBounds();
+      expect(packed, spaced);
+      expect(packed.bottomRight, const Offset(1.5, 1.5));
+    });
+
     testWidgets('semantics label is the provider name', (tester) async {
       final handle = tester.ensureSemantics();
       await _pumpLogo(

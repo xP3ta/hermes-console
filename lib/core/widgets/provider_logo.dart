@@ -300,9 +300,10 @@ ui.Path parseSvgPathData(String data) {
   bool isCmd(String t) => RegExp(r'^[A-Za-z]$').hasMatch(t);
   double num() => double.parse(tokens[i++]);
   bool flag() {
-    // Arc flags may be packed with the next number ("0 01.5").
+    // Arc flags are one digit and may be packed with the next number
+    // ("0 01.5", "00.5.5"), so only the first character is the flag.
     final t = tokens[i];
-    if (t.length > 1 && (t[0] == '0' || t[0] == '1') && !t.startsWith('0.')) {
+    if (t.length > 1 && (t[0] == '0' || t[0] == '1')) {
       tokens[i] = t.substring(1);
       return t[0] == '1';
     }
