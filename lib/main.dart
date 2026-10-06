@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/widgets/artifact_viewer/code_view_prefs.dart';
+import 'core/widgets/mascot/mascot_sprite.dart';
 import 'core/services/message_reaction_prefs.dart';
 import 'core/services/pinned_prompt_prefs.dart';
 import 'core/services/retired_prefs.dart';
@@ -321,6 +322,8 @@ Future<Widget> bootstrapHermesApp() async {
   // Media prefetch never fetches or decodes while the app is locked; the
   // cache root is resolved now so reopened chats read media synchronously.
   MediaPrefetcher.appLocked = appLock.locked;
+  // The header mascot produces no frames while the app is locked.
+  MascotSprite.appLocked = appLock.locked;
   unawaited(GeneratedMediaService.warmCacheRoot());
   final approvalPolicy = ApprovalPolicyService(prefs);
   final fontSize = FontSizeService(prefs);
