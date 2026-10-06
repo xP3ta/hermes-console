@@ -3224,7 +3224,7 @@
   "mdlRemoveFallback": "Quitar fallback",
   "mdlAuxSection": "Modelos por función",
   "mdlAuxAllAuto": "todas en automático",
-  "mdlAuxCustomized": "{customized} personalizada(s) · {total} funciones",
+  "mdlAuxCustomized": "{customized, plural, =1{1 personalizada} other{{customized} personalizadas}} · {total, plural, =1{1 función} other{{total} funciones}}",
   "@mdlAuxCustomized": {
     "placeholders": {
       "customized": {
@@ -3239,7 +3239,7 @@
   "mdlAuxAutoMain": "automático (modelo principal)",
   "mdlMainProviders": "Modelo principal · proveedores",
   "mdlUnconfiguredProviders": "Proveedores sin configurar",
-  "mdlUnconfiguredHint": "{count} disponibles · pulsa para configurar",
+  "mdlUnconfiguredHint": "{count, plural, =1{1 disponible} other{{count} disponibles}} · pulsa para configurar",
   "@mdlUnconfiguredHint": {
     "placeholders": {
       "count": {
@@ -3247,7 +3247,7 @@
       }
     }
   },
-  "mdlModelCount": "{count} modelos",
+  "mdlModelCount": "{count, plural, =1{1 modelo} other{{count} modelos}}",
   "@mdlModelCount": {
     "placeholders": {
       "count": {

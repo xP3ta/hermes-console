@@ -2399,7 +2399,7 @@
   "mdlRemoveFallback": "Remove fallback",
   "mdlAuxSection": "Models by function",
   "mdlAuxAllAuto": "all automatic",
-  "mdlAuxCustomized": "{customized} custom · {total} functions",
+  "mdlAuxCustomized": "{customized} custom · {total, plural, =1{1 function} other{{total} functions}}",
   "@mdlAuxCustomized": {
     "placeholders": {
       "customized": {
@@ -2422,7 +2422,7 @@
       }
     }
   },
-  "mdlModelCount": "{count} models",
+  "mdlModelCount": "{count, plural, =1{1 model} other{{count} models}}",
   "@mdlModelCount": {
     "placeholders": {
       "count": {
