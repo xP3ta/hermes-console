@@ -109,12 +109,17 @@ class ActivityPanelSurface extends StatefulWidget {
     required this.state,
     required this.onClose,
     this.clock,
+    this.opensDown = false,
     super.key,
   });
 
   final Animation<double> animation;
   final LayerLink link;
   final Size pillSize;
+
+  /// fh1215: the pill sits in the floating header, so the card grows DOWN
+  /// from it with the pill line on top.
+  final bool opensDown;
   final ValueListenable<ActivityPanelState> state;
   final VoidCallback onClose;
   final DateTime Function()? clock;
@@ -198,6 +203,15 @@ class _ActivityPanelSurfaceState extends State<ActivityPanelSurface> {
     return false;
   }
 
+  /// fh1215: the side the card grows from (the pill's side).
+  Alignment get _growFrom =>
+      widget.opensDown ? Alignment.topCenter : Alignment.bottomCenter;
+
+  /// The pill line is the card's last row when it opens up from the pill
+  /// and its first row when it opens down from the header.
+  List<Widget> _ordered(List<Widget> rows) =>
+      widget.opensDown ? [rows.last, ...rows.take(rows.length - 1)] : rows;
+
   void _close() {
     if (_closing) return;
     _closing = true;
@@ -225,7 +239,7 @@ class _ActivityPanelSurfaceState extends State<ActivityPanelSurface> {
     return ClipRect(
       child: SizeTransition(
         sizeFactor: _curve,
-        alignment: Alignment.bottomCenter,
+        alignment: _growFrom,
         child: Opacity(opacity: Curves.easeIn.transform(t), child: bar),
       ),
     );
@@ -277,8 +291,12 @@ class _ActivityPanelSurfaceState extends State<ActivityPanelSurface> {
                 child: CompositedTransformFollower(
                   link: widget.link,
                   showWhenUnlinked: false,
-                  targetAnchor: Alignment.bottomCenter,
-                  followerAnchor: Alignment.bottomCenter,
+                  targetAnchor: widget.opensDown
+                      ? Alignment.topCenter
+                      : Alignment.bottomCenter,
+                  followerAnchor: widget.opensDown
+                      ? Alignment.topCenter
+                      : Alignment.bottomCenter,
                   child: AnimatedBuilder(
                     animation: _curve,
                     builder: (context, _) {
@@ -318,12 +336,12 @@ class _ActivityPanelSurfaceState extends State<ActivityPanelSurface> {
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
+                                children: _ordered([
                                   Flexible(
                                     child: ClipRect(
                                       child: SizeTransition(
                                         sizeFactor: _curve,
-                                        alignment: Alignment.bottomCenter,
+                                        alignment: _growFrom,
                                         child: Opacity(
                                           opacity: Curves.easeIn.transform(t),
                                           child:
@@ -403,7 +421,7 @@ class _ActivityPanelSurfaceState extends State<ActivityPanelSurface> {
                                       ),
                                     ),
                                   ),
-                                ],
+                                ]),
                               ),
                             ),
                           ),
@@ -467,6 +485,17 @@ class ActivityPanelRoute extends PopupRoute<void> {
 /// Una sola pastilla, un solo hueco de layout y un solo `ActivityTicker`: el
 /// cronómetro, el porcentaje de compactación y el resto del texto salen del
 /// mismo reloj, y no existen otras pastillas con las que solaparse.
+/// fh1215: builds the floating header's pill. [model] is null when nothing
+/// is live; [openPanel] opens the activity panel under the pill (null when
+/// there is nothing to show in it).
+typedef ActivityHeaderPillBuilder =
+    Widget Function(
+      BuildContext context,
+      ActivityPillModel? model,
+      DateTime now,
+      VoidCallback? openPanel,
+    );
+
 class ActivityPillHost extends StatefulWidget {
   const ActivityPillHost({
     required this.snapshot,
@@ -474,6 +503,7 @@ class ActivityPillHost extends StatefulWidget {
     this.clock,
     this.revealAfter = const Duration(seconds: 2),
     this.suspended = false,
+    this.headerBuilder,
     super.key,
   });
 
@@ -481,6 +511,11 @@ class ActivityPillHost extends StatefulWidget {
   final ActivityPanelActions actions;
   final DateTime Function()? clock;
   final Duration revealAfter;
+
+  /// fh1215: the pill lives in the floating chat header (always present,
+  /// built by this callback) and the panel opens DOWN from it. Null keeps
+  /// the pill floating above the composer.
+  final ActivityHeaderPillBuilder? headerBuilder;
 
   /// Otra superficie flotante (la paleta de comandos) ocupa ahora el hueco
   /// sobre el compositor: la pastilla conserva su sitio pero no se pinta ni
@@ -576,6 +611,7 @@ class _ActivityPillHostState extends State<ActivityPillHost> {
         animation: animation,
         link: _link,
         pillSize: size,
+        opensDown: widget.headerBuilder != null,
         state: _live,
         clock: widget.clock,
         onClose: () {
@@ -598,6 +634,7 @@ class _ActivityPillHostState extends State<ActivityPillHost> {
   Widget build(BuildContext context) {
     final strings = Strings.of(context);
     final lang = Localizations.localeOf(context).languageCode;
+    final header = widget.headerBuilder;
     return ActivityTicker(
       active: widget.snapshot.isLive,
       clock: widget.clock,
@@ -609,6 +646,22 @@ class _ActivityPillHostState extends State<ActivityPillHost> {
           languageCode: lang,
           revealAfter: widget.revealAfter,
         );
+        if (header != null) {
+          // fh1215: the header pill stays visible while its panel is open
+          // below it.
+          return CompositedTransformTarget(
+            link: _link,
+            child: KeyedSubtree(
+              key: _pillKey,
+              child: header(
+                context,
+                model,
+                now,
+                model == null ? null : _openPanel,
+              ),
+            ),
+          );
+        }
         if (model == null) {
           return const SizedBox.shrink(key: ValueKey('activity-pill-idle'));
         }
