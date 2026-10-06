@@ -674,6 +674,23 @@
   "genVideoFullscreen": "Full screen",
   "genVideoSaved": "Video saved to gallery",
   "genVideoSaveFailed": "Couldn't save the video",
+  "videoPlayerReplay": "Replay",
+  "videoPlayerSeekBack": "Back 10 seconds",
+  "videoPlayerSeekForward": "Forward 10 seconds",
+  "videoPlayerMute": "Mute",
+  "videoPlayerUnmute": "Unmute",
+  "videoPlayerSpeed": "Playback speed",
+  "videoPlayerSpeedValue": "{speed}×",
+  "@videoPlayerSpeedValue": {
+    "placeholders": {
+      "speed": {
+        "type": "String"
+      }
+    }
+  },
+  "videoPlayerPosition": "Playback position",
+  "videoPlayerExitFullscreen": "Exit full screen",
+  "videoPlayerToggleControls": "Show or hide video controls",
   "imgSaveToGallery": "Save to gallery",
   "imgSavedToGallery": "Image saved to gallery",
   "imgSaveFailed": "Couldn't save the image",

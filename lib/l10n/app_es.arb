@@ -1066,6 +1066,23 @@
   "genVideoFullscreen": "Pantalla completa",
   "genVideoSaved": "Vídeo guardado en la galería",
   "genVideoSaveFailed": "No se pudo guardar el vídeo",
+  "videoPlayerReplay": "Volver a reproducir",
+  "videoPlayerSeekBack": "Retroceder 10 segundos",
+  "videoPlayerSeekForward": "Avanzar 10 segundos",
+  "videoPlayerMute": "Silenciar",
+  "videoPlayerUnmute": "Activar sonido",
+  "videoPlayerSpeed": "Velocidad de reproducción",
+  "videoPlayerSpeedValue": "{speed}×",
+  "@videoPlayerSpeedValue": {
+    "placeholders": {
+      "speed": {
+        "type": "String"
+      }
+    }
+  },
+  "videoPlayerPosition": "Posición de reproducción",
+  "videoPlayerExitFullscreen": "Salir de pantalla completa",
+  "videoPlayerToggleControls": "Mostrar u ocultar los controles del vídeo",
   "imgSaveToGallery": "Guardar en galería",
   "imgSavedToGallery": "Imagen guardada en la galería",
   "imgSaveFailed": "No se pudo guardar la imagen",

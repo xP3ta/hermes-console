@@ -25,6 +25,43 @@ class FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   /// When set, the next created player fails to initialize.
   bool failNextInit = false;
 
+  /// When set, [getPosition] answers only on [releasePositions]: models a
+  /// position poll still in flight when the clip completes.
+  bool holdPositions = false;
+  final List<Completer<Duration>> _heldPositions = <Completer<Duration>>[];
+
+  /// Positions polled while [holdPositions] was on and not yet answered.
+  int get heldPositionCount => _heldPositions.length;
+
+  /// Answers every held position poll with [position].
+  void releasePositions(Duration position) {
+    final held = List<Completer<Duration>>.of(_heldPositions);
+    _heldPositions.clear();
+    for (final c in held) {
+      c.complete(position);
+    }
+  }
+
+  /// Moves the platform playhead; the controller sees it on its next poll.
+  void setPosition(int playerId, Duration position) {
+    _positions[playerId] = position;
+  }
+
+  /// The clip on [playerId] reached its end.
+  void emitCompleted(int playerId) {
+    _events[playerId]?.add(VideoEvent(eventType: VideoEventType.completed));
+  }
+
+  /// Reports how far [playerId] has buffered.
+  void emitBuffered(int playerId, Duration end) {
+    _events[playerId]?.add(
+      VideoEvent(
+        eventType: VideoEventType.bufferingUpdate,
+        buffered: <DurationRange>[DurationRange(Duration.zero, end)],
+      ),
+    );
+  }
+
   static FakeVideoPlayerPlatform install({Duration? duration}) {
     final fake = FakeVideoPlayerPlatform(
       duration: duration ?? const Duration(seconds: 5),
@@ -116,17 +153,25 @@ class FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   }
 
   @override
-  Future<Duration> getPosition(int playerId) async =>
-      _positions[playerId] ?? Duration.zero;
+  Future<Duration> getPosition(int playerId) {
+    if (holdPositions) {
+      final held = Completer<Duration>();
+      _heldPositions.add(held);
+      return held.future;
+    }
+    return Future<Duration>.value(_positions[playerId] ?? Duration.zero);
+  }
 
   @override
   Future<void> setLooping(int playerId, bool looping) async {}
 
   @override
-  Future<void> setVolume(int playerId, double volume) async {}
+  Future<void> setVolume(int playerId, double volume) async =>
+      calls.add('volume:$playerId:$volume');
 
   @override
-  Future<void> setPlaybackSpeed(int playerId, double speed) async {}
+  Future<void> setPlaybackSpeed(int playerId, double speed) async =>
+      calls.add('speed:$playerId:$speed');
 
   @override
   Future<void> setMixWithOthers(bool mixWithOthers) async {}
