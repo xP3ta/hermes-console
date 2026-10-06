@@ -31799,6 +31799,7 @@ class ActiveChatService {
     @visibleForTesting ApiClient? api,
     @visibleForTesting HermesDesktopGateway? desktopGateway,
     @visibleForTesting StoredSessionMessageLoader? storedMessageLoader,
+    @visibleForTesting DashboardClient? transcriptDashboard,
     bool? attachDesktopRuntimeOnLoad,
     @visibleForTesting bool allowUnownedDesktopSnapshotForTesting = false,
     @visibleForTesting Future<bool> Function()? turnIdempotencyCapability,
@@ -31904,6 +31905,7 @@ class ActiveChatService {
       compressionRestoreStore: _compressionRestoreStore,
       storedMessageLoader:
           storedMessageLoader ?? defaultStoredMessageLoaderForTesting,
+      transcriptDashboard: transcriptDashboard,
       modelCatalogCache: modelCatalogCache,
       attachDesktopRuntimeOnLoad:
           attachDesktopRuntimeOnLoad ?? _attachDesktopRuntimeOnLoadByDefault,

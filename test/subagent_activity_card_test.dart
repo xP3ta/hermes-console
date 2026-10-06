@@ -833,7 +833,7 @@ void main() {
     await _settle(tester);
 
     expect(
-      find.textContaining('Este perfil necesita acceso al Dashboard'),
+      find.textContaining('El historial de este perfil no se puede cargar'),
       findsOneWidget,
     );
     expect(loads, 1);

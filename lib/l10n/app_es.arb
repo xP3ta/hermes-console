@@ -911,7 +911,7 @@
   "chaErrFirstTokenTimeout": "Modelo sin respuesta",
   "chaErrSearchToolUnavailable": "Búsqueda web no configurada",
   "chaErrSessionTooLarge": "Sesión demasiado grande",
-  "chaErrProfileDashboardAccess": "Este perfil necesita acceso al Dashboard. Inicia sesión en el Dashboard de esta conexión (o da al perfil su propia API_SERVER_KEY) y reintenta.",
+  "chaErrProfileDashboardAccess": "El historial de este perfil no se puede cargar: el Dashboard de esta conexión no aceptó la sesión. Revisa el usuario y la contraseña del Dashboard en los ajustes de la conexión y reintenta.",
   "chaErrUnknown": "Error",
   "chaErrHintConnection": "Comprueba la instancia, la red o Tailscale e inténtalo de nuevo.",
   "chaErrHintModel": "Revisa la clave/credenciales o el modelo activo.",
