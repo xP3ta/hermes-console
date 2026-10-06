@@ -8,6 +8,7 @@ import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 
 import '../../support/inter_font.dart';
 import 'room_fixtures.dart';
@@ -169,9 +170,12 @@ Map<String, dynamic> _inThread(Map<String, dynamic> event, String thread) {
   return event;
 }
 
-/// Divider top relative to the transcript top.
+/// Divider top relative to the top of what is readable: the transcript runs
+/// under the floating header (fh1215), so that is the header's inset.
 double _dividerFromTop(WidgetTester tester) =>
-    tester.getTopLeft(_divider).dy - tester.getTopLeft(_transcript).dy;
+    tester.getTopLeft(_divider).dy -
+    tester.getTopLeft(_transcript).dy -
+    FloatingChatHeader.insetFor(tester.element(_transcript));
 
 void main() {
   setUpAll(loadInterFont);
@@ -210,6 +214,13 @@ void main() {
 
       expect(_divider, findsOneWidget);
       final landed = _dividerFromTop(tester);
+      // fh1215: it lands BELOW the floating header's pill, never under it.
+      expect(
+        tester.getTopLeft(_divider).dy,
+        greaterThan(
+          tester.getRect(find.byKey(const ValueKey('room-header'))).bottom,
+        ),
+      );
       expect(
         landed,
         inInclusiveRange(0, 80),
@@ -309,6 +320,13 @@ void main() {
       );
       expect(_divider, findsOneWidget);
       final landed = _dividerFromTop(tester);
+      // fh1215: it lands BELOW the floating header's pill, never under it.
+      expect(
+        tester.getTopLeft(_divider).dy,
+        greaterThan(
+          tester.getRect(find.byKey(const ValueKey('room-header'))).bottom,
+        ),
+      );
       expect(landed, inInclusiveRange(0, 80));
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 16));

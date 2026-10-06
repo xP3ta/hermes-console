@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
-import 'package:hermes_android/core/bots/ui/room/room_header.dart';
 import 'package:hermes_android/core/bots/ui/room/room_models.dart';
 import 'package:hermes_android/core/bots/ui/room/room_prefs.dart';
 import 'package:hermes_android/core/bots/ui/room/room_screen.dart';
@@ -11,6 +10,7 @@ import 'package:hermes_android/core/bots/ui/room/room_widgets.dart';
 import 'package:hermes_android/core/models/hosted_groups.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 
 import '../../support/inter_font.dart';
 import 'room_fixtures.dart';
@@ -169,7 +169,7 @@ List<Map<String, dynamic>> _longRoom(EventSeq seq, {int rounds = 12}) {
 }
 
 Finder get _strip => find.byKey(const ValueKey('room-header'));
-Finder get _bar => find.byType(AppBar);
+Finder get _bar => find.byKey(const ValueKey('room-header-bar'));
 Finder get _transcript => find.byKey(const ValueKey('room-transcript'));
 
 /// Top edge (global y) of the first message tile visible in the transcript.
@@ -263,7 +263,8 @@ void main() {
       await measure('empty', const [], null);
 
       expect(heights.values.toSet(), {
-        RoomHeaderBar.expandedHeight,
+        FloatingChatHeader.heightFor(TextScaler.noScaling) +
+            FloatingChatHeader.scrimTail,
       }, reason: '$heights');
     });
 
@@ -308,7 +309,7 @@ void main() {
       ]) {
         expect(
           find.descendant(
-            of: _strip,
+            of: find.byKey(const ValueKey('room-header-bar')),
             matching: find.byKey(ValueKey('room-header-dot-$id-$state')),
           ),
           findsOneWidget,
@@ -333,7 +334,12 @@ void main() {
       // Needs-you wins the one-line summary.
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('room-header-status')))
+            .widget<Text>(
+              find.descendant(
+                of: find.byKey(const ValueKey('room-header')),
+                matching: find.byKey(const ValueKey('floating-header-text')),
+              ),
+            )
             .data,
         'console-lead needs you',
       );
@@ -362,7 +368,12 @@ void main() {
       );
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('room-header-status')))
+            .widget<Text>(
+              find.descendant(
+                of: find.byKey(const ValueKey('room-header')),
+                matching: find.byKey(const ValueKey('floating-header-text')),
+              ),
+            )
             .data,
         'console-radar is replying · $elapsed',
       );
@@ -381,7 +392,11 @@ void main() {
           reason: '$id must sit after the one replying',
         );
       }
-      expect(tester.getSize(_bar).height, RoomHeaderBar.expandedHeight);
+      expect(
+        tester.getSize(_bar).height,
+        FloatingChatHeader.heightFor(TextScaler.noScaling) +
+            FloatingChatHeader.scrimTail,
+      );
     });
 
     testWidgets('typing: the replying bot shows under the last message', (
@@ -458,7 +473,12 @@ void main() {
       );
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('room-header-status')))
+            .widget<Text>(
+              find.descendant(
+                of: find.byKey(const ValueKey('room-header')),
+                matching: find.byKey(const ValueKey('floating-header-text')),
+              ),
+            )
             .data,
         'console-builder and console-lead are replying',
       );
@@ -810,7 +830,12 @@ void main() {
         expect(find.byKey(const ValueKey('room-retry-task-r')), findsNothing);
         expect(
           tester
-              .widget<Text>(find.byKey(const ValueKey('room-header-status')))
+              .widget<Text>(
+                find.descendant(
+                  of: find.byKey(const ValueKey('room-header')),
+                  matching: find.byKey(const ValueKey('floating-header-text')),
+                ),
+              )
               .data,
           isNot(contains('failed')),
         );

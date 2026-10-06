@@ -23,6 +23,7 @@ import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
 import 'package:hermes_android/core/widgets/hermes_premium_ui.dart';
 import 'package:hermes_android/main.dart';
+import 'support/chat_header_menu.dart';
 
 SavedConnection _connection() => SavedConnection(
   id: 'conn-chat-find',
@@ -202,8 +203,10 @@ void main() {
   }
 
   Future<void> openFindFromAppBar(WidgetTester tester) async {
-    final trigger = find.byKey(const ValueKey('chat-find-trigger'));
-    expect(find.byTooltip('Buscar en el chat'), findsOneWidget);
+    // fh1215: search moved from the header icon to the header pill's menu.
+    expect(find.byKey(const ValueKey('chat-find-trigger')), findsNothing);
+    await openChatHeaderMenu(tester);
+    final trigger = find.byKey(const ValueKey('chat-menu-find'));
     expect(tester.getSize(trigger).height, greaterThanOrEqualTo(48));
     await tester.tap(trigger);
     await tester.pump();

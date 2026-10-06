@@ -49,8 +49,10 @@ void main() {
     final semantics = tester.ensureSemantics();
     try {
       await pumpA11yChat(tester, textScale: 1);
+      // fh1215: the floating header's pill (the assistant's name while
+      // idle) leads; the model moved into its menu.
       expectLabelsInOrder(traversalLabels(tester), [
-        'Model & session',
+        'HERMES CONSOLE',
         'Hermes Console',
         'The release is ready.',
         'Ask Hermes…',

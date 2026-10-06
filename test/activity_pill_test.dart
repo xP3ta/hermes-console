@@ -366,7 +366,10 @@ void main() {
           find.byKey(const ValueKey('activity-task-check-pop')),
           findsOneWidget,
         );
-        expect(find.text('1/1'), findsWidgets);
+        // fh1215: the turn is idle, so the linger names the outcome and
+        // carries no «1/1» counter.
+        expect(find.text('1/1'), findsNothing);
+        expect(find.textContaining('Todo completado'), findsWidgets);
 
         await tester.pump(const Duration(seconds: 3));
         expect(
@@ -381,37 +384,40 @@ void main() {
       },
     );
 
-    testWidgets('una lista nueva sustituye el linger sin retrasar su progreso', (
-      tester,
-    ) async {
-      final harness = await _pump(
-        tester,
-        ActivitySnapshot(
-          turnActive: true,
-          tasks: _tasks([('Anterior', AgentTaskStatus.inProgress)]),
-        ),
-      );
-      harness.currentState!.set(
-        ActivitySnapshot(
-          tasks: _tasks([('Anterior', AgentTaskStatus.completed)]),
-        ),
-      );
-      await tester.pump();
-      expect(find.text('1/1'), findsOneWidget);
+    testWidgets(
+      'una lista nueva sustituye el linger sin retrasar su progreso',
+      (tester) async {
+        final harness = await _pump(
+          tester,
+          ActivitySnapshot(
+            turnActive: true,
+            tasks: _tasks([('Anterior', AgentTaskStatus.inProgress)]),
+          ),
+        );
+        harness.currentState!.set(
+          ActivitySnapshot(
+            tasks: _tasks([('Anterior', AgentTaskStatus.completed)]),
+          ),
+        );
+        await tester.pump();
+        // fh1215: the idle linger has no counter.
+        expect(find.text('1/1'), findsNothing);
+        expect(find.textContaining('Todo completado'), findsOneWidget);
 
-      harness.currentState!.set(
-        ActivitySnapshot(
-          turnActive: true,
-          tasks: _tasks([('Nueva', AgentTaskStatus.inProgress)]),
-        ),
-      );
-      await tester.pump();
-      expect(find.text('0/1'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('activity-task-check-pop')),
-        findsNothing,
-      );
-    });
+        harness.currentState!.set(
+          ActivitySnapshot(
+            turnActive: true,
+            tasks: _tasks([('Nueva', AgentTaskStatus.inProgress)]),
+          ),
+        );
+        await tester.pump();
+        expect(find.text('0/1'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('activity-task-check-pop')),
+          findsNothing,
+        );
+      },
+    );
 
     testWidgets(
       'un turno recién nacido no parpadea; lo demás sí es inmediato',

@@ -21,6 +21,7 @@ import 'package:hermes_android/core/models/room_member_status.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
 import 'package:hermes_android/l10n/app_localizations.dart';
+import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 
 import '../support/inter_font.dart';
 import 'room/room_fixtures.dart';
@@ -252,11 +253,11 @@ void main() {
       final events = longRun();
       await _pumpRoom(tester, events: events);
       final transcript = find.byKey(const ValueKey('room-transcript'));
-      final top = tester.getTopLeft(transcript).dy;
-      final status = find.byType(AppBar);
-      expect(status, findsOneWidget);
-      // Transcript starts below the header (column layout, no overlap).
-      expect(top, greaterThanOrEqualTo(tester.getBottomLeft(status).dy));
+      // fh1215: the transcript runs under the floating header; what is
+      // readable starts below the header's inset.
+      expect(tester.getTopLeft(transcript).dy, 0);
+      expect(find.byKey(const ValueKey('room-header-bar')), findsOneWidget);
+      final top = FloatingChatHeader.insetFor(tester.element(transcript));
       // The newest speaker run's header (face, name, time) is fully visible
       // below the status line, not cut at (or hidden above) the list edge.
       final lead = events.last['event_id'] as String;
@@ -365,7 +366,7 @@ And whether `fix/tap-targets` is still open.''';
         find.descendant(of: cluster, matching: find.text('+1')),
         findsOneWidget,
       );
-      final bar = tester.getRect(find.byType(AppBar));
+      final bar = tester.getRect(find.byKey(const ValueKey('room-header-bar')));
       for (var i = 0; i < faces.length; i++) {
         expect(faces[i].size, const Size.square(RoomFaceCluster.faceSize));
         expect(bar.contains(faces[i].topLeft), isTrue);
@@ -400,14 +401,21 @@ And whether `fix/tap-targets` is still open.''';
           events: [u, started, reply, settled],
           locale: locale,
         );
-        // No panel stacked over a last-activity bar: one grey line in the
-        // header.
+        // No panel stacked over a last-activity bar. fh1215: idle, the
+        // header pill says the room name in one line; the finished-round
+        // line is the header's semantics.
         expect(find.byKey(const ValueKey('room-round-panel')), findsNothing);
         final line = tester.widget<Text>(
-          find.byKey(const ValueKey('room-header-status')),
+          find.descendant(
+            of: find.byKey(const ValueKey('room-header')),
+            matching: find.byKey(const ValueKey('floating-header-text')),
+          ),
         );
-        expect(line.data, startsWith(expected));
         expect(line.maxLines, 1);
+        expect(
+          tester.widget<RoomHeaderBar>(find.byType(RoomHeaderBar)).status,
+          startsWith(expected),
+        );
       });
     }
 
@@ -422,17 +430,16 @@ And whether `fix/tap-targets` is still open.''';
       seq.at = 1790000400 - 40;
       final started = seq.started('m-builder', disc);
       await _pumpRoom(tester, events: [u, started], locale: const Locale('en'));
-      expect(
-        tester
-            .widget<RoomHeaderBar>(find.byType(RoomHeaderBar))
-            .preferredSize
-            .height,
-        RoomHeaderBar.expandedHeight,
-      );
+      expect(find.byType(AppBar), findsNothing);
       // Who replies and for how long (the clock of the working turn).
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('room-header-status')))
+            .widget<Text>(
+              find.descendant(
+                of: find.byKey(const ValueKey('room-header')),
+                matching: find.byKey(const ValueKey('floating-header-text')),
+              ),
+            )
             .data,
         startsWith('console-builder is replying · '),
       );
@@ -452,7 +459,12 @@ And whether `fix/tap-targets` is still open.''';
       await _pumpRoom(tester, events: [u, started], locale: const Locale('en'));
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('room-header-status')))
+            .widget<Text>(
+              find.descendant(
+                of: find.byKey(const ValueKey('room-header')),
+                matching: find.byKey(const ValueKey('floating-header-text')),
+              ),
+            )
             .data,
         isNot(contains('is replying')),
       );
