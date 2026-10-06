@@ -416,6 +416,13 @@ ApiClient _safeApi() => ApiClient(
   httpClient: MockClient((_) async => http.Response('not found', 404)),
 );
 
+/// The user is typing, so the IME is up; a sheet opened from the composer
+/// then hands focus back to it on close.
+void _showKeyboard(WidgetTester tester) {
+  tester.view.viewInsets = const FakeViewPadding(bottom: 600);
+  addTearDown(tester.view.resetViewInsets);
+}
+
 Future<ActiveChat> _pumpSlashChat(
   WidgetTester tester,
   _SlashGateway gateway, {
@@ -1412,6 +1419,7 @@ void main() {
       final composer = find.byType(TextField).last;
 
       await tester.enterText(composer, '/he');
+      _showKeyboard(tester);
       await tester.pump(const Duration(milliseconds: 250));
       expect(gateway.slashCompletionCalls, 1);
       final help = find.byKey(const ValueKey('chat-slash-command-help'));
@@ -1501,6 +1509,7 @@ void main() {
 
         await tester.tap(composer);
         await tester.enterText(composer, '/model ');
+        _showKeyboard(tester);
         await tester.pump(const Duration(milliseconds: 250));
         final fieldBeforeSubmit = tester.widget<TextField>(composer);
         expect(fieldBeforeSubmit.controller?.text, '/model ');
@@ -1546,6 +1555,7 @@ void main() {
 
         await tester.tap(composer);
         await tester.enterText(composer, '/model definitely-not-a-model');
+        _showKeyboard(tester);
         await tester.pump(const Duration(milliseconds: 250));
         final field = tester.widget<TextField>(composer);
         final sendAction = find.descendant(

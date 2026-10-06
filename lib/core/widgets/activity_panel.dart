@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 
 import '../../l10n/app_localizations.dart';
+import '../design/modal.dart' show releaseTextFocusIfKeyboardHidden;
 import '../models/activity_snapshot.dart';
 import '../theme/app_theme.dart';
 import 'activity_pill.dart';
@@ -483,6 +484,7 @@ class _ActivityPillHostState extends State<ActivityPillHost> {
       ),
     );
     _route = route;
+    releaseTextFocusIfKeyboardHidden(context);
     setState(() => _open = true);
     unawaited(
       navigator.push<void>(route).whenComplete(() {

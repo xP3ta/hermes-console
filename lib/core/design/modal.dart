@@ -7,6 +7,27 @@ import '../theme/app_theme.dart';
 import '../theme/scroll_behavior.dart';
 import 'tokens.dart';
 
+/// Call right before pushing a sheet or popup route over a screen with a text
+/// field. When that field still holds focus but the keyboard is hidden (the
+/// user dismissed it with system Back), the field is unfocused, because
+/// popping the route restores focus to it and a focused field shows the
+/// keyboard again by itself. With the keyboard visible nothing changes and
+/// the focus comes back on close as before.
+///
+/// Reads the raw view insets: inside a Scaffold body `MediaQuery.viewInsets`
+/// is always zero.
+void releaseTextFocusIfKeyboardHidden(BuildContext context) {
+  final focused = FocusManager.instance.primaryFocus;
+  final focusedContext = focused?.context;
+  if (focused == null || focusedContext == null) return;
+  if (focusedContext.findAncestorWidgetOfExactType<EditableText>() == null) {
+    return;
+  }
+  final view = View.maybeOf(context);
+  if (view == null || view.viewInsets.bottom > 0) return;
+  focused.unfocus();
+}
+
 // ── The ONE modal container ────────────────────────────────────────────────
 
 /// Floating modal surface (spec 080). Never a bottom sheet
@@ -34,6 +55,7 @@ Future<T?> showHermesSurface<T>({
   assert(maxHeightFactor > 0 && maxHeightFactor <= 1);
   final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
   final focusScopeNode = FocusScopeNode(debugLabel: 'HermesFloatingSurface');
+  releaseTextFocusIfKeyboardHidden(context);
   Rect? origin = originRect;
   if (origin == null && anchorKey != null) {
     final box = anchorKey.currentContext?.findRenderObject();
