@@ -89,7 +89,6 @@ import 'package:hermes_android/core/navigation/chat_route.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/compression_restore_store.dart';
 import 'package:hermes_android/core/services/desktop_control_gateway.dart';
-import 'package:hermes_android/core/services/quick_reply_prefs.dart';
 import 'package:hermes_android/core/services/subagent_transcript_projection.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
 import 'package:hermes_android/core/services/approval_policy.dart';
@@ -121,6 +120,7 @@ import 'package:hermes_android/core/services/voice/stt_remote.dart';
 import 'package:hermes_android/core/services/voice/conversation/native_voice.dart';
 import 'package:hermes_android/core/services/voice/voice_phase.dart';
 import 'package:hermes_android/core/widgets/attachment_card.dart';
+import 'package:hermes_android/core/widgets/hermes_suggestions.dart';
 import 'package:hermes_android/core/widgets/attachment_history_preview.dart';
 import 'package:hermes_android/core/widgets/chat_event_cards.dart';
 import 'package:hermes_android/core/widgets/chat/tool_output_cards.dart';
@@ -5551,60 +5551,14 @@ void main() {
     await tester.pump(const Duration(minutes: 2));
   });
 
-  testWidgets('historial anterior ofrece control accesible distinto al final', (
-    tester,
-  ) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(390, 844);
-    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
-    addTearDown(() {
-      tester.view.resetDevicePixelRatio();
-      tester.view.resetPhysicalSize();
-      tester.platformDispatcher.clearTextScaleFactorTestValue();
-    });
-    var reads = 0;
-    final rows = <Map<String, dynamic>>[
-      for (var index = 1; index <= 240; index++)
-        {
-          'id': index,
-          'message_id': 'history-$index',
-          'role': index.isOdd ? 'user' : 'assistant',
-          'content': 'historial $index',
-        },
-    ];
-    final client = MockClient((request) async {
-      reads += 1;
-      final offset = int.parse(request.url.queryParameters['offset'] ?? '0');
-      final end = math.max(0, rows.length - offset);
-      final start = math.max(0, end - 120);
-      final page = rows.sublist(start, end);
-      return http.Response(
-        jsonEncode({
-          'object': 'list',
-          'session_id': 'sess-test',
-          'messages': page,
-          'pagination': {
-            'limit': 120,
-            'offset': offset,
-            'order': 'latest',
-            'returned': page.length,
-          },
-        }),
-        200,
-        headers: const {'content-type': 'application/json'},
-      );
-    });
-    final api = ApiClient(
-      baseUrl: 'https://example.test',
-      apiKey: 'test-key',
-      httpClient: client,
-    );
-    addTearDown(api.close);
-
+  // Owner decision: no up-arrow chevron. Earlier history loads by itself
+  // when the reader scrolls near the top.
+  testWidgets('cs1215 earlier history shows no chevron', (tester) async {
+    final pages = _EarlierHistoryPages();
     final chat = await pumpChat(
       tester,
-      api: api,
-      connection: _remoteConn('conn-load-earlier-control'),
+      api: pages.api(),
+      connection: _remoteConn('conn-cs-no-chevron'),
       messagesLoaded: false,
       attachDesktopRuntimeOnLoad: false,
       allowUnownedDesktopSnapshotForTesting: false,
@@ -5612,30 +5566,11 @@ void main() {
     await tester.pump();
 
     expect(chat.hasEarlierMessages, isTrue);
-    expect(reads, 1);
-    const earlierKey = ValueKey('chat-load-earlier');
-    const bottomKey = ValueKey('chat-scroll-to-bottom');
-    final earlier = find.byKey(earlierKey);
-    expect(earlier, findsOneWidget);
-    expect(find.byKey(bottomKey), findsOneWidget);
-    expect(earlierKey, isNot(bottomKey));
-    expect(tester.getSize(earlier).width, greaterThanOrEqualTo(48));
-    expect(tester.getSize(earlier).height, greaterThanOrEqualTo(48));
-    final earlierSemantics = find.bySemanticsLabel(
-      'Cargar mensajes anteriores',
-    );
-    expect(earlierSemantics, findsOneWidget);
-    expect(
-      tester.getSemantics(earlierSemantics),
-      matchesSemantics(
-        label: 'Cargar mensajes anteriores',
-        isButton: true,
-        hasEnabledState: true,
-        isEnabled: true,
-        hasTapAction: true,
-      ),
-    );
-    expect(find.byTooltip('Cargar mensajes anteriores'), findsOneWidget);
+    expect(pages.requests, hasLength(1));
+    expect(find.byKey(const ValueKey('chat-load-earlier')), findsNothing);
+    expect(find.byIcon(Icons.keyboard_arrow_up_rounded), findsNothing);
+    expect(find.bySemanticsLabel('Cargar mensajes anteriores'), findsNothing);
+    expect(find.byKey(const ValueKey('chat-earlier-loading')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -5974,7 +5909,8 @@ void main() {
     await tester.pump();
 
     const control = ValueKey('chat-load-earlier');
-    expect(find.byKey(control), findsOneWidget);
+    expect(chat.hasEarlierMessages, isTrue);
+    expect(find.byKey(control), findsNothing);
 
     paginate = false;
     expect(await chat.reconcileAfterResume(), isFalse);
@@ -5988,300 +5924,214 @@ void main() {
       '120',
     ]);
     expect(chat.hasEarlierMessages, isFalse);
-    // Sin más historial real que cargar, la flecha desaparece del todo: ya
-    // no queda un modo "ir arriba" genérico como atajo de scroll.
+    // There is no chevron in either state: earlier history loads by itself.
     expect(find.byKey(control), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('control anterior cabe con safe area teclado y texto 1.3', (
-    tester,
-  ) async {
-    tester.view
-      ..devicePixelRatio = 1
-      ..physicalSize = const Size(360, 800)
-      ..viewPadding = const FakeViewPadding(top: 24, bottom: 24)
-      ..viewInsets = const FakeViewPadding(bottom: 300);
-    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
-    addTearDown(tester.view.reset);
-    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-    final rows = <Map<String, dynamic>>[
-      for (var index = 1; index <= 240; index++)
-        {
-          'id': index,
-          'message_id': 'compact-history-$index',
-          'role': index.isOdd ? 'user' : 'assistant',
-          'content': 'compacto $index',
-        },
-    ];
-    final client = MockClient((request) async {
-      final offset = int.parse(request.url.queryParameters['offset'] ?? '0');
-      final end = math.max(0, rows.length - offset);
-      final start = math.max(0, end - 120);
-      final page = rows.sublist(start, end);
-      return http.Response(
-        jsonEncode({
-          'object': 'list',
-          'session_id': 'sess-test',
-          'messages': page,
-          'pagination': {
-            'limit': 120,
-            'offset': offset,
-            'order': 'latest',
-            'returned': page.length,
-          },
-        }),
-        200,
-        headers: const {'content-type': 'application/json'},
+  group('cs1215 earlier history loads by itself', () {
+    Finder list() => find.descendant(
+      of: find.byType(ChatRefreshStatusOverlay),
+      matching: find.byType(ListView),
+    );
+    ScrollController controller(WidgetTester tester) =>
+        tester.widget<ListView>(list()).controller!;
+    final loading = find.byKey(const ValueKey('chat-earlier-loading'));
+
+    Future<ActiveChat> open(
+      WidgetTester tester,
+      _EarlierHistoryPages pages,
+      String id,
+    ) async {
+      final chat = await pumpChat(
+        tester,
+        api: pages.api(),
+        connection: _remoteConn(id),
+        messagesLoaded: false,
+        attachDesktopRuntimeOnLoad: false,
+        allowUnownedDesktopSnapshotForTesting: false,
       );
-    });
-    final api = ApiClient(
-      baseUrl: 'https://example.test',
-      apiKey: 'test-key',
-      httpClient: client,
-    );
-    addTearDown(api.close);
-    await pumpChat(
-      tester,
-      api: api,
-      connection: _remoteConn('conn-load-earlier-compact'),
-      messagesLoaded: false,
-      attachDesktopRuntimeOnLoad: false,
-      allowUnownedDesktopSnapshotForTesting: false,
-    );
-    await tester.pump();
+      await tester.pump();
+      expect(pages.older, isEmpty, reason: 'precondition: one page');
+      return chat;
+    }
 
-    final control = find.byKey(const ValueKey('chat-load-earlier'));
-    expect(control, findsOneWidget);
-    final rect = tester.getRect(control);
-    expect(rect.left, greaterThanOrEqualTo(0));
-    expect(rect.right, lessThanOrEqualTo(360));
-    expect(rect.top, greaterThanOrEqualTo(24));
-    expect(rect.bottom, lessThanOrEqualTo(500));
-    expect(find.byType(TextField), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('historial anterior solo carga por gesto y conserva el ancla', (
-    tester,
-  ) async {
-    final pendingPages = <Completer<http.Response>>[];
-    final requests = <Uri>[];
-    final latest = <Map<String, dynamic>>[
-      for (var index = 121; index <= 240; index++)
-        {
-          'id': index,
-          'message_id': 'anchor-history-$index',
-          'role': index.isOdd ? 'user' : 'assistant',
-          'content': 'ANCLA_HISTORIAL_$index',
-        },
-    ];
-    final client = MockClient((request) {
-      requests.add(request.url);
-      if (requests.length == 1) {
-        return Future.value(
-          http.Response(
-            jsonEncode({
-              'object': 'list',
-              'session_id': 'sess-test',
-              'messages': latest,
-              'pagination': {
-                'limit': 120,
-                'offset': 0,
-                'order': 'latest',
-                'returned': 120,
-              },
-            }),
-            200,
-            headers: const {'content-type': 'application/json'},
-          ),
-        );
+    /// The topmost history row painted inside the transcript viewport.
+    Finder firstVisibleRow(WidgetTester tester) {
+      final viewport = tester.getRect(list());
+      Finder? best;
+      var bestTop = double.infinity;
+      for (var index = 240; index >= 1; index--) {
+        final f = find.text('ANCLA_HISTORIAL_$index');
+        if (f.evaluate().isEmpty) continue;
+        final top = tester.getTopLeft(f).dy;
+        if (top >= viewport.top + 40 && top < bestTop) {
+          bestTop = top;
+          best = f;
+        }
       }
-      final response = Completer<http.Response>();
-      pendingPages.add(response);
-      return response.future;
-    });
-    final api = ApiClient(
-      baseUrl: 'https://example.test',
-      apiKey: 'test-key',
-      httpClient: client,
-    );
-    addTearDown(api.close);
-    await pumpChat(
-      tester,
-      api: api,
-      connection: _remoteConn('conn-load-earlier-anchor'),
-      messagesLoaded: false,
-      attachDesktopRuntimeOnLoad: false,
-      allowUnownedDesktopSnapshotForTesting: false,
-    );
-    await tester.pump();
+      return best!;
+    }
 
-    final transcript = tester.widget<ListView>(
-      find.descendant(
-        of: find.byType(ChatRefreshStatusOverlay),
-        matching: find.byType(ListView),
-      ),
-    );
-    transcript.controller!.jumpTo(
-      transcript.controller!.position.maxScrollExtent,
-    );
-    await tester.pump();
-    expect(requests, hasLength(1));
-
-    final anchor = find.text('ANCLA_HISTORIAL_121');
-    expect(anchor, findsOneWidget);
-    final anchorTop = tester.getTopLeft(anchor);
-    final control = find.byKey(const ValueKey('chat-load-earlier'));
-    await tester.tap(control);
-    await tester.tap(control);
-    await tester.pump();
-
-    expect(requests, hasLength(2));
-    expect(pendingPages, hasLength(1));
-    expect(
-      find.descendant(
-        of: control,
-        matching: find.byType(CircularProgressIndicator),
-      ),
-      findsOneWidget,
-    );
-    final disabled = tester.getSemantics(
-      find.bySemanticsLabel('Cargar mensajes anteriores'),
-    );
-    expect(
-      disabled.getSemanticsData().actions & (1 << SemanticsAction.tap.index),
-      0,
-    );
-
-    final older = <Map<String, dynamic>>[
-      for (var index = 1; index <= 120; index++)
-        {
-          'id': index,
-          'message_id': 'anchor-history-$index',
-          'role': index.isOdd ? 'user' : 'assistant',
-          'content': 'ANCLA_HISTORIAL_$index',
-        },
-    ];
-    pendingPages.single.complete(
-      http.Response(
-        jsonEncode({
-          'object': 'list',
-          'session_id': 'sess-test',
-          'messages': older,
-          'pagination': {
-            'limit': 120,
-            'offset': 120,
-            'order': 'latest',
-            'returned': 120,
-          },
-        }),
-        200,
-        headers: const {'content-type': 'application/json'},
-      ),
-    );
-    await tester.pump();
-    await tester.pump();
-
-    expect(anchor, findsOneWidget);
-    expect(tester.getTopLeft(anchor).dy, closeTo(anchorTop.dy, 0.01));
-    expect(find.byKey(const ValueKey('chat-load-earlier')), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('fallo de historial conserva contenido y permite retry seguro', (
-    tester,
-  ) async {
-    var reads = 0;
-    final latest = <Map<String, dynamic>>[
-      for (var index = 121; index <= 240; index++)
-        {
-          'id': index,
-          'message_id': 'retry-history-$index',
-          'role': index.isOdd ? 'user' : 'assistant',
-          'content': 'RETRY_HISTORIAL_$index',
-        },
-    ];
-    final client = MockClient((request) async {
-      reads += 1;
-      if (reads == 2) {
-        return http.Response('super-secret-stack', 503);
+    Future<void> frames(WidgetTester tester, int count) async {
+      for (var i = 0; i < count; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
       }
-      final page = reads == 1
-          ? latest
-          : <Map<String, dynamic>>[
-              const {
-                'id': 120,
-                'message_id': 'retry-history-120',
-                'role': 'assistant',
-                'content': 'RETRY_ANTERIOR_OK',
-              },
-            ];
-      final offset = reads == 1 ? 0 : 120;
-      return http.Response(
-        jsonEncode({
-          'object': 'list',
-          'session_id': 'sess-test',
-          'messages': page,
-          'pagination': {
-            'limit': 120,
-            'offset': offset,
-            'order': 'latest',
-            'returned': page.length,
-          },
-        }),
-        200,
-        headers: const {'content-type': 'application/json'},
+    }
+
+    testWidgets('far from the top nothing loads; near the top one page '
+        'loads with a progress row and the reader stays put', (tester) async {
+      final pages = _EarlierHistoryPages(holdOlder: true);
+      final chat = await open(tester, pages, 'conn-cs-auto-anchor');
+      final scroll = controller(tester);
+      final viewport = scroll.position.viewportDimension;
+
+      // Three screens below the top: beyond the 1.5 screen threshold.
+      scroll.jumpTo(scroll.position.maxScrollExtent - 3 * viewport);
+      await frames(tester, 3);
+      expect(pages.older, isEmpty, reason: 'too far from the top');
+      expect(loading, findsNothing);
+
+      // One screen below the top: inside the threshold.
+      scroll.jumpTo(scroll.position.maxScrollExtent - viewport);
+      await frames(tester, 3);
+      expect(pages.older, hasLength(1));
+      expect(loading, findsOneWidget);
+      expect(
+        find.descendant(
+          of: loading,
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsOneWidget,
       );
+
+      final anchor = firstVisibleRow(tester);
+      final anchorTop = tester.getTopLeft(anchor).dy;
+      pages.completeOlder();
+      await frames(tester, 4);
+
+      expect(chat.messages.length, greaterThan(120), reason: 'page applied');
+      expect(anchor, findsOneWidget);
+      expect(tester.getTopLeft(anchor).dy, closeTo(anchorTop, 2));
+      expect(loading, findsNothing);
+      expect(pages.older, hasLength(1));
+      expect(tester.takeException(), isNull);
     });
-    final api = ApiClient(
-      baseUrl: 'https://example.test',
-      apiKey: 'test-key',
-      httpClient: client,
-    );
-    addTearDown(api.close);
-    final chat = await pumpChat(
+
+    testWidgets('one fling loads one page; the next gesture may load again', (
       tester,
-      api: api,
-      connection: _remoteConn('conn-load-earlier-retry'),
-      messagesLoaded: false,
-      attachDesktopRuntimeOnLoad: false,
-      allowUnownedDesktopSnapshotForTesting: false,
-    );
-    await tester.pump();
+    ) async {
+      final pages = _EarlierHistoryPages(total: 480, holdOlder: true);
+      await open(tester, pages, 'conn-cs-auto-fling');
+      final scroll = controller(tester);
+      final viewport = scroll.position.viewportDimension;
+      scroll.jumpTo(scroll.position.maxScrollExtent - 2.2 * viewport);
+      await frames(tester, 3);
+      expect(pages.older, isEmpty);
 
-    final control = find.byKey(const ValueKey('chat-load-earlier'));
-    await tester.tap(control);
-    await tester.pump();
-    await tester.pump();
+      await tester.fling(list(), const Offset(0, 500), 4000);
+      for (var i = 0; i < 120 && pages.older.isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(pages.older, hasLength(1), reason: 'the fling reached the top');
+      // The page lands while the fling is still moving near the top.
+      pages.completeOlder();
+      await frames(tester, 150);
+      expect(
+        pages.requests,
+        hasLength(2),
+        reason: 'one fling must trigger one load',
+      );
 
-    expect(reads, 2);
-    expect(chat.earlierMessagesLoadFailed, isTrue);
-    expect(find.text('RETRY_HISTORIAL_240'), findsOneWidget);
-    expect(
-      find.text(
-        'No se pudieron cargar los mensajes anteriores. Inténtalo de nuevo.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.textContaining('super-secret-stack'), findsNothing);
-    expect(control, findsOneWidget);
+      // Resting near the top loads nothing more until a new gesture.
+      scroll.jumpTo(scroll.position.maxScrollExtent - 200);
+      await frames(tester, 10);
+      expect(pages.older, hasLength(1), reason: 'no gesture, no load');
+      await tester.drag(list(), const Offset(0, 120));
+      await frames(tester, 10);
+      expect(pages.older, hasLength(2), reason: 'a new gesture loads');
+      pages.completeOlder();
+      await frames(tester, 10);
+      expect(tester.takeException(), isNull);
+    });
 
-    await tester.tap(control);
-    await tester.pump();
-    await tester.pump();
+    testWidgets('nothing loads when the server has no earlier history', (
+      tester,
+    ) async {
+      final pages = _EarlierHistoryPages(total: 100);
+      final chat = await pumpChat(
+        tester,
+        api: pages.api(),
+        connection: _remoteConn('conn-cs-auto-none'),
+        messagesLoaded: false,
+        attachDesktopRuntimeOnLoad: false,
+        allowUnownedDesktopSnapshotForTesting: false,
+      );
+      await tester.pump();
+      expect(chat.hasEarlierMessages, isFalse);
+      final scroll = controller(tester);
+      scroll.jumpTo(scroll.position.maxScrollExtent);
+      await frames(tester, 3);
+      await tester.fling(list(), const Offset(0, 300), 3000);
+      await frames(tester, 90);
+      expect(pages.older, isEmpty);
+      expect(loading, findsNothing);
+      expect(tester.takeException(), isNull);
+    });
 
-    expect(reads, 3);
-    expect(chat.earlierMessagesLoadFailed, isFalse);
-    expect(
-      chat.messages.any((message) => message['content'] == 'RETRY_ANTERIOR_OK'),
-      isTrue,
-    );
-    // La segunda página fue la última (sin más historial real que pedir): la
-    // flecha desaparece del todo, sin quedar como atajo de scroll.
-    expect(chat.hasEarlierMessages, isFalse);
-    expect(find.byKey(const ValueKey('chat-load-earlier')), findsNothing);
-    expect(tester.takeException(), isNull);
+    testWidgets('nothing loads while App Lock is locked', (tester) async {
+      final pages = _EarlierHistoryPages();
+      await open(tester, pages, 'conn-cs-auto-locked');
+      final lock = tester
+          .state<HermesAppState>(find.byType(HermesApp))
+          .appLock
+          .locked;
+      lock.value = true;
+      addTearDown(() => lock.value = false);
+      final scroll = controller(tester);
+      scroll.jumpTo(scroll.position.maxScrollExtent - 100);
+      await frames(tester, 3);
+      expect(pages.older, isEmpty, reason: 'locked: no read');
+
+      lock.value = false;
+      scroll.jumpTo(scroll.position.maxScrollExtent - 50);
+      await frames(tester, 3);
+      expect(pages.older, hasLength(1), reason: 'unlocked: loads');
+      await frames(tester, 10);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a failed page keeps the content and offers a retry', (
+      tester,
+    ) async {
+      final pages = _EarlierHistoryPages(failNext: true);
+      final chat = await open(tester, pages, 'conn-cs-auto-retry');
+      final scroll = controller(tester);
+      scroll.jumpTo(scroll.position.maxScrollExtent - 100);
+      await frames(tester, 4);
+
+      expect(pages.older, hasLength(1));
+      expect(chat.earlierMessagesLoadFailed, isTrue);
+      expect(chat.messages, hasLength(120), reason: 'loaded rows are kept');
+      expect(find.textContaining('super-secret-stack'), findsNothing);
+      // No automatic retry loop while the reader stays there.
+      scroll.jumpTo(scroll.position.pixels - 20);
+      await frames(tester, 4);
+      expect(pages.older, hasLength(1));
+
+      final retry = find.byKey(const ValueKey('chat-earlier-retry'));
+      expect(retry, findsOneWidget);
+      await tester.tap(retry);
+      await frames(tester, 4);
+      expect(pages.older, hasLength(2));
+      expect(chat.earlierMessagesLoadFailed, isFalse);
+      expect(
+        chat.messages.any((m) => m['content'] == 'ANCLA_HISTORIAL_120'),
+        isTrue,
+      );
+      expect(retry, findsNothing);
+      expect(tester.takeException(), isNull);
+    });
   });
 
   testWidgets('observa cambios durables de Desktop sin adquirir el runtime', (
@@ -35550,10 +35400,10 @@ void main() {
       ], reason: 'rows=$rows');
     },
   );
-  group('rpl1215 quick replies', () {
-    setUp(() => QuickReplyPrefs.debugUse(QuickReplyPrefs.forTesting(null)));
-    tearDown(() => QuickReplyPrefs.debugUse(null));
-
+  // Owner decision: the quick reply chips are gone for good. A finished
+  // turn closes with the answer alone; only the assistant's own offers
+  // (server suggestions) stay tappable.
+  group('cs1215 no quick replies', () {
     const finishedTurn = [
       {
         'role': 'assistant',
@@ -35562,586 +35412,63 @@ void main() {
       },
       {'role': 'user', 'id': 'u-qr-1', 'content': 'Arregla el parser'},
     ];
-    Finder chip(int index) =>
-        find.byKey(ValueKey('quick-reply-$index'), skipOffstage: false);
-    final smart = find.byKey(const ValueKey('quick-reply-smart'));
-    String chipText(WidgetTester tester, int index) => tester
-        .widget<Text>(
-          find.descendant(of: chip(index), matching: find.byType(Text)),
-        )
-        .data!;
-    TextEditingController composer(WidgetTester tester) =>
-        tester.widget<TextField>(find.byType(TextField)).controller!;
 
-    testWidgets('rpl1215 chips follow a completed turn, no automatic oneshot', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      final chat = await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-turn'),
-      );
-      await tester.enterText(find.byType(TextField), 'Arregla el parser');
-      await tester.pump(const Duration(milliseconds: 250));
-      await tester.tap(find.byKey(const ValueKey('send')));
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(gateway.submissions, ['Arregla el parser']);
-      // While the turn runs there is nothing to answer yet.
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-
-      gateway.emitComplete('Listo. ¿Quieres que lo aplique?');
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(chat.isStreaming, isFalse);
-      expect(chipText(tester, 0), 'Sí');
-      expect(chipText(tester, 1), 'No');
-      expect(chipText(tester, 2), 'Explícamelo más');
-      expect(smart, findsOneWidget);
-
-      for (var i = 0; i < 5; i++) {
-        await tester.pump(const Duration(seconds: 1));
+    void expectNoQuickReplies() {
+      expect(find.byKey(const ValueKey('chat-quick-replies')), findsNothing);
+      for (var index = 0; index < 4; index++) {
+        expect(
+          find.byKey(ValueKey('quick-reply-$index'), skipOffstage: false),
+          findsNothing,
+        );
       }
-      expect(gateway.calls, isEmpty, reason: 'llm.oneshot only on tap');
-      expect(gateway.submissions, hasLength(1));
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 tapping a chip fills the composer and sends nothing', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-fill'),
-        messages: finishedTurn,
-      );
-      expect(chipText(tester, 1), 'No');
-
-      await tester.tap(chip(1));
-      await tester.pump(const Duration(milliseconds: 400));
-
-      expect(composer(tester).text, 'No');
-      expect(gateway.submissions, isEmpty);
-      // The rail steps aside while the composer holds text.
-      expect(chip(0), findsNothing);
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 no chips while streaming or with a pending approval', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      final chat = await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-busy'),
-        messages: finishedTurn,
-        chatState: ChatPipelineState.streaming,
-      );
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-
-      Future<void> rebuildThroughComposer() async {
-        await tester.enterText(find.byType(TextField), 'x');
-        await tester.pump();
-        await tester.enterText(find.byType(TextField), '');
-        await tester.pump(const Duration(milliseconds: 250));
-      }
-
-      chat.state = ChatPipelineState.completed;
-      chat.pendingApproval = const {'request_id': 'approval-qr'};
-      await rebuildThroughComposer();
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-
-      chat.pendingApproval = null;
-      await rebuildThroughComposer();
-      expect(chipText(tester, 0), 'Sí');
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    Future<void> rebuildThroughComposer(WidgetTester tester) async {
-      final field = find.descendant(
-        of: find.byKey(const ValueKey('chat-composer-host')),
-        matching: find.byType(TextField),
-      );
-      await tester.enterText(field, 'x');
-      await tester.pump();
-      await tester.enterText(field, '');
-      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.byKey(const ValueKey('quick-reply-smart')), findsNothing);
+      expect(find.text('Explícamelo más'), findsNothing);
     }
 
-    testWidgets('rpl1215 hidden while a question is pending', (tester) async {
-      final gateway = _InteractiveUiGateway();
-      final chat = await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-question'),
-        messages: finishedTurn,
-        acquireDesktopRuntimeBeforeMount: true,
-      );
-      await tester.pump(const Duration(milliseconds: 250));
-      expect(chipText(tester, 0), 'Sí');
-
-      gateway.emit('clarify.request', const {
-        'request_id': 'clarify-qr',
-        'question': '¿Qué rama uso?',
-        'choices': ['main', 'dev'],
-      });
-      await tester.pump();
-      // A parked question outlives the run state (resume, reconnect): only
-      // the open prompt itself must keep the chips away.
-      chat.state = ChatPipelineState.completed;
-      await rebuildThroughComposer(tester);
-      expect(chat.isStreaming, isFalse);
-      expect(chat.pendingInteractivePrompt, isNotNull);
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-
-      // Once the question is closed the chips come back.
-      gateway.emit('clarify.expire', const {'request_id': 'clarify-qr'});
-      await tester.pump();
-      await rebuildThroughComposer(tester);
-      expect(chat.pendingInteractivePrompt, isNull);
-      expect(chipText(tester, 0), 'Sí');
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 hidden while an approval is pending', (tester) async {
-      final gateway = _QuickReplyGateway();
-      final chat = await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-approval'),
-        messages: finishedTurn,
-      );
-      expect(chipText(tester, 0), 'Sí');
-
-      chat.pendingApproval = const {'request_id': 'approval-qr-2'};
-      await rebuildThroughComposer(tester);
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-
-      chat.pendingApproval = null;
-      await rebuildThroughComposer(tester);
-      expect(chipText(tester, 0), 'Sí');
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 ✨ asks once on tap with only the last two messages', (
+    testWidgets('cs1215 a finished turn offers no quick reply chips', (
       tester,
     ) async {
-      final gateway = _QuickReplyGateway();
-      final probe = ChatPerformanceProbe();
+      final gateway = _SubmissionGateway();
       await pumpChat(
         tester,
         desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-smart'),
-        messages: [
-          ...finishedTurn,
-          {'role': 'assistant', 'id': 'a-qr-0', 'content': 'Respuesta vieja'},
-          {'role': 'user', 'id': 'u-qr-0', 'content': 'Pregunta vieja'},
-        ],
-        performanceProbe: probe,
+        connection: _remoteConn('conn-cs-no-qr'),
+        messages: finishedTurn,
       );
       await tester.pump(const Duration(milliseconds: 400));
-      expect(gateway.calls, isEmpty);
-      final screenBuilds = probe.screenBuilds;
-      final assistantBuilds = probe.terminalAssistantBuilds;
-
-      await tester.tap(smart);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-
-      expect(gateway.calls, hasLength(1));
-      final call = gateway.calls.single;
-      expect(call.lastUser, 'Arregla el parser');
-      expect(call.lastAssistant, contains('¿Quieres que lo aplique?'));
-      expect(call.lastAssistant, isNot(contains('Respuesta vieja')));
-      expect(chipText(tester, 0), 'Sí, aplícalo');
-      expect(chipText(tester, 1), 'Enséñame el diff');
-      // The ideas land in the rail only: no screen or transcript rebuild.
-      expect(probe.screenBuilds, screenBuilds);
-      expect(probe.terminalAssistantBuilds, assistantBuilds);
-
-      // Cached for this turn: tapping again never asks again.
-      await tester.tap(smart);
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(gateway.calls, hasLength(1));
-      await tester.tap(chip(0));
-      await tester.pump();
-      expect(composer(tester).text, 'Sí, aplícalo');
-      await tester.enterText(find.byType(TextField), '');
-      await tester.pump(const Duration(milliseconds: 250));
-      expect(chipText(tester, 0), 'Sí, aplícalo');
-      expect(gateway.calls, hasLength(1));
-      expect(gateway.submissions, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 ✨ hidden without the capability or read-only', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway()..available = false;
-      await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-nocap'),
-        messages: finishedTurn,
-      );
-      expect(chipText(tester, 0), 'Sí');
-      expect(smart, findsNothing);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 hidden while messages are queued', (tester) async {
-      final gateway = _QuickReplyGateway();
-      final chat = await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-queued'),
-        messages: finishedTurn,
-        chatState: ChatPipelineState.streaming,
-      );
-      expect(chat.enqueue('Siguiente turno en cola'), isTrue);
-      // The turn is over but the queue still owns what comes next.
-      chat.state = ChatPipelineState.completed;
-      await rebuildThroughComposer(tester);
-      expect(chat.isStreaming, isFalse);
-      expect(chat.queuedMessages, ['Siguiente turno en cola']);
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-
-      // Once the queue is empty the chips come back.
-      chat.clearQueueForTesting();
-      await rebuildThroughComposer(tester);
-      expect(chat.queuedMessages, isEmpty);
-      expect(chipText(tester, 0), 'Sí');
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 a read-only connection shows no chips', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-ro').copyWith(readOnly: true),
-        messages: finishedTurn,
-      );
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 the setting hides the chips without a rebuild', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      final probe = ChatPerformanceProbe();
-      await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-setting'),
-        messages: finishedTurn,
-        performanceProbe: probe,
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(chipText(tester, 0), 'Sí');
-      final assistantBuilds = probe.terminalAssistantBuilds;
-
-      await QuickReplyPrefs.shared.setEnabled(false);
-      await tester.pump();
-
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-      expect(probe.terminalAssistantBuilds, assistantBuilds);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 scrolling away hides the chips without moving text', (
-      tester,
-    ) async {
-      final history = scrollableChatHistory('carril rápido');
-      await pumpChat(
-        tester,
-        desktopGateway: _QuickReplyGateway(),
-        connection: _remoteConn('conn-rpl-scroll'),
-        messages: history,
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(chip(0), findsOneWidget);
-      final controller = tester.widget<ListView>(chatListFinder()).controller!;
-      final marker = find.textContaining('carril rápido histórico 1.').first;
-      final before = tester.getTopLeft(marker).dy;
-
-      // Far enough for the scroll-to-bottom arrow, which hides the rail.
-      controller.jumpTo(120);
-      await tester.pump();
-      expect(chip(0), findsNothing);
-      expect(tester.getTopLeft(marker).dy - before, closeTo(120, 0.5));
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(tester.getTopLeft(marker).dy - before, closeTo(120, 0.5));
-
-      controller.jumpTo(0);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(chip(0), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 hidden while a run streams over a finished answer', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      final chat = await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-streaming'),
-        messages: finishedTurn,
-      );
-      expect(chipText(tester, 0), 'Sí');
-
-      // A run attached without its own row yet (resume, background turn):
-      // the last row is still the finished answer, only the run state says
-      // the conversation is busy.
-      for (final running in [
-        ChatPipelineState.connecting,
-        ChatPipelineState.waiting,
-        ChatPipelineState.executing,
-        ChatPipelineState.streaming,
-      ]) {
-        chat.state = running;
-        await rebuildThroughComposer(tester);
-        expect(chat.isStreaming, isTrue);
-        expect(chat.messages.first['id'], 'a-qr-1');
-        expect(chip(0), findsNothing, reason: '$running');
-        expect(smart, findsNothing, reason: '$running');
-
-        chat.state = ChatPipelineState.completed;
-        await rebuildThroughComposer(tester);
-        expect(chipText(tester, 0), 'Sí');
-      }
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 hidden while a sent message is being edited', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-edit'),
-        messages: finishedTurn,
-      );
-      expect(chipText(tester, 0), 'Sí');
-
-      await tester.tap(find.byTooltip('Editar mensaje'));
-      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.textContaining('¿Quieres que lo aplique?'), findsOneWidget);
+      expectNoQuickReplies();
       expect(
-        tester
-            .widgetList<EditableText>(find.byType(EditableText))
-            .map((field) => field.controller.text),
-        contains('Arregla el parser'),
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
       );
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-      expect(gateway.calls, isEmpty);
       expect(gateway.submissions, isEmpty);
       expect(tester.takeException(), isNull);
     });
 
-    for (final flag in ['_cancelled', '_stopped', '_pipeline']) {
-      testWidgets('rpl1215 no chips under an assistant row marked $flag', (
-        tester,
-      ) async {
-        final gateway = _QuickReplyGateway();
-        await pumpChat(
-          tester,
-          desktopGateway: gateway,
-          connection: _remoteConn('conn-qr$flag'),
-          messages: [
-            {
-              'role': 'assistant',
-              'id': 'a-qr-flag',
-              'content': 'Lo dejé a medias. ¿Quieres que siga?',
-              flag: true,
-            },
-            {'role': 'user', 'id': 'u-qr-flag', 'content': 'Arregla el parser'},
-          ],
-          chatState: ChatPipelineState.completed,
-        );
-        await tester.pump(const Duration(milliseconds: 400));
-        expect(chip(0), findsNothing);
-        expect(smart, findsNothing);
-        expect(gateway.calls, isEmpty);
-        expect(tester.takeException(), isNull);
-      });
-    }
-
-    const failedTurn = {
-      'role': 'assistant_error',
-      'id': 'e-qr-1',
-      'content': 'El proveedor no respondió.',
-    };
-    const unansweredUser = {
-      'role': 'user',
-      'id': 'u-qr-2',
-      'content': 'Aplícalo',
-    };
-    for (final (name, rows, state) in [
-      (
-        'a failed turn after a new prompt',
-        [failedTurn, unansweredUser, ...finishedTurn],
-        ChatPipelineState.failed,
-      ),
-      (
-        'a failed step right after the answer',
-        [failedTurn, ...finishedTurn],
-        ChatPipelineState.failed,
-      ),
-      (
-        'a prompt nobody answered yet',
-        [unansweredUser, ...finishedTurn],
-        ChatPipelineState.idle,
-      ),
-    ]) {
-      testWidgets('rpl1215 no chips after $name', (tester) async {
-        final gateway = _QuickReplyGateway();
-        await pumpChat(
-          tester,
-          desktopGateway: gateway,
-          connection: _remoteConn('conn-qr-error'),
-          messages: rows,
-          chatState: state,
-        );
-        await tester.pump(const Duration(milliseconds: 400));
-        // The older finished answer must not lend its chips to a later turn.
-        expect(chip(0), findsNothing);
-        expect(smart, findsNothing);
-        expect(gateway.calls, isEmpty);
-        expect(tester.takeException(), isNull);
-      });
-    }
-
-    testWidgets('rpl1215 no chips over an answer with its own suggestions', (
+    testWidgets('cs1215 the answer\'s own suggestions still render', (
       tester,
     ) async {
-      final gateway = _QuickReplyGateway();
+      final gateway = _SubmissionGateway();
       await pumpChat(
         tester,
         desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-own'),
+        connection: _remoteConn('conn-cs-server-suggestions'),
         messages: const [
           {
             'role': 'assistant',
-            'id': 'a-qr-own',
+            'id': 'a-sg-1',
             'content':
-                'He revisado el parser.\n\nSi quieres, puedo:\n'
-                '- resumirlo\n- ampliarlo',
+                'He revisado el parser.\n\n'
+                'Si quieres, puedo:\n- Aplica el cambio\n- Enséñame el diff',
           },
-          {'role': 'user', 'id': 'u-qr-own', 'content': 'Revisa el parser'},
-        ],
-        chatState: ChatPipelineState.completed,
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      // The answer's own offers are painted; the rail stays away.
-      expect(find.textContaining('resumirlo'), findsWidgets);
-      expect(chip(0), findsNothing);
-      expect(smart, findsNothing);
-      expect(gateway.calls, isEmpty);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 ✨ sends the typed text of a message with files', (
-      tester,
-    ) async {
-      final gateway = _QuickReplyGateway();
-      await pumpChat(
-        tester,
-        desktopGateway: gateway,
-        connection: _remoteConn('conn-qr-attach'),
-        messages: const [
-          {
-            'role': 'assistant',
-            'id': 'a-qr-attach',
-            'content': 'El contrato vence en mayo. ¿Lo resumo?',
-          },
-          {
-            'role': 'user',
-            'id': 'u-qr-attach',
-            'content': '[📎 contrato.pdf · 31 B]\nRevisa el contrato',
-          },
+          {'role': 'user', 'id': 'u-sg-1', 'content': 'Arregla el parser'},
         ],
       );
       await tester.pump(const Duration(milliseconds: 400));
-      await tester.tap(smart);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-
-      expect(gateway.calls, hasLength(1));
-      expect(gateway.calls.single.lastUser, 'Revisa el contrato');
-      expect(gateway.calls.single.lastAssistant, contains('¿Lo resumo?'));
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('rpl1215 the transcript padding stays frozen while away', (
-      tester,
-    ) async {
-      final history = scrollableChatHistory('carril congelado');
-      await pumpChat(
-        tester,
-        desktopGateway: _QuickReplyGateway(),
-        connection: _remoteConn('conn-rpl-frozen'),
-        messages: history,
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(chip(0), findsOneWidget);
-      double bottomPadding() =>
-          (tester.widget<ListView>(chatListFinder()).padding! as EdgeInsets)
-              .bottom;
-      final controller = tester.widget<ListView>(chatListFinder()).controller!;
-      final withChips = bottomPadding();
-      // Base padding (12) plus the rail's measured height.
-      expect(withChips, greaterThan(12 + 20));
-
-      // Away from the latest message the rail hides but its padding stays:
-      // only the arrow adds its 48.
-      controller.jumpTo(120);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(chip(0), findsNothing);
-      expect(bottomPadding(), withChips + 48);
-
-      // The composer gets text while the reader is away: the chips are no
-      // longer due, yet the padding must not move under the reader.
-      composer(tester).text = 'Mi respuesta';
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(bottomPadding(), withChips + 48);
-
-      // Back at the latest message the pending measure (no rail) applies.
-      controller.jumpTo(0);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(chip(0), findsNothing);
-      expect(bottomPadding(), 12);
-
-      composer(tester).text = '';
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(chip(0), findsOneWidget);
-      expect(bottomPadding(), withChips);
+      expect(find.byType(HermesSuggestions), findsOneWidget);
+      expect(find.text('Aplica el cambio'), findsOneWidget);
+      expectNoQuickReplies();
       expect(tester.takeException(), isNull);
     });
   });
@@ -36402,26 +35729,81 @@ class _Dup9340HistoryGateway extends _UiRewindGateway
   }
 }
 
-class _QuickReplyGateway extends _SubmissionGateway
-    implements HermesQuickReplySuggestionGateway {
-  bool available = true;
-  List<String> ideas = const ['Sí, aplícalo', 'Enséñame el diff'];
-  final calls = <({String lastAssistant, String lastUser, String profile})>[];
+/// REST transcript of [total] rows served newest first in pages of 120.
+/// Older pages can be held until [completeOlder], and the next older read
+/// can fail once.
+class _EarlierHistoryPages {
+  _EarlierHistoryPages({
+    this.total = 240,
+    this.holdOlder = false,
+    this.failNext = false,
+  });
 
-  @override
-  bool get quickReplySuggestionsAvailable => available;
+  final int total;
+  final bool holdOlder;
+  bool failNext;
+  final requests = <Uri>[];
 
-  @override
-  Future<List<String>> suggestQuickReplies({
-    required String lastAssistant,
-    required String lastUser,
-    String profile = '',
-  }) async {
-    calls.add((
-      lastAssistant: lastAssistant,
-      lastUser: lastUser,
-      profile: profile,
-    ));
-    return ideas;
+  /// Reads of earlier pages (offset past the newest page).
+  Iterable<Uri> get older => requests.where(
+    (uri) => int.parse(uri.queryParameters['offset'] ?? '0') > 0,
+  );
+  final _held = <({Completer<http.Response> response, int offset})>[];
+
+  ApiClient api() {
+    final client = ApiClient(
+      baseUrl: 'https://example.test',
+      apiKey: 'fixture',
+      httpClient: MockClient((request) {
+        requests.add(request.url);
+        final offset = int.parse(request.url.queryParameters['offset'] ?? '0');
+        if (offset > 0 && failNext) {
+          failNext = false;
+          return Future.value(http.Response('super-secret-stack', 503));
+        }
+        if (offset > 0 && holdOlder) {
+          final response = Completer<http.Response>();
+          _held.add((response: response, offset: offset));
+          return response.future;
+        }
+        return Future.value(_page(offset));
+      }),
+    );
+    addTearDown(client.close);
+    return client;
+  }
+
+  void completeOlder() {
+    final next = _held.removeAt(0);
+    next.response.complete(_page(next.offset));
+  }
+
+  http.Response _page(int offset) {
+    final end = math.max(0, total - offset);
+    final start = math.max(0, end - 120);
+    final page = <Map<String, dynamic>>[
+      for (var index = start + 1; index <= end; index++)
+        {
+          'id': index,
+          'message_id': 'anchor-history-$index',
+          'role': index.isOdd ? 'user' : 'assistant',
+          'content': 'ANCLA_HISTORIAL_$index',
+        },
+    ];
+    return http.Response(
+      jsonEncode({
+        'object': 'list',
+        'session_id': 'sess-test',
+        'messages': page,
+        'pagination': {
+          'limit': 120,
+          'offset': offset,
+          'order': 'latest',
+          'returned': page.length,
+        },
+      }),
+      200,
+      headers: const {'content-type': 'application/json'},
+    );
   }
 }

@@ -22,7 +22,6 @@ import '../widgets/chat/chat_message_frame.dart';
 import '../widgets/chat/composer_pasted_image.dart';
 import '../widgets/chat/console_composer.dart';
 import '../widgets/chat/chat_message_selection_area.dart';
-import '../widgets/chat/chat_quick_reply_bar.dart';
 // Chat screen with real-time streaming via REST API.
 // Uses REST endpoints: POST /api/sessions/{id}/chat and
 // GET /api/sessions/{id}/messages.
@@ -169,7 +168,6 @@ import '../utils/assistant_content.dart';
 import '../utils/assistant_operational_artifacts.dart';
 import '../utils/assistant_suggestions.dart';
 import '../utils/chat_ask_about.dart';
-import '../utils/chat_quick_replies.dart';
 import '../utils/generated_artifact_markdown_scanner.dart';
 import '../utils/streaming_normalizer.dart';
 import 'activity_screen.dart';
@@ -185,6 +183,8 @@ import 'recovery_center_screen.dart';
 import 'soul_screen.dart';
 import 'tasks_screen.dart';
 import 'chat_prompt_index.dart';
+import '../services/pinned_prompt_prefs.dart';
+import '../widgets/chat/chat_pinned_prompt_header.dart';
 import 'chat_render_projection.dart';
 import '../widgets/action_approval.dart';
 import '../widgets/agent_task_widgets.dart';
@@ -1503,7 +1503,17 @@ class _ChatScreenState extends State<ChatScreen>
   String get _lastPrompt => _chat.lastPrompt;
 
   String? _error;
-  bool _loadingEarlierMessages = false;
+  // Earlier history loads by itself near the top of the transcript. The
+  // progress row listens to this notifier, so a load never rebuilds rows.
+  final ValueNotifier<bool> _loadingEarlierMessages = ValueNotifier(false);
+
+  // One automatic load per gesture: a pointer down arms it, a load disarms
+  // it, so a single fling (or a reader resting near the top) loads once.
+  bool _earlierAutoArmed = true;
+
+  /// How close to the oldest loaded row (in viewport heights) the reader
+  /// has to be before the next page is fetched.
+  static const double _earlierAutoLoadScreens = 1.5;
   int _messageRefreshEpoch = 0;
   ({int epoch, bool passiveOnly, bool published})? _messageRefreshInFlight;
   int? get _messageRefreshInFlightEpoch => _messageRefreshInFlight?.epoch;
@@ -1844,7 +1854,6 @@ class _ChatScreenState extends State<ChatScreen>
     if (_scrollToBottomVisibility.value == value) return;
     _recordTranscriptOverlayExtentChange(value ? 48 : -48);
     _scrollToBottomVisibility.value = value;
-    if (!value) _applyQuickReplyExtent();
     if (value) {
       _beginAwayFromBottom();
     } else {
@@ -1957,6 +1966,209 @@ class _ChatScreenState extends State<ChatScreen>
       return null;
     }
     return prompt;
+  }
+
+  String get _pinnedPromptChatKey =>
+      '${widget.connection.id}.${widget.session.logicalId}';
+
+  /// The slim one-line pinned prompt. It listens to the pinned prompt and
+  /// its preferences itself, so following the scroll never rebuilds the
+  /// screen or the transcript rows.
+  Widget _buildPinnedPromptHeader(Strings str) {
+    final prefs = PinnedPromptPrefs.shared;
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        _stickyPrompt,
+        _transcriptConcealed,
+        prefs,
+      ]),
+      builder: (context, _) {
+        final candidate = _stickyPrompt.value;
+        final prompt =
+            candidate == null ||
+                _findOpen ||
+                _transcriptConcealed.value ||
+                !prefs.enabled ||
+                prefs.isHiddenFor(_pinnedPromptChatKey)
+            ? null
+            : candidate;
+        final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+        Widget child = const SizedBox.shrink(
+          key: ValueKey('chat-pinned-prompt-none'),
+        );
+        if (prompt != null) {
+          final parsed = _parseUserContent(
+            (prompt['content'] ?? '').toString(),
+          );
+          var text = parsed.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+          if (text.isEmpty && parsed.attachments.isNotEmpty) {
+            text = parsed.attachments.first.name;
+          }
+          child = KeyedSubtree(
+            key: ValueKey(identityHashCode(prompt)),
+            child: ChatPinnedPromptHeader(
+              key: const ValueKey('chat-sticky-prompt'),
+              youLabel: str.cs1215PinnedPromptYou,
+              text: text,
+              attachmentCount: parsed.attachments.length,
+              semanticLabel: str.pj1215StickyPromptLabel,
+              hideLabel: str.cs1215PinnedPromptHide,
+              onTap: () => unawaited(_revealStickyPrompt(prompt)),
+              onHide: () => unawaited(prefs.hideFor(_pinnedPromptChatKey)),
+            ),
+          );
+        }
+        return AnimatedSwitcher(
+          duration: reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 150),
+          layoutBuilder: (current, previous) => Stack(
+            alignment: Alignment.topCenter,
+            children: [...previous, ?current],
+          ),
+          transitionBuilder: (child, animation) => AnimatedBuilder(
+            animation: animation,
+            child: child,
+            builder: (context, child) {
+              final exiting = animation.status == AnimationStatus.reverse;
+              return IgnorePointer(
+                ignoring: exiting,
+                child: ExcludeSemantics(
+                  excluding: exiting,
+                  child: FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween(
+                        begin: const Offset(0, -0.25),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          child: child,
+        );
+      },
+    );
+  }
+
+  /// Small row under the pinned prompt: a progress line while an earlier
+  /// page loads, or a retry pill after a failed one. Nothing otherwise.
+  Widget _buildEarlierHistoryRow(Strings str) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _loadingEarlierMessages,
+      builder: (context, loading, _) {
+        final colors = Theme.of(context).hermes;
+        final retry =
+            !loading &&
+            _chatBound &&
+            _chat.hasEarlierMessages &&
+            _chat.earlierMessagesLoadFailed;
+        if (!loading && !retry) return const SizedBox.shrink();
+        final decoration = BoxDecoration(
+          color: colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: colors.divider.withValues(alpha: 0.55)),
+        );
+        final label = TextStyle(fontSize: 12, color: colors.textSecondary);
+        if (loading) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Semantics(
+                liveRegion: true,
+                label: str.cs1215LoadingEarlier,
+                child: ExcludeSemantics(
+                  child: Container(
+                    key: const ValueKey('chat-earlier-loading'),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: decoration,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox.square(
+                          dimension: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: colors.accent,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            str.cs1215LoadingEarlier,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: label,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Semantics(
+              button: true,
+              label: str.chaLoadEarlierMessages,
+              child: GestureDetector(
+                key: const ValueKey('chat-earlier-retry'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  _earlierAutoArmed = false;
+                  unawaited(_loadEarlierMessages());
+                },
+                child: ExcludeSemantics(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    child: Center(
+                      widthFactor: 1,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: decoration,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.refresh_rounded,
+                              size: 14,
+                              color: colors.accent,
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                str.chaLoadEarlierMessages,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: label,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _revealStickyPrompt(Map<String, dynamic> prompt) async {
@@ -2189,37 +2401,6 @@ class _ChatScreenState extends State<ChatScreen>
   // Alto medido del hueco de las pastillas de actividad. Notifier aparte por
   // la misma razón que la flecha: cambiar no reconstruye la pantalla.
   final ValueNotifier<double> _activityPillExtent = ValueNotifier(0);
-
-  /// Keyboard up, for the quick reply rail (a notifier: no screen rebuild).
-  final ValueNotifier<bool> _keyboardOpen = ValueNotifier(false);
-
-  /// Height the quick reply rail pads the transcript with. While the reader
-  /// is away from the latest message it stays frozen (the rail hides) and the
-  /// last measure is applied on return, so the padding never changes under
-  /// someone reading history.
-  final ValueNotifier<double> _quickReplyExtent = ValueNotifier(0);
-  double _quickReplyMeasured = 0;
-
-  void _setQuickReplyExtent(double value) {
-    _quickReplyMeasured = value;
-    if (_scrollToBottomVisibility.value || _keyboardInsetMoving) return;
-    _applyQuickReplyExtent();
-  }
-
-  /// The rail hides as soon as the keyboard starts moving, but the transcript
-  /// padding waits until the inset settles: changing it rebuilds every visible
-  /// row, and doing that in the middle of the IME animation is the jank the
-  /// inset watcher exists to avoid.
-  bool _keyboardInsetMoving = false;
-  double? _lastKeyboardInset;
-  Timer? _keyboardSettleTimer;
-
-  void _applyQuickReplyExtent() {
-    final value = _quickReplyMeasured;
-    if (_disposed || _quickReplyExtent.value == value) return;
-    _recordTranscriptOverlayExtentChange(value - _quickReplyExtent.value);
-    _quickReplyExtent.value = value;
-  }
 
   /// Compactación (automática o manual) de la sesión abierta: mide el tiempo,
   /// aprende la duración típica y conserva el resultado unos segundos. La
@@ -2676,6 +2857,11 @@ class _ChatScreenState extends State<ChatScreen>
       _slashCompletions.cancel();
       _closeReferencePalette();
     }
+    // Only the slash/reference palettes read composer focus in build. With
+    // both empty a focus flip changes nothing on screen, and a screen-wide
+    // setState here rebuilds every cached transcript row on the very frame
+    // the keyboard starts opening or closing.
+    if (_slashSuggestions.isEmpty && _referenceItems.isEmpty) return;
     if (mounted && !_disposed) setState(() {});
   }
 
@@ -3960,108 +4146,6 @@ class _ChatScreenState extends State<ChatScreen>
     _textController.value = insertQuoteIntoComposer(
       _textController.value,
       quote,
-    );
-    _textFocusNode.requestFocus();
-  }
-
-  /// The finished turn quick replies answer, or null while anything else
-  /// owns the conversation (streaming, a pending card, a queue, read-only).
-  ({Object turnKey, String answer, String lastUser})? _quickReplySource() {
-    if (!_chatBound ||
-        _isBotChatSurface ||
-        widget.connection.readOnly ||
-        _cronRunReadOnly ||
-        _chat.conflictReadOnly ||
-        _chat.isStreaming ||
-        _sending ||
-        _compressingSession ||
-        _attachmentSubmitting ||
-        _interactiveMessageRefreshPending ||
-        _chat.pendingApproval != null ||
-        _chat.pendingInteractivePrompt != null ||
-        _chat.queuedMessages.isNotEmpty ||
-        _editingUserMessage ||
-        _isRecording ||
-        _transcribing) {
-      return null;
-    }
-    Map<String, dynamic>? assistant;
-    var lastUser = '';
-    for (final message in _messages) {
-      final role = message['role'];
-      if (assistant == null) {
-        if (role == 'assistant') {
-          assistant = message;
-          continue;
-        }
-        if (role == 'user' || role == 'assistant_error') return null;
-        continue;
-      }
-      if (role == 'user') {
-        lastUser = _parseUserContent(
-          (message['content'] ?? '').toString(),
-        ).text;
-        break;
-      }
-    }
-    if (assistant == null ||
-        assistant['_cancelled'] == true ||
-        assistant['_stopped'] == true ||
-        assistant['_pipeline'] == true) {
-      return null;
-    }
-    final content = (assistant['content'] ?? '').toString();
-    final projection = projectAssistantSuggestions(
-      GeneratedMediaService.stripDirectives(splitReasoning(content).answer),
-    );
-    // The answer already ends with its own tappable offers.
-    if (projection.hasSuggestions) return null;
-    final answer = projection.body.trim();
-    if (answer.isEmpty) return null;
-    final id = assistant['id'] ?? assistant['message_id'] ?? '';
-    return (
-      turnKey: '$id:${content.length}:${content.hashCode}',
-      answer: answer,
-      lastUser: lastUser,
-    );
-  }
-
-  Widget _buildQuickReplyBar({bool suppressed = false}) {
-    final strings = Strings.of(context);
-    final source = suppressed ? null : _quickReplySource();
-    return ChatQuickReplyBar(
-      key: const ValueKey('chat-quick-replies'),
-      turnKey: source?.turnKey,
-      replies: source == null
-          ? const []
-          : heuristicQuickReplies(source.answer, strings),
-      composer: _textController,
-      awayFromLatest: _scrollToBottomVisibility,
-      keyboardOpen: _keyboardOpen,
-      onFill: _fillComposerFromQuickReply,
-      smartLabel: strings.rpl1215SmartSuggest,
-      loadSmart: source != null && _chat.canSuggestQuickReplies
-          ? _loadSmartQuickReplies
-          : null,
-    );
-  }
-
-  /// Only ever runs from a tap on the ✨ chip.
-  Future<List<String>> _loadSmartQuickReplies() async {
-    final source = _quickReplySource();
-    if (source == null) return const [];
-    return _chat.suggestQuickReplies(
-      lastAssistant: source.answer,
-      lastUser: source.lastUser,
-    );
-  }
-
-  /// A quick reply fills an empty composer for editing; it is never sent.
-  void _fillComposerFromQuickReply(String reply) {
-    if (!mounted || _textController.text.isNotEmpty) return;
-    _textController.value = TextEditingValue(
-      text: reply,
-      selection: TextSelection.collapsed(offset: reply.length),
     );
     _textFocusNode.requestFocus();
   }
@@ -5634,20 +5718,6 @@ class _ChatScreenState extends State<ChatScreen>
   /// reconstruía la pantalla completa (transcript incluido) solo para
   /// reprogramar este temporizador.
   void _onKeyboardBottomInset(double bottomInset) {
-    if (!_disposed) {
-      _keyboardOpen.value = bottomInset > 0;
-      final previous = _lastKeyboardInset;
-      _lastKeyboardInset = bottomInset;
-      if (previous != null && previous != bottomInset) {
-        _keyboardInsetMoving = true;
-        _keyboardSettleTimer?.cancel();
-        _keyboardSettleTimer = Timer(const Duration(milliseconds: 200), () {
-          _keyboardInsetMoving = false;
-          if (_disposed || _scrollToBottomVisibility.value) return;
-          _applyQuickReplyExtent();
-        });
-      }
-    }
     if (_disposed || !mounted || bottomInset <= 0 || _findOpen) return;
     // Si ya está al fondo, el resize del viewport mantiene visible el último
     // mensaje. No programes un scroll/setState durante la animación del IME.
@@ -7738,13 +7808,11 @@ class _ChatScreenState extends State<ChatScreen>
     _transcriptConcealed
       ..removeListener(_scheduleStickyPromptUpdate)
       ..dispose();
+    _loadingEarlierMessages.dispose();
     _stickyPrompt.dispose();
     _findStatus.dispose();
     _findActiveMessage.dispose();
     _activityPillExtent.dispose();
-    _keyboardSettleTimer?.cancel();
-    _keyboardOpen.dispose();
-    _quickReplyExtent.dispose();
     _compaction.dispose();
     _sessionContextMetrics.dispose();
     super.dispose();
@@ -7878,15 +7946,13 @@ class _ChatScreenState extends State<ChatScreen>
     }
     _scheduleMessageRefreshViewportReanchor();
     _scheduleStickyPromptUpdate();
+    _maybeAutoLoadEarlier();
     // Lista reverse:true → offset 0 es el FONDO (mensaje más nuevo) y
     // maxScrollExtent es lo más antiguo. "Estás abajo" = cerca de
     // minScrollExtent; medir contra maxScrollExtent detectaría lo contrario
     // (cerca de lo más viejo) → el botón "ir abajo" salía invertido en chats
     // largos y el auto-seguimiento del streaming no enganchaba.
     final atBottom = _isNearBottom;
-    // El historial anterior es una acción explícita. Llegar al borde solo hace
-    // visible el control flotante; nunca dispara red ni encadena páginas por un
-    // rebote de física/semántica de "scroll to top".
     // La flecha representa una distancia real al final, no el estado interno
     // del seguimiento. Un toque sin desplazamiento puede pausar el auto-follow
     // durante unos milisegundos, pero no debe enseñar una acción inútil si el
@@ -7902,33 +7968,66 @@ class _ChatScreenState extends State<ChatScreen>
     }
   }
 
+  bool get _appLocked =>
+      context
+          .findAncestorStateOfType<HermesAppState>()
+          ?.appLock
+          .locked
+          .value ??
+      false;
+
+  /// Loads the next earlier page when the reader is within
+  /// [_earlierAutoLoadScreens] viewports of the oldest loaded row. Only once
+  /// per gesture, never while App Lock is locked or a landing walk runs.
+  void _maybeAutoLoadEarlier() {
+    if (!_earlierAutoArmed ||
+        _disposed ||
+        !_chatBound ||
+        _loadingEarlierMessages.value ||
+        !_chat.hasEarlierMessages ||
+        _transcriptConcealed.value ||
+        !_scrollController.hasClients) {
+      return;
+    }
+    final position = _scrollController.position;
+    if (!position.hasContentDimensions || !position.hasViewportDimension) {
+      return;
+    }
+    final toTop = position.maxScrollExtent - position.pixels;
+    if (toTop > _earlierAutoLoadScreens * position.viewportDimension) return;
+    if (_appLocked) return;
+    _earlierAutoArmed = false;
+    unawaited(_loadEarlierMessages());
+  }
+
   Future<void> _loadEarlierMessages() async {
-    if (_loadingEarlierMessages || !_chat.hasEarlierMessages) return;
-    final position = _scrollController.hasClients
-        ? _scrollController.position
-        : null;
-    final previousPixels = position?.pixels;
-    final previousMax = position?.maxScrollExtent;
-    setState(() {
-      _loadingEarlierMessages = true;
-      _coreReadCoverageNoticeDismissed = false;
-    });
-    await _chat.loadEarlierMessages(continuePastInvisible: true);
-    if (_disposed || !mounted) return;
-    setState(() => _loadingEarlierMessages = false);
-    if (previousPixels == null || previousMax == null) return;
+    if (_loadingEarlierMessages.value || !_chat.hasEarlierMessages) return;
+    if (_appLocked) return;
+    _loadingEarlierMessages.value = true;
+    if (_coreReadCoverageNoticeDismissed) {
+      setState(() => _coreReadCoverageNoticeDismissed = false);
+    }
+    try {
+      await _chat.loadEarlierMessages(continuePastInvisible: true);
+    } finally {
+      if (!_disposed) _loadingEarlierMessages.value = false;
+    }
+    if (_disposed || !mounted || !_scrollController.hasClients) return;
+    // The rows are published but not laid out yet: this is where the
+    // reader is right now (a fling may have moved on since the request).
+    final anchorPixels = _scrollController.position.pixels;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_disposed || !mounted || !_scrollController.hasClients) return;
       final next = _scrollController.position;
-      final extentDelta = next.maxScrollExtent - previousMax;
-      if (extentDelta <= 0) return;
-      // The transcript is reverse:true: older rows extend the far (max) edge,
-      // while every existing row keeps its bottom-origin coordinate. Consume
-      // the measured extent delta by retaining the captured coordinate rather
-      // than following the new max edge.
-      next.jumpTo(
-        previousPixels.clamp(next.minScrollExtent, next.maxScrollExtent),
+      // The transcript is reverse:true: older rows extend the far (max) edge
+      // and every existing row keeps its bottom-origin coordinate, so the
+      // reader stays put as long as the offset does. Only restore it if the
+      // layout moved it; jumping to the same offset would stop a fling.
+      final target = anchorPixels.clamp(
+        next.minScrollExtent,
+        next.maxScrollExtent,
       );
+      if ((next.pixels - target).abs() > 0.5) next.jumpTo(target);
     });
   }
 
@@ -13466,86 +13565,14 @@ class _ChatScreenState extends State<ChatScreen>
                                   top: 0,
                                   left: 0,
                                   right: 0,
-                                  child: ListenableBuilder(
-                                    listenable: Listenable.merge([
-                                      _stickyPrompt,
-                                      _transcriptConcealed,
-                                    ]),
-                                    builder: (context, _) {
-                                      final prompt = _stickyPrompt.value;
-                                      if (prompt == null ||
-                                          _findOpen ||
-                                          _transcriptConcealed.value) {
-                                        return const SizedBox.shrink();
-                                      }
-                                      return Semantics(
-                                        button: true,
-                                        label: str.pj1215StickyPromptLabel,
-                                        child: GestureDetector(
-                                          key: const ValueKey(
-                                            'chat-sticky-prompt',
-                                          ),
-                                          behavior: HitTestBehavior.opaque,
-                                          onTap: () => unawaited(
-                                            _revealStickyPrompt(prompt),
-                                          ),
-                                          // The user bubble is translucent
-                                          // by design; pinned over the reply
-                                          // it showed the text underneath.
-                                          // Like Desktop's sticky prompt,
-                                          // the reply is hidden behind it:
-                                          // an opaque field of the screen
-                                          // background.
-                                          child: ColoredBox(
-                                            color: Theme.of(
-                                              context,
-                                            ).scaffoldBackgroundColor,
-                                            child: ClipRect(
-                                              child: ConstrainedBox(
-                                                constraints:
-                                                    const BoxConstraints(
-                                                      maxHeight: 96,
-                                                    ),
-                                                child: SingleChildScrollView(
-                                                  physics:
-                                                      const NeverScrollableScrollPhysics(),
-                                                  child: IgnorePointer(
-                                                    child: ExcludeSemantics(
-                                                      child: _UserMessage(
-                                                        content:
-                                                            prompt['content']
-                                                                as String,
-                                                        compact: true,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                                Positioned(
-                                  top: 8,
-                                  left: 0,
-                                  right: 0,
-                                  height: 48,
-                                  child: _ChatTopButton(
-                                    controller: _scrollController,
-                                    hasEarlierMessages:
-                                        _chat.hasEarlierMessages,
-                                    loading: _loadingEarlierMessages,
-                                    contentChanges: _liveAssistantFrame,
-                                    transcriptOverlayExtent: () =>
-                                        _activityPillExtent.value +
-                                        _quickReplyExtent.value +
-                                        (_scrollToBottomVisibility.value
-                                            ? 48
-                                            : 0),
-                                    onLoadEarlier: _loadEarlierMessages,
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      _buildPinnedPromptHeader(str),
+                                      _buildEarlierHistoryRow(str),
+                                    ],
                                   ),
                                 ),
                                 // Bottom overlay of the transcript. The
@@ -13740,18 +13767,6 @@ class _ChatScreenState extends State<ChatScreen>
                                               ),
                                             ),
                                           ],
-                                        ),
-                                      ),
-                                      // Quick replies float under the pill,
-                                      // never in the bottom bars: their
-                                      // measured height pads the transcript
-                                      // (frozen while the reader is away), so
-                                      // they never move what is being read.
-                                      _BottomGapWhenVisible(
-                                        gap: 4,
-                                        onExtent: _setQuickReplyExtent,
-                                        child: _buildQuickReplyBar(
-                                          suppressed: showVoiceSurface,
                                         ),
                                       ),
                                     ],
@@ -16901,23 +16916,196 @@ class _ChatScreenState extends State<ChatScreen>
       _scheduleStickyPromptUpdate();
     }
 
+    // Overlay extents (activity pill, arrow) only change the list
+    // padding. Reusing the same delegate lets the sliver skip rebuilding
+    // every cached row when the ListenableBuilder below re-runs.
+    final rowDelegate = SliverChildBuilderDelegate(
+      (context, index) {
+        final entry = entries[index];
+        if (entry is _RetainedTerminalErrorChatListEntry) {
+          return _buildRetainedTerminalErrorEntry(entry);
+        }
+        final plan = entry.sourcePlan;
+        final assistantSlice = entry is _AssistantSliceChatListEntry
+            ? entry.slice
+            : null;
+        final sourceMessages = _sourceMessagesForRenderPlan(plan);
+        final reportsPreservedTurnInsertion = sourceMessages.any(
+          _readerPreservedTurnInsertions.contains,
+        );
+        final unit = _materializeRenderUnit(plan);
+        Widget child = _wrapFindHighlight(
+          _buildRenderUnit(unit, assistantSlice: assistantSlice),
+          unit: unit,
+          sourceMessages: sourceMessages,
+        );
+        child = _wrapReactions(
+          child,
+          unit: unit,
+          assistantSlice: assistantSlice,
+        );
+        if (_newSinceFirstUnread != null &&
+            (assistantSlice?.showHeader ?? true) &&
+            sourceMessages.any(_isNewSinceFirstUnread)) {
+          // Inside the row (not a list entry of its own): indices and
+          // the reader anchors keep their slots, and the landing jump
+          // aligns the divider with the top of the screen.
+          child = Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              RoomSeparator(
+                key: const ValueKey('chat-new-since-divider'),
+                label: Strings.of(context).sc1215NewSinceYouLeft,
+                highlight: true,
+              ),
+              child,
+            ],
+          );
+        }
+        final assistantMessage =
+            unit is Map<String, dynamic> &&
+                unit['role'] == 'assistant' &&
+                unit['_pipeline'] != true
+            ? unit
+            : null;
+        final ownsAnchor = assistantSlice?.showHeader ?? true;
+        Widget result = child;
+        if (ownsAnchor) {
+          result = ChatAnswerAnchor(
+            onLayout: (anchor) {
+              var added = false;
+              for (final message in sourceMessages) {
+                if (!identical(_messageAnchors[message], anchor)) {
+                  _messageAnchors[message] = anchor;
+                  added = true;
+                }
+              }
+              if (added) _scheduleStickyPromptUpdate();
+            },
+            onDetach: (anchor) {
+              for (final message in sourceMessages) {
+                if (identical(_messageAnchors[message], anchor)) {
+                  _messageAnchors.remove(message);
+                }
+              }
+            },
+            child: child,
+          );
+        } else if (sourceMessages.isNotEmpty) {
+          // A later slice of a long reply: it has no reader anchor of
+          // its own, but when it spans the viewport top the sticky
+          // prompt needs to know which reply it belongs to.
+          final replyMessage = sourceMessages.first;
+          result = ChatAnswerAnchor(
+            onLayout: (anchor) {
+              if (identical(_stickySliceAnchors[anchor], replyMessage)) {
+                return;
+              }
+              _stickySliceAnchors[anchor] = replyMessage;
+              _scheduleStickyPromptUpdate();
+            },
+            onDetach: (anchor) => _stickySliceAnchors.remove(anchor),
+            child: child,
+          );
+        }
+        if (assistantSlice != null && assistantMessage != null) {
+          result = KeyedSubtree(
+            key: ValueKey((assistantMessage, assistantSlice.index)),
+            child: result,
+          );
+        }
+        // Entrada suave del mensaje NUEVO: solo el más reciente (índice 0, la
+        // lista es reverse). El turno que esta superficie ya presentó queda
+        // fuera: su host crece por streaming y un translate adicional de 8 px
+        // se percibe como un pequeño tirón si el usuario empieza a leer o
+        // arrastrar. La guarda sobrevive al terminal para que cancelación,
+        // error o una reconciliación tardía tampoco animen de nuevo la fila.
+        // A response group grows at its newest row; its oldest row is
+        // the stable identity, so a joining row never replays the
+        // entrance nor remounts the bubble.
+        final groupStart =
+            plan is ChatMessageUnitPlan && sourceMessages.length > 1
+            ? sourceMessages.last
+            : null;
+        final key = _entranceKey(groupStart ?? unit);
+        final belongsToSurfaceTurn =
+            _surfaceTurnSerial == _assistantEntranceSerial &&
+            (_chat.isStreaming || _surfaceTurnTerminal);
+        if (index == 0 && key != null && !belongsToSurfaceTurn) {
+          result = MotionEntrance(key: ValueKey<Object>(key), child: result);
+        }
+        if (reportsPreservedTurnInsertion) {
+          result = _SurfaceTurnInitialExtentReporter(
+            onInitialExtent: _streamingViewportLock.record,
+            child: result,
+          );
+        }
+        // Cada mensaje repinta en su propia capa: el host vivo a 30 Hz (y el
+        // reveal gradual) no invalida la rasterización del historial visible.
+        // El host vivo/retenido queda fuera: su geometría la mide el lock del
+        // viewport y una capa intermedia rompe esa medición.
+        final keepsLiveHost =
+            assistantMessage != null && _messageKeepsLiveHost(assistantMessage);
+        final isLiveHead =
+            _chat.isStreaming &&
+            _messages.isNotEmpty &&
+            identical(unit, _messages.first);
+        if (!keepsLiveHost && !isLiveHead) {
+          result = RepaintBoundary(child: result);
+        }
+        final durableEntryIds =
+            (groupStart == null ? sourceMessages : [groupStart])
+                .map((message) {
+                  final messageId = canonicalTranscriptMessageId(message);
+                  if (messageId != null) return 'message:$messageId';
+                  final rowId = canonicalTranscriptRowId(message);
+                  return rowId == null ? null : 'row:$rowId';
+                })
+                .whereType<String>()
+                .toList(growable: false);
+        if (durableEntryIds.length ==
+            (groupStart == null ? sourceMessages.length : 1)) {
+          // This must remain the outermost list child. Sliver reconciliation
+          // can then retain the complete bubble subtree even when refresh
+          // replaces its source Map or runtime presentation wrappers change.
+          result = KeyedSubtree(
+            key: ValueKey<Object>((
+              'chat-render-entry',
+              durableEntryIds.join('\u0000'),
+              assistantSlice?.index,
+            )),
+            child: result,
+          );
+        }
+        return result;
+      },
+      childCount: entries.length,
+      addAutomaticKeepAlives: false,
+    );
     final transcript = ListenableBuilder(
       listenable: Listenable.merge([
         _activityPillExtent,
-        _quickReplyExtent,
         _scrollToBottomVisibility,
       ]),
       builder: (context, _) {
         final overlayExtent =
             _activityPillExtent.value +
-            _quickReplyExtent.value +
             (_scrollToBottomVisibility.value ? 48 : 0);
         return ChatScrollInteractionGuard(
-          onPointerDown: _pauseStreamingFollow,
-          onPointerMove: _trackStreamingScrollInteraction,
+          onPointerDown: (event) {
+            _earlierAutoArmed = true;
+            _pauseStreamingFollow(event);
+          },
+          onPointerMove: (event) {
+            _trackStreamingScrollInteraction(event);
+            // A transcript shorter than the screen never scrolls: dragging
+            // it down still asks for the earlier history.
+            if (event.delta.dy > 0) _maybeAutoLoadEarlier();
+          },
           onPointerUp: _finishStreamingScrollInteraction,
           onPointerCancel: _cancelStreamingScrollInteraction,
-          child: ListView.builder(
+          child: ListView.custom(
             controller: _scrollController,
             // En `reverse:true` el asistente vivo crece por debajo del contenido
             // que el lector está mirando. Conservar el mismo offset numérico hace
@@ -16938,180 +17126,16 @@ class _ChatScreenState extends State<ChatScreen>
             // Precarga ~1 pantalla extra fuera del viewport: al seguir el stream no
             // se materializan entradas frías en medio de un frame de scroll.
             scrollCacheExtent: const ScrollCacheExtent.pixels(1000),
-            itemCount: entries.length,
+            semanticChildCount: entries.length,
             // Una selección que sale del viewport no debe retener el RenderObject
             // (y con él todo un árbol Markdown) indefinidamente. Copiar el mensaje
             // completo sigue disponible en su cabecera y la selección visible se
             // mantiene dentro de cada bloque virtualizado.
-            addAutomaticKeepAlives: false,
             // No usar GlobalKey por índice: un rewind cambia los slots de golpe y
             // reparentar un árbol todavía dependiente del diálogo puede disparar
             // `_dependents.isEmpty` en Flutter. Las anclas de respuesta son
             // RenderObjects ligeros que no reutilizan el árbol Markdown.
-            itemBuilder: (context, index) {
-              final entry = entries[index];
-              if (entry is _RetainedTerminalErrorChatListEntry) {
-                return _buildRetainedTerminalErrorEntry(entry);
-              }
-              final plan = entry.sourcePlan;
-              final assistantSlice = entry is _AssistantSliceChatListEntry
-                  ? entry.slice
-                  : null;
-              final sourceMessages = _sourceMessagesForRenderPlan(plan);
-              final reportsPreservedTurnInsertion = sourceMessages.any(
-                _readerPreservedTurnInsertions.contains,
-              );
-              final unit = _materializeRenderUnit(plan);
-              Widget child = _wrapFindHighlight(
-                _buildRenderUnit(unit, assistantSlice: assistantSlice),
-                unit: unit,
-                sourceMessages: sourceMessages,
-              );
-              child = _wrapReactions(
-                child,
-                unit: unit,
-                assistantSlice: assistantSlice,
-              );
-              if (_newSinceFirstUnread != null &&
-                  (assistantSlice?.showHeader ?? true) &&
-                  sourceMessages.any(_isNewSinceFirstUnread)) {
-                // Inside the row (not a list entry of its own): indices and
-                // the reader anchors keep their slots, and the landing jump
-                // aligns the divider with the top of the screen.
-                child = Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    RoomSeparator(
-                      key: const ValueKey('chat-new-since-divider'),
-                      label: Strings.of(context).sc1215NewSinceYouLeft,
-                      highlight: true,
-                    ),
-                    child,
-                  ],
-                );
-              }
-              final assistantMessage =
-                  unit is Map<String, dynamic> &&
-                      unit['role'] == 'assistant' &&
-                      unit['_pipeline'] != true
-                  ? unit
-                  : null;
-              final ownsAnchor = assistantSlice?.showHeader ?? true;
-              Widget result = child;
-              if (ownsAnchor) {
-                result = ChatAnswerAnchor(
-                  onLayout: (anchor) {
-                    var added = false;
-                    for (final message in sourceMessages) {
-                      if (!identical(_messageAnchors[message], anchor)) {
-                        _messageAnchors[message] = anchor;
-                        added = true;
-                      }
-                    }
-                    if (added) _scheduleStickyPromptUpdate();
-                  },
-                  onDetach: (anchor) {
-                    for (final message in sourceMessages) {
-                      if (identical(_messageAnchors[message], anchor)) {
-                        _messageAnchors.remove(message);
-                      }
-                    }
-                  },
-                  child: child,
-                );
-              } else if (sourceMessages.isNotEmpty) {
-                // A later slice of a long reply: it has no reader anchor of
-                // its own, but when it spans the viewport top the sticky
-                // prompt needs to know which reply it belongs to.
-                final replyMessage = sourceMessages.first;
-                result = ChatAnswerAnchor(
-                  onLayout: (anchor) {
-                    if (identical(_stickySliceAnchors[anchor], replyMessage)) {
-                      return;
-                    }
-                    _stickySliceAnchors[anchor] = replyMessage;
-                    _scheduleStickyPromptUpdate();
-                  },
-                  onDetach: (anchor) => _stickySliceAnchors.remove(anchor),
-                  child: child,
-                );
-              }
-              if (assistantSlice != null && assistantMessage != null) {
-                result = KeyedSubtree(
-                  key: ValueKey((assistantMessage, assistantSlice.index)),
-                  child: result,
-                );
-              }
-              // Entrada suave del mensaje NUEVO: solo el más reciente (índice 0, la
-              // lista es reverse). El turno que esta superficie ya presentó queda
-              // fuera: su host crece por streaming y un translate adicional de 8 px
-              // se percibe como un pequeño tirón si el usuario empieza a leer o
-              // arrastrar. La guarda sobrevive al terminal para que cancelación,
-              // error o una reconciliación tardía tampoco animen de nuevo la fila.
-              // A response group grows at its newest row; its oldest row is
-              // the stable identity, so a joining row never replays the
-              // entrance nor remounts the bubble.
-              final groupStart =
-                  plan is ChatMessageUnitPlan && sourceMessages.length > 1
-                  ? sourceMessages.last
-                  : null;
-              final key = _entranceKey(groupStart ?? unit);
-              final belongsToSurfaceTurn =
-                  _surfaceTurnSerial == _assistantEntranceSerial &&
-                  (_chat.isStreaming || _surfaceTurnTerminal);
-              if (index == 0 && key != null && !belongsToSurfaceTurn) {
-                result = MotionEntrance(
-                  key: ValueKey<Object>(key),
-                  child: result,
-                );
-              }
-              if (reportsPreservedTurnInsertion) {
-                result = _SurfaceTurnInitialExtentReporter(
-                  onInitialExtent: _streamingViewportLock.record,
-                  child: result,
-                );
-              }
-              // Cada mensaje repinta en su propia capa: el host vivo a 30 Hz (y el
-              // reveal gradual) no invalida la rasterización del historial visible.
-              // El host vivo/retenido queda fuera: su geometría la mide el lock del
-              // viewport y una capa intermedia rompe esa medición.
-              final keepsLiveHost =
-                  assistantMessage != null &&
-                  _messageKeepsLiveHost(assistantMessage);
-              final isLiveHead =
-                  _chat.isStreaming &&
-                  _messages.isNotEmpty &&
-                  identical(unit, _messages.first);
-              if (!keepsLiveHost && !isLiveHead) {
-                result = RepaintBoundary(child: result);
-              }
-              final durableEntryIds =
-                  (groupStart == null ? sourceMessages : [groupStart])
-                      .map((message) {
-                        final messageId = canonicalTranscriptMessageId(message);
-                        if (messageId != null) return 'message:$messageId';
-                        final rowId = canonicalTranscriptRowId(message);
-                        return rowId == null ? null : 'row:$rowId';
-                      })
-                      .whereType<String>()
-                      .toList(growable: false);
-              if (durableEntryIds.length ==
-                  (groupStart == null ? sourceMessages.length : 1)) {
-                // This must remain the outermost list child. Sliver reconciliation
-                // can then retain the complete bubble subtree even when refresh
-                // replaces its source Map or runtime presentation wrappers change.
-                result = KeyedSubtree(
-                  key: ValueKey<Object>((
-                    'chat-render-entry',
-                    durableEntryIds.join('\u0000'),
-                    assistantSlice?.index,
-                  )),
-                  child: result,
-                );
-              }
-              return result;
-            },
+            childrenDelegate: rowDelegate,
           ),
         );
       },
@@ -17128,7 +17152,6 @@ class _ChatScreenState extends State<ChatScreen>
           : Strings.of(context).chaMessagesError,
       onDismissError: () => setState(() => _refreshErrorNoticeDismissed = true),
       // Bajo el botón «cargar anteriores» (8 + 48 + 8) cuando está a la vista.
-      errorTopInset: _chat.hasEarlierMessages ? 64 : 8,
       // Always in the tree so hiding never rebuilds the list or loses its
       // scroll position; laid out while hidden so the landing walk can build
       // rows, but neither painted nor touchable.
@@ -20910,6 +20933,14 @@ class _RenderBubbleSizeReporter extends RenderProxyBox {
   }
 }
 
+/// The pinned (sticky) copy of a user prompt at the top of the transcript.
+///
+/// A short summary, like Desktop's sticky prompt (two-line clamp; attachments
+/// stay in the transcript): the text clamped to two lines, then the
+/// attachments as small chips. Every piece has a fixed size, so the pinned
+/// area never cuts a thumbnail or a line in half. The bubble starts after the
+/// same 56 dp left gutter as the transcript bubble; the load-earlier chevron
+/// sits there.
 class _UserMessage extends StatelessWidget {
   final String content;
   final bool verbose;
@@ -23046,95 +23077,21 @@ class _ScrollToBottomButton extends StatelessWidget {
   );
 }
 
-class _ChatTopButton extends StatefulWidget {
-  const _ChatTopButton({
-    required this.controller,
-    required this.hasEarlierMessages,
-    required this.loading,
-    required this.contentChanges,
-    required this.transcriptOverlayExtent,
-    required this.onLoadEarlier,
-  });
-
-  final ScrollController controller;
-  final bool hasEarlierMessages;
-  final bool loading;
-  final Listenable contentChanges;
-  final ValueGetter<double> transcriptOverlayExtent;
-  final VoidCallback onLoadEarlier;
-
-  @override
-  State<_ChatTopButton> createState() => _ChatTopButtonState();
-}
-
-class _ChatTopButtonState extends State<_ChatTopButton> {
-  // La flecha de subir es solo para cargar historial real, no un atajo
-  // genérico de "ir arriba" dentro de lo ya cargado: su visibilidad refleja
-  // únicamente hasEarlierMessages (la señal real del backend de que hay más
-  // que pedir), nunca la posición del scroll dentro de lo ya visible — ni
-  // controller ni contentChanges intervienen en si se muestra o no.
-  bool get _visible => widget.hasEarlierMessages;
-
-  void _activate() {
-    if (!widget.hasEarlierMessages) return;
-    widget.onLoadEarlier();
-  }
-
-  @override
-  Widget build(BuildContext context) => Center(
-    child: AnimatedSwitcher(
-      duration: const Duration(milliseconds: 160),
-      reverseDuration: const Duration(milliseconds: 120),
-      transitionBuilder: (child, animation) => AnimatedBuilder(
-        animation: animation,
-        builder: (context, child) {
-          final exiting = animation.status == AnimationStatus.reverse;
-          return IgnorePointer(
-            ignoring: exiting,
-            child: ExcludeSemantics(
-              excluding: exiting,
-              child: FadeTransition(
-                opacity: animation,
-                alwaysIncludeSemantics: !exiting,
-                child: child,
-              ),
-            ),
-          );
-        },
-        child: child,
-      ),
-      child: _visible
-          ? _ChatScrollButton(
-              key: const ValueKey('chat-load-earlier'),
-              onTap: widget.loading ? null : _activate,
-              label: Strings.of(context).chaLoadEarlierMessages,
-              icon: Icons.keyboard_arrow_up_rounded,
-              iconSize: 20,
-              loading: widget.loading,
-            )
-          : const SizedBox.shrink(key: ValueKey('chat-top-button-hidden')),
-    ),
-  );
-}
-
 class _ChatScrollButton extends StatelessWidget {
   final VoidCallback? onTap;
   final String label;
   final IconData icon;
   final double iconSize;
-  final bool loading;
 
   /// Short text shown next to the circle (e.g. "3 new"); the button keeps its
   /// 48 dp height so the transcript padding never changes with it.
   final String? badge;
 
   const _ChatScrollButton({
-    super.key,
     required this.onTap,
     required this.label,
     required this.icon,
     this.iconSize = 18,
-    this.loading = false,
     this.badge,
   });
 
@@ -23180,15 +23137,7 @@ class _ChatScrollButton extends StatelessWidget {
                     ),
                   ],
                 ),
-                child: loading
-                    ? Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: colors.accent,
-                        ),
-                      )
-                    : badge == null
+                child: badge == null
                     ? Icon(icon, size: iconSize, color: colors.accent)
                     : ExcludeSemantics(
                         child: Row(

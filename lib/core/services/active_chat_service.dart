@@ -8111,6 +8111,10 @@ class ActiveChat {
   /// Quedan mensajes anteriores en el servidor más allá de lo ya cargado.
   bool get hasEarlierMessages => _earlierMessagesAvailable;
 
+  @visibleForTesting
+  set earlierMessagesAvailableForTesting(bool value) =>
+      _earlierMessagesAvailable = value;
+
   /// El último intento de cargar una página anterior falló. Es la única causa
   /// para mostrar la recuperación flotante de historial.
   bool get earlierMessagesLoadFailed => _earlierMessagesLoadFailed;
@@ -16739,35 +16743,6 @@ class ActiveChat {
   /// context references a prompt carries. False on REST-only chats.
   bool get supportsDesktopPathCompletion =>
       _desktopGateway is HermesDesktopComposerCompletionGateway;
-
-  /// The composer may offer the on-tap ✨ reply ideas (`llm.oneshot`).
-  bool get canSuggestQuickReplies {
-    final gateway = _desktopGateway;
-    return !connection.readOnly &&
-        gateway is HermesQuickReplySuggestionGateway &&
-        (gateway as HermesQuickReplySuggestionGateway)
-            .quickReplySuggestionsAvailable;
-  }
-
-  /// Asks the server for reply ideas from the last two messages. Only called
-  /// from an explicit tap; empty when unavailable or on any failure.
-  Future<List<String>> suggestQuickReplies({
-    required String lastAssistant,
-    required String lastUser,
-  }) async {
-    final gateway = _desktopGateway;
-    if (!canSuggestQuickReplies) return const [];
-    try {
-      return await (gateway as HermesQuickReplySuggestionGateway)
-          .suggestQuickReplies(
-            lastAssistant: lastAssistant,
-            lastUser: lastUser,
-            profile: sessionProfile,
-          );
-    } catch (_) {
-      return const [];
-    }
-  }
 
   /// `@` completion against [runtimeSessionId], the runtime the caller keyed
   /// its query to. Null when the gateway lacks it, the socket is down
