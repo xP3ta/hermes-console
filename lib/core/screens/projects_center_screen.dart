@@ -475,18 +475,15 @@ class _ProjectsCenterScreenState extends State<ProjectsCenterScreen> {
   }
 
   void _launch(BuildContext context, ProjectChatRequest request) {
+    // From the screen's own context: on a tablet the project may sit in the
+    // detail pane, but a chat still opens on the app navigator exactly as it
+    // does on a phone.
+    final host = mounted ? this.context : context;
     final launcher = widget.chatLauncher;
     if (launcher != null) {
-      launcher(context, request);
+      launcher(host, request);
     } else {
-      // From the screen's own context: on a tablet the project may sit in
-      // the detail pane, but a chat still opens on the app navigator exactly
-      // as it does on a phone.
-      _defaultChatLauncher(
-        mounted ? this.context : context,
-        widget.connection,
-        request,
-      );
+      _defaultChatLauncher(host, widget.connection, request);
     }
   }
 

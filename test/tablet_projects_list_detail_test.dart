@@ -13,6 +13,9 @@ import 'support/pj1215_fake_projects_gateway.dart';
 // open project side by side; selecting a project never pushes an app route.
 // Medium windows show one at a time, phones keep the full-screen push.
 
+final List<BuildContext> _launchContexts = [];
+final GlobalKey<NavigatorState> _rootNavigator = GlobalKey<NavigatorState>();
+
 class _CountingObserver extends NavigatorObserver {
   int pushes = 0;
   @override
@@ -43,6 +46,7 @@ Future<_CountingObserver> _pump(WidgetTester tester, Size size) async {
       localizationsDelegates: Strings.localizationsDelegates,
       supportedLocales: Strings.supportedLocales,
       theme: AppTheme.fromId('dark'),
+      navigatorKey: _rootNavigator,
       navigatorObservers: [observer],
       home: Builder(
         builder: (context) => Scaffold(
@@ -61,7 +65,7 @@ Future<_CountingObserver> _pump(WidgetTester tester, Size size) async {
                     ),
                     connectionManager: manager,
                     gateway: Pj1215FakeProjectsGateway.sample(),
-                    chatLauncher: (_, _) {},
+                    chatLauncher: (context, _) => _launchContexts.add(context),
                   ),
                 ),
               ),
@@ -91,6 +95,7 @@ String? _openPath(WidgetTester tester) {
 
 void main() {
   setUp(PrivateRenderCaches.clearAll);
+  setUp(_launchContexts.clear);
 
   testWidgets('phone 411x915: a project opens full screen as before', (
     tester,
@@ -201,5 +206,37 @@ void main() {
     await _resize(tester, const Size(1024, 768));
     expect(_openPath(tester), '/home/demo/code/hermes-console');
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a chat started from a project in the pane opens on the app '
+      'navigator, as on a phone', (tester) async {
+    await _pump(tester, const Size(1280, 800));
+    await tester.tap(find.byKey(_card('p_console')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('pj1215-detail-new-chat')));
+    await tester.pumpAndSettle();
+
+    expect(_launchContexts, hasLength(1));
+    expect(
+      Navigator.of(_launchContexts.single),
+      same(_rootNavigator.currentState),
+    );
+  });
+
+  testWidgets('shrinking to a phone with a project open keeps it open full '
+      'screen', (tester) async {
+    final observer = await _pump(tester, const Size(1280, 800));
+    await tester.tap(find.byKey(_card('p_notes')));
+    await tester.pumpAndSettle();
+
+    await _resize(tester, const Size(411, 915));
+    expect(_openPath(tester), '/home/demo/notes/travel');
+    expect(observer.pushes, 1, reason: 'continued with the phone flow');
+    expect(tester.takeException(), isNull);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byKey(_card('p_notes')), findsOneWidget);
   });
 }
