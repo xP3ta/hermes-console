@@ -30,6 +30,14 @@ extension BotFaceSignalMotion on BotFaceSignal {
       this == BotFaceSignal.working || this == BotFaceSignal.attention;
 }
 
+/// Look of a [LivingBotFace]: [classic] (pulsing ring, flat face) or
+/// [dots] (Bots home, owner variant C): matte volume, larger eyes, a soft
+/// contact shadow, a thin orbit ring with one travelling dot while busy and
+/// a static amber ring plus dot while the bot waits for the user. Both share
+/// the same clock rules (idle never ticks, busy ≤ ~30 fps, covered,
+/// background or reduced motion paint a static frame).
+enum LivingBotFaceStyle { classic, dots }
+
 /// Test switch: when true every [LivingBotFace] paints its static frame
 /// (exactly as with reduced motion) so widget tests of whole screens can
 /// `pumpAndSettle`. Set for the whole suite in `flutter_test_config.dart`;
@@ -44,6 +52,71 @@ int get livingBotFaceActiveTickers => _LivingBotFaceState._active;
 /// Test hook: number of idle blink timers currently pending.
 @visibleForTesting
 int get livingBotFacePendingBlinks => _LivingBotFaceState._pendingBlinks;
+
+/// Test hook: idle list faces currently enrolled in the shared blink
+/// scheduler ([LivingBotFaceBlink.shared]).
+@visibleForTesting
+int get livingBotFaceSharedBlinkFaces => _SharedBlinkScheduler._faces.length;
+
+/// Test hook: timers held by the shared blink scheduler (0 or 1, whatever
+/// the number of list faces).
+@visibleForTesting
+int get livingBotFaceSharedBlinkTimers =>
+    _SharedBlinkScheduler._timer == null ? 0 : 1;
+
+/// How an idle [LivingBotFace] blinks.
+enum LivingBotFaceBlink {
+  /// The face keeps its own blink timer (one face on screen: the bot chat
+  /// header, the profile hero).
+  own,
+
+  /// List/roster faces: no per-face timer. ONE scheduler shared by every
+  /// such face blinks a single random face every
+  /// [LivingBotFace.sharedBlinkMinPause]-[LivingBotFace.sharedBlinkMaxPause],
+  /// so ten idle bots cost one rare blink, not ten interleaved ones.
+  shared,
+}
+
+/// One timer for every [LivingBotFaceBlink.shared] face: it wakes up rarely
+/// and blinks one random enrolled (mounted, visible, idle) face.
+abstract final class _SharedBlinkScheduler {
+  static final Set<_LivingBotFaceState> _faces = <_LivingBotFaceState>{};
+  static Timer? _timer;
+  static final math.Random _random = math.Random();
+
+  static void enroll(_LivingBotFaceState face) {
+    _faces.add(face);
+    _arm();
+  }
+
+  static void leave(_LivingBotFaceState face) {
+    _faces.remove(face);
+    if (_faces.isEmpty) {
+      _timer?.cancel();
+      _timer = null;
+    }
+  }
+
+  static void _arm() {
+    if (_timer != null || _faces.isEmpty) return;
+    final min = LivingBotFace.sharedBlinkMinPause.inMilliseconds;
+    final span = LivingBotFace.sharedBlinkMaxPause.inMilliseconds - min;
+    _timer = Timer(
+      Duration(milliseconds: min + _random.nextInt(span + 1)),
+      _fire,
+    );
+  }
+
+  static void _fire() {
+    _timer = null;
+    if (_faces.isEmpty) return;
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle == null || lifecycle == AppLifecycleState.resumed) {
+      _faces.elementAt(_random.nextInt(_faces.length))._blinkOnce();
+    }
+    _arm();
+  }
+}
 
 /// A living bot face: thinking look-around, working scan (eyes read a
 /// line) with a soft pulsing ring, attention nudge every few seconds,
@@ -70,9 +143,14 @@ class LivingBotFace extends StatefulWidget {
   /// Plays the scale/fade entrance the first time this face is built.
   final bool entrance;
 
+  /// Own blink timer (default) or the rare shared list blink.
+  final LivingBotFaceBlink blink;
+
   /// Motion amplitude. Defaults by size: large (pinned, profile hero)
   /// faces are the most expressive.
   final double? expressiveness;
+
+  final LivingBotFaceStyle style;
 
   const LivingBotFace({
     super.key,
@@ -84,6 +162,8 @@ class LivingBotFace extends StatefulWidget {
     this.semanticLabel,
     this.entrance = true,
     this.expressiveness,
+    this.blink = LivingBotFaceBlink.own,
+    this.style = LivingBotFaceStyle.classic,
   });
 
   /// Amplitude used for a face of [size] dp: small faces need more relative
@@ -97,6 +177,10 @@ class LivingBotFace extends StatefulWidget {
 
   /// Shortest pause between idle blinks.
   static const minBlinkPause = Duration(milliseconds: 4200);
+
+  /// Pause between two blinks of the WHOLE list of shared-blink faces.
+  static const sharedBlinkMinPause = Duration(seconds: 12);
+  static const sharedBlinkMaxPause = Duration(seconds: 20);
 
   static double expressivenessFor(double size) => size >= 56 ? 1.3 : 1.2;
 
@@ -206,9 +290,15 @@ class _LivingBotFaceState extends State<LivingBotFace>
   }
 
   void _runBlinks(bool on) {
-    if (on) {
+    final shared = widget.blink == LivingBotFaceBlink.shared;
+    if (on && shared) {
+      _cancelBlinkTimer();
+      _SharedBlinkScheduler.enroll(this);
+    } else if (on) {
+      _SharedBlinkScheduler.leave(this);
       if (_nextBlink == null && !_blink.isAnimating) _scheduleBlink();
     } else {
+      _SharedBlinkScheduler.leave(this);
       _cancelBlinkTimer();
       if (_blink.isAnimating || _blink.value != 0) {
         _blink.stop();
@@ -254,10 +344,21 @@ class _LivingBotFaceState extends State<LivingBotFace>
     });
   }
 
+  /// One blink requested by the shared list scheduler.
+  void _blinkOnce() {
+    if (_disposed || !_motion || _continuous || _blink.isAnimating) return;
+    _blinks++;
+    _blink.forward(from: 0).whenCompleteOrCancel(() {
+      if (_disposed) return;
+      if (_blink.value != 0) _blink.value = 0;
+    });
+  }
+
   @override
   void dispose() {
     _disposed = true;
     _frames?.cancel();
+    _SharedBlinkScheduler.leave(this);
     _cancelBlinkTimer();
     if (_counted) _active--;
     _clock.dispose();
@@ -287,7 +388,9 @@ class _LivingBotFaceState extends State<LivingBotFace>
       blink: _motion ? _blink : null,
       signal: signal,
       gain: gain,
+      matte: widget.style == LivingBotFaceStyle.dots,
     );
+    final dots = widget.style == LivingBotFaceStyle.dots;
     final ringColor = signal == BotFaceSignal.attention
         ? colors.warning
         : colors.accent;
@@ -315,6 +418,15 @@ class _LivingBotFaceState extends State<LivingBotFace>
             dy = -math.sin(k * math.pi) * size * .07;
             turn = math.sin(k * math.pi * 4) * .09 * (1 - k);
           }
+        }
+        if (dots) {
+          return Opacity(
+            opacity: entrance.clamp(0.0, 1.0),
+            child: Transform.scale(
+              scale: .6 + .4 * entrance,
+              child: _dotsFrame(colors, ms, child!, dy, turn),
+            ),
+          );
         }
         final pulse = _continuous && signal.hasRing
             ? (math.sin((ms + _phaseMs) / 1300 * 2 * math.pi) + 1) / 2
@@ -384,6 +496,143 @@ class _LivingBotFaceState extends State<LivingBotFace>
   }
 }
 
+extension on _LivingBotFaceState {
+  /// Dots look: contact shadow, the face, then the state mark (orbit while
+  /// busy, amber ring and dot while waiting, nothing when idle).
+  Widget _dotsFrame(
+    HermesThemeColors colors,
+    double ms,
+    Widget face,
+    double dy,
+    double turn,
+  ) {
+    final signal = widget.signal;
+    final size = widget.size;
+    final busy =
+        signal == BotFaceSignal.working ||
+        signal == BotFaceSignal.thinking ||
+        signal == BotFaceSignal.speaking;
+    final waiting = signal == BotFaceSignal.attention;
+    // One lap every 2.6 s while the clock runs; a fixed top position in the
+    // static frame (reduced motion, covered route, tests).
+    final angle = _continuous
+        ? ((ms + _phaseMs) % 2600) / 2600 * 2 * math.pi - math.pi / 2
+        : -math.pi / 2;
+    final dotSize = math.max(7.0, size * .13);
+    final ring = size * .56;
+    return SizedBox.square(
+      dimension: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          if (size >= 40)
+            Positioned(
+              left: size * .2,
+              right: size * .2,
+              bottom: -size * .04,
+              height: size * .1,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(size),
+                    gradient: RadialGradient(
+                      colors: [
+                        Colors.black.withValues(alpha: .32),
+                        Colors.black.withValues(alpha: 0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          Transform.translate(
+            offset: Offset(0, dy),
+            child: Transform.rotate(angle: turn, child: face),
+          ),
+          if (busy || waiting)
+            Positioned.fill(
+              // Same identity as the classic ring: "this face shows a state".
+              key: ValueKey('living-face-ring-${signal.name}'),
+              child: IgnorePointer(
+                child: CustomPaint(
+                  key: ValueKey(busy ? 'dots-face-orbit' : 'dots-face-ring'),
+                  painter: _DotsRingPainter(
+                    color: waiting ? colors.warning : colors.accent,
+                    radius: ring,
+                    width: size >= 56 ? 1.6 : 1.3,
+                    // A waiting ring carries no travelling dot.
+                    dotAngle: busy ? angle : null,
+                    dotRadius: dotSize / 2,
+                  ),
+                ),
+              ),
+            ),
+          if (waiting)
+            Positioned(
+              key: const ValueKey('dots-face-waiting-dot'),
+              left: size / 2 + ring * math.cos(-math.pi / 4) - dotSize / 2,
+              top: size / 2 + ring * math.sin(-math.pi / 4) - dotSize / 2,
+              width: dotSize,
+              height: dotSize,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colors.warning,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Thin ring around a Dots face, with an optional dot on it.
+final class _DotsRingPainter extends CustomPainter {
+  final Color color;
+  final double radius;
+  final double width;
+  final double? dotAngle;
+  final double dotRadius;
+
+  const _DotsRingPainter({
+    required this.color,
+    required this.radius,
+    required this.width,
+    required this.dotAngle,
+    required this.dotRadius,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = width
+        ..color = color.withValues(alpha: .62),
+    );
+    final angle = dotAngle;
+    if (angle == null) return;
+    canvas.drawCircle(
+      center + Offset(math.cos(angle), math.sin(angle)) * radius,
+      dotRadius,
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_DotsRingPainter old) =>
+      old.color != color ||
+      old.radius != radius ||
+      old.width != width ||
+      old.dotAngle != dotAngle ||
+      old.dotRadius != dotRadius;
+}
+
 /// Procedural Blobatar or raster avatar, both driven by the shared clock.
 class _Face extends StatelessWidget {
   final String profileName;
@@ -395,6 +644,7 @@ class _Face extends StatelessWidget {
   final Animation<double>? blink;
   final BotFaceSignal signal;
   final double gain;
+  final bool matte;
 
   const _Face({
     required this.profileName,
@@ -406,6 +656,7 @@ class _Face extends StatelessWidget {
     required this.blink,
     required this.signal,
     required this.gain,
+    this.matte = false,
   });
 
   @override
@@ -453,6 +704,7 @@ class _Face extends StatelessWidget {
       motionState: signal.motionState,
       motionGain: gain,
       eyeGain: LivingBotFace.eyeGainFor(gain),
+      finish: matte ? HermesBotFaceFinish.matte : HermesBotFaceFinish.flat,
     );
   }
 }

@@ -19,6 +19,13 @@ import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'support/inter_font.dart';
 
+/// The amber "waiting for you" dot of any room card.
+Finder _roomNeedsYou() => find.byWidgetPredicate(
+  (w) =>
+      w.key is ValueKey<String> &&
+      (w.key! as ValueKey<String>).value.startsWith('roster-room-needs-you-'),
+);
+
 void main() {
   setUpAll(loadInterFont);
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
@@ -107,7 +114,7 @@ void main() {
       sinceSeq: 0,
     );
     await _pumpHostedScreen(tester, manager, _workspaceSource(log: mention));
-    final needs = find.byKey(const ValueKey('roster-section-needs-you'));
+    final needs = _roomNeedsYou();
     expect(needs, findsOneWidget);
 
     // Leaving the room writes the seen marker, exactly as RoomScreen does.
@@ -559,7 +566,9 @@ void main() {
       await _pumpHostedScreen(tester, manager, source);
 
       await _openRoomActions(tester);
-      await tester.tap(find.byKey(const ValueKey('roster-room-action-disband')));
+      await tester.tap(
+        find.byKey(const ValueKey('roster-room-action-disband')),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('roster-room-confirm')));
       await tester.pumpAndSettle();
@@ -690,7 +699,7 @@ void main() {
     );
     final source = _workspaceSource(deferred: true);
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('A room task can be retried.'), findsNothing);
@@ -905,9 +914,72 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  // The Work area (its "ROOMS" section, the "whole team sees it" line and
-  // the stacked-face cards) is gone: rooms are rows of the Bots roster.
-  testWidgets('rooms are roster rows, never a separate Work section', (
+  // Owner decision 1.2.15: Desktop's local (projection) rooms are gone from
+  // Console. Even when the default profile's ui_meta still carries them,
+  // only the server's hosted rooms are listed, searched or flagged.
+  testWidgets('Desktop projection rooms never show; hosted rooms still do', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final manager = await ConnectionManager.create(
+      await SharedPreferences.getInstance(),
+    );
+    addTearDown(manager.dispose);
+    final withDesktopRooms = AgentProfile.fromJson({
+      'name': 'default',
+      'is_default': true,
+      'ui_meta': {
+        'hermes-bots-groups': {
+          'version': 3,
+          'updatedAt': 1790000600000,
+          'rooms': {
+            'id:room-desktop-1': {
+              'name': 'Desktop crew',
+              'roomId': 'room-desktop-1',
+              'revision': 12,
+              'members': [
+                {'name': 'astra'},
+              ],
+              'log': [
+                {
+                  'id': 'm2',
+                  'from': {'kind': 'member', 'name': 'astra'},
+                  'text': 'All green. @user ready to merge?',
+                  'at': 1790000560000,
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+    await _pumpHostedScreen(
+      tester,
+      manager,
+      _workspaceSource(profiles: [withDesktopRooms]),
+    );
+
+    expect(_roomRow(), findsOneWidget, reason: 'the hosted room');
+    expect(find.text('Shared'), findsOneWidget);
+    expect(find.text('Desktop crew'), findsNothing);
+    expect(find.text('Desktop'), findsNothing);
+    expect(_roomNeedsYou(), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('roster-search')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('mission-bot-search')),
+      'crew',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Desktop crew'), findsNothing);
+    expect(find.text('Shared'), findsNothing, reason: 'no match, no rooms');
+    expect(tester.takeException(), isNull);
+  });
+
+  // The old Work area (the "whole team sees it" line, the shared-rooms feed)
+  // is gone: rooms are the Dots home's ROOMS cards.
+  testWidgets('rooms are the Bots home ROOMS cards, never a Work section', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -916,7 +988,7 @@ void main() {
     );
     await _pumpHostedScreen(tester, manager, _workspaceSource());
 
-    expect(find.text('ROOMS'), findsNothing);
+    expect(find.text('ROOMS'), findsOneWidget);
     expect(find.textContaining('The whole team sees it'), findsNothing);
     expect(find.byKey(const ValueKey('mission-shared-rooms')), findsNothing);
     expect(find.byKey(const ValueKey('mission-work-feed')), findsNothing);
@@ -969,10 +1041,7 @@ void main() {
       loadedAt: base.loadedAt,
     );
     await _pumpHostedScreen(tester, manager, source);
-    expect(
-      find.byKey(const ValueKey('roster-section-needs-you')),
-      findsOneWidget,
-    );
+    expect(_roomNeedsYou(), findsOneWidget);
 
     await _openRoomActions(tester);
     await tester.tap(find.byKey(const ValueKey('roster-room-action-rename')));
@@ -986,10 +1055,7 @@ void main() {
     expect(source.calls, contains('rename:3:Renamed room'));
 
     // The pending approval did not go anywhere: the room still needs you.
-    expect(
-      find.byKey(const ValueKey('roster-section-needs-you')),
-      findsOneWidget,
-    );
+    expect(_roomNeedsYou(), findsOneWidget);
   });
 
   testWidgets('room actions from the roster rename and stop the room', (
@@ -1227,7 +1293,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _workspaceSource();
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('mission-hosted-room-workspace')),
@@ -1283,7 +1349,7 @@ void main() {
       addTearDown(manager.dispose);
       final source = _workspaceSource();
       await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(_roomRow());
+      await _tapRoom(tester);
       await tester.pumpAndSettle();
       await tester.tap(roomField());
       await tester.enterText(roomField(), '@${handle.substring(0, 1)}');
@@ -1314,7 +1380,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _RefreshingHostedSource(_workspaceSource().snapshot);
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
@@ -1350,7 +1416,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _ReconnectingHostedSource(_workspaceSource().snapshot);
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
@@ -1396,7 +1462,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _ReconnectingHostedSource(_workspaceSource().snapshot);
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
@@ -1438,7 +1504,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _workspaceSource();
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
 
     Future<void> menu(String item) async {
@@ -1530,7 +1596,7 @@ void main() {
       ],
     );
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
     final local = tester.widget<RoomMemberAvatar>(
       find.descendant(
@@ -1572,7 +1638,7 @@ void main() {
     addTearDown(manager.dispose);
     final source = _workspaceSource();
     await _pumpHostedScreen(tester, manager, source);
-    await tester.tap(_roomRow());
+    await _tapRoom(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('room-reply-event-private')));
     await tester.pumpAndSettle();
@@ -1600,7 +1666,7 @@ void main() {
       addTearDown(manager.dispose);
       final source = _workspaceSource(room: _crowdedRoom(14));
       await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(_roomRow());
+      await _tapRoom(tester);
       await tester.pumpAndSettle();
       final screen = tester.getRect(
         find.byKey(const ValueKey('mission-hosted-room-workspace')),
@@ -1629,7 +1695,7 @@ void main() {
       addTearDown(manager.dispose);
       final source = _presenceSource();
       await _pumpHostedScreen(tester, manager, source);
-      await tester.tap(_roomRow());
+      await _tapRoom(tester);
       await tester.pumpAndSettle();
       await tester.enterText(roomField(), '@builder @reviewer please reply');
       await tester.pump();
@@ -1758,15 +1824,23 @@ Future<void> _pumpHostedScreen(
 
 /// The first hosted room row of the Bots roster (rooms live there now; the
 /// separate Work destination is gone).
-Finder _roomRow() => find
-    .byWidgetPredicate((widget) {
-      final key = widget.key;
-      return key is ValueKey<String> && key.value.startsWith('roster-room-row-');
-    })
-    .first;
+Finder _roomRow() => find.byWidgetPredicate((widget) {
+  final key = widget.key;
+  return key is ValueKey<String> && key.value.startsWith('roster-room-row-');
+}).first;
+
+/// Tap the room card, scrolled into view first: the Dots home puts the
+/// rooms under the main bot and the team grid.
+Future<void> _tapRoom(WidgetTester tester) async {
+  await tester.ensureVisible(_roomRow());
+  await tester.pumpAndSettle();
+  await tester.tap(_roomRow());
+}
 
 /// Long-press a room row to open its actions sheet.
 Future<void> _openRoomActions(WidgetTester tester) async {
+  await tester.ensureVisible(_roomRow());
+  await tester.pumpAndSettle();
   await tester.longPress(_roomRow());
   await tester.pumpAndSettle();
   expect(find.byKey(const ValueKey('roster-room-actions')), findsOneWidget);

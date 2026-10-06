@@ -6,8 +6,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hermes_android/core/bots/data/desktop_projection_rooms.dart';
-import 'package:hermes_android/core/bots/ui/room/desktop_projection_room_screen.dart';
 import 'package:hermes_android/core/bots/ui/room/room_dictation.dart';
 import 'package:hermes_android/core/bots/ui/room/room_gateway.dart';
 import 'package:hermes_android/core/bots/ui/room/room_models.dart';
@@ -1289,48 +1287,6 @@ void main() {
     expect(find.byKey(const ValueKey('room-activity-sheet')), findsOneWidget);
     expect(find.text('console-radar passed'), findsOneWidget);
   });
-
-  testWidgets(
-    'Desktop projection room is read-only with a banner and no composer',
-    (tester) async {
-      final projection = DesktopProjectionRooms.parse({
-        'version': 3,
-        'rooms': {
-          'name:Desk': {
-            'name': 'Desk',
-            'members': [
-              {'name': 'astra'},
-            ],
-            'log': [
-              {
-                'from': {'kind': 'user', 'name': 'You'},
-                'text': 'hi @astra',
-                'at': 1790000100000,
-              },
-              {
-                'from': {'kind': 'member', 'name': 'astra'},
-                'text': '**bold** reply',
-                'at': 1790000160000,
-              },
-            ],
-          },
-        },
-      });
-      expect(projection.rooms, isNotEmpty);
-      await tester.pumpWidget(
-        _host(DesktopProjectionRoomScreen(room: projection.rooms.single)),
-      );
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('projection-readonly-banner')),
-        findsOneWidget,
-      );
-      expect(find.text('Desktop room · read-only'), findsOneWidget);
-      expect(find.byType(ConsoleComposer), findsNothing);
-      expect(find.byType(TextField), findsNothing);
-      expect(find.textContaining('**'), findsNothing);
-    },
-  );
 
   // Field report (hosted room, 4/4 bots up): "? could not reply" plus "A reply
   // failed" while the server was only re-checking an interrupted attempt.

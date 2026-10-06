@@ -369,6 +369,61 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  // QA 9491: each idle face blinked on its own 4.2-8 s timer, so ten bots
+  // interleaved into a near-continuous ~33 fps. A list now blinks one face
+  // every 12-20 s through one shared scheduler.
+  testWidgets('ten idle bots blink rarely, not ten interleaved blinks', (
+    tester,
+  ) async {
+    debugLivingBotFacesStill = false;
+    addTearDown(() => debugLivingBotFacesStill = true);
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final manager = await _manager();
+    addTearDown(manager.dispose);
+    final snapshot = _snapshot(
+      profiles: [
+        // Ten grid tiles (four pinned): every face shares the one blink.
+        for (var i = 0; i < 10; i++)
+          AgentProfile(
+            name: 'quiet_bot_$i',
+            botModeUiMeta: {if (i < 4) 'pinned': true},
+          ),
+      ],
+    );
+    await tester.pumpWidget(_host(manager: manager, snapshot: snapshot));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.byType(LivingBotFace).evaluate().length, greaterThan(8));
+    expect(
+      find.byWidgetPredicate(
+        (w) =>
+            w.key is ValueKey<String> &&
+            (w.key! as ValueKey<String>).value.startsWith('dots-tile-'),
+      ),
+      findsNWidgets(10),
+    );
+    expect(livingBotFaceActiveTickers, 0);
+    // Count wake-ups: rising edges of "a frame callback is pending" over one
+    // minute of fake time. One edge per blink (220 ms, sampled every 100 ms).
+    var wakeUps = 0;
+    var wasBusy = false;
+    for (var i = 0; i < 600; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+      final busy = tester.binding.transientCallbackCount > 0;
+      if (busy && !wasBusy) wakeUps++;
+      wasBusy = busy;
+    }
+    expect(
+      wakeUps,
+      lessThanOrEqualTo(6),
+      reason: 'idle Bots list woke up $wakeUps times in 60 s',
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets(
     'Room attention marks the room row, not the bots seated in that room',
     (tester) async {
@@ -423,8 +478,15 @@ void main() {
         find.byKey(const ValueKey('mission-bot-unread-radar')),
         findsNothing,
       );
+      // The room card carries the amber "waiting for you" dot instead.
       expect(
-        find.byKey(const ValueKey('roster-section-needs-you')),
+        find.byWidgetPredicate(
+          (w) =>
+              w.key is ValueKey<String> &&
+              (w.key! as ValueKey<String>).value.startsWith(
+                'roster-room-needs-you-',
+              ),
+        ),
         findsOneWidget,
       );
     },

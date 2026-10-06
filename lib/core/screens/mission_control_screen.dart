@@ -18,10 +18,10 @@ import '../models/mission_control.dart';
 import '../navigation/chat_route.dart';
 import '../navigation/enclosing_route.dart';
 import '../services/active_chat_service.dart';
+import '../services/active_profile_scope.dart';
 import '../services/cold_start_store.dart';
 import '../services/chat_draft_store.dart';
 import '../services/connection_manager.dart';
-import '../bots/data/desktop_projection_rooms.dart';
 import '../bots/data/room_member_prompts.dart';
 import '../bots/state/attention.dart';
 import '../bots/ui/room/room_dictation.dart';
@@ -33,8 +33,7 @@ import '../bots/ui/room/room_sheets.dart' show showRoomMembersSheet;
 import '../bots/state/bot_presence.dart';
 import '../bots/state/bot_roster_meta.dart';
 import '../bots/ui/profile/bot_profile_screen.dart';
-import '../bots/ui/roster/bots_roster_view.dart';
-import '../bots/ui/roster/projection_room_sheet.dart';
+import '../bots/ui/roster/dots_home_view.dart';
 import '../bots/ui/roster/roster_actions.dart';
 import '../bots/ui/roster/roster_model.dart';
 import '../bots/state/bot_chat_target.dart';
@@ -294,6 +293,11 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Duration _kanbanReconnectDelay = const Duration(seconds: 3);
   int _kanbanEventCursor = 0;
   int _loadGeneration = 0;
+
+  /// The connection's one active-profile source (no copy is kept here). A
+  /// switch starts a new read, whose generation voids any read still on the
+  /// wire for the previous profile, so a late answer never paints.
+  late final ActiveProfileScope _profileScope;
   bool _lifecyclePaused = false;
   bool _disposed = false;
   MissionControlOpenTarget? _pendingTarget;
@@ -347,6 +351,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
       _profileAssetsGateway = lease.client;
     }
     _organizations = _organizationStore.load(widget.connection.id);
+    _profileScope = ActiveProfileScope.of(
+      widget.connManager,
+      widget.connection.id,
+    )..addListener(_onActiveProfileChanged);
     WidgetsBinding.instance.addObserver(this);
     _scheduleRosterRefresh();
     _watchLiveChanges();
@@ -453,8 +461,14 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     if (!identical(next, current)) setState(() => _snapshot = next);
   }
 
+  void _onActiveProfileChanged() {
+    if (_disposed || !mounted) return;
+    unawaited(_load(refresh: _snapshot != null, quiet: true));
+  }
+
   @override
   void dispose() {
+    _profileScope.removeListener(_onActiveProfileChanged);
     _rosterStore.removeListener(_onSharedRoster);
     _disposed = true;
     _live.remove(this);
@@ -1157,6 +1171,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
         chat.sessionId,
         chat.storedSessionId,
         chat.sessionProfile,
+        chat.safeActiveSubagentCount,
       ],
     ];
   }
@@ -1246,6 +1261,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             model: session?.model,
             settledAt: chat.lastTerminalAt,
             botChat: chat.sessionId == 'mob-bot-$profile',
+            subagentCount: chat.safeActiveSubagentCount,
           );
         })
         .toList(growable: false);
@@ -1946,21 +1962,10 @@ class _MissionControlScreenState extends State<MissionControlScreen>
     final snapshot = _snapshot;
     if (snapshot == null) return;
     final roomId = entry.hostedRoomId;
-    if (roomId != null) {
-      await _openInitialTarget(
-        MissionControlOpenTarget.room(sessionId: '', roomId: roomId),
-        snapshot,
-      );
-      return;
-    }
-    final projection = entry.projection;
-    if (projection == null) return;
-    await showHermesFloatingSurface<void>(
-      context: context,
-      surfaceKey: ValueKey('roster-projection-${entry.publicKey}'),
-      maxWidth: 560,
-      maxHeightFactor: 0.86,
-      builder: (_) => ProjectionRoomSheet(room: projection),
+    if (roomId == null) return;
+    await _openInitialTarget(
+      MissionControlOpenTarget.room(sessionId: '', roomId: roomId),
+      snapshot,
     );
   }
 
@@ -2296,10 +2301,7 @@ class _MissionControlScreenState extends State<MissionControlScreen>
   Future<void> _openRoomActions(RoomRosterEntry entry) async {
     final snapshot = _snapshot;
     final roomId = entry.hostedRoomId;
-    if (snapshot == null || roomId == null) {
-      await _openRosterRoom(entry);
-      return;
-    }
+    if (snapshot == null || roomId == null) return;
     final room = snapshot.hostedGroups.rooms
         .where((r) => r.roomId == roomId && !r.disbanded)
         .firstOrNull;
@@ -3228,7 +3230,6 @@ class _MissionControlScreenState extends State<MissionControlScreen>
             remoteBotLoader: widget.remoteBotLoader,
             onRemoteOpen: _openRemoteBot,
             onRemoteDetails: _remoteBotDetails,
-            onSectionMenu: _canManageSections ? _sectionMenu : null,
             onAttention:
                 projection.approvals.isNotEmpty ||
                     projection.blockedCount > 0
@@ -3966,9 +3967,10 @@ class _WorkspaceSheet extends StatelessWidget {
   }
 }
 
-/// Bots roster (spec 070 S1) over [BotsRosterView]: server-sourced rows for
-/// bots (presence, canonical preview/time, `ui_meta` pins/sections/hidden)
-/// and rooms (hosted `groups.*` plus read-only Desktop projection).
+/// Bots home (Dots style, owner variant C) over [DotsHomeView]: the main
+/// bot on top, the team grid and the room cards, all derived from this
+/// screen's one snapshot (presence from each canonical Bot Chat, canonical
+/// preview/time, `ui_meta` pins/hidden) plus the hosted `groups.*` rooms.
 class _BotsTab extends StatefulWidget {
   final SharedPreferences prefs;
   final String connectionId;
@@ -3985,7 +3987,6 @@ class _BotsTab extends StatefulWidget {
   final RemoteBotLoader? remoteBotLoader;
   final void Function(SavedConnection, AgentProfile) onRemoteOpen;
   final void Function(SavedConnection, AgentProfile) onRemoteDetails;
-  final void Function(String sectionId, String name)? onSectionMenu;
   final VoidCallback? onAttention;
   final String? attentionSummary;
   final VoidCallback? onCreateAgent;
@@ -4008,7 +4009,6 @@ class _BotsTab extends StatefulWidget {
     required this.onRemoteDetails,
     required this.onRefresh,
     this.remoteBotLoader,
-    this.onSectionMenu,
     this.onAttention,
     this.attentionSummary,
     this.onCreateAgent,
@@ -4072,18 +4072,9 @@ class _BotsTabState extends State<_BotsTab> {
   List<RoomRosterEntry> _rooms() {
     final snapshot = widget.snapshot;
     final hosted = snapshot.hostedGroups;
-    final defaults = snapshot.profiles.where(
-      (p) => p.isDefault || p.name == 'default',
-    );
     return RoomRosterEntry.build(
       hosted: hosted,
       attention: _attention,
-      projection: defaults.isEmpty
-          ? DesktopProjectionRooms.empty
-          : DesktopProjectionRooms.parse(
-              defaults.first.groupsProjection,
-              hostedRoomIds: {for (final r in hosted.rooms) r.roomId},
-            ),
       localProfiles: {for (final p in snapshot.profiles) p.name: p},
       identityFor: snapshot.roomIdentity,
     );
@@ -4095,18 +4086,15 @@ class _BotsTabState extends State<_BotsTab> {
     final unsupported =
         widget.snapshot.profilesCapability ==
         MissionCapabilityState.unsupported;
-    return BotsRosterView(
+    return DotsHomeView(
       bots: unsupported ? const [] : _bots(),
       rooms: _rooms(),
       avatarCache: widget.avatarCache,
       searchOpen: widget.searchOpen,
-      prefs: widget.prefs,
-      connectionId: widget.connectionId,
       onOpenBot: (entry) => widget.onOpenChat(entry.agent),
       onBotActions: widget.onBotActions,
       onOpenRoom: widget.onOpenRoom,
       onRoomActions: widget.onRoomActions,
-      onSectionMenu: widget.onSectionMenu,
       onAttention: widget.onAttention,
       attentionSummary: widget.attentionSummary,
       onRefresh: widget.onRefresh,

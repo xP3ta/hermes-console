@@ -106,56 +106,44 @@ void main() {
   });
   tearDown(() => manager.dispose());
 
-  testWidgets(
-    'no sections or mirror retains identical rendered pixels and legacy controls',
-    (tester) async {
-      Future<List<int>> frame({
-        bool malformed = false,
-        bool work = false,
-      }) async {
-        await tester.pumpWidget(const SizedBox());
-        await tester.pumpWidget(
-          _host(manager, [
-            AgentProfile.fromJson({
-              'name': 'default',
-              'ui_meta': {
-                'hermes-bots': {
-                  'pinned': true,
-                  if (malformed) 'sectionId': [],
-                  if (malformed) 'sectionName': 42,
-                },
-                if (malformed)
-                  'hermes-bots-groups': {'version': 3, 'rooms': false},
+  testWidgets('malformed sections or mirror render the same pixels as none', (
+    tester,
+  ) async {
+    Future<List<int>> frame({bool malformed = false}) async {
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(
+        _host(manager, [
+          AgentProfile.fromJson({
+            'name': 'default',
+            'ui_meta': {
+              'hermes-bots': {
+                'pinned': true,
+                if (malformed) 'sectionId': [],
+                if (malformed) 'sectionName': 42,
               },
-            }),
-            const AgentProfile(name: 'builder'),
-          ]),
-        );
-        await tester.pumpAndSettle();
-        expect(
-          find.byKey(const ValueKey('mission-pinned-strip')),
-          findsOneWidget,
-        );
-        // Spec 070 S1: pinned faces, then everything else by recency.
-        expect(find.text('Recientes'), findsOneWidget);
-        expect(find.text('Sin sección'), findsNothing);
-        if (work) {
-          // Rooms filter of the roster (the Work destination is gone).
-          await tester.tap(find.byKey(const ValueKey('roster-filter-rooms')));
-          await tester.pumpAndSettle();
-          expect(find.byType(RoomMirrorAvatar), findsNothing);
-        }
-        return (await tester.runAsync(() => _pixels(tester)))!;
-      }
+              if (malformed)
+                'hermes-bots-groups': {'version': 3, 'rooms': false},
+            },
+          }),
+          const AgentProfile(name: 'builder'),
+        ]),
+      );
+      await tester.pumpAndSettle();
+      // Dots home: the main bot on top, the rest in the team grid.
+      expect(find.byKey(const ValueKey('dots-main')), findsOneWidget);
+      expect(find.byKey(const ValueKey('dots-tile-builder')), findsOneWidget);
+      expect(find.text('Sin sección'), findsNothing);
+      expect(find.byType(RoomMirrorAvatar), findsNothing);
+      return (await tester.runAsync(() => _pixels(tester)))!;
+    }
 
-      expect(await frame(malformed: true), await frame());
-      expect(await frame(malformed: true, work: true), await frame(work: true));
-      expect(tester.takeException(), isNull);
-    },
-  );
+    expect(await frame(malformed: true), await frame());
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
-    'sections count visible rows, keep pins, fold locally and isolate connections',
+    'Desktop sections do not split the team grid; pins lead their tier and '
+    'hidden bots stay out',
     (tester) async {
       tester.view.physicalSize = const Size(600, 1100);
       tester.view.devicePixelRatio = 1;
@@ -173,11 +161,7 @@ void main() {
           name: 'builder',
           botModeUiMeta: {'sectionId': 'team', 'sectionName': 'Team'},
         ),
-        const AgentProfile(
-          name: 'reviewer',
-          botModeUiMeta: {'sectionId': 'team', 'sectionName': 'Team'},
-        ),
-        const AgentProfile(name: 'loose'),
+        const AgentProfile(name: 'aloose'),
         const AgentProfile(
           name: 'hidden',
           botModeUiMeta: {
@@ -189,133 +173,46 @@ void main() {
       ];
       await tester.pumpWidget(_host(manager, profiles));
       await tester.pumpAndSettle();
-      final heading = find.byKey(
-        const ValueKey('mission-bot-section-section:team'),
-      );
-      final builder = find.byKey(const ValueKey('mission-bot-row-builder'));
-      expect(
-        find.descendant(of: heading, matching: find.text('2')),
-        findsOneWidget,
-      );
+      expect(find.text('Team'), findsNothing);
       expect(find.text('Hidden section'), findsNothing);
-      expect(
-        find.byKey(const ValueKey('mission-pinned-tile-pinned')),
-        findsOneWidget,
-      );
-      expect(find.text('Recientes'), findsOneWidget);
-      await tester.tap(heading);
-      await tester.pumpAndSettle();
-      expect(builder, findsNothing);
-      expect(
-        find.byKey(const ValueKey('mission-bot-row-loose')),
-        findsOneWidget,
-      );
-      await tester.pumpWidget(const SizedBox());
-      await tester.pumpWidget(_host(manager, profiles));
-      await tester.pumpAndSettle();
-      expect(builder, findsNothing);
-      await tester.tap(heading);
-      await tester.pumpAndSettle();
-      expect(builder, findsOneWidget);
-      await tester.tap(heading);
-      await tester.pumpAndSettle();
-      await tester.pumpWidget(const SizedBox());
-      await tester.pumpWidget(
-        _host(manager, profiles, connectionId: 'second-test'),
-      );
-      await tester.pumpAndSettle();
-      expect(builder, findsOneWidget);
+      expect(find.byKey(const ValueKey('dots-tile-hidden')), findsNothing);
+      double x(String name) =>
+          tester.getTopLeft(find.byKey(ValueKey('dots-tile-$name'))).dx;
+      // Same tier and no activity: the pin leads, then by name.
+      expect(x('pinned'), lessThan(x('aloose')));
+      expect(x('aloose'), lessThan(x('builder')));
       expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets(
-    'hidden section alone never switches legacy layout; search remains flat',
-    (tester) async {
-      await tester.pumpWidget(
-        _host(manager, const [
-          AgentProfile(name: 'visible'),
-          AgentProfile(
-            name: 'hidden',
-            botModeUiMeta: {
-              'hidden': true,
-              'sectionId': 'team',
-              'sectionName': 'Team',
-            },
-          ),
-        ]),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Team'), findsNothing);
-      expect(find.text('Sin sección'), findsNothing);
-      await tester.pumpWidget(const SizedBox());
-      await tester.pumpWidget(
-        _host(manager, const [
-          AgentProfile(
-            name: 'visible',
-            botModeUiMeta: {'sectionId': 'team', 'sectionName': 'Team'},
-          ),
-        ]),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Team'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('roster-search')));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('mission-bot-search')),
-        'visible',
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Team'), findsNothing);
-      expect(
-        find.byKey(const ValueKey('mission-bot-row-visible')),
-        findsOneWidget,
-      );
-    },
-  );
-
-  testWidgets(
-    'same-name sections remain independent and sort before Recent',
-    (tester) async {
-      tester.view.physicalSize = const Size(600, 1100);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      await tester.pumpWidget(
-        _host(manager, const [
-          AgentProfile(
-            name: 'z',
-            botModeUiMeta: {'sectionId': 'z', 'sectionName': 'Zulu'},
-          ),
-          AgentProfile(
-            name: 'b',
-            botModeUiMeta: {'sectionId': 'b', 'sectionName': 'Alpha'},
-          ),
-          AgentProfile(
-            name: 'a',
-            botModeUiMeta: {'sectionId': 'a', 'sectionName': 'Alpha'},
-          ),
-          AgentProfile(name: 'loose'),
-        ], locale: 'en'),
-      );
-      await tester.pumpAndSettle();
-      Finder section(String id) =>
-          find.byKey(ValueKey('mission-bot-section-$id'));
-      final a = section('section:a');
-      final b = section('section:b');
-      final z = section('section:z');
-      final loose = find.byKey(const ValueKey('roster-section-recent'));
-      expect(find.text('Alpha'), findsNWidgets(2));
-      expect(find.text('Recent'), findsOneWidget);
-      expect(tester.getTopLeft(a).dy, lessThan(tester.getTopLeft(b).dy));
-      expect(tester.getTopLeft(b).dy, lessThan(tester.getTopLeft(z).dy));
-      expect(tester.getTopLeft(z).dy, lessThan(tester.getTopLeft(loose).dy));
-      await tester.tap(a);
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('mission-bot-row-a')), findsNothing);
-      expect(find.byKey(const ValueKey('mission-bot-row-b')), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    },
-  );
+  testWidgets('search over a sectioned roster stays one flat grid', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(manager, const [
+        AgentProfile(
+          name: 'visible',
+          botModeUiMeta: {'sectionId': 'team', 'sectionName': 'Team'},
+        ),
+        AgentProfile(name: 'other'),
+      ]),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Team'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('roster-search')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('mission-bot-search')),
+      'visible',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Team'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('mission-bot-row-visible')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('mission-bot-row-other')), findsNothing);
+  });
 
   testWidgets(
     'mirrored room image and name appear in list and header, never pseudo rooms or messages',
@@ -337,17 +234,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Team picture'), findsOneWidget);
-      // A Desktop-only room is listed by the roster as a read-only Desktop
-      // projection row, never as a hosted (writable) room.
-      expect(find.text('Desktop only'), findsOneWidget);
-      expect(
-        find.byWidgetPredicate((widget) {
-          final key = widget.key;
-          return key is ValueKey<String> &&
-              key.value.startsWith('roster-room-desktop-');
-        }),
-        findsOneWidget,
-      );
+      // A Desktop-only room is not listed at all (owner decision 1.2.15:
+      // Console shows only the server's hosted rooms).
+      expect(find.text('Desktop only'), findsNothing);
       expect(find.text('MIRROR ONLY MESSAGE'), findsNothing);
       expect(find.byType(RoomMirrorAvatar), findsOneWidget);
       await tester.tap(find.text('Team picture'));

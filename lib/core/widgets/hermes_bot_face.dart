@@ -106,6 +106,11 @@ enum HermesBotFaceMotionState {
   working,
 }
 
+/// Surface of a Blobatar face. [flat] is the Blobatar reference; [matte]
+/// (Bots home, Dots style) adds a soft, cached radial volume over the head
+/// and slightly larger eyes. Classic faces ignore it.
+enum HermesBotFaceFinish { flat, matte }
+
 class HermesBotFace extends StatefulWidget {
   final HermesBotFaceVisual visual;
   final double size;
@@ -133,6 +138,9 @@ class HermesBotFace extends StatefulWidget {
   /// animation runs 0→1. It is a one-shot blink, never a running clock.
   final Animation<double>? blink;
 
+  /// Surface finish (flat reference or the Dots matte volume).
+  final HermesBotFaceFinish finish;
+
   /// Period of the face clock; external clocks must use the same period so
   /// the seeded breath/blink/saccade periods stay continuous.
   static const clockDuration = Duration(days: 1);
@@ -148,6 +156,7 @@ class HermesBotFace extends StatefulWidget {
     this.motionGain = 1,
     this.eyeGain,
     this.blink,
+    this.finish = HermesBotFaceFinish.flat,
   }) : assert(size > 0);
 
   @override
@@ -228,6 +237,7 @@ class _HermesBotFaceState extends State<HermesBotFace>
             motionGain: widget.motionGain,
             eyeGain: widget.eyeGain ?? widget.motionGain,
             blink: widget.blink,
+            finish: widget.finish,
           ),
         ),
       ),
@@ -248,6 +258,7 @@ final class _HermesBotFacePainter extends CustomPainter {
   final double motionGain;
   final double eyeGain;
   final Animation<double>? blink;
+  final HermesBotFaceFinish finish;
   final _BlobatarLayout? _blobatarLayout;
   final _BlobatarMotionProfile? _motionProfile;
 
@@ -260,6 +271,7 @@ final class _HermesBotFacePainter extends CustomPainter {
     this.motionGain = 1,
     this.eyeGain = 1,
     this.blink,
+    this.finish = HermesBotFaceFinish.flat,
   }) : _blobatarLayout = switch (visual) {
          final HermesBlobatarFaceVisual face => _BlobatarLayout.create(
            face.seed,
@@ -291,7 +303,13 @@ final class _HermesBotFacePainter extends CustomPainter {
             : blink != null
             ? _restPose(blink!.value)
             : HermesBotFaceMotionSnapshot.staticFrame;
-        _paintBlobatar(canvas, size, _blobatarLayout!, frame);
+        _paintBlobatar(
+          canvas,
+          size,
+          _blobatarLayout!,
+          frame,
+          matte: finish == HermesBotFaceFinish.matte,
+        );
       case final HermesClassicFaceVisual face:
         _paintClassic(canvas, size, face);
     }
@@ -304,7 +322,8 @@ final class _HermesBotFacePainter extends CustomPainter {
       oldDelegate.motionState != motionState ||
       oldDelegate.motionGain != motionGain ||
       oldDelegate.eyeGain != eyeGain ||
-      oldDelegate.blink != blink;
+      oldDelegate.blink != blink ||
+      oldDelegate.finish != finish;
 }
 
 /// Still idle pose of a living face: the reference frame with its eyes
@@ -375,12 +394,29 @@ bool _sameVisual(HermesBotFaceVisual a, HermesBotFaceVisual b) =>
 // ---------------------------------------------------------------------------
 // Blobatar 2.0.0 native port. The package viewBox is exactly 100 x 100.
 
+/// Matte volume shader in the 100×100 Blobatar space: a soft highlight
+/// up-left fading to a gentle shade down-right. Built once and reused by
+/// every matte face (no per-frame allocation).
+final Shader _matteVolume = const RadialGradient(
+  center: Alignment(-0.35, -0.45),
+  radius: 0.95,
+  colors: [Color(0x33FFFFFF), Color(0x00FFFFFF), Color(0x29000000)],
+  stops: [0, .5, 1],
+).createShader(const Rect.fromLTWH(0, 0, 100, 100));
+
+/// Layer bounds of the matte volume (head motion stays inside it).
+const Rect _matteBounds = Rect.fromLTWH(-20, -20, 140, 140);
+
+/// Eyes of a matte (Dots) face are drawn this much larger.
+const double _matteEyeScale = 1.16;
+
 void _paintBlobatar(
   Canvas canvas,
   Size size,
   _BlobatarLayout layout,
-  HermesBotFaceMotionSnapshot motion,
-) {
+  HermesBotFaceMotionSnapshot motion, {
+  bool matte = false,
+}) {
   canvas.save();
   canvas.scale(size.width / 100, size.height / 100);
   canvas
@@ -391,6 +427,7 @@ void _paintBlobatar(
   final head = Paint()
     ..color = _colorFromHex(layout.headHex)
     ..style = PaintingStyle.fill;
+  if (matte) canvas.saveLayer(_matteBounds, Paint());
   for (final petal in layout.petals) {
     canvas.drawCircle(Offset(petal.cx, petal.cy), petal.r, head);
   }
@@ -398,6 +435,17 @@ void _paintBlobatar(
     canvas.drawPath(extra.path, head);
   }
   canvas.drawPath(layout.bodyPath.path, head);
+  if (matte) {
+    // srcATop keeps the volume inside the head drawn into this layer, so
+    // overlapping petals shade once and nothing spills outside the body.
+    canvas.drawRect(
+      _matteBounds,
+      Paint()
+        ..shader = _matteVolume
+        ..blendMode = BlendMode.srcATop,
+    );
+    canvas.restore();
+  }
 
   final eyeColor = _colorFromHex(layout.eyeHex);
   final eye = Paint()
@@ -412,8 +460,9 @@ void _paintBlobatar(
   for (final value in layout.eyes) {
     final cx = value.cx + motion.eyeOffsetX;
     final cy = value.cy + motion.eyeOffsetY;
-    final rx = value.rx * motion.eyeScaleX;
-    final ry = value.ry * motion.eyeScaleY * motion.blinkScaleY;
+    final eyeScale = matte ? _matteEyeScale : 1.0;
+    final rx = value.rx * motion.eyeScaleX * eyeScale;
+    final ry = value.ry * motion.eyeScaleY * motion.blinkScaleY * eyeScale;
     if (motion.brows != 0) {
       _paintBrow(canvas, value, cx, cy, rx, ry, motion.brows, eyeColor);
     }
