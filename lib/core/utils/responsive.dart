@@ -31,6 +31,13 @@ class Responsive {
   /// Width of the categories pane of Settings in expanded windows.
   static const double settingsCategoryPaneWidth = 320;
 
+  /// Width of the chat's activity side panel in expanded windows.
+  static const double activitySidePanelWidth = 360;
+
+  /// Narrowest the conversation column gets beside the activity side panel;
+  /// a narrower chat keeps the modal panel.
+  static const double minChatColumnWidth = 440;
+
   static WindowSizeClass sizeClassForWidth(double width) {
     if (width >= expandedBreakpoint) return WindowSizeClass.expanded;
     if (width >= tabletBreakpoint) return WindowSizeClass.medium;

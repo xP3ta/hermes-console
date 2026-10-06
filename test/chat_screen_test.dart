@@ -23124,6 +23124,101 @@ void main() {
     },
   );
 
+  for (final (label, size, sidePanel) in const [
+    ('1280x800', Size(1280, 800), true),
+    ('1024x768', Size(1024, 768), true),
+    ('411x915', Size(411, 915), false),
+  ]) {
+    testWidgets(
+      '$label: the activity pill opens '
+      '${sidePanel ? 'a side panel beside the composer' : 'the modal panel'}',
+      (tester) async {
+        tester.view
+          ..physicalSize = size
+          ..devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final gateway = _StableRefreshGateway(subagents: const []);
+        gateway.processSnapshot = const AgentCenterSnapshot(
+          snapshots: [],
+          processes: [
+            BackgroundProcessEntry(
+              opaqueId: 'process-tablet',
+              status: AgentCenterStatus.running,
+              uptimeSeconds: 12,
+              command: 'dart run worker.dart',
+              notifyOnComplete: true,
+            ),
+          ],
+        );
+        final chat = await pumpChat(
+          tester,
+          connection: _remoteConn('tablet-activity-$label'),
+          desktopGateway: gateway,
+        );
+        expect(
+          await chat.send(
+            fullText: 'PUBLIC_PARENT_REQUEST',
+            model: 'hermes-agent',
+            history: chat.messages,
+          ),
+          isTrue,
+        );
+        gateway.emit('message.start');
+        gateway.emit('message.complete', const {'text': 'PUBLIC_PARENT_DONE'});
+        gateway.emit('status.update', const {
+          'kind': 'process',
+          'text': 'PUBLIC_PROCESS_STATUS',
+        });
+        await tester.pump();
+        await tester.pump();
+        final pill = find.byKey(const ValueKey('activity-pill'));
+        expect(pill, findsOneWidget);
+
+        await tester.tap(
+          find.descendant(of: pill, matching: find.byType(InkWell)),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+
+        final side = find.byKey(const ValueKey('activity-side-panel'));
+        final modal = find.byKey(const ValueKey('activity-panel'));
+        if (!sidePanel) {
+          expect(modal, findsOneWidget);
+          expect(side, findsNothing);
+          Navigator.of(tester.element(modal)).pop();
+          await tester.pump(const Duration(milliseconds: 300));
+          return;
+        }
+        expect(side, findsOneWidget);
+        expect(modal, findsNothing);
+        expect(
+          find.descendant(
+            of: side,
+            matching: find.textContaining('dart run worker.dart'),
+          ),
+          findsWidgets,
+        );
+        final panel = tester.getRect(side);
+        expect(panel.width, closeTo(360, 1));
+        expect(panel.right, size.width);
+        final composer = tester.getRect(
+          find.byKey(const ValueKey('chat-composer-host')),
+        );
+        expect(composer.overlaps(panel), isFalse);
+        expect(composer.right, lessThanOrEqualTo(panel.left));
+        expect(tester.getRect(pill).overlaps(panel), isFalse);
+        expect(tester.takeException(), isNull);
+
+        await tester.tap(
+          find.byKey(const ValueKey('activity-side-panel-close')),
+        );
+        await tester.pump();
+        expect(side, findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets('la lista reserva todas las filas de actividad flotante', (
     tester,
   ) async {
