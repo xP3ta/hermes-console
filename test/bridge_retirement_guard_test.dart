@@ -41,4 +41,8 @@ void main() {
     expect(source, isNot(contains('BridgeClient')));
   });
 
+  test('the chat screen never provisions a bridge token by itself', () {
+    final source = _code('lib/core/screens/chat_screen.dart');
+    expect(source, isNot(contains('BridgeClient.provision(')));
+  });
 }
