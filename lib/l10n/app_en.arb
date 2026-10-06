@@ -1999,200 +1999,6 @@
       }
     }
   },
-  "sklStatsApi": "{enabled} active · {total} total · /api/skills",
-  "@sklStatsApi": {
-    "placeholders": {
-      "enabled": {
-        "type": "int"
-      },
-      "total": {
-        "type": "int"
-      }
-    }
-  },
-  "sklStatsSource": "{total} total · {source}",
-  "@sklStatsSource": {
-    "placeholders": {
-      "total": {
-        "type": "int"
-      },
-      "source": {
-        "type": "String"
-      }
-    }
-  },
-  "sklTabInstalled": "installed",
-  "sklTabDiscover": "discover",
-  "sklBridgeActiveTooltip": "Native management active (bridge)",
-  "sklBridgeDetectedTooltip": "Bridge detected · tap to connect",
-  "sklBridgeUnavailableTooltip": "Bridge unavailable (management by command only)",
-  "sklProfileBlockMsg": "Editing skills with profile «{profile}» active would modify the global config. Switch to the default profile to edit.",
-  "@sklProfileBlockMsg": {
-    "placeholders": {
-      "profile": {
-        "type": "String"
-      }
-    }
-  },
-  "sklUseDefault": "Use default",
-  "sklActivate": "Activate skill",
-  "sklDeactivate": "Deactivate skill",
-  "sklActivated": "Skill activated: {name} · restart the agent to apply",
-  "@sklActivated": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklDeactivated": "Skill deactivated: {name} · restart the agent to apply",
-  "@sklDeactivated": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklToggleFailed": "Could not change «{name}»",
-  "@sklToggleFailed": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklBridgeError": "Bridge: {msg}",
-  "@sklBridgeError": {
-    "placeholders": {
-      "msg": {
-        "type": "String"
-      }
-    }
-  },
-  "sklError": "Error: {msg}",
-  "@sklError": {
-    "placeholders": {
-      "msg": {
-        "type": "String"
-      }
-    }
-  },
-  "sklRemoveTitle": "Remove skill",
-  "sklRemoveConfirm": "Remove «{name}» from the server? It can be reinstalled later from Discover.",
-  "@sklRemoveConfirm": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklCancel": "Cancel",
-  "sklRemove": "Remove",
-  "sklRemoveNeedsBridge": "Removing skills requires the local agent (bridge) to be connected.",
-  "sklNoBridgeConnection": "No connection to the local agent (bridge).",
-  "sklBuiltinArchived": "Builtin skill archived: {name}",
-  "@sklBuiltinArchived": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklRemoved": "Skill removed: {name}",
-  "@sklRemoved": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklRemoveFailed": "Could not remove «{name}» (rc {rc})",
-  "@sklRemoveFailed": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      },
-      "rc": {
-        "type": "String"
-      }
-    }
-  },
-  "sklNoInstallSource": "This skill has no installable owner/repo source.",
-  "sklInstallTitle": "Install {name}",
-  "@sklInstallTitle": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklInstallWarning": "⚠ A skill can run code on your server. Only install skills from sources you trust.\n\n{cmd}",
-  "@sklInstallWarning": {
-    "placeholders": {
-      "cmd": {
-        "type": "String"
-      }
-    }
-  },
-  "sklInstall": "Install",
-  "sklInstalled": "Skill installed: {name}",
-  "@sklInstalled": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
-  "sklInstallFailed": "Installation failed (rc {rc})",
-  "@sklInstallFailed": {
-    "placeholders": {
-      "rc": {
-        "type": "String"
-      }
-    }
-  },
-  "sklDetailHintBridge": "Enable/disable with the list toggle and delete with the trash icon. You can also copy the commands.",
-  "sklDetailHintNoBridge": "/api/skills is GET-only. Connect the Mobile Bridge (cloud icon) to enable/disable, install and remove natively, or copy the commands below.",
-  "sklModeNative": "native management (bridge)",
-  "sklModeCli": "CLI management",
-  "sklRecommended": "recommended · most used on skills.sh",
-  "sklDiscoverTitle": "discover skills",
-  "sklSearchHintBridge": "search skills by name (e.g. git, pdf, search)",
-  "sklSearchHintCli": "search the skills.sh registry",
-  "sklWebOnlyTitle": "catalogue via web only",
-  "sklWebOnlyBody": "skills.sh has no public API — you don't need any key.\nBrowse the catalogue in your browser and copy the\ninstallation command to run it on your gateway.",
-  "sklOpenSkillsSh": "open skills.sh",
-  "sklNoResultsTitle": "no results",
-  "sklNoResultsFor": "no skills found for \"{query}\"",
-  "@sklNoResultsFor": {
-    "placeholders": {
-      "query": {
-        "type": "String"
-      }
-    }
-  },
-  "sklSearchOnline": "search skills.sh",
-  "sklInstalling": "installing…",
-  "sklInstallButton": "install",
-  "sklCommandButton": "command",
-  "sklPendingReload": "Pending skill changes. Restart the agent in Settings › Maintenance to apply them.",
-  "sklNoApiNote": "skills.sh has no public API (no key needed). Browse the catalogue in your browser.",
-  "sklOpen": "open",
-  "sklBridgeDetectedTitle": "Mobile Bridge detected",
-  "sklBridgeDisabledTitle": "Mobile skill management disabled",
-  "sklBridgeCanView": "You can see the list of installed skills on the gateway.",
-  "sklBridgeNoActions": "Without the bridge you CANNOT enable/disable, install or remove skills from the app (only copy the commands).",
-  "sklBridgeRunningNote": "The bridge auto-connects when the instance has the gateway token (API_SERVER_KEY). If not, tap it to connect manually.",
-  "sklBridgeNotRunningNote": "The Mobile Bridge is the link that gives the app control over skills; it requires the local Hermes agent configured from this app.",
-  "sklBridgeConnect": "Connect bridge",
-  "sklBridgeConfigure": "Configure bridge",
-  "sklCliCatalogIntro": "skills.sh works as a web catalogue — no API key required. Browse in your browser and generate the installation command for your server here.",
-  "sklRepoLabel": "skill owner/repo",
-  "sklRepoHint": "e.g. vercel-labs/agent-skills",
-  "sklCopyCommand": "Copy command",
-  "sklCommandCopied": "Command copied — run it on your Hermes server",
-  "sklCliOnlyNote": "Command copy only: the gateway does not expose a secure remote installation endpoint (verified), so the app sends nothing to the server.",
-  "sklSecurityWarning": "Skills run code on your server with the agent's permissions. Review the repository before installing anything.",
   "mdlVision": "Vision (images)",
   "mdlWebExtract": "Web extraction",
   "mdlCompression": "Context compression",
@@ -6316,13 +6122,6 @@
   "installCustomModel": "Custom model",
   "installUseCloudApi": "Use a cloud API",
   "installStartWithoutLocalModel": "Start without a local model",
-  "skillsRefreshInstalled": "Refresh installed",
-  "skillsNoneFound": "no skills found",
-  "skillsNoneInstalled": "no skills are installed on this gateway",
-  "skillsSearchInstalledHint": "search installed skills…",
-  "skillsNoMatch": "no match",
-  "skillsNoMatchBody": "no skills match your search",
-  "skillsSearchHubHint": "search skills.sh…",
   "liveCompacting": "Compacting",
   "liveWaitingForUser": "Waiting for your reply",
   "liveMoreBackground": "+{count} in background",
@@ -7109,12 +6908,6 @@
   "aboutSectionApp": "App",
   "aboutSectionLegal": "Licenses and privacy",
   "aboutSectionLinks": "Links",
-  "designEnabled": "Enabled",
-  "designDisabled": "Disabled",
-  "sklDetailWhat": "What it does",
-  "sklDetailManage": "Manage",
-  "sklCopyInstallCmd": "Copy install command",
-  "sklCopyRemoveCmd": "Copy remove command",
   "memDetailFile": "File",
   "designDetails": "Details",
   "cphTitle": "Capabilities",
@@ -7153,7 +6946,6 @@
   "cphMore": "More options",
   "cphMenuUpdateSkills": "Update skills",
   "cphMenuAdvanced": "Advanced settings",
-  "cphMenuClassicSkills": "Classic skills",
   "cphEmptyCatalog": "No capabilities match",
   "cphEmptyCatalogBody": "Try another search or clear the filters.",
   "cphEmptyInstalled": "Nothing installed yet",

@@ -233,14 +233,12 @@ class CapabilitiesHub extends StatefulWidget {
   final SavedConnection connection;
   final String profile;
   final WidgetBuilder? advancedBuilder;
-  final WidgetBuilder? classicSkillsBuilder;
 
   const CapabilitiesHub({
     super.key,
     required this.connection,
     this.profile = '',
     this.advancedBuilder,
-    this.classicSkillsBuilder,
   });
 
   @override
@@ -279,7 +277,6 @@ class _CapabilitiesHubState extends State<CapabilitiesHub> {
     destinationLabel:
         '${widget.connection.label} · ${widget.profile.trim().isEmpty ? 'default' : widget.profile.trim()}',
     advancedBuilder: widget.advancedBuilder,
-    classicSkillsBuilder: widget.classicSkillsBuilder,
   );
 }
 
@@ -291,7 +288,6 @@ class CapabilitiesScreen extends StatefulWidget {
   /// `<server label> · <profile>` shown in install confirmations.
   final String destinationLabel;
   final WidgetBuilder? advancedBuilder;
-  final WidgetBuilder? classicSkillsBuilder;
   final CapabilitiesSegment initialSegment;
   final Duration searchDebounce;
 
@@ -302,7 +298,6 @@ class CapabilitiesScreen extends StatefulWidget {
     this.instanceId = '',
     this.destinationLabel = '',
     this.advancedBuilder,
-    this.classicSkillsBuilder,
     this.initialSegment = CapabilitiesSegment.catalog,
     this.searchDebounce = const Duration(milliseconds: 450),
   });
@@ -311,7 +306,7 @@ class CapabilitiesScreen extends StatefulWidget {
   State<CapabilitiesScreen> createState() => _CapabilitiesScreenState();
 }
 
-enum _MenuAction { updateSkills, advanced, classicSkills }
+enum _MenuAction { updateSkills, advanced }
 
 /// Facet values offered by the filter surface.
 sealed class _Facet {
@@ -514,13 +509,6 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
             label: s.cphMenuAdvanced,
             icon: Icons.tune_rounded,
           ),
-        if (widget.classicSkillsBuilder != null)
-          HermesAction(
-            key: const ValueKey('cph-menu-classic'),
-            value: _MenuAction.classicSkills,
-            label: s.cphMenuClassicSkills,
-            icon: Icons.auto_awesome_outlined,
-          ),
       ],
     );
     if (!mounted || chosen == null) return;
@@ -531,11 +519,6 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
         await Navigator.of(
           context,
         ).push(MaterialPageRoute<void>(builder: widget.advancedBuilder!));
-        if (mounted) unawaited(_load());
-      case _MenuAction.classicSkills:
-        await Navigator.of(
-          context,
-        ).push(MaterialPageRoute<void>(builder: widget.classicSkillsBuilder!));
         if (mounted) unawaited(_load());
     }
   }
@@ -994,7 +977,6 @@ class _CapabilitiesScreenState extends State<CapabilitiesScreen> {
 
     final hasMenu =
         widget.advancedBuilder != null ||
-        widget.classicSkillsBuilder != null ||
         (!widget.readOnly && (snapshot?.skillsUpdatable ?? false));
 
     return HermesPage(

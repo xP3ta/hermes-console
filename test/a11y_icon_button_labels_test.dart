@@ -8,10 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/models/interactive_prompt.dart';
 import 'package:hermes_android/core/screens/image_viewer_screen.dart';
 import 'package:hermes_android/core/screens/memory_screen.dart';
-import 'package:hermes_android/core/screens/skills_screen.dart';
 import 'package:hermes_android/core/services/active_profile_scope.dart';
-import 'package:hermes_android/core/services/bridge_client.dart';
-import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/interactive_prompt_reducer.dart';
 import 'package:hermes_android/core/theme/app_theme.dart';
@@ -232,21 +229,6 @@ Widget build() => IconButton(
 
     await tester.pumpWidget(
       _host(
-        SkillsScreen(
-          connection: _connection,
-          profileScope: scope,
-          dashboardClientForTesting: _dashboardClient(),
-          bridgeManagerForTesting: _NoBridge(),
-        ),
-      ),
-    );
-    await _settle(tester);
-    await tester.enterText(find.byType(TextField).first, 'skill');
-    await tester.pump();
-    expect(find.bySemanticsLabel('Clear search'), findsOneWidget);
-
-    await tester.pumpWidget(
-      _host(
         ImageViewerScreen(
           imageUrl: 'https://hermes.example.test/image.png',
           imageBytes: base64Decode(
@@ -372,13 +354,6 @@ DashboardClient _dashboardClient() => DashboardClient(
           }),
           200,
         );
-      case '/api/skills':
-        return http.Response(
-          jsonEncode([
-            {'name': 'example-skill', 'enabled': true, 'category': 'test'},
-          ]),
-          200,
-        );
       default:
         return http.Response('{"detail":"not found"}', 404);
     }
@@ -389,21 +364,6 @@ Future<void> _settle(WidgetTester tester) async {
   for (var i = 0; i < 20; i++) {
     await tester.pump(const Duration(milliseconds: 50));
   }
-}
-
-final class _NoBridge implements BridgeManagerContract {
-  @override
-  Future<BridgeClient?> clientFor(String connectionId) async => null;
-
-  @override
-  Future<BridgeState> probe(String connectionId) async => BridgeState.unknown;
-
-  @override
-  Future<BridgeProvisionResult> provision(String connectionId) =>
-      throw UnimplementedError();
-
-  @override
-  Future<bool> tryProvision(String connectionId) async => false;
 }
 
 final class _FakeAudioPlayback implements GeneratedAudioPlayback {

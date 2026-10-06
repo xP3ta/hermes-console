@@ -16,7 +16,6 @@ import 'package:hermes_android/core/models/mission_control.dart';
 import 'package:hermes_android/core/models/profile_pet.dart';
 import 'package:hermes_android/core/screens/mission_control_screen.dart';
 import 'package:hermes_android/core/screens/profiles_screen.dart';
-import 'package:hermes_android/core/screens/skills_screen.dart';
 import 'package:hermes_android/core/screens/tasks_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
@@ -792,10 +791,6 @@ void main() {
     final hub = tester.widget<CapabilitiesHub>(hubFinder);
     expect(hub.profile, 'infra');
     expect(hub.advancedBuilder, isNull);
-    expect(hub.classicSkillsBuilder, isNotNull);
-    final classic =
-        hub.classicSkillsBuilder!(tester.element(hubFinder)) as SkillsScreen;
-    expect(classic.profileOverride, 'infra');
     Navigator.of(tester.element(hubFinder)).pop();
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(

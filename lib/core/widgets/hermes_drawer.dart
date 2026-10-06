@@ -19,7 +19,6 @@ import '../screens/session_list_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/voice_settings_screen.dart';
 import '../screens/companion/mascotas_screen.dart';
-import '../screens/skills_screen.dart';
 import '../screens/task_center_screen.dart';
 import '../screens/tasks_screen.dart';
 import '../screens/tools_hub_screen.dart';
@@ -72,6 +71,8 @@ enum DrawerSection {
 CapabilitiesHub buildCapabilitiesHub({
   required SavedConnection connection,
   required ConnectionManager connManager,
+  // Unused since the bridge-only classic skills screen was retired; kept so
+  // the call sites do not change in this cleanup.
   required CapabilityMatrix capabilities,
   String? profileOverride,
 }) {
@@ -91,12 +92,6 @@ CapabilitiesHub buildCapabilitiesHub({
               gateway: gateway,
               readOnly: connection.readOnly,
             ),
-          ),
-    classicSkillsBuilder: capabilities.skillsRead.isNo
-        ? null
-        : (_) => SkillsScreen(
-            connection: connection,
-            profileOverride: scoped ? fixedProfile : null,
           ),
   );
 }

@@ -177,7 +177,6 @@ void main() {
             as CapabilitiesHub;
     expect(identical(screen.connection, _connection), isTrue);
     expect(screen.advancedBuilder, isNotNull);
-    expect(screen.classicSkillsBuilder, isNotNull);
   });
 
   testWidgets('Voz se bloquea y Herramientas sigue accesible sin instancia', (

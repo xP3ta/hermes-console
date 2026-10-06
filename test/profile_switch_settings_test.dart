@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_android/core/screens/memory_screen.dart';
 import 'package:hermes_android/core/screens/models_screen.dart';
-import 'package:hermes_android/core/screens/skills_screen.dart';
 import 'package:hermes_android/core/screens/soul_screen.dart';
 import 'package:hermes_android/core/services/active_profile_scope.dart';
 import 'package:hermes_android/core/services/bridge_client.dart';
@@ -76,10 +75,6 @@ final class _Dashboard {
           );
         case '/api/model/auxiliary':
           return http.Response(jsonEncode({'tasks': []}), 200);
-        case '/api/skills':
-          return held('skills', profile, [
-            {'name': '$profile-skill', 'enabled': true, 'category': 'x'},
-          ]);
         case '/api/memory':
           return held('memory', profile, {
             'active': '',
@@ -253,15 +248,6 @@ void main() {
           ),
           shows: (profile) => find.text('${profile}_notes.md'),
         ),
-        'skills': (
-          build: (client, scope) => SkillsScreen(
-            connection: _connection,
-            profileScope: scope,
-            dashboardClientForTesting: client,
-            bridgeManagerForTesting: _NoBridge(),
-          ),
-          shows: (profile) => find.text('$profile-skill'),
-        ),
         'model': (
           build: (client, scope) => ModelsScreen(
             connection: _connection,
@@ -373,7 +359,7 @@ void main() {
   });
 
   group('a bot card (fixed profile)', () {
-    for (final area in ['memory', 'skills']) {
+    for (final area in ['memory']) {
       testWidgets('$area edits the card profile and ignores switches', (
         tester,
       ) async {
@@ -381,20 +367,12 @@ void main() {
         final client = dashboard.client();
         await pump(
           tester,
-          area == 'memory'
-              ? MemoryScreen(
-                  connection: _connection,
-                  profileOverride: 'zed',
-                  profileScope: scope,
-                  dashboardClientForTesting: client,
-                )
-              : SkillsScreen(
-                  connection: _connection,
-                  profileOverride: 'zed',
-                  profileScope: scope,
-                  dashboardClientForTesting: client,
-                  bridgeManagerForTesting: _NoBridge(),
-                ),
+          MemoryScreen(
+            connection: _connection,
+            profileOverride: 'zed',
+            profileScope: scope,
+            dashboardClientForTesting: client,
+          ),
         );
         expect(dashboard.reads, ['$area:zed']);
         expect(find.text('Profile: zed'), findsOneWidget);
