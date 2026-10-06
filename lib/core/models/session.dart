@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '../utils/chat_turn.dart';
 import '../utils/markdown_clipboard.dart';
 import '../utils/session_timestamp.dart';
+import 'reference_directive.dart';
 import 'session_category.dart';
 
 /// Derived lifecycle state for a session.
@@ -111,6 +112,7 @@ class Session implements SessionSortKey {
   /// The server's `last_read_at` watermark (seconds). Null when the server
   /// does not publish it or never tracked the session (NULL = read there).
   final double? lastReadAt;
+
   /// A search hit's FTS snippet as the server sent it, with the `>>>`/`<<<`
   /// match delimiters ([preview] has them stripped). Null for list rows.
   final String? searchSnippet;
@@ -361,8 +363,10 @@ class Session implements SessionSortKey {
       return '';
     }
     return markdownToCompactText(
-      stripCronPreamble(
-        stripBackgroundProcessCarrier(stripBotMentionNote(preview)),
+      plainReferencePreview(
+        stripCronPreamble(
+          stripBackgroundProcessCarrier(stripBotMentionNote(preview)),
+        ),
       ),
     );
   }

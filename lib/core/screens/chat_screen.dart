@@ -9,9 +9,11 @@ export '../widgets/chat/chat_message_selection_area.dart';
 
 import '../models/bot_mention.dart';
 import '../models/composer_reference.dart';
+import '../models/reference_directive.dart';
 import '../utils/large_paste.dart';
 import '../widgets/chat_mention_palette.dart';
 import '../widgets/chat/composer_reference_palette.dart';
+import '../widgets/chat/user_message_text.dart';
 import '../widgets/chat/pasted_text_editor.dart';
 import '../services/message_reaction_prefs.dart';
 import '../services/terminal_availability.dart';
@@ -21204,13 +21206,11 @@ class _UserMessage extends StatelessWidget {
                                 ),
                               ),
                             if (parsed.text.isNotEmpty)
-                              MarkdownBody(
+                              // `@url:`/`@file:` references read as chips, not
+                              // as raw directives with a backtick fence.
+                              UserMessageText(
                                 data: parsed.text,
-                                selectable: false,
-                                // Respeta los saltos de línea simples (CommonMark los
-                                // colapsaría en espacios → texto "todo junto").
-                                softLineBreak: true,
-                                onTapLink: (text, href, title) =>
+                                onTapLink: (href) =>
                                     openChatMarkdownLink(context, href),
                                 styleSheet: _userSheet(theme, colors),
                               ),
@@ -22853,9 +22853,8 @@ class _QueuedRow extends StatelessWidget {
   Widget _buildRow(BuildContext context) {
     final colors = Theme.of(context).hermes;
     final strings = Strings.of(context);
-    final preview = entry.text.length > 72
-        ? '${entry.text.substring(0, 72)}…'
-        : entry.text;
+    final plain = plainReferencePreview(entry.text);
+    final preview = plain.length > 72 ? '${plain.substring(0, 72)}…' : plain;
     final isEditing = editingId == entry.id;
     // Already on the server: edit/send/delete cannot act (and send-now would
     // cancel the running turn), so the row shows them disabled.
