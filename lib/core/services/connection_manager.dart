@@ -4151,6 +4151,24 @@ class DashboardClient {
     return _strictTranscriptMessages(raw);
   }
 
+  /// GET /api/sessions/{id}?profile= — the persisted session row of any
+  /// profile, read the way Hermes Desktop does. The API server's
+  /// `/p/<profile>/` route would demand that profile's own key.
+  Future<Session> getSessionDetail(
+    String sessionId, {
+    String profile = '',
+  }) async {
+    final normalizedProfile = profile.trim();
+    final query = normalizedProfile.isEmpty
+        ? ''
+        : '?${Uri(queryParameters: {'profile': normalizedProfile}).query}';
+    final data = await apiGet(
+      'sessions/${Uri.encodeComponent(sessionId)}$query',
+    );
+    final row = data['session'];
+    return Session.fromJson(row is Map<String, dynamic> ? row : data);
+  }
+
   /// Variante paginada (`order=latest`, offset hacia atrás desde el mensaje
   /// más reciente) del transcript Dashboard, igual que
   /// [ApiClient.getMessagesPage]. Dashboards antiguos responden sin metadata
