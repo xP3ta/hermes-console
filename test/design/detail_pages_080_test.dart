@@ -28,6 +28,7 @@ void main() {
     tester,
   ) async {
     var opened = 0;
+    var edited = 0;
     await pumpDesignScreen(
       tester,
       MemoryFileDetailPage(
@@ -35,11 +36,15 @@ void main() {
         bytes: 5320,
         hasDraft: true,
         onOpenDraft: () => opened++,
+        onEditEntries: () => edited++,
       ),
     );
     expect(nestedVerticalScrollables(tester), isEmpty);
+    expect(find.text('Editar entradas'), findsOneWidget);
     expect(find.text('Abrir borrador local'), findsOneWidget);
     await saveDesignShot(tester, 'memory_file_detail');
+    await tester.tap(find.byKey(const ValueKey('memory-file-edit-entries')));
+    expect(edited, 1);
     await tester.tap(find.byKey(const ValueKey('memory-file-open-draft')));
     expect(opened, 1);
   });

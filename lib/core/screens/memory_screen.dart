@@ -3,14 +3,15 @@
 // Shows the active memory provider, all available providers, and
 // the size of the built-in memory files (memory.md, user.md).
 //
-// NOTE on write API: /api/memory is GET-only; the only write is
-// POST /api/memory/reset (`{target: memory|user}`, always with an explicit
-// `?profile=`), offered per built-in file behind a confirmation. A "backup"
-// action serialises the API response JSON and saves it to
+// Writes: POST /api/memory/reset (`{target: memory|user}`, always with an
+// explicit `?profile=`), offered per built-in file behind a confirmation, and
+// per-entry edits through /api/learning/node (MemoryEntriesScreen). A
+// "backup" action serialises the API response JSON and saves it to
 // getApplicationDocumentsDirectory() via path_provider.
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -20,6 +21,7 @@ import '../../main.dart';
 import '../services/active_profile_scope.dart';
 import '../services/connection_manager.dart';
 import '../services/memory_draft_store.dart';
+import '../services/memory_entries_repository.dart';
 import '../design/hermes_design.dart' as d show HermesListRow;
 import '../design/hermes_design.dart'
     show
@@ -43,6 +45,7 @@ import '../utils/api_error.dart';
 import '../widgets/hermes_notice.dart';
 import '../widgets/hermes_pill.dart';
 import 'memory_draft_screen.dart';
+import 'memory_entries_screen.dart';
 import '../widgets/hermes_app_bar.dart';
 import '../widgets/profile_scope.dart';
 import '../widgets/feature_dependency_notice.dart';
@@ -57,11 +60,15 @@ class MemoryScreen extends StatefulWidget {
   /// Active profile source; defaults to the app's for [connection].
   final ActiveProfileScope? profileScope;
   final DashboardClient? dashboardClientForTesting;
+
+  /// App-lock state for the entry editor; the app's own lock when null.
+  final ValueListenable<bool>? appLockedForTesting;
   const MemoryScreen({
     required this.connection,
     this.profileOverride,
     this.profileScope,
     @visibleForTesting this.dashboardClientForTesting,
+    @visibleForTesting this.appLockedForTesting,
     super.key,
   });
 
@@ -130,6 +137,26 @@ class _MemoryScreenState extends State<MemoryScreen>
       ),
     );
     if (mounted) setState(() {}); // refresca el indicador de borrador
+  }
+
+  Future<void> _openEntries(MemoryFileKind file) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MemoryEntriesScreen(
+          repository: MemoryEntriesRepository(
+            DashboardMemoryEntriesRest(_client),
+            profile: _profile,
+          ),
+          file: file,
+          instanceId: widget.connection.id,
+          readOnly: widget.connection.readOnly,
+          appLockedForTesting: widget.appLockedForTesting,
+        ),
+      ),
+    );
+    // Entry edits change the file sizes shown here.
+    if (mounted) await _load();
   }
 
   @override
@@ -711,12 +738,19 @@ class _MemoryScreenState extends State<MemoryScreen>
   }
 
   void _showFileDetail(String name, int bytes, HermesThemeColors colors) {
+    final file = MemoryFileKind.fromKey(name);
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (pageCtx) => MemoryFileDetailPage(
           name: name,
           bytes: bytes,
           hasDraft: _hasDraft(name),
+          onEditEntries: file == null
+              ? null
+              : () {
+                  Navigator.pop(pageCtx);
+                  _openEntries(file);
+                },
           onOpenDraft: () {
             Navigator.pop(pageCtx);
             _openDraft(name);
@@ -897,11 +931,18 @@ class _FileMoreButtonState extends State<_FileMoreButton> {
 }
 
 /// Memory file detail (spec 080): one page scroll, one primary action.
+///
+/// The primary action edits the file's entries on the server. A local draft
+/// left by earlier versions stays reachable (copy/export/discard) as the
+/// secondary action, only while one exists.
 class MemoryFileDetailPage extends StatelessWidget {
   final String name;
   final int bytes;
   final bool hasDraft;
   final VoidCallback onOpenDraft;
+
+  /// Null for a file the server cannot edit by entries.
+  final VoidCallback? onEditEntries;
 
   const MemoryFileDetailPage({
     super.key = const ValueKey('memory-file-detail-page'),
@@ -909,6 +950,7 @@ class MemoryFileDetailPage extends StatelessWidget {
     required this.bytes,
     required this.hasDraft,
     required this.onOpenDraft,
+    this.onEditEntries,
   });
 
   @override
@@ -924,13 +966,23 @@ class MemoryFileDetailPage extends StatelessWidget {
               tone: HermesStatusTone.active,
             )
           : null,
-      primaryAction: HermesActionButton(
-        key: const ValueKey('memory-file-open-draft'),
-        primary: true,
-        icon: Icons.edit_note_outlined,
-        label: hasDraft ? s.memOpenDraft : s.memCreateDraft,
-        onPressed: onOpenDraft,
-      ),
+      primaryAction: onEditEntries == null
+          ? null
+          : HermesActionButton(
+              key: const ValueKey('memory-file-edit-entries'),
+              primary: true,
+              icon: Icons.edit_note_outlined,
+              label: s.memEditEntries,
+              onPressed: onEditEntries,
+            ),
+      secondaryAction: hasDraft
+          ? HermesActionButton(
+              key: const ValueKey('memory-file-open-draft'),
+              icon: Icons.drafts_outlined,
+              label: s.memOpenDraft,
+              onPressed: onOpenDraft,
+            )
+          : null,
       sections: [
         HermesSectionHeader(s.designDetails),
         HermesListGroup(
