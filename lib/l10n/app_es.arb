@@ -10247,5 +10247,9 @@
   "mc1215OpenInViewer": "Abrir en el visor",
   "mc1215CodeTitle": "Código · {language}",
   "@mc1215CodeTitle": {"placeholders": {"language": {"type": "String"}}},
-  "mc1215ViewerActions": "Acciones del visor"
+  "mc1215ViewerActions": "Acciones del visor",
+  "cb1215ShowAllLines": "Mostrar todo ({count} líneas)",
+  "@cb1215ShowAllLines": {"placeholders": {"count": {"type": "int"}}},
+  "cb1215ShowLess": "Mostrar menos",
+  "cb1215PlainCode": "texto"
 }

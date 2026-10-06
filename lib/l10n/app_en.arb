@@ -8540,5 +8540,9 @@
   "mc1215OpenInViewer": "Open in viewer",
   "mc1215CodeTitle": "Code · {language}",
   "@mc1215CodeTitle": {"placeholders": {"language": {"type": "String"}}},
-  "mc1215ViewerActions": "Viewer actions"
+  "mc1215ViewerActions": "Viewer actions",
+  "cb1215ShowAllLines": "Show all {count} lines",
+  "@cb1215ShowAllLines": {"placeholders": {"count": {"type": "int"}}},
+  "cb1215ShowLess": "Show less",
+  "cb1215PlainCode": "text"
 }
