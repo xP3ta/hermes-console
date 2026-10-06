@@ -9,6 +9,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/widgets/artifact_viewer/code_view_prefs.dart';
+import 'core/widgets/mascot/float/mascot_overlay.dart';
+import 'core/widgets/mascot/float/mascot_route_watch.dart';
+import 'core/widgets/mascot/float/mascot_settings_screen.dart';
+import 'core/widgets/mascot/float/mascot_sources.dart';
+import 'core/widgets/mascot/mascot_sprite.dart';
 import 'core/services/message_reaction_prefs.dart';
 import 'core/services/pinned_prompt_prefs.dart';
 import 'core/services/retired_prefs.dart';
@@ -18,11 +23,13 @@ import 'core/companion/data/companion_repository.dart';
 import 'core/companion/hatch/mock_hatch_provider.dart';
 import 'core/companion/state/companion_controller.dart';
 import 'core/companion/state/companion_presence_controller.dart';
+import 'core/config/feature_flags.dart';
 import 'core/config/flavor.dart';
 import 'core/models/new_session_launch_action.dart';
 import 'core/models/home_widget_snapshot.dart';
 import 'core/navigation/chat_route.dart';
 import 'core/screens/chat_screen.dart';
+import 'core/screens/memory_screen.dart';
 import 'core/screens/home_dashboard_screen.dart';
 import 'core/screens/mission_control_screen.dart';
 import 'core/screens/session_list_screen.dart';
@@ -322,6 +329,8 @@ Future<Widget> bootstrapHermesApp() async {
   // Media prefetch never fetches or decodes while the app is locked; the
   // cache root is resolved now so reopened chats read media synchronously.
   MediaPrefetcher.appLocked = appLock.locked;
+  // The header mascot produces no frames while the app is locked.
+  MascotSprite.appLocked = appLock.locked;
   unawaited(GeneratedMediaService.warmCacheRoot());
   final approvalPolicy = ApprovalPolicyService(prefs);
   final fontSize = FontSizeService(prefs);
@@ -1166,6 +1175,42 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
         ? HomeWidgetTheme.light
         : HomeWidgetTheme.dark;
   }
+
+  /// Menu actions of the floating mascot (flag only): a new chat, what
+  /// Hermes remembers, and the mascot settings.
+  MascotOverlayActions _mascotActions() => MascotOverlayActions(
+    onTalk: () {
+      final connection = _activeHomeWidgetConnection();
+      final nav = _navigatorKey.currentState;
+      if (connection == null || nav == null) return;
+      final session = Session(
+        id: GatewayChatClient.generateSessionId(),
+        title: Strings.of(nav.context).drawerNewChat,
+        model: 'hermes-agent',
+        source: 'mobile',
+        messageCount: 0,
+        isActive: true,
+        preview: '',
+        startedAt: DateTime.now().millisecondsSinceEpoch / 1000,
+      );
+      openChatFromHomeNavigator<void>(
+        nav,
+        builder: (_) => ChatScreen(connection: connection, session: session),
+      );
+    },
+    onKnowledge: () {
+      final connection = _activeHomeWidgetConnection();
+      if (connection == null) return;
+      _navigatorKey.currentState?.push(
+        MaterialPageRoute<void>(
+          builder: (_) => MemoryScreen(connection: connection),
+        ),
+      );
+    },
+    onSettings: () => _navigatorKey.currentState?.push(
+      MaterialPageRoute<void>(builder: (_) => const MascotSettingsScreen()),
+    ),
+  );
 
   SavedConnection? _activeHomeWidgetConnection() {
     final connections = widget.connManager.getConnections();
@@ -2851,7 +2896,12 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
               themeAnimationCurve: Curves.easeInOutCubic,
               navigatorKey: _navigatorKey,
               scaffoldMessengerKey: _messengerKey,
-              navigatorObservers: [hermesRouteObserver, _appNavigationFence],
+              navigatorObservers: [
+                hermesRouteObserver,
+                _appNavigationFence,
+                // Dialogs and sheets hide the floating mascot (flag only).
+                if (FeatureFlags.floatingMascot) MascotRouteWatch.instance,
+              ],
               // El gate orquesta una ruta de bloqueo sobre el Navigator raíz: cubre
               // también las rutas empujadas, sin Overlay casero.
               builder: (context, navChild) => ListenableBuilder(
@@ -2877,7 +2927,16 @@ class HermesAppState extends State<HermesApp> with WidgetsBindingObserver {
                       lock: widget.appLock,
                       navigatorKey: _navigatorKey,
                       // Inert unless the gesture dock flag is on (auto mode).
-                      child: GestureDockScrollRelay(child: navChild!),
+                      child: GestureDockScrollRelay(
+                        // The floating mascot ships dark: with its flag off
+                        // the navigator is mounted exactly as before.
+                        child: FeatureFlags.floatingMascot
+                            ? MascotOverlayHost(
+                                actions: _mascotActions(),
+                                child: navChild!,
+                              )
+                            : navChild!,
+                      ),
                     ),
                   ),
                 ),

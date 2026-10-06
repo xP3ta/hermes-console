@@ -8591,5 +8591,198 @@
   "gdGestChatTitle": "Chat shortcut",
   "gdGestChatBody": "Tap or swipe up the handle above the composer",
   "gdExperimentalTitle": "Gesture dock (experimental)",
-  "gdExperimentalSubtitle": "New floating dock that hides and responds to gestures. In testing."
+  "gdExperimentalSubtitle": "New floating dock that hides and responds to gestures. In testing.",
+  "mascotStateIdle": "{name} is idle",
+  "@mascotStateIdle": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateThinking": "{name} is thinking",
+  "@mascotStateThinking": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateTool": "{name} is using a tool",
+  "@mascotStateTool": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateNeedsYou": "{name} needs you",
+  "@mascotStateNeedsYou": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateDone": "{name} is done",
+  "@mascotStateDone": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateOffline": "{name} is offline",
+  "@mascotStateOffline": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotStateError": "{name} hit an error",
+  "@mascotStateError": {
+    "description": "Screen-reader label of the header mascot for this activity state.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotClusterMore": "{names} and {count} more",
+  "@mascotClusterMore": {
+    "description": "Screen-reader label of a room's mascot cluster when more bots than the visible faces are present.",
+    "placeholders": {
+      "names": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mascotOverlayLabel": "{name}'s mascot",
+  "@mascotOverlayLabel": {
+    "description": "Screen-reader label of the floating mascot button.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mascotPendingCount": "{count, plural, =1{1 pending permission} other{{count} pending permissions}}",
+  "@mascotPendingCount": {
+    "description": "Floating mascot: number of pending permissions, read after its label.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "mascotPermissionAllow": "Allow",
+  "@mascotPermissionAllow": {
+    "description": "Floating mascot permission bubble: allow button."
+  },
+  "mascotPermissionDeny": "Deny",
+  "@mascotPermissionDeny": {
+    "description": "Floating mascot permission bubble: deny button."
+  },
+  "mascotPermissionOpenChat": "Open the chat",
+  "@mascotPermissionOpenChat": {
+    "description": "Floating mascot permission bubble: open the chat that asks."
+  },
+  "mascotSuggestionNotNow": "Not now",
+  "@mascotSuggestionNotNow": {
+    "description": "Floating mascot suggestion bubble: dismiss once."
+  },
+  "mascotSuggestionNever": "Don't suggest this",
+  "@mascotSuggestionNever": {
+    "description": "Floating mascot suggestion bubble: silence this kind of suggestion."
+  },
+  "mascotMenuTalk": "Talk",
+  "@mascotMenuTalk": {
+    "description": "Floating mascot menu: start a new chat."
+  },
+  "mascotMenuWhatsUp": "What are you doing?",
+  "@mascotMenuWhatsUp": {
+    "description": "Floating mascot menu: say what Hermes is doing now."
+  },
+  "mascotMenuSuggest": "Suggest something",
+  "@mascotMenuSuggest": {
+    "description": "Floating mascot menu: show a server suggestion."
+  },
+  "mascotMenuFloat": "Let me float",
+  "@mascotMenuFloat": {
+    "description": "Floating mascot menu: leave the dock and float."
+  },
+  "mascotMenuDock": "Stick to the dock",
+  "@mascotMenuDock": {
+    "description": "Floating mascot menu: go back to the dock."
+  },
+  "mascotMenuKnowledge": "What I know about you",
+  "@mascotMenuKnowledge": {
+    "description": "Floating mascot menu: open what Hermes remembers about the user."
+  },
+  "mascotMenuSettings": "Mascot settings",
+  "@mascotMenuSettings": {
+    "description": "Floating mascot menu: open its settings."
+  },
+  "mascotMenuHide": "Hide me",
+  "@mascotMenuHide": {
+    "description": "Floating mascot menu: turn the mascot off."
+  },
+  "mascotNothingRunning": "Nothing right now. I'm resting.",
+  "@mascotNothingRunning": {
+    "description": "Floating mascot: answer to 'What are you doing?' when nothing runs."
+  },
+  "mascotNoSuggestions": "I have no suggestions right now.",
+  "@mascotNoSuggestions": {
+    "description": "Floating mascot: no server suggestion is available."
+  },
+  "mascotSettingsTitle": "Mascot",
+  "@mascotSettingsTitle": {
+    "description": "Mascot settings screen title and Settings row."
+  },
+  "mascotSettingsSubtitle": "Floating mascot outside chats",
+  "@mascotSettingsSubtitle": {
+    "description": "Settings row subtitle for the mascot settings."
+  },
+  "mascotSettingsEnabled": "Show the mascot",
+  "@mascotSettingsEnabled": {
+    "description": "Mascot settings: on/off switch."
+  },
+  "mascotSettingsEnabledHint": "Turning it off loses nothing: permissions still show as cards.",
+  "@mascotSettingsEnabledHint": {
+    "description": "Mascot settings: explains what happens when it is off."
+  },
+  "mascotSettingsPlacement": "Where it lives",
+  "@mascotSettingsPlacement": {
+    "description": "Mascot settings: placement section."
+  },
+  "mascotPlacementDock": "On the dock",
+  "@mascotPlacementDock": {
+    "description": "Mascot placement: stands on the dock."
+  },
+  "mascotPlacementFloat": "Floating",
+  "@mascotPlacementFloat": {
+    "description": "Mascot placement: stays where the user drops it."
+  },
+  "mascotSettingsSprite": "Look",
+  "@mascotSettingsSprite": {
+    "description": "Mascot settings: sprite section."
+  },
+  "mascotSettingsSpriteAuto": "From the profile",
+  "@mascotSettingsSpriteAuto": {
+    "description": "Mascot settings: sprite picked from the profile."
+  },
+  "mascotWelcomeNoMascot": "I'd rather not have a mascot",
+  "@mascotWelcomeNoMascot": {
+    "description": "Gesture welcome in the mascot bubble: turn the mascot off."
+  }
 }

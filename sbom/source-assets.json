@@ -146,6 +146,30 @@
     },
     {
       "kind": "asset",
+      "license": "CC0-1.0",
+      "licenseEvidence": "assets/mascot/LICENSES.md",
+      "path": "assets/mascot/nimbus.webp",
+      "sha256": "e5bf12f45bfc9ad1d852587a5939f50ba5b10304748b7dcf397546a137b9260b",
+      "size": 20592
+    },
+    {
+      "kind": "asset",
+      "license": "CC0-1.0",
+      "licenseEvidence": "assets/mascot/LICENSES.md",
+      "path": "assets/mascot/pixel.webp",
+      "sha256": "7c7c8d45f9e9f6543de596cd61a97d849f3435a8302a22b52f1f5f29ae31be49",
+      "size": 19566
+    },
+    {
+      "kind": "asset",
+      "license": "CC0-1.0",
+      "licenseEvidence": "assets/mascot/LICENSES.md",
+      "path": "assets/mascot/violet.webp",
+      "sha256": "438b2a866bd6aaf7d5363c2ddd9d2b9982d3055c15620f377741bbc305045e7c",
+      "size": 15762
+    },
+    {
+      "kind": "asset",
       "license": "GPL-3.0-only",
       "licenseEvidence": "assets/branding/android-launcher-splash.sha256",
       "path": "android/app/src/main/res/drawable-hdpi/ic_launcher_background.png",
@@ -905,5 +929,5 @@
       "size": 127920
     }
   ],
-  "inputFingerprint": "79c03d76b3f49d19a17f7de44a913d7424ec374fb659753c11757fbf663a00eb"
+  "inputFingerprint": "0064a2aa996c718cd24b0bac8b4540fa24be8e2eb65fb2798c8619c10ce1a473"
 }
