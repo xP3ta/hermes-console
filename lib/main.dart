@@ -8,6 +8,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'core/widgets/artifact_viewer/code_view_prefs.dart';
 import 'core/services/message_reaction_prefs.dart';
 import 'core/services/quick_reply_prefs.dart';
 import 'core/app_header_title.dart';
@@ -262,6 +263,7 @@ Future<Widget> bootstrapHermesApp() async {
   await EmbedConsentStore.load(prefs);
   await MessageReactionPrefs.load(prefs);
   await QuickReplyPrefs.load(prefs);
+  await CodeViewPrefs.load(prefs);
   final themeProfileStore = ThemeProfileStore(prefs);
   final cancelledTurnStore = CancelledTurnTombstoneStore.secure();
   final compressionRestoreStore = CompressionRestoreStore();

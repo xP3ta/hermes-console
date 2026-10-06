@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -21,6 +22,7 @@ import '../../utils/markdown_math.dart';
 import '../../utils/semantic_markdown.dart';
 import '../../utils/streaming_normalizer.dart';
 import '../../utils/transport_privacy.dart';
+import '../artifact_viewer/artifact_viewer_screen.dart';
 import '../callout_card.dart';
 import '../hermes_file_tree.dart';
 import '../hermes_notice.dart';
@@ -753,6 +755,25 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
     super.dispose();
   }
 
+  /// Full-screen reading: wrap, code size, find and copy of the exact block.
+  void _openInViewer() {
+    final raw = widget.lang?.toLowerCase().trim() ?? '';
+    final language = raw.isEmpty ? null : (_langAliases[raw] ?? raw);
+    final bytes = Uint8List.fromList(utf8.encode(widget.code));
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => ArtifactViewerScreen(
+            name: Strings.of(context).mc1215CodeTitle(_languageLabel),
+            mimeType: 'text/plain',
+            loadBytes: () async => bytes,
+            highlightLanguage: language,
+          ),
+        ),
+      ),
+    );
+  }
+
   /// ```diff / ```patch fences reuse the tool cards' diff renderer, so
   /// removed lines read red instead of hljs's grey `deletion`.
   bool get _isDiff {
@@ -817,6 +838,14 @@ class _CodeBlockWrapperState extends State<_CodeBlockWrapper> {
             ),
           ),
           const Spacer(),
+          IconButton(
+            key: const ValueKey('chat-code-open-viewer'),
+            tooltip: Strings.of(context).mc1215OpenInViewer,
+            onPressed: _openInViewer,
+            iconSize: 16,
+            color: colors.textSecondary,
+            icon: const Icon(Icons.open_in_full_rounded),
+          ),
           Tooltip(
             message: Strings.of(context).chaCodeCopyTooltip,
             child: GestureDetector(

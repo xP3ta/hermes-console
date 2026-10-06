@@ -10239,5 +10239,13 @@
   "tc1215DiffViewedSemantics": "Marcar {name} como visto",
   "@tc1215DiffViewedSemantics": {"placeholders": {"name": {"type": "String"}}},
   "tc1215TurnChangesDone": "Hecho",
-  "cmp1215PasteImage": "Pegar imagen"
+  "cmp1215PasteImage": "Pegar imagen",
+  "mc1215WrapLines": "Ajustar líneas largas",
+  "mc1215NoWrapLines": "Desplazar líneas largas",
+  "mc1215FontSmaller": "Código más pequeño",
+  "mc1215FontLarger": "Código más grande",
+  "mc1215OpenInViewer": "Abrir en el visor",
+  "mc1215CodeTitle": "Código · {language}",
+  "@mc1215CodeTitle": {"placeholders": {"language": {"type": "String"}}},
+  "mc1215ViewerActions": "Acciones del visor"
 }
