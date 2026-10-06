@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hermes_android/core/widgets/floating_chat_header.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
@@ -436,11 +437,14 @@ void main() {
       of: find.byType(ChatScreen),
       matching: find.byType(ListView),
     );
+    // fh1215: the transcript runs under the floating header; the reader's
+    // view starts at its bottom edge.
+    double readTop() =>
+        tester.getRect(find.byKey(const ValueKey('floating-header'))).bottom -
+        FloatingChatHeader.scrimTail;
     bool landed() =>
         divider.evaluate().isNotEmpty &&
-        (tester.getTopLeft(divider).dy - (tester.getRect(list.first).top + 48))
-                .abs() <=
-            1;
+        (tester.getTopLeft(divider).dy - (readTop() + 48)).abs() <= 1;
     // Wait for the landing itself (bounded), not for a fixed number of
     // frames: how many frames the lazy list needs is not a contract.
     for (var frame = 0; frame < 300 && !landed(); frame++) {
@@ -448,9 +452,8 @@ void main() {
     }
 
     expect(divider, findsOneWidget, reason: 'the chat opens on the divider');
-    final viewport = tester.getRect(list.first);
-    // QA 9491: ~1 row (48 dp) of context above the divider.
-    expect(tester.getTopLeft(divider).dy, closeTo(viewport.top + 48, 1));
+    // QA 9491: ~1 row (48 dp) of context above the divider, below the header.
+    expect(tester.getTopLeft(divider).dy, closeTo(readTop() + 48, 1));
     // QA 9489: the first news is the reply, not the owner's question.
     expect(find.textContaining('long answer 41.'), findsOneWidget);
     // One landing, then stillness.
