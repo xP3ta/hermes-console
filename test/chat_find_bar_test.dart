@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:hermes_android/core/widgets/chat/chat_notch.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
 import 'package:hermes_android/core/services/app_lock.dart';
@@ -201,11 +202,17 @@ void main() {
     return chat;
   }
 
+  // Find moved from the header into the notch sheet ("Buscar en este chat").
   Future<void> openFindFromAppBar(WidgetTester tester) async {
-    final trigger = find.byKey(const ValueKey('chat-find-trigger'));
-    expect(find.byTooltip('Buscar en el chat'), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-find-trigger')), findsNothing);
+    final trigger = find.byKey(const ValueKey('chat-notch'));
     expect(tester.getSize(trigger).height, greaterThanOrEqualTo(48));
     await tester.tap(trigger);
+    await tester.pump();
+    await tester.pump(kChatNotchSheetOpen);
+    final row = find.byKey(const ValueKey('chat-control-find'));
+    expect(find.text('Buscar en este chat'), findsOneWidget);
+    await tester.tap(row);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
   }

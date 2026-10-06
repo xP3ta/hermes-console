@@ -8490,5 +8490,13 @@
   "rt1215Thinking": "Thinking",
   "@rt1215Thinking": {
     "description": "Label of the block that shows the model's reasoning (rt1215)."
-  }
+  },
+  "chatNotchLabel": "Conversation settings and Go to",
+  "chatNotchGoTo": "Go to",
+  "chatNotchChats": "Chats",
+  "chatNotchNeedsYouElsewhere": "Something needs you in another conversation",
+  "chatNotchSearchChats": "Search chats",
+  "chatNotchFindInChat": "Search this chat",
+  "chatNotchPreviousChat": "Previous chat",
+  "chatNotchNextChat": "Next chat"
 }

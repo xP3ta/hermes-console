@@ -261,8 +261,12 @@ class SessionListScreen extends StatefulWidget {
     @visibleForTesting this.gatewayFactory,
     @visibleForTesting this.sessionExporter,
     @visibleForTesting this.chatScreenBuilderOverride,
+    this.autofocusSearch = false,
     super.key,
   });
+
+  /// Opens with the search field focused (the chat notch's "Buscar chats").
+  final bool autofocusSearch;
 
   /// Builds the conversation instead of [ChatScreen] (widget tests: the real
   /// chat needs the whole app around it).
@@ -3031,6 +3035,7 @@ class _SessionListScreenState extends State<SessionListScreen>
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
       child: HermesSearchField(
         onChanged: _onSearchChanged,
+        autofocus: widget.autofocusSearch,
         hintText: Strings.of(context).slSearchHint,
         clearTooltip: Strings.of(context).slClearSearch,
       ),

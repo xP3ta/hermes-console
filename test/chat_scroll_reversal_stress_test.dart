@@ -9,6 +9,7 @@ import 'package:http/testing.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:hermes_android/core/widgets/chat/chat_notch.dart';
 import 'package:hermes_android/core/models/desktop_session_snapshot.dart';
 import 'package:hermes_android/core/screens/chat_screen.dart';
 import 'package:hermes_android/core/services/active_chat_service.dart';
@@ -407,9 +408,10 @@ void main() {
       lessThanOrEqualTo(viewportRect.bottom),
       reason: 'el salto debe fundirse dentro del borde inferior del chat',
     );
+    // The notch tab on the composer's edge sits under the jump.
     expect(
       jumpRect.top,
-      greaterThan(viewportRect.bottom - 56),
+      greaterThan(viewportRect.bottom - 56 - kChatNotchHeight),
       reason: 'el salto no debe abrir una franja separada sobre el compositor',
     );
     for (var burst = 0; burst < 12; burst++) {
