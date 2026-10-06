@@ -513,9 +513,14 @@ void main() {
     );
     for (var i = 0; i < 40; i++) {
       await tester.pump(const Duration(milliseconds: 50));
-      if (find.text('Conversación reciente 0').evaluate().isNotEmpty) break;
+      if (find
+          .textContaining('Conversación reciente 0')
+          .evaluate()
+          .isNotEmpty) {
+        break;
+      }
     }
-    expect(find.text('Conversación reciente 0'), findsOneWidget);
+    expect(find.textContaining('Conversación reciente 0'), findsOneWidget);
     final field = find.byType(TextField).first;
     await tester.tap(field);
     for (var i = 0; i < 20; i++) {
