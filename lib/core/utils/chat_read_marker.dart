@@ -1,4 +1,5 @@
 import 'chat_turn.dart';
+import 'unread_rules.dart';
 
 /// Durable coordinate of a transcript row usable as a read marker, or null
 /// for rows that only exist locally (optimistic prompt, live placeholder).
@@ -9,17 +10,26 @@ String? chatReadMarkerKey(Map<String, dynamic> message) {
   return rowId == null ? null : 'row:$rowId';
 }
 
-/// Rows the user reads as "a message": real user turns and assistant replies
-/// with text. Pipeline placeholders, runtime metadata and empty rows are not
-/// news for the reader.
-bool chatReadMarkerCountable(Map<String, dynamic> message) {
-  if (message['_pipeline'] == true) return false;
+/// What a chat row is for the shared unread rules (unread_rules.dart):
+/// assistant replies with text are news; the reader's own turns (sent from
+/// this device or another) are theirs; pipeline placeholders, tool rows,
+/// runtime metadata and empty rows are quiet. A streamed reply is one row,
+/// so its deltas count once.
+UnreadRowKind chatUnreadRowKind(Map<String, dynamic> message) {
+  if (message['_pipeline'] == true) return UnreadRowKind.quiet;
   if (message['role'] == 'assistant') {
     final content = message['content'];
-    return content is String && content.trim().isNotEmpty;
+    return content is String && content.trim().isNotEmpty
+        ? UnreadRowKind.news
+        : UnreadRowKind.quiet;
   }
-  return isRealUserTurn(message);
+  return isRealUserTurn(message) ? UnreadRowKind.own : UnreadRowKind.quiet;
 }
+
+/// Rows that count for the divider, the pill and the read marker: news
+/// only (never the reader's own messages).
+bool chatReadMarkerCountable(Map<String, dynamic> message) =>
+    unreadCounts(chatUnreadRowKind(message));
 
 /// Newest countable row of a newest-first transcript.
 Map<String, dynamic>? chatNewestCountableMessage(
