@@ -16,12 +16,14 @@ import 'package:hermes_android/core/services/bridge_manager.dart';
 import 'package:hermes_android/core/services/connection_manager.dart';
 import 'package:hermes_android/core/services/font_size_service.dart';
 import 'package:hermes_android/core/services/notifications/notification_service.dart';
+import 'package:hermes_android/core/services/pinned_prompt_prefs.dart';
 import 'package:hermes_android/core/services/secure_storage.dart';
 import 'package:hermes_android/core/services/sftp_transfer_service.dart';
 import 'package:hermes_android/core/services/ssh_manager.dart';
 import 'package:hermes_android/core/services/ssh_session_service.dart';
 import 'package:hermes_android/core/services/tui_gateway_client.dart';
 import 'package:hermes_android/core/services/turn_outbox_store.dart';
+import 'package:hermes_android/core/widgets/attachment_card.dart';
 import 'package:hermes_android/main.dart';
 
 // ignore: unused_element
@@ -216,6 +218,7 @@ void main() {
     List<Map<String, dynamic>>? history,
     Map<String, Object> initialPrefs = const {},
     int Function()? wallClockMs,
+    bool earlierAvailable = false,
   }) async {
     tester.platformDispatcher.localesTestValue = [const Locale('es')];
     addTearDown(tester.platformDispatcher.clearLocalesTestValue);
@@ -225,6 +228,8 @@ void main() {
       'onboarding_done': true,
     });
     final prefs = await SharedPreferences.getInstance();
+    await PinnedPromptPrefs.load(prefs);
+    addTearDown(() => PinnedPromptPrefs.debugUse(null));
     final connectionManager = await ConnectionManager.create(prefs);
     final secureStorage = SecureStorage();
     final activeChats = ActiveChatService();
@@ -241,6 +246,7 @@ void main() {
     chat
       ..internalMessagesForTesting = history ?? _history()
       ..messagesLoaded = true;
+    if (earlierAvailable) chat.earlierMessagesAvailableForTesting = true;
 
     await tester.pumpWidget(
       HermesApp(
@@ -1381,6 +1387,308 @@ void main() {
         find.descendant(of: jumpButton(), matching: find.text('1 nuevo')),
         findsOneWidget,
       );
+      await tearDownChat(tester, gateway);
+    });
+  });
+
+  // Owner redesign: the pinned prompt is a slim one-line header that
+  // follows the scroll, can be hidden per chat and switched off in Settings.
+  group('#1215 slim pinned prompt', () {
+    Finder header() => find.byKey(const ValueKey('chat-sticky-prompt'));
+    Finder dismiss() =>
+        find.byKey(const ValueKey('chat-pinned-prompt-dismiss'));
+    const sessionKey = 'conn-scroll-stress.sess-scroll-stress';
+    String longReply(String tag) => List.filled(
+      40,
+      'Texto de la respuesta $tag que ocupa varias pantallas.',
+    ).join('\n\n');
+
+    List<Map<String, dynamic>> twoLongTurns() => [
+      {'id': 'turn-b-a', 'role': 'assistant', 'content': longReply('B')},
+      {'id': 'turn-b-u', 'role': 'user', 'content': 'Pregunta B del turno'},
+      {'id': 'turn-a-a', 'role': 'assistant', 'content': longReply('A')},
+      {'id': 'turn-a-u', 'role': 'user', 'content': 'Pregunta A del turno'},
+      ..._history(turns: 3, prefix: 'older'),
+    ];
+
+    /// 'A', 'B' or '' (no header) as painted after the fade settles.
+    String headerState(WidgetTester tester) {
+      if (header().evaluate().isEmpty) return '';
+      for (final tag in ['A', 'B']) {
+        if (find
+            .descendant(
+              of: header(),
+              matching: find.textContaining('Pregunta $tag del turno'),
+            )
+            .evaluate()
+            .isNotEmpty) {
+          return tag;
+        }
+      }
+      return '?';
+    }
+
+    Future<void> settleHeader(WidgetTester tester) async {
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    /// Walks up the transcript and returns the header states it went
+    /// through, with repeats collapsed.
+    Future<List<String>> walkUp(WidgetTester tester) async {
+      final controller = controllerOf(tester);
+      final states = <String>[headerState(tester)];
+      for (var step = 0; step < 400; step++) {
+        final position = controller.position;
+        if (position.pixels >= position.maxScrollExtent) break;
+        controller.jumpTo(
+          (position.pixels + 40).clamp(0, position.maxScrollExtent),
+        );
+        await settleHeader(tester);
+        final state = headerState(tester);
+        if (state != states.last) states.add(state);
+        if (state == 'A') break;
+      }
+      return states;
+    }
+
+    testWidgets('the header follows the turn at the top and hides when the '
+        'prompt bubble is on screen', (tester) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: twoLongTurns());
+      await settle(tester);
+      await settleHeader(tester);
+      expect(headerState(tester), 'B');
+
+      final states = await walkUp(tester);
+      expect(states.first, 'B');
+      expect(states.last, 'A', reason: 'states: $states');
+      final hiddenAt = states.indexOf('');
+      expect(
+        hiddenAt,
+        inInclusiveRange(1, states.length - 2),
+        reason: 'the header hides while prompt B is on screen: $states',
+      );
+      expect(states, isNot(contains('?')));
+
+      // A fling straight from one turn into the other switches the header
+      // directly, without passing over the prompt bubble.
+      final controller = controllerOf(tester);
+      final insideA = controller.position.pixels + 240;
+      controller.jumpTo(40);
+      await settle(tester);
+      await settleHeader(tester);
+      expect(headerState(tester), 'B');
+      controller.jumpTo(insideA);
+      await settleHeader(tester);
+      expect(headerState(tester), 'A');
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('the header is one slim opaque line', (tester) async {
+      tester.view
+        ..physicalSize = const Size(1280, 2856)
+        ..devicePixelRatio = 3.1;
+      addTearDown(tester.view.reset);
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: [
+          {'id': 'slim-a', 'role': 'assistant', 'content': longReply('B')},
+          {
+            'id': 'slim-u',
+            'role': 'user',
+            'content': List.filled(20, 'Pregunta B del turno larga').join(' '),
+          },
+          ..._history(turns: 3, prefix: 'older'),
+        ],
+      );
+      await settle(tester);
+      await settleHeader(tester);
+      expect(header(), findsOneWidget);
+      final box = tester.getRect(header());
+      expect(box.height, lessThanOrEqualTo(36));
+      final text = tester.widget<Text>(
+        find.descendant(
+          of: header(),
+          matching: find.textContaining('Pregunta B del turno'),
+        ),
+      );
+      expect(text.maxLines, 1);
+      expect(text.overflow, TextOverflow.ellipsis);
+      expect(
+        find.byKey(const ValueKey('chat-load-earlier')),
+        findsNothing,
+        reason: 'nothing else sits on the header',
+      );
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('the header does not overflow with 2.0x text', (tester) async {
+      tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      tester.view
+        ..physicalSize = const Size(1280, 2856)
+        ..devicePixelRatio = 3.1;
+      addTearDown(tester.view.reset);
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: twoLongTurns());
+      await settle(tester);
+      await settleHeader(tester);
+      expect(header(), findsOneWidget);
+      final box = tester.getRect(header());
+      for (final element
+          in find
+              .descendant(of: header(), matching: find.byType(RichText))
+              .evaluate()) {
+        final rendered = element.renderObject! as RenderBox;
+        final rect = rendered.localToGlobal(Offset.zero) & rendered.size;
+        expect(rect.top, greaterThanOrEqualTo(box.top - 0.5));
+        expect(rect.bottom, lessThanOrEqualTo(box.bottom + 0.5));
+      }
+      expect(tester.takeException(), isNull);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('attachments show as a paperclip with their count', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: [
+          {'id': 'att-a', 'role': 'assistant', 'content': longReply('B')},
+          {
+            'id': 'att-u',
+            'role': 'user',
+            'content': [
+              '[📎 una.png · 1 KB]',
+              '[📎 dos.png · 2 KB]',
+              'Pregunta B del turno con capturas',
+              '⟦adjunto⟧',
+              'payload para el modelo',
+            ].join('\n'),
+          },
+          ..._history(turns: 3, prefix: 'older'),
+        ],
+      );
+      await settle(tester);
+      await settleHeader(tester);
+      expect(header(), findsOneWidget);
+      expect(
+        find.descendant(of: header(), matching: find.byIcon(Icons.attach_file)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: header(), matching: find.text('2')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: header(), matching: find.byType(RawImage)),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: header(), matching: find.byType(AttachmentCard)),
+        findsNothing,
+      );
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('× hides the header for this chat only, and it stays hidden', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: twoLongTurns());
+      await settle(tester);
+      await settleHeader(tester);
+      expect(headerState(tester), 'B');
+
+      await tester.tap(dismiss());
+      await settleHeader(tester);
+      expect(header(), findsNothing);
+      expect(PinnedPromptPrefs.shared.isHiddenFor(sessionKey), isTrue);
+      expect(PinnedPromptPrefs.shared.isHiddenFor('conn-x.other'), isFalse);
+      expect(PinnedPromptPrefs.shared.enabled, isTrue);
+
+      // Scrolling into another turn does not bring it back.
+      final states = await walkUp(tester);
+      expect(states.toSet(), {''});
+
+      // Reopening the chat keeps it hidden.
+      final prefs = await SharedPreferences.getInstance();
+      final stored = {for (final key in prefs.getKeys()) key: prefs.get(key)!};
+      await tearDownChat(tester, gateway);
+      final again = _StreamingGateway();
+      await pumpChat(
+        tester,
+        again,
+        history: twoLongTurns(),
+        initialPrefs: stored.cast<String, Object>(),
+      );
+      await settle(tester);
+      await settleHeader(tester);
+      expect(header(), findsNothing);
+      await tearDownChat(tester, again);
+    });
+
+    testWidgets('the Settings switch turns the header off everywhere', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(
+        tester,
+        gateway,
+        history: twoLongTurns(),
+        initialPrefs: const {'chat_pinned_prompt_enabled': false},
+      );
+      await settle(tester);
+      await settleHeader(tester);
+      expect(header(), findsNothing);
+
+      await PinnedPromptPrefs.shared.setEnabled(true);
+      await settleHeader(tester);
+      expect(headerState(tester), 'B');
+      await PinnedPromptPrefs.shared.setEnabled(false);
+      await settleHeader(tester);
+      expect(header(), findsNothing);
+      await tearDownChat(tester, gateway);
+    });
+
+    testWidgets('following the scroll rebuilds no transcript row', (
+      tester,
+    ) async {
+      final gateway = _StreamingGateway();
+      await pumpChat(tester, gateway, history: twoLongTurns());
+      await settle(tester);
+      await settleHeader(tester);
+      expect(headerState(tester), 'B');
+      // Leave the bottom first: showing the jump arrow is not under test.
+      controllerOf(tester).jumpTo(40);
+      await settle(tester);
+      await settleHeader(tester);
+      final list = tester.element(
+        find.descendant(of: transcript(), matching: find.byType(SliverList)),
+      );
+      final existing = <Element>{};
+      void collect(Element element) {
+        existing.add(element);
+        element.visitChildren(collect);
+      }
+
+      list.visitChildren(collect);
+      var rebuilds = 0;
+      debugOnRebuildDirtyWidget = (element, _) {
+        if (existing.contains(element)) rebuilds++;
+      };
+      addTearDown(() => debugOnRebuildDirtyWidget = null);
+
+      final states = await walkUp(tester);
+      debugOnRebuildDirtyWidget = null;
+      expect(states.last, 'A', reason: 'precondition: the header switched');
+      expect(rebuilds, 0, reason: 'scrolling rebuilt transcript rows');
       await tearDownChat(tester, gateway);
     });
   });

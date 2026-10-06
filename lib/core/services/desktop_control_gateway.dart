@@ -90,22 +90,6 @@ abstract class HermesDesktopControlGateway {
   Future<void> sendGoalAction(String runtimeSessionId, String action);
 }
 
-/// Reply ideas for the chat composer through Hermes' stateless
-/// `llm.oneshot`, asked only when the user taps for them. A gateway without
-/// it, a read-only connection or a server that lacks the method hides the
-/// action.
-abstract class HermesQuickReplySuggestionGateway {
-  /// False on read-only connections and once `llm.oneshot` is unsupported.
-  bool get quickReplySuggestionsAvailable;
-
-  /// Up to three short replies; empty when the call fails or is not allowed.
-  Future<List<String>> suggestQuickReplies({
-    required String lastAssistant,
-    required String lastUser,
-    String profile = '',
-  });
-}
-
 /// Project writes and git worktree helpers, exactly as Hermes Desktop issues
 /// them: `projects.update` / `projects.create` / `projects.delete` /
 /// `projects.set_active` over JSON-RPC and the Dashboard `/api/git/*` mirror
