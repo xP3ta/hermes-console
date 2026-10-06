@@ -141,6 +141,15 @@ final class FakeActions implements RoomAttachmentActions {
   }
 }
 
+/// Actions with the private-cache capabilities of the Dashboard ones.
+final class _PrefetchActions extends FakeActions
+    implements RoomAttachmentCache {
+  @override
+  File? cachedFile(RoomAttachmentRef ref) => null;
+  @override
+  void prefetch(RoomAttachmentRef ref) => calls.add('prefetch:${ref.name}');
+}
+
 final class _FakeDictation extends RoomDictation {
   bool _recording = false;
   @override
@@ -750,6 +759,26 @@ void main() {
       'open:report.pdf',
       'share:report.pdf',
     ]);
+  });
+
+  testWidgets('room images are prefetched before their rows are built', (
+    tester,
+  ) async {
+    final seq = EventSeq();
+    final events = [
+      seq.user('Look:\nMEDIA:/srv/out/early.png\nMEDIA:/srv/out/notes.pdf'),
+      seq.user('Later text'),
+    ];
+    final actions = _PrefetchActions();
+    await _pump(tester, events: events, actions: actions);
+    await tester.pump();
+    // The fetch is started from the log, ahead of the row's own preview
+    // load (which then joins it); documents still wait for a tap.
+    expect(actions.calls.first, 'prefetch:early.png');
+    // The prefetcher dedupes repeated passes over the same log.
+    expect(actions.calls.where((c) => c.startsWith('prefetch:')).toSet(), {
+      'prefetch:early.png',
+    });
   });
 
   testWidgets('a MEDIA line renders as a preview and the raw line is hidden', (
