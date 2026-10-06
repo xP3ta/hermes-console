@@ -1062,6 +1062,7 @@ enum _ChatControlAction {
   permissions,
   refresh,
   prompts,
+  showPinnedPrompt,
   content,
   branch,
   artifacts,
@@ -1973,6 +1974,23 @@ class _ChatScreenState extends State<ChatScreen>
   String get _pinnedPromptChatKey =>
       '${widget.connection.id}.${widget.session.logicalId}';
 
+  /// The pinned prompt's ×: hides it for this chat and offers Undo. The
+  /// chat menu can show it again later, and so can the Settings toggle.
+  void _hidePinnedPrompt() {
+    final prefs = PinnedPromptPrefs.shared;
+    final chatKey = _pinnedPromptChatKey;
+    unawaited(prefs.hideFor(chatKey));
+    final str = Strings.of(context);
+    HermesNotice.show(
+      context,
+      message: str.q90PinnedPromptHidden,
+      action: HermesNoticeAction(
+        label: str.q90PinnedPromptUndo,
+        onPressed: () => unawaited(prefs.showFor(chatKey)),
+      ),
+    );
+  }
+
   /// The slim one-line pinned prompt. It listens to the pinned prompt and
   /// its preferences itself, so following the scroll never rebuilds the
   /// screen or the transcript rows.
@@ -2016,7 +2034,7 @@ class _ChatScreenState extends State<ChatScreen>
               semanticLabel: str.pj1215StickyPromptLabel,
               hideLabel: str.cs1215PinnedPromptHide,
               onTap: () => unawaited(_revealStickyPrompt(prompt)),
-              onHide: () => unawaited(prefs.hideFor(_pinnedPromptChatKey)),
+              onHide: _hidePinnedPrompt,
             ),
           );
         }
@@ -11513,6 +11531,7 @@ class _ChatScreenState extends State<ChatScreen>
             artifacts: strings.chaArtifactsAction,
             content: strings.sa1215ContentAction,
             prompts: strings.pj1215PromptsAction,
+            showPinnedPrompt: strings.q90PinnedPromptShow,
             branch: strings.tc1215BranchChat,
             details: strings.chaSessionDetailsAction,
             cron: strings.crnOpenFromConversation,
@@ -11536,6 +11555,11 @@ class _ChatScreenState extends State<ChatScreen>
           onArtifacts: () => select(_ChatControlAction.artifacts),
           onContent: () => select(_ChatControlAction.content),
           onPrompts: () => select(_ChatControlAction.prompts),
+          onShowPinnedPrompt:
+              PinnedPromptPrefs.shared.enabled &&
+                  PinnedPromptPrefs.shared.isHiddenFor(_pinnedPromptChatKey)
+              ? () => select(_ChatControlAction.showPinnedPrompt)
+              : null,
           onBranch: _chat.canBranchChat
               ? () => select(_ChatControlAction.branch)
               : null,
@@ -11573,6 +11597,8 @@ class _ChatScreenState extends State<ChatScreen>
         unawaited(_fetchMessages());
       case _ChatControlAction.prompts:
         unawaited(_showPromptSheet());
+      case _ChatControlAction.showPinnedPrompt:
+        unawaited(PinnedPromptPrefs.shared.showFor(_pinnedPromptChatKey));
       case _ChatControlAction.content:
         unawaited(_openChatContent());
       case _ChatControlAction.branch:

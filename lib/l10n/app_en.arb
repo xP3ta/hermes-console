@@ -8536,7 +8536,10 @@
   "cs1215PinnedPromptYou": "You",
   "cs1215PinnedPromptHide": "Hide in this chat",
   "cs1215PinnedPromptSetting": "Pin your prompt at the top",
-  "cs1215PinnedPromptSettingSubtitle": "One line at the top of the chat with the prompt of the reply you're reading.",
+  "cs1215PinnedPromptSettingSubtitle": "One line at the top of the chat with the prompt of the reply you're reading. Turning it on shows it again in the chats where you hid it.",
+  "q90PinnedPromptHidden": "Hidden in this chat",
+  "q90PinnedPromptUndo": "Undo",
+  "q90PinnedPromptShow": "Show your pinned prompt",
   "cs1215LoadingEarlier": "Loading earlier messages…",
   "tabletPickConversation": "Pick a conversation to open it here",
   "@tabletPickConversation": {

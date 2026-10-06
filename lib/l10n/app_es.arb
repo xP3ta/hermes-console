@@ -10243,7 +10243,10 @@
   "cs1215PinnedPromptYou": "Tú",
   "cs1215PinnedPromptHide": "Ocultar en este chat",
   "cs1215PinnedPromptSetting": "Fijar tu pregunta arriba",
-  "cs1215PinnedPromptSettingSubtitle": "Una línea arriba del chat con la pregunta de la respuesta que estás leyendo.",
+  "cs1215PinnedPromptSettingSubtitle": "Una línea arriba del chat con la pregunta de la respuesta que estás leyendo. Al activarlo vuelve a aparecer en los chats donde la ocultaste.",
+  "q90PinnedPromptHidden": "Oculta en este chat",
+  "q90PinnedPromptUndo": "Deshacer",
+  "q90PinnedPromptShow": "Mostrar tu pregunta fijada",
   "cs1215LoadingEarlier": "Cargando mensajes anteriores…",
   "tabletPickConversation": "Elige una conversación para abrirla aquí"
 }
