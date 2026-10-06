@@ -52,6 +52,7 @@ import 'package:flutter/rendering.dart'
         ScrollCacheExtent,
         ScrollDirection;
 import 'package:flutter/scheduler.dart' show SchedulerBinding, SchedulerPhase;
+import 'package:flutter/semantics.dart' show OrdinalSortKey;
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:image_picker/image_picker.dart';
@@ -14274,125 +14275,123 @@ class _ChatScreenState extends State<ChatScreen>
               )
             : Stack(
                 children: [
-                  Center(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: Responsive.isTablet(context)
-                            ? 800
-                            : double.infinity,
-                      ),
-                      child: Column(
-                        children: [
-                          if (!floatingHeader) ...topNotices,
-                          Expanded(
-                            child: Stack(
-                              children: [
-                                AgentTaskScope(
-                                  tasks: _chat.agentTasks,
-                                  ownerStepId: _chat.agentTasks.isEmpty
-                                      ? null
-                                      : latestAgentTaskStepId(_messages),
-                                  child: _buildBody(),
-                                ),
-                                Positioned(
-                                  top: 0,
-                                  left: 0,
-                                  right: 0,
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
-                                      if (floatingHeader) ...[
-                                        SizedBox(height: _floatingTopInset),
-                                        _ExtentReporter(
-                                          onExtent: _setFloatingNoticesExtent,
-                                          child: ColoredBox(
-                                            color: colors.background,
-                                            child: Column(
-                                              mainAxisSize: MainAxisSize.min,
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.stretch,
-                                              children: topNotices,
+                  // fh1215: the transcript runs under the floating header, so
+                  // geometry alone would read a row scrolled under it before
+                  // the header. Pin the reading order: header, then body.
+                  Semantics(
+                    container: true,
+                    explicitChildNodes: true,
+                    sortKey: const OrdinalSortKey(1),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: Responsive.isTablet(context)
+                              ? 800
+                              : double.infinity,
+                        ),
+                        child: Column(
+                          children: [
+                            if (!floatingHeader) ...topNotices,
+                            Expanded(
+                              child: Stack(
+                                children: [
+                                  AgentTaskScope(
+                                    tasks: _chat.agentTasks,
+                                    ownerStepId: _chat.agentTasks.isEmpty
+                                        ? null
+                                        : latestAgentTaskStepId(_messages),
+                                    child: _buildBody(),
+                                  ),
+                                  Positioned(
+                                    top: 0,
+                                    left: 0,
+                                    right: 0,
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        if (floatingHeader) ...[
+                                          SizedBox(height: _floatingTopInset),
+                                          _ExtentReporter(
+                                            onExtent: _setFloatingNoticesExtent,
+                                            child: ColoredBox(
+                                              color: colors.background,
+                                              child: Column(
+                                                mainAxisSize: MainAxisSize.min,
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.stretch,
+                                                children: topNotices,
+                                              ),
                                             ),
                                           ),
-                                        ),
+                                        ],
+                                        _buildPinnedPromptHeader(str),
+                                        _buildEarlierHistoryRow(str),
                                       ],
-                                      _buildPinnedPromptHeader(str),
-                                      _buildEarlierHistoryRow(str),
-                                    ],
+                                    ),
                                   ),
-                                ),
-                                // Bottom overlay of the transcript. The
-                                // scroll-to-bottom arrow and the floating
-                                // activity pills share one bottom-centre
-                                // anchor, so they are STACKED in a single
-                                // bottom-anchored Column instead of two
-                                // Positioned children layered on top of each
-                                // other: the pills paint last, so the arrow
-                                // used to end up underneath them — invisible
-                                // and, once a pill owns the gesture, impossible
-                                // to tap. Stacking makes the arrow ride just
-                                // above whichever pill is showing and drop back
-                                // to its resting spot (8 dp) when none is, with
-                                // no measure-then-reposition frame in between.
-                                //
-                                // The pills stay glued near the composer like
-                                // the design mockup, but always INSIDE this
-                                // transcript Stack, never over the input.
-                                // Reply text keeps its clearance because the
-                                // measured stack extent pads the transcript by
-                                // the same amount.
-                                // The notch: a glass tab sitting on the
-                                // composer's top edge that opens the
-                                // conversation settings + "Ir a". Its touch
-                                // target extends up into the transcript.
-                                Positioned(
-                                  left: 0,
-                                  right: 0,
-                                  bottom: 0,
-                                  height: kChatNotchSlotHeight,
-                                  child: Center(child: _buildNotch(str)),
-                                ),
-                                Positioned(
-                                  left: 0,
-                                  right: 0,
-                                  // Rides just above the drawn tab.
-                                  bottom: 8 + kChatNotchHeight,
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      SizedBox(
-                                        width: double.infinity,
-                                        height: 48,
-                                        child: ValueListenableBuilder<bool>(
-                                          valueListenable:
-                                              _scrollToBottomVisibility,
-                                          builder: (context, showScrollToBottom, _) {
-                                            return ExcludeSemantics(
-                                              excluding: !showScrollToBottom,
-                                              child: IgnorePointer(
-                                                ignoring: !showScrollToBottom,
-                                                child: Center(
-                                                  child: AnimatedOpacity(
-                                                    key: ValueKey(
-                                                      showScrollToBottom
-                                                          ? 'scroll-to-bottom-visible'
-                                                          : 'scroll-to-bottom-hidden',
-                                                    ),
-                                                    opacity: showScrollToBottom
-                                                        ? 1
-                                                        : 0,
-                                                    duration: _reduceMotion
-                                                        ? Duration.zero
-                                                        : const Duration(
-                                                            milliseconds: 160,
-                                                          ),
-                                                    curve: Curves.easeOutCubic,
-                                                    child: AnimatedScale(
-                                                      scale: showScrollToBottom
+                                  // Bottom overlay of the transcript. The
+                                  // scroll-to-bottom arrow and the floating
+                                  // activity pills share one bottom-centre
+                                  // anchor, so they are STACKED in a single
+                                  // bottom-anchored Column instead of two
+                                  // Positioned children layered on top of each
+                                  // other: the pills paint last, so the arrow
+                                  // used to end up underneath them — invisible
+                                  // and, once a pill owns the gesture, impossible
+                                  // to tap. Stacking makes the arrow ride just
+                                  // above whichever pill is showing and drop back
+                                  // to its resting spot (8 dp) when none is, with
+                                  // no measure-then-reposition frame in between.
+                                  //
+                                  // The pills stay glued near the composer like
+                                  // the design mockup, but always INSIDE this
+                                  // transcript Stack, never over the input.
+                                  // Reply text keeps its clearance because the
+                                  // measured stack extent pads the transcript by
+                                  // the same amount.
+                                  // The notch: a glass tab sitting on the
+                                  // composer's top edge that opens the
+                                  // conversation settings + "Ir a". Its touch
+                                  // target extends up into the transcript.
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    bottom: 0,
+                                    height: kChatNotchSlotHeight,
+                                    child: Center(child: _buildNotch(str)),
+                                  ),
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    // Rides just above the drawn tab.
+                                    bottom: 8 + kChatNotchHeight,
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        SizedBox(
+                                          width: double.infinity,
+                                          height: 48,
+                                          child: ValueListenableBuilder<bool>(
+                                            valueListenable:
+                                                _scrollToBottomVisibility,
+                                            builder: (context, showScrollToBottom, _) {
+                                              return ExcludeSemantics(
+                                                excluding: !showScrollToBottom,
+                                                child: IgnorePointer(
+                                                  ignoring: !showScrollToBottom,
+                                                  child: Center(
+                                                    child: AnimatedOpacity(
+                                                      key: ValueKey(
+                                                        showScrollToBottom
+                                                            ? 'scroll-to-bottom-visible'
+                                                            : 'scroll-to-bottom-hidden',
+                                                      ),
+                                                      opacity:
+                                                          showScrollToBottom
                                                           ? 1
-                                                          : 0.94,
+                                                          : 0,
                                                       duration: _reduceMotion
                                                           ? Duration.zero
                                                           : const Duration(
@@ -14400,301 +14399,325 @@ class _ChatScreenState extends State<ChatScreen>
                                                             ),
                                                       curve:
                                                           Curves.easeOutCubic,
-                                                      child: _ScrollToBottomButton(
-                                                        key: const ValueKey(
-                                                          'chat-scroll-to-bottom',
+                                                      child: AnimatedScale(
+                                                        scale:
+                                                            showScrollToBottom
+                                                            ? 1
+                                                            : 0.94,
+                                                        duration: _reduceMotion
+                                                            ? Duration.zero
+                                                            : const Duration(
+                                                                milliseconds:
+                                                                    160,
+                                                              ),
+                                                        curve:
+                                                            Curves.easeOutCubic,
+                                                        child: _ScrollToBottomButton(
+                                                          key: const ValueKey(
+                                                            'chat-scroll-to-bottom',
+                                                          ),
+                                                          newMessages:
+                                                              _newWhileAway,
+                                                          onTap:
+                                                              _scrollToBottom,
                                                         ),
-                                                        newMessages:
-                                                            _newWhileAway,
-                                                        onTap: _scrollToBottom,
                                                       ),
                                                     ),
                                                   ),
                                                 ),
-                                              ),
-                                            );
-                                          },
+                                              );
+                                            },
+                                          ),
                                         ),
-                                      ),
-                                      // The pill area collapses to zero when
-                                      // nothing is running, and the gap below
-                                      // it collapses with it so the arrow lands
-                                      // back on its resting offset.
-                                      _BottomGapWhenVisible(
-                                        gap: 12,
-                                        onExtent: _setActivityPillExtent,
-                                        // Una sola pastilla para todo lo vivo
-                                        // (turno, tareas, segundo plano,
-                                        // subagentes, compactación): un único
-                                        // hueco medido, un único cronómetro. El
-                                        // panel sale de ella al tocarla.
-                                        child: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            // fh1215: the activity pill lives
-                                            // in the floating header now
-                                            // (`_buildFloatingHeader`).
-                                            KeyedSubtree(
-                                              key: const ValueKey(
-                                                'chat-session-activity',
-                                              ),
-                                              child: SubagentActivityCard(
+                                        // The pill area collapses to zero when
+                                        // nothing is running, and the gap below
+                                        // it collapses with it so the arrow lands
+                                        // back on its resting offset.
+                                        _BottomGapWhenVisible(
+                                          gap: 12,
+                                          onExtent: _setActivityPillExtent,
+                                          // Una sola pastilla para todo lo vivo
+                                          // (turno, tareas, segundo plano,
+                                          // subagentes, compactación): un único
+                                          // hueco medido, un único cronómetro. El
+                                          // panel sale de ella al tocarla.
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              // fh1215: the activity pill lives
+                                              // in the floating header now
+                                              // (`_buildFloatingHeader`).
+                                              KeyedSubtree(
                                                 key: const ValueKey(
-                                                  'chat-subagent-status',
+                                                  'chat-session-activity',
                                                 ),
-                                                hidden: true,
-                                                controller: _subagentController,
-                                                activities:
-                                                    _displaySubagentActivities,
-                                                onDismiss: _dismissSubagentPill,
-                                                safeChildCount:
-                                                    _chat.safeActiveSubagentCount >
-                                                        (_chat.hasRecentPassiveRemoteActivity
+                                                child: SubagentActivityCard(
+                                                  key: const ValueKey(
+                                                    'chat-subagent-status',
+                                                  ),
+                                                  hidden: true,
+                                                  controller:
+                                                      _subagentController,
+                                                  activities:
+                                                      _displaySubagentActivities,
+                                                  onDismiss:
+                                                      _dismissSubagentPill,
+                                                  safeChildCount:
+                                                      _chat.safeActiveSubagentCount >
+                                                          (_chat.hasRecentPassiveRemoteActivity
+                                                              ? _chat
+                                                                    .passiveActivityAggregate
+                                                                    .total
+                                                              : 0)
+                                                      ? _chat
+                                                            .safeActiveSubagentCount
+                                                      : (_chat.hasRecentPassiveRemoteActivity
                                                             ? _chat
                                                                   .passiveActivityAggregate
                                                                   .total
-                                                            : 0)
-                                                    ? _chat
-                                                          .safeActiveSubagentCount
-                                                    : (_chat.hasRecentPassiveRemoteActivity
-                                                          ? _chat
-                                                                .passiveActivityAggregate
-                                                                .total
-                                                          : 0),
-                                                background:
-                                                    _chat
-                                                        .hasRecentPassiveRemoteActivity ||
-                                                    _chat.safeActiveSubagentCount >
-                                                        0,
-                                                canInterrupt:
-                                                    _chat.canInterruptSubagent,
-                                                canSteer:
-                                                    _chat.canSteerSubagent,
-                                                canTail: _chat.canTailSubagent,
-                                                delegationControl:
-                                                    _chat.delegationControl,
-                                                parentTitle:
-                                                    widget.session.title,
-                                                acquirePresentation:
-                                                    _acquireSubagentDetailLease,
-                                                isInterruptPending: _chat
-                                                    .isSubagentInterruptPending,
-                                                appForeground:
-                                                    _appInForeground &&
-                                                    _chatRouteVisible,
-                                                openLiveWatch:
-                                                    _openSubagentLiveWatch,
-                                                onTail: (activity) async {
-                                                  final result = await _chat
-                                                      .tailSubagent(activity);
-                                                  return SubagentTailView(
-                                                    available: result.available,
-                                                    content: result.content,
-                                                    truncated: result.truncated,
-                                                  );
-                                                },
-                                                onSteer:
-                                                    (activity, text) async {
-                                                      final result = await _chat
-                                                          .steerSubagent(
-                                                            activity,
-                                                            text,
-                                                          );
-                                                      return SubagentSteerView(
-                                                        status: result.status,
-                                                      );
-                                                    },
-                                                isOpenPending:
-                                                    _isSubagentOpenPending,
-                                                onOpenConversation: (activity) {
-                                                  unawaited(
-                                                    _openSubagentConversation(
-                                                      activity,
-                                                    ),
-                                                  );
-                                                },
-                                                onStopRequested:
-                                                    _confirmInterruptSubagent,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                if (_chat.pendingInteractivePrompt != null)
-                                  Positioned.fill(
-                                    child: Stack(
-                                      children: [
-                                        // Light, un-blurred barrier — same
-                                        // idiom as the app's other floating
-                                        // popovers (session_context_usage.dart)
-                                        // — instead of a ~70% dim: the agent is
-                                        // just paused, not blocking the whole
-                                        // screen, so the transcript stays
-                                        // legible behind the card.
-                                        Positioned.fill(
-                                          child: ColoredBox(
-                                            color: colors.background.withAlpha(
-                                              41,
-                                            ),
-                                          ),
-                                        ),
-                                        Positioned(
-                                          left: 16,
-                                          right: 16,
-                                          bottom: 16,
-                                          child: InteractivePromptCard(
-                                            key: ValueKey(
-                                              'interactive-${_chat.pendingInteractivePrompt!.key.runtimeSessionId}-'
-                                              '${_chat.pendingInteractivePrompt!.key.requestId}',
-                                            ),
-                                            entry:
-                                                _chat.pendingInteractivePrompt!,
-                                            busy:
-                                                _resolvingInteractivePrompt ||
-                                                _chat
-                                                        .pendingInteractivePrompt!
-                                                        .status ==
-                                                    InteractivePromptStatus
-                                                        .responding,
-                                            onSubmit: (value) {
-                                              unawaited(
-                                                _resolveInteractivePrompt(
-                                                  value,
+                                                            : 0),
+                                                  background:
+                                                      _chat
+                                                          .hasRecentPassiveRemoteActivity ||
+                                                      _chat.safeActiveSubagentCount >
+                                                          0,
+                                                  canInterrupt: _chat
+                                                      .canInterruptSubagent,
+                                                  canSteer:
+                                                      _chat.canSteerSubagent,
+                                                  canTail:
+                                                      _chat.canTailSubagent,
+                                                  delegationControl:
+                                                      _chat.delegationControl,
+                                                  parentTitle:
+                                                      widget.session.title,
+                                                  acquirePresentation:
+                                                      _acquireSubagentDetailLease,
+                                                  isInterruptPending: _chat
+                                                      .isSubagentInterruptPending,
+                                                  appForeground:
+                                                      _appInForeground &&
+                                                      _chatRouteVisible,
+                                                  openLiveWatch:
+                                                      _openSubagentLiveWatch,
+                                                  onTail: (activity) async {
+                                                    final result = await _chat
+                                                        .tailSubagent(activity);
+                                                    return SubagentTailView(
+                                                      available:
+                                                          result.available,
+                                                      content: result.content,
+                                                      truncated:
+                                                          result.truncated,
+                                                    );
+                                                  },
+                                                  onSteer:
+                                                      (activity, text) async {
+                                                        final result =
+                                                            await _chat
+                                                                .steerSubagent(
+                                                                  activity,
+                                                                  text,
+                                                                );
+                                                        return SubagentSteerView(
+                                                          status: result.status,
+                                                        );
+                                                      },
+                                                  isOpenPending:
+                                                      _isSubagentOpenPending,
+                                                  onOpenConversation: (activity) {
+                                                    unawaited(
+                                                      _openSubagentConversation(
+                                                        activity,
+                                                      ),
+                                                    );
+                                                  },
+                                                  onStopRequested:
+                                                      _confirmInterruptSubagent,
                                                 ),
-                                              );
-                                            },
-                                            onSubmitBatch: (answers) {
-                                              return _resolveInteractivePromptBatch(
-                                                answers,
-                                              );
-                                            },
-                                            onCancel: _cancelInteractivePrompt,
+                                              ),
+                                            ],
                                           ),
                                         ),
                                       ],
                                     ),
                                   ),
-                              ],
-                            ),
-                          ),
-                          // Lo que vive bajo el transcript (avisos en flujo,
-                          // tiras y composer) es un grupo en flujo: ningun
-                          // aviso transitorio flota sobre el, viven arriba.
-                          KeyedSubtree(
-                            key: const ValueKey('chat-bottom-bars'),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                ?_buildRecoveredTurnBanner(),
-                                if (_chat.compactionAuthFailure
-                                    case final compactionAuth?)
-                                  ProviderAuthBanner(
-                                    failure: compactionAuth,
-                                    onAction: _providerReauthRunning
-                                        ? null
-                                        : () => unawaited(
-                                            _reauthProvider(compactionAuth),
+                                  if (_chat.pendingInteractivePrompt != null)
+                                    Positioned.fill(
+                                      child: Stack(
+                                        children: [
+                                          // Light, un-blurred barrier — same
+                                          // idiom as the app's other floating
+                                          // popovers (session_context_usage.dart)
+                                          // — instead of a ~70% dim: the agent is
+                                          // just paused, not blocking the whole
+                                          // screen, so the transcript stays
+                                          // legible behind the card.
+                                          Positioned.fill(
+                                            child: ColoredBox(
+                                              color: colors.background
+                                                  .withAlpha(41),
+                                            ),
                                           ),
-                                    onDismiss:
-                                        _chat.dismissCompactionAuthFailure,
-                                  ),
-                                if (_chat.offerStaleResumedSessionStop)
-                                  StaleRunningSessionBanner(
-                                    enabled: _chat.gatewayConnected,
-                                    onStop: _cancelStream,
-                                    onDismiss: _chat
-                                        .dismissStaleResumedSessionStopOffer,
-                                  ),
-                                // Ownership conflicts keep the transcript and composer
-                                // mounted while fencing every mutation.
-                                // Cerrar el aviso solo lo compacta a una línea: el
-                                // estado de solo lectura sigue a la vista.
-                                if (_chat.conflictReadOnly)
-                                  _chat.ownershipConflictNoticeVisible
-                                      ? _buildRuntimeOwnershipBanner()
-                                      : _buildRuntimeOwnershipCompactIndicator(),
-                                // Aprobación inline: aparece justo encima del composer cuando el
-                                // agente pide permiso (motor /v1/runs).
-                                if (_chat.pendingApproval != null)
-                                  ChatApprovalCard(
-                                    approval: _chat.pendingApproval!,
-                                    busy: _resolvingApproval,
-                                    onChoice: _resolveChatApproval,
-                                    companion: context
-                                        .findAncestorStateOfType<
-                                          HermesAppState
-                                        >()
-                                        ?.companion,
-                                  ),
-                                if (_chat.desktopContinuationNoticeVisible)
-                                  Semantics(
-                                    container: true,
-                                    label: Strings.of(
-                                      context,
-                                    ).chatContinueOnDesktop,
-                                    child: Card(
-                                      key: const ValueKey(
-                                        'desktop-continuation-required',
+                                          Positioned(
+                                            left: 16,
+                                            right: 16,
+                                            bottom: 16,
+                                            child: InteractivePromptCard(
+                                              key: ValueKey(
+                                                'interactive-${_chat.pendingInteractivePrompt!.key.runtimeSessionId}-'
+                                                '${_chat.pendingInteractivePrompt!.key.requestId}',
+                                              ),
+                                              entry: _chat
+                                                  .pendingInteractivePrompt!,
+                                              busy:
+                                                  _resolvingInteractivePrompt ||
+                                                  _chat
+                                                          .pendingInteractivePrompt!
+                                                          .status ==
+                                                      InteractivePromptStatus
+                                                          .responding,
+                                              onSubmit: (value) {
+                                                unawaited(
+                                                  _resolveInteractivePrompt(
+                                                    value,
+                                                  ),
+                                                );
+                                              },
+                                              onSubmitBatch: (answers) {
+                                                return _resolveInteractivePromptBatch(
+                                                  answers,
+                                                );
+                                              },
+                                              onCancel:
+                                                  _cancelInteractivePrompt,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                      child: Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          16,
-                                          4,
-                                          4,
-                                          4,
+                                    ),
+                                ],
+                              ),
+                            ),
+                            // Lo que vive bajo el transcript (avisos en flujo,
+                            // tiras y composer) es un grupo en flujo: ningun
+                            // aviso transitorio flota sobre el, viven arriba.
+                            KeyedSubtree(
+                              key: const ValueKey('chat-bottom-bars'),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  ?_buildRecoveredTurnBanner(),
+                                  if (_chat.compactionAuthFailure
+                                      case final compactionAuth?)
+                                    ProviderAuthBanner(
+                                      failure: compactionAuth,
+                                      onAction: _providerReauthRunning
+                                          ? null
+                                          : () => unawaited(
+                                              _reauthProvider(compactionAuth),
+                                            ),
+                                      onDismiss:
+                                          _chat.dismissCompactionAuthFailure,
+                                    ),
+                                  if (_chat.offerStaleResumedSessionStop)
+                                    StaleRunningSessionBanner(
+                                      enabled: _chat.gatewayConnected,
+                                      onStop: _cancelStream,
+                                      onDismiss: _chat
+                                          .dismissStaleResumedSessionStopOffer,
+                                    ),
+                                  // Ownership conflicts keep the transcript and composer
+                                  // mounted while fencing every mutation.
+                                  // Cerrar el aviso solo lo compacta a una línea: el
+                                  // estado de solo lectura sigue a la vista.
+                                  if (_chat.conflictReadOnly)
+                                    _chat.ownershipConflictNoticeVisible
+                                        ? _buildRuntimeOwnershipBanner()
+                                        : _buildRuntimeOwnershipCompactIndicator(),
+                                  // Aprobación inline: aparece justo encima del composer cuando el
+                                  // agente pide permiso (motor /v1/runs).
+                                  if (_chat.pendingApproval != null)
+                                    ChatApprovalCard(
+                                      approval: _chat.pendingApproval!,
+                                      busy: _resolvingApproval,
+                                      onChoice: _resolveChatApproval,
+                                      companion: context
+                                          .findAncestorStateOfType<
+                                            HermesAppState
+                                          >()
+                                          ?.companion,
+                                    ),
+                                  if (_chat.desktopContinuationNoticeVisible)
+                                    Semantics(
+                                      container: true,
+                                      label: Strings.of(
+                                        context,
+                                      ).chatContinueOnDesktop,
+                                      child: Card(
+                                        key: const ValueKey(
+                                          'desktop-continuation-required',
                                         ),
-                                        child: Row(
-                                          children: [
-                                            const Icon(
-                                              Icons.desktop_windows_outlined,
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Expanded(
-                                              child: Text(
-                                                Strings.of(
-                                                  context,
-                                                ).chatContinueOnDesktop,
+                                        child: Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            16,
+                                            4,
+                                            4,
+                                            4,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              const Icon(
+                                                Icons.desktop_windows_outlined,
                                               ),
-                                            ),
-                                            _ChatNoticeDismissButton(
-                                              key: const ValueKey(
-                                                'desktop-continuation-dismiss',
+                                              const SizedBox(width: 12),
+                                              Expanded(
+                                                child: Text(
+                                                  Strings.of(
+                                                    context,
+                                                  ).chatContinueOnDesktop,
+                                                ),
                                               ),
-                                              onPressed: () => setState(
-                                                _chat
-                                                    .dismissDesktopContinuationNotice,
+                                              _ChatNoticeDismissButton(
+                                                key: const ValueKey(
+                                                  'desktop-continuation-dismiss',
+                                                ),
+                                                onPressed: () => setState(
+                                                  _chat
+                                                      .dismissDesktopContinuationNotice,
+                                                ),
                                               ),
-                                            ),
-                                          ],
+                                            ],
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                // The subagent activity indicator now floats as an
-                                // overlay anchored above the transcript (see the
-                                // inner Stack below) instead of living here, so its
-                                // live/completed count changes never resize this
-                                // Column or shift the composer.
-                                _buildStopStatusStrip(colors),
-                                _buildBackgroundTaskStrip(colors),
-                                _lockWhileEditing(_buildQueueStrip(colors)),
-                                if ((_vc?.active ?? false) && !showVoiceSurface)
-                                  _buildVoiceReturnBar(
-                                    colors,
-                                    ownsCurrentChat: voiceSessionActive,
-                                  ),
-                                if (!showVoiceSurface)
-                                  Opacity(
-                                    opacity: _editingUserMessage ? 0.62 : 1,
-                                    child: _lockWhileEditing(_buildInputBar()),
-                                  ),
-                              ],
+                                  // The subagent activity indicator now floats as an
+                                  // overlay anchored above the transcript (see the
+                                  // inner Stack below) instead of living here, so its
+                                  // live/completed count changes never resize this
+                                  // Column or shift the composer.
+                                  _buildStopStatusStrip(colors),
+                                  _buildBackgroundTaskStrip(colors),
+                                  _lockWhileEditing(_buildQueueStrip(colors)),
+                                  if ((_vc?.active ?? false) &&
+                                      !showVoiceSurface)
+                                    _buildVoiceReturnBar(
+                                      colors,
+                                      ownsCurrentChat: voiceSessionActive,
+                                    ),
+                                  if (!showVoiceSurface)
+                                    Opacity(
+                                      opacity: _editingUserMessage ? 0.62 : 1,
+                                      child: _lockWhileEditing(
+                                        _buildInputBar(),
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -14703,7 +14726,12 @@ class _ChatScreenState extends State<ChatScreen>
                       top: 0,
                       left: 0,
                       right: 0,
-                      child: _buildFloatingHeader(str, connManager),
+                      child: Semantics(
+                        container: true,
+                        explicitChildNodes: true,
+                        sortKey: const OrdinalSortKey(0),
+                        child: _buildFloatingHeader(str, connManager),
+                      ),
                     ),
                 ],
               ),
